@@ -540,14 +540,14 @@ public class PluginAdmin {
                         getClass().getClassLoader().getResourceAsStream(bundleName));
 
             } else {
-                System.out.println("Bundle = null");
+                System.out.println("installInternalBundleJars() Bundle = null");
             }
         } catch(Exception ex) {
             ex.printStackTrace();
         }
 
         if(installedBundle == null) {
-            System.out.println("Failed to load bundle exiting!");
+            System.out.println("controller installInternalBundleJars() Failed to load bundle " + bundleName + " exiting!");
             System.exit(0);
         }
 
