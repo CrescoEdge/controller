@@ -1,0 +1,19 @@
+language: java
+addons:
+  sonarcloud:
+    organization: crescoedge
+    token:
+      secure: pflDxYJMrssCG1Q3sudfF3Bw/KUnNcON/CIq5Bx/YkFcI6J55+pxXE/QDhNlcFc4vEV2/4rnM+8HIr1QKiRBft9GR/0a5/NKUQ/MiEDauRI8wdHm5K//xDPmTn2kpXaNlaDHF8puleg1uGy55LQ/+tpN83I5bZpbhFFo27FIa/NECVr0XSAzCJggMBEfKXqdVWm/bGc2LCrk9rwedMn0aCahybmVepX08JrFyL079KA2rQ/bvyL6viwXT8Ye5bFNC9rFwKsasvrpyVoXGJkzlsly2kxGorkaM5bFS6gkPtNmdwbDLKyDFXCaIavst4yzMgDjxgWUW8vgTDLr/2Gi3MnUqHbkq0Mtk/77tKLej4xaoLq0P/HH3A0IsQi5t7J3y7JpmQZbkyiJNH0EYHhhxkOEZ2nqfSyYwG5SQ4PaNnhtkAK2GgaKC8D51VYtWryWVyiJ2UuSYvWiRoK6a+nWqfJc6lFzRBrWou6UtE563RU7q7N7CRSLF9/pcX2YNKTtJLV964Fj1IxnzhFTZw0IdNT4uFC6g/JzIJwvwnyzGXTSmkneUPEPDEbEfJZzhg87mSGhv/xLy1seWNueBSec9NNqUk7Zn7tChbzjS1uUTzKQaNLarJ44Hp+umoh6DGa9m5n/ZzvYAoIX+Fml0ms7u8IqNgi/tnPa8JLJlJEewZ0=
+script:
+- mvn clean org.jacoco:jacoco-maven-plugin:prepare-agent install sonar:sonar
+after_success:
+- mvn package bundle:bundle
+- mvn deploy:deploy-file -Dfile=target/controller-1.0-SNAPSHOT.jar -Durl=https://oss.sonatype.org/content/repositories/snapshots
+  -DrepositoryId=ossrh -DpomFile=pom.xml --settings travis-settings.xml -DskipTests=true
+  -B
+env:
+  global:
+  - SONATYPE_USERNAME=crescoedge
+  - secure: mnwZsFG02pjQviHpS4DHslkdD9Ne6AYpn2XcW5AhZt0uTXdicGnYHvGL++N9Xzyq5nBP2+S2q/yfRklgDUhz9iEWqjFX44Dz3mSCjs5eTe2QUgb7J0shoWCBakfQsYaYBlLsktA1tKPWZvPmKO+btdmqgQ7/tpSHo56y5qc2uU4bqUyY1G5oggLpnSXTFEtRVpiMBfYIGDn6fNTJ0QZfOQArLrLUCLyY1rJJsr79k468S/sXkgKoUFkhbqT0Eep3j8rvBu9ckdm3ZBatokOsll49THDTddMHb3wjLG8+Z7Z8RUbbNmSFBb+Z3ak6yDgEYIFREmBRvCtySzZ5j8xaff6ruapn9HukjCIaAfqp8OYygxNuCb4sKz44TDtKQ/DpT2nAnxyl/Jw4efE2lm7sX2Cc104ttN2+CrR8thfNkzWvRqgMeC+7F/BCiBGapBOoQC9XXLiWLBanEWQv4ZdurrL/sVmZ2EEDjWmC9E5uUecmGFYsVwq/g6s0BUmOjBh9mXYlCJJPsErVnRiqwWi17Q1Drxh4v0/EFnv3xSfHeEdRr0TuZhQ5bUFL63zt1PlM76tGZarcRy3qiEAPHkkU++LW5MFUxovBmkH2kZ69SaNeK00zb6ifK8dXg/7hlV9OuCJw/jx+IJX1eikbOHXaPPDx/7sLzTE6pibRpDqCCUM=
+before_install:
+- bash prebuild.sh
