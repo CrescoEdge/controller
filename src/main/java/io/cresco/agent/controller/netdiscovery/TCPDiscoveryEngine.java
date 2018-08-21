@@ -96,16 +96,17 @@ public class TCPDiscoveryEngine implements Runnable {
         }
 
         public void run() {
-            try {
-                InputStream input  = clientSocket.getInputStream();
-                OutputStream output = clientSocket.getOutputStream();
+            InputStream input = null;
+            OutputStream output = null;
+            ObjectOutputStream oos = null;
+            ObjectInputStream ois = null;
 
-                ObjectOutputStream oos = null;
-                ObjectInputStream ois = null;
+            try {
+                input  = clientSocket.getInputStream();
+                output = clientSocket.getOutputStream();
 
                 ois = new ObjectInputStream(input);
                 String message = (String) ois.readObject();
-
 
                 MsgEvent me = null;
 
@@ -126,16 +127,32 @@ public class TCPDiscoveryEngine implements Runnable {
                     String json = gson.toJson(me);
 
                     oos.writeObject(json);
-                    oos.close();
-                }
-                ois.close();
+                    oos.flush();
 
-                output.close();
-                input.close();
-                //System.out.println("Request processed: " + time);
+                }
+
             } catch (Exception e) {
-                //report exception somewhere.
                 e.printStackTrace();
+            } finally {
+                try {
+
+                    if(oos != null) {
+                        oos.close();
+                    }
+                    if(ois != null) {
+                        ois.close();
+                    }
+                    if(output != null) {
+                        output.close();
+                    }
+                    if(input != null) {
+                        input.close();
+                    }
+                } catch(Exception ex) {
+                    ex.printStackTrace();
+                }
+
+
             }
         }
 
@@ -375,6 +392,33 @@ public class TCPDiscoveryEngine implements Runnable {
         openServerSocket();
         controllerEngine.setTCPDiscoveryActive(true);
         while(! isStopped()){
+            try {
+                new Thread(
+                        new WorkerRunnable(controllerEngine,
+                                serverSocket.accept(), "Multithreaded Server")
+                ).start();
+
+            } catch (IOException e) {
+                if(isStopped()) {
+                    System.out.println("Server Stopped.") ;
+                    return;
+                }
+                throw new RuntimeException(
+                        "Error accepting client connection", e);
+            }
+        }
+        System.out.println("Server Stopped.") ;
+    }
+
+
+    /*
+    public void run(){
+        synchronized(this){
+            this.runningThread = Thread.currentThread();
+        }
+        openServerSocket();
+        controllerEngine.setTCPDiscoveryActive(true);
+        while(! isStopped()){
             Socket clientSocket = null;
             try {
                 clientSocket = serverSocket.accept();
@@ -393,7 +437,7 @@ public class TCPDiscoveryEngine implements Runnable {
         }
         System.out.println("Server Stopped.") ;
     }
-
+    */
     public static synchronized void shutdown(){
         isStopped = true;
         try {
