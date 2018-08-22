@@ -15,6 +15,10 @@ public class DBManager implements Runnable  {
 	private CLogger logger;
 	private Timer timer;
 	private BlockingQueue<String> importQueue;
+
+	//Added no-arg constructor for testing
+	protected DBManager(){};
+
 	public DBManager(ControllerEngine controllerEngine, BlockingQueue<String> importQueue) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();

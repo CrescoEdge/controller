@@ -4,7 +4,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-//import java.util.*;
+
 import java.util.Set;
 import java.util.Map;
 import java.util.List;
@@ -12,13 +12,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HashMap;
-import java.util.stream.Collectors;
+
 import java.util.stream.Stream;
 
 import javax.xml.bind.DatatypeConverter;
 
 import com.jayway.jsonpath.JsonPath;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+
 import io.cresco.agent.controller.globalscheduler.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import org.junit.jupiter.api.*;
@@ -28,11 +29,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import org.json.simple.parser.*;
 
-import testhelpers.ControllerEngine;
-import testhelpers.CrescoHelpers;
-import testhelpers.GDBConf;
-import testhelpers.OrientHelpers;
-
+import io.cresco.agent.controller.db.testhelpers.*;
 
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @org.junit.jupiter.api.TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class DBInterfaceTest {
-    private ControllerEngine ce;
+
     private DBInterface gdb;
     private JSONParser jp;
     private final String NOT_FOUND = "This should return whatever we choose for \"not found\"";
@@ -200,9 +197,7 @@ class DBInterfaceTest {
     void set_up_controller() {
         Map<String,Object> pluginConf = CrescoHelpers.getMockPluginConfig(testingConf.getAsMap());
         test_db = model_db.copy();
-        ce = CrescoHelpers.getControllerEngine("test_controller_agent","test_controller_region","DBInterfaceTest",
-                pluginConf,test_db);
-        gdb = ce.getGDB();
+        gdb = new DBInterface4Test(test_db);
     }
 
    /* @AfterEach

@@ -84,6 +84,8 @@ public class ControllerEngine {
     private Thread discoveryUDPEngineThread;
     private Thread discoveryTCPEngineThread;
 
+    //Added to make subclassing this for testing easier
+    protected ControllerEngine(){};
 
     public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin){
 

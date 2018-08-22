@@ -1,10 +1,8 @@
 package io.cresco.agent.controller.db.testhelpers;
 
-import com.google.gson.Gson;
-
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import io.cresco.library.messaging.MsgEvent;
-import io.cresco.agent.controller.db.DBInterface;
+
+import com.google.gson.Gson;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -46,13 +44,13 @@ public class CrescoHelpers {
         return testConfig;
     }
 
-    public static ControllerEngine getControllerEngine(String agent, String region, String baseClassName
+    /*public static MockControllerEngine getControllerEngine(String agent, String region, String baseClassName
             , Map<String,Object> configMap, ODatabaseDocumentTx db_to_use) {
-        PluginBuilder mypb = new PluginBuilder(agent,region,baseClassName,configMap);
+        MockPluginBuilder mypb = new MockPluginBuilder(agent,region,baseClassName,configMap);
         PluginAdmin mypluginAdmin = new PluginAdmin();
         //Not having any plugins causes problems in the form of a NullPointerException, so add a bogus plugin
         mypluginAdmin.addPlugin("some_plugin_name","some_plugin.jar",configMap);
-        ControllerEngine new_ce  = new ControllerEngine(mypb,mypluginAdmin);
+        MockControllerEngine new_ce  = new MockControllerEngine(mypb,mypluginAdmin);
         DBInterface freshGDB = new DBInterface(new_ce,db_to_use);
         new_ce.setGDB(freshGDB);
 
@@ -60,7 +58,7 @@ public class CrescoHelpers {
         //    new_ce.getGDB().addNode(buildAddNodeMsg(mypb.getRegion(), mypb.getAgent(), pluginid));
         //}
         return new_ce;
-    }
+    }*/
 
 
 }

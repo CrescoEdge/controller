@@ -36,6 +36,8 @@ public class DBInterface {
     private Thread DBManagerThread;
     private BlockingQueue<String> importQueue;
 
+    //NMS Added no-arg constructor to help write tests
+    protected DBInterface(){};
 
     public DBInterface(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -655,8 +657,8 @@ public class DBInterface {
 
     }
 
-
-    private String getGlobalResourceInfo() {
+    //NMS change to package private to facilitate testing
+    protected String getGlobalResourceInfo() {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;
@@ -731,7 +733,7 @@ public class DBInterface {
         return queryReturn;
 
     }
-    private String getRegionResourceInfo(String actionRegion) {
+    protected String getRegionResourceInfo(String actionRegion) {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;
@@ -806,7 +808,7 @@ public class DBInterface {
         return queryReturn;
 
     }
-    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
+    protected String getAgentResourceInfo(String actionRegion, String actionAgent) {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;

@@ -48,6 +48,9 @@ public class DBBaseFunctions {
     public String[] aNodeIndexParams = {"platform","environment","location"};
     public String[] pNodeIndexParams = {"pluginname","jarfile"};
 
+    //NMS added no-arg constructor for testing
+    protected DBBaseFunctions(){}
+
     public DBBaseFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();

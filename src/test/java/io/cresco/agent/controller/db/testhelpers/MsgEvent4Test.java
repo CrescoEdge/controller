@@ -6,7 +6,7 @@ import java.util.stream.Collectors;
 //Did this dirty trick to make sure the relevant parameters for MsgEvent
 //objects show up in the test results instead of something like
 // "io.cresco.library.MsgEvent@904209348"
-class MsgEvent4Test extends io.cresco.library.messaging.MsgEvent {
+public class MsgEvent4Test extends io.cresco.library.messaging.MsgEvent {
     private MsgEvent m;
     public MsgEvent4Test(MsgEvent m){
         this.m = m;

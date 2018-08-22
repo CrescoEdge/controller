@@ -20,6 +20,9 @@ public class DBEngine {
     public OPartitionedDatabasePool pool;
     private int retryCount;
 
+    //Added no-arg constructor for testing
+    protected DBEngine(){}
+
     public DBEngine(ControllerEngine controllerEngine) {
 
         this.controllerEngine = controllerEngine;

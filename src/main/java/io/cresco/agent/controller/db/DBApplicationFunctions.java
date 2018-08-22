@@ -39,6 +39,9 @@ public class DBApplicationFunctions {
     //private OrientGraph odb;
     //private OPartitionedDatabasePool pool;
 
+    //NMS Added no-arg constructor for testing
+    protected DBApplicationFunctions(){}
+
     public DBApplicationFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
