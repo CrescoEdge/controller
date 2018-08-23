@@ -39,6 +39,7 @@ public class DBInterface4Test extends DBInterface {
 
         this.DBManagerThread = new Thread(new DBManager4Test(importQueue,this));
         this.DBManagerThread.start();
+        //TODO:HERE!
         super.setLogger(controllerEngine.getPluginBuilder().);
     }
 
