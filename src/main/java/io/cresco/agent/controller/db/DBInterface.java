@@ -39,6 +39,9 @@ public class DBInterface {
     //NMS Added no-arg constructor to help write tests
     protected DBInterface(){};
 
+    //NMS Added to avoid NPE when logger is invoked in DBInterface instead of DBInterface4Test
+    protected void setLogger(CLogger logger){this.logger = logger;}
+    protected CLogger getLogger(){return logger;}
     public DBInterface(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
