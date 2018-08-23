@@ -27,6 +27,9 @@ public class TCPDiscoveryEngine {
     private boolean isSSL = false;
     private int discoveryPort;
 
+    private EventLoopGroup bossGroup;
+    private EventLoopGroup workerGroup;
+
     public TCPDiscoveryEngine(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -48,8 +51,8 @@ public class TCPDiscoveryEngine {
             sslCtx = null;
         }
 
-        EventLoopGroup bossGroup = new NioEventLoopGroup();
-        EventLoopGroup workerGroup = new NioEventLoopGroup();
+        bossGroup = new NioEventLoopGroup();
+        workerGroup = new NioEventLoopGroup();
         try {
             ServerBootstrap b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)
@@ -69,11 +72,22 @@ public class TCPDiscoveryEngine {
                         }
                     });
 
+            controllerEngine.setTCPDiscoveryActive(true);
+
             // Bind and start to accept incoming connections.
             b.bind(discoveryPort).sync().channel().closeFuture().sync();
         } finally {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
+        }
+    }
+
+    public void stopServer() {
+        try {
+            bossGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully();
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
         }
     }
 

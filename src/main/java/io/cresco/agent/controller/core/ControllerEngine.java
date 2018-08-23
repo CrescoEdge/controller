@@ -78,11 +78,12 @@ public class ControllerEngine {
     private AgentExecutor executor;
     private MeasurementEngine measurementEngine;
     private MsgRouter msgRouter;
+    private TCPDiscoveryEngine discoveryEngine;
 
     private Thread activeBrokerManagerThread;
     private Thread globalControllerManagerThread;
     private Thread discoveryUDPEngineThread;
-    private Thread discoveryTCPEngineThread;
+    //private Thread discoveryTCPEngineThread;
 
 
     public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin){
@@ -1083,6 +1084,13 @@ public class ControllerEngine {
                 this.discoveryUDPEngineThread = null;
                 this.DiscoveryActive = false;
             }
+
+            if(discoveryEngine != null) {
+                discoveryEngine.stopServer();
+            }
+            this.DiscoveryActive = false;
+
+            /*
             if (this.discoveryTCPEngineThread != null) {
                 logger.trace("TCP Discovery Engine shutting down");
                 TCPDiscoveryEngine.shutdown();
@@ -1090,6 +1098,7 @@ public class ControllerEngine {
                 this.discoveryTCPEngineThread = null;
                 this.DiscoveryActive = false;
             }
+            */
             isStopped = true;
         } catch(Exception ex) {
             logger.error("stopNetDiscoveryEngine: " + ex.getMessage());
@@ -1105,9 +1114,9 @@ public class ControllerEngine {
                 this.discoveryUDPEngineThread = new Thread(new UDPDiscoveryEngine(this));
                 this.discoveryUDPEngineThread.start();
 
-                this.discoveryTCPEngineThread = new Thread(new TCPDiscoveryEngine(this));
-                this.discoveryTCPEngineThread.start();
-
+                //this.discoveryTCPEngineThread = new Thread(new TCPDiscoveryEngine(this));
+                //this.discoveryTCPEngineThread.start();
+                discoveryEngine = new TCPDiscoveryEngine(this);
 
                 while (!this.UDPDiscoveryActive && !this.TCPDiscoveryActive) {
                     Thread.sleep(1000);
