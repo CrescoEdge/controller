@@ -19,9 +19,9 @@ public class OrientHelpers {
         return new OCommandOutputListener() {
             @Override
             public void onMessage(String iText) {
-                //if(iText.matches(".*error.*")) {
+                if(iText.matches(".*error.*")) {
                     System.out.print(iText);
-                //}
+                }
             }
         };
     }
