@@ -11,6 +11,8 @@ import com.orientechnologies.orient.core.metadata.security.OUser;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.util.Optional;
 import java.util.logging.Logger;
 
@@ -106,15 +108,14 @@ public class OrientHelpers {
         return success;
     }
 
-    public static Optional<ODatabaseDocumentTx> getInMemoryTestDB(String dbBackupPath){
+    public static Optional<ODatabaseDocumentTx> getInMemoryTestDB(InputStream dbBackup){
         FileInputStream backupFile;
 
         ODatabaseDocumentTx newdb=null;
         try{
-            backupFile = new FileInputStream(dbBackupPath);
             newdb = new ODatabaseDocumentTx("memory:internalDb").create();
             //newdb.restore(backupFile,null,null,getCommandListener());
-            ODatabaseImport imp = new ODatabaseImport(newdb, dbBackupPath, getCommandListener());
+            ODatabaseImport imp = new ODatabaseImport(newdb, dbBackup, getCommandListener());
             imp.importDatabase();
             imp.close();
         }

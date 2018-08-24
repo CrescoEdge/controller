@@ -1,7 +1,7 @@
 package io.cresco.agent.controller.db;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Stream;
+import java.util.zip.GZIPInputStream;
 
 import javax.xml.bind.DatatypeConverter;
 
@@ -53,9 +54,8 @@ class DBInterfaceTest {
 
     private final GDBConf testingConf = new GDBConf("test_runner","test","localhost","cresco_test");
 
-    //TODO:The hardcoded paths below are bad news. I need to get them in here some other way
-    private final String db_export_file_path = "/home/nima/code/IdeaProjects/cresco_db_rewrite/src/test/resources/global_region_agent.gz";
-    private final String regional_db_export_file_path = "/home/nima/code/IdeaProjects/cresco_db_rewrite/src/test/resources/cresco_regional.gz";
+    private  String db_export_file_path;
+    private  String regional_db_export_file_path;
 
     private ODatabaseDocumentTx model_db;
     private ODatabaseDocumentTx test_db;
@@ -73,6 +73,20 @@ class DBInterfaceTest {
     Map<String,Map<String,Map<String,String>>> region_contents = new HashMap<>();
 
     private static final int REPEAT_COUNT = 5;
+
+    private static String readFromInputStream(InputStream inputStream)
+            throws IOException {
+        //Found at https://www.baeldung.com/reading-file-in-java
+        StringBuilder resultStringBuilder = new StringBuilder();
+        try (BufferedReader br
+                     = new BufferedReader(new InputStreamReader(inputStream))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                resultStringBuilder.append(line).append("\n");
+            }
+        }
+        return resultStringBuilder.toString();
+    }
 
     Stream<Arguments> getRegionAgentPluginidTriples(){
         return regions.stream().flatMap( (region) ->
@@ -176,7 +190,7 @@ class DBInterfaceTest {
         return plugin!= null && agentExists(region,agent) && region_contents.get(region).get(agent).containsKey(plugin);
     }
     @org.junit.jupiter.api.BeforeAll
-    void init_model_db() throws  Exception {
+    void init_model_db() throws  Exception,IOException {
         Map<String,String> plugins_reg_agents = new HashMap<>();
         Map<String,Map<String,String>> agents_in_diff_region = new HashMap<>();
         plugins_reg_agents.put("plugin/0","io.cresco.sysinfo");
@@ -194,10 +208,13 @@ class DBInterfaceTest {
 
         jp = new JSONParser();
 
-        model_db = OrientHelpers.getInMemoryTestDB(db_export_file_path).orElseThrow(() -> new Exception("Can't get test db"));
+        Class clazz = DBInterfaceTest.class;
+        GZIPInputStream all_db_file_stream = new GZIPInputStream(clazz.getResourceAsStream("/global_region_agent.gz"));
+        GZIPInputStream regional_db_file_stream = new GZIPInputStream(clazz.getResourceAsStream("/cresco_regional.gz"));
 
-
+        model_db = OrientHelpers.getInMemoryTestDB(all_db_file_stream).orElseThrow(() -> new Exception("Can't get test db"));
     }
+
     @BeforeEach
     void set_up_controller() {
         Map<String,Object> pluginConf = CrescoHelpers.getMockPluginConfig(testingConf.getAsMap());
