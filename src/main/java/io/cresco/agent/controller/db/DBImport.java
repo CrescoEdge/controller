@@ -125,7 +125,7 @@ public class DBImport {
                 logger.debug("Removing node :" + lostNode);
                 Map<String,String> nodeParams = gdb.getNodeParams(lostNode);
                 String region = nodeParams.get("region");
-                String agent = nodeParams.get("io/cresco/agent");
+                String agent = nodeParams.get("agent");
                 String pluginId = nodeParams.get("agentcontroller");
                 logger.debug("Removing " + region + " " + agent + " " + pluginId);
                 gdb.removeNode(region,agent,pluginId);
@@ -191,7 +191,7 @@ public class DBImport {
                 String region = null;
                 String agent = null;
                 String plugin = null;
-                if((document.containsField("region")) && (!document.containsField("io/cresco/agent")) && (!document.containsField("agentcontroller")))
+                if((document.containsField("region")) && (!document.containsField("agent")) && (!document.containsField("agentcontroller")))
                 {
                     //rNode
                     region = document.field("region");
@@ -199,19 +199,19 @@ public class DBImport {
                     isNodeType = true;
 
                 }
-                else if((document.containsField("region")) && (document.containsField("io/cresco/agent")) && (!document.containsField("agentcontroller")))
+                else if((document.containsField("region")) && (document.containsField("agent")) && (!document.containsField("agentcontroller")))
                 {
                     //aNode
                     region = document.field("region");
-                    agent = document.field("io/cresco/agent");
+                    agent = document.field("agent");
                     isNodeType = true;
 
                 }
-                else if((document.containsField("region")) && (document.containsField("io/cresco/agent")) && (document.containsField("agentcontroller")))
+                else if((document.containsField("region")) && (document.containsField("agent")) && (document.containsField("agentcontroller")))
                 {
                     //pNode
                     region = document.field("region");
-                    agent = document.field("io/cresco/agent");
+                    agent = document.field("agent");
                     plugin = document.field("agentcontroller");
                     isNodeType = true;
                 }

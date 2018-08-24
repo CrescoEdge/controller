@@ -41,7 +41,7 @@ public class PollRemovePlugin implements Runnable {
                     pnode_node_id = pnode_node_id.substring(pnode_node_id.indexOf("[") + 1, pnode_node_id.indexOf("]"));
 
                     String region = controllerEngine.getGDB().dba.getIsAssignedParam(edge_id, "region");
-                    String agent = controllerEngine.getGDB().dba.getIsAssignedParam(edge_id, "io/cresco/agent");
+                    String agent = controllerEngine.getGDB().dba.getIsAssignedParam(edge_id, "agent");
                     String pluginId = controllerEngine.getGDB().dba.getIsAssignedParam(edge_id, "agentcontroller");
 
                     logger.debug("starting to remove r: " + region + " a:" + agent + " p:" + pluginId);

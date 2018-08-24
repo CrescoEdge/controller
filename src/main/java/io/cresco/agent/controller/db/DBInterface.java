@@ -405,7 +405,7 @@ public class DBInterface {
             for(Map<String,String> perfMap : myMap.get("plugins")) {
 
                 String region = perfMap.get("region");
-                String agent = perfMap.get("io/cresco/agent");
+                String agent = perfMap.get("agent");
                 String pluginID = perfMap.get("pluginid");
 
                 /*
@@ -539,7 +539,7 @@ public class DBInterface {
                             Map<String, String> regionMap = new HashMap<>();
                             regionMap.put("name", plugin);
                             regionMap.put("region", region);
-                            regionMap.put("io/cresco/agent", agent);
+                            regionMap.put("agent", agent);
                             regionArray.add(regionMap);
                         }
                     }
@@ -821,7 +821,7 @@ public class DBInterface {
             for(String edgeID : sysInfoEdgeList) {
                 Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
 
-                if((edgeParams.get("region").toLowerCase().equals(actionRegion.toLowerCase())) && (edgeParams.get("io/cresco/agent").toLowerCase().equals(actionAgent.toLowerCase()))) {
+                if((edgeParams.get("region").toLowerCase().equals(actionRegion.toLowerCase())) && (edgeParams.get("agent").toLowerCase().equals(actionAgent.toLowerCase()))) {
 
                     Map<String,String> resourceTotal = new HashMap<>();
 

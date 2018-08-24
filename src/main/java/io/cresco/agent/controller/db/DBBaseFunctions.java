@@ -621,7 +621,7 @@ public class DBBaseFunctions {
                         String node_id = v.getProperty("rid").toString();
                         node_id = node_id.substring(node_id.indexOf("[") + 1, node_id.indexOf("]"));
                         Vertex aNode = graph.getVertex(node_id);
-                        node_list.add(aNode.getProperty("io/cresco/agent").toString());
+                        node_list.add(aNode.getProperty("agent").toString());
                     }
                 }
 
@@ -975,7 +975,7 @@ public class DBBaseFunctions {
                         graph = factory.getTx();
                         Vertex v = graph.addVertex("class:aNode");
                         v.setProperty("region", region);
-                        v.setProperty("io/cresco/agent", agent);
+                        v.setProperty("agent", agent);
 
                         Vertex fromV = graph.getVertex(v.getId().toString());
                         Vertex toV = graph.getVertex(region_id);
@@ -985,7 +985,7 @@ public class DBBaseFunctions {
 
                         he.setProperty("enable_pending", Boolean.TRUE.toString());
                         he.setProperty("region", region);
-                        he.setProperty("io/cresco/agent", agent);
+                        he.setProperty("agent", agent);
 
                         graph.commit();
                         node_id = v.getId().toString();
@@ -1018,7 +1018,7 @@ public class DBBaseFunctions {
                         graph = factory.getTx();
                         Vertex v = graph.addVertex("class:pNode");
                         v.setProperty("region", region);
-                        v.setProperty("io/cresco/agent", agent);
+                        v.setProperty("agent", agent);
                         v.setProperty("agentcontroller", plugin);
 
 
@@ -1028,7 +1028,7 @@ public class DBBaseFunctions {
                         graph.addEdge("class:isPlugin", fromV, toV, "isPlugin");
                         Edge he = graph.addEdge("class:isPluginHealth", fromV, toV, "isPluginHealth");
                         he.setProperty("region", region);
-                        he.setProperty("io/cresco/agent", agent);
+                        he.setProperty("agent", agent);
                         he.setProperty("agentcontroller", plugin);
 
                         //no need to set this as health is checked on the agentcontroller level
@@ -1912,7 +1912,7 @@ public class DBBaseFunctions {
             createVertexClass("rNode", rProps);
 
             logger.debug("Create Agent Vertex Class");
-            String[] aProps = {"region", "io/cresco/agent"}; //Property names
+            String[] aProps = {"region", "agent"}; //Property names
             createVertexClass("aNode", aProps);
 
             //indexes for searching
@@ -1922,7 +1922,7 @@ public class DBBaseFunctions {
             }
 
             logger.debug("Create Plugin Vertex Class");
-            String[] pProps = {"region", "io/cresco/agent", "agentcontroller"}; //Property names
+            String[] pProps = {"region", "agent", "agentcontroller"}; //Property names
             createVertexClass("pNode", pProps);
 
             for(String indexName : pNodeIndexParams) {
@@ -1955,7 +1955,7 @@ public class DBBaseFunctions {
             createEdgeClass("isAgent",null);
 
             logger.debug("Create isAgentHealth Edge Class");
-            String[] isAgentHealthProps = {"region", "io/cresco/agent"}; //Property names
+            String[] isAgentHealthProps = {"region", "agent"}; //Property names
             //createEdgeClass("isAgent",isAgentProps);
             createEdgeClass("isAgentHealth",isAgentHealthProps);
 
@@ -1965,7 +1965,7 @@ public class DBBaseFunctions {
             createEdgeClass("isPlugin",null);
 
             logger.debug("Create isPluginHealth Edge Class");
-            String[] isPluginHealthProps = {"region", "io/cresco/agent","agentcontroller"}; //Property names
+            String[] isPluginHealthProps = {"region", "agent","agentcontroller"}; //Property names
             //createEdgeClass("isPlugin",isPluginProps);
             createEdgeClass("isPluginHealth",isPluginHealthProps);
 

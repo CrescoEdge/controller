@@ -88,7 +88,7 @@ public class KPIProducer {
 
 			TextMessage outgoingMessage = sess.createTextMessage(gson.toJson(params));
 			outgoingMessage.setStringProperty("region", region);
-			outgoingMessage.setStringProperty("io/cresco/agent", agent);
+			outgoingMessage.setStringProperty("agent", agent);
 			outgoingMessage.setStringProperty("agentcontroller", pluginId);
 			outgoingMessage.setStringProperty("resourceid", resource_id);
 			outgoingMessage.setStringProperty("inodeid", inode_id);

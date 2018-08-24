@@ -529,7 +529,7 @@ public class UDPDiscoveryEngine implements Runnable {
                 String discoverySecret = null;
                 if (rme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
                     discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
-                    groupName = "io/cresco/agent";
+                    groupName = "agent";
                 } else if (rme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
                     discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
                     groupName = "region";

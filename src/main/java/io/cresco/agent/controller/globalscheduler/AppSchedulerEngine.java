@@ -272,7 +272,7 @@ public class AppSchedulerEngine implements Runnable {
                     if(nodeId != null) {
                         Map<String,String> nodeMap = controllerEngine.getGDB().gdb.getNodeParams(nodeId);
                         node.params.put("location_region",nodeMap.get("region"));
-                        node.params.put("location_agent",nodeMap.get("io/cresco/agent"));
+                        node.params.put("location_agent",nodeMap.get("agent"));
                         unAssignedNodes.remove(node);
                         assignedNodes.add(node);
                     }

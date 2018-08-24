@@ -372,7 +372,7 @@ public class AgentExecutor implements Executor {
                 for(Map<String,String> repoMap : node.repoServers) {
 
                     String region = repoMap.get("region");
-                    String agent = repoMap.get("io/cresco/agent");
+                    String agent = repoMap.get("agent");
                     String pluginID = repoMap.get("pluginid");
 
                     MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC,region,agent,pluginID);

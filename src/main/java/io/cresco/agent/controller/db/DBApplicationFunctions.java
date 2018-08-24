@@ -2275,14 +2275,14 @@ public class DBApplicationFunctions {
                     Vertex v = iter.next();
 
                     String region = v.getProperty("region").toString();
-                    String agent = v.getProperty("io/cresco/agent").toString();
+                    String agent = v.getProperty("agent").toString();
                     String plugin = v.getProperty("agentcontroller").toString();
 
                     if ((region != null) && (agent != null)  && (plugin != null)) {
                         //edge_id = edge_id.substring(edge_id.indexOf("[") + 1, edge_id.indexOf("]"));
-                        logger.debug("parameter = " + region + "io/cresco/agent " + "agentcontroller " + plugin);
+                        logger.debug("parameter = " + region + "agent " + "agentcontroller " + plugin);
                         nodeMap.put("region",region);
-                        nodeMap.put("io/cresco/agent",agent);
+                        nodeMap.put("agent",agent);
                         nodeMap.put("agentcontroller",plugin);
                     }
 
@@ -2366,7 +2366,7 @@ public class DBApplicationFunctions {
             createEdgeClass("isReachable",null);
 
             logger.debug("Create isAssigned Edge Class");
-            String[] isAssignedProps = {"resource_id","inode_id","region", "io/cresco/agent", "agentcontroller"}; //Property names
+            String[] isAssignedProps = {"resource_id","inode_id","region", "agent", "agentcontroller"}; //Property names
             createEdgeClass("isAssigned",isAssignedProps);
 
             logger.debug("Create resourceNode Vertex Class");
@@ -2756,7 +2756,7 @@ public class DBApplicationFunctions {
                         Edge e = iter.next();
                         edgeList.add(e.getId().toString());
                     }
-                    logger.debug("getIsAttachedEdgeId region " + region + "io/cresco/agent " + agent + " pluginId " + pluginId + " edgeListCount " + edgeList.size());
+                    logger.debug("getIsAttachedEdgeId region " + region + "agent " + agent + " pluginId " + pluginId + " edgeListCount " + edgeList.size());
                 }
 
             }
@@ -2803,7 +2803,7 @@ public class DBApplicationFunctions {
                 {
                     edge_id = edge_id.substring(edge_id.indexOf("[") + 1, edge_id.indexOf("]"));
                 }
-                logger.debug("getResourceEdgeId resource_id " + resource_id + " inode_id " + inode_id + "  region " + region + "io/cresco/agent " + agent + " pluginId " + pluginId + " edgeid " + edge_id);
+                logger.debug("getResourceEdgeId resource_id " + resource_id + " inode_id " + inode_id + "  region " + region + "agent " + agent + " pluginId " + pluginId + " edgeid " + edge_id);
 
                 //Vertex vNode = odb.getVertexByKey("vNode.node_id", vNode_id);
 
@@ -3288,7 +3288,7 @@ public class DBApplicationFunctions {
                             e.setProperty("resource_id", resource_id);
                             e.setProperty("inode_id", inode_id);
                             e.setProperty("region", region);
-                            e.setProperty("io/cresco/agent", agent);
+                            e.setProperty("agent", agent);
                             e.setProperty("agentcontroller", pluginId);
                             graph.commit();
                             edge_id = e.getId().toString();

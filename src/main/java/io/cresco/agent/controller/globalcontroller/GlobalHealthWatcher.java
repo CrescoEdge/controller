@@ -624,7 +624,7 @@ public class GlobalHealthWatcher implements Runnable {
                         //String nodeId = controllerEngine.getGDB().gdb.getNodeId(edgeMap.get("region"),null,null);
                         //Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
                         String region = edgeParams.get("region");
-                        String agent = edgeParams.get("io/cresco/agent");
+                        String agent = edgeParams.get("agent");
                         String pluginId = edgeParams.get("agentcontroller");
                         logger.error("Removing " + region + " " + agent + " " + pluginId);
                         controllerEngine.getGDB().removeNode(region,agent,pluginId);
