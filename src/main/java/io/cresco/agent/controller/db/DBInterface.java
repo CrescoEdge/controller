@@ -36,12 +36,60 @@ public class DBInterface {
     private Thread DBManagerThread;
     private BlockingQueue<String> importQueue;
 
-    //NMS Added no-arg constructor to help write tests
-    protected DBInterface(){};
+    //NMS Added no-arg constructor and builder-style stuff for testing
+    public DBInterface(){}
 
-    //NMS Added to avoid NPE when logger is invoked in DBInterface instead of DBInterface4Test
-    protected void setLogger(CLogger logger){this.logger = logger;}
-    protected CLogger getLogger(){return logger;}
+    public DBInterface controllerEngine(ControllerEngine toAdd){
+        this.controllerEngine = toAdd;
+        return this;
+    }
+
+    public DBInterface pluginBuilder(PluginBuilder toAdd){
+        this.plugin = toAdd;
+        return this;
+    }
+
+    public DBInterface logger(CLogger toAdd){
+        this.logger = toAdd;
+        return this;
+    }
+
+    public DBInterface importQueue(BlockingQueue<String> toAdd){
+        this.importQueue = toAdd;
+        return this;
+    }
+
+    public DBInterface dbEngine(DBEngine toAdd){
+        this.gde = toAdd;
+        return this;
+    }
+    public DBInterface dbBaseFunctions(DBBaseFunctions toAdd){
+        this.gdb = toAdd;
+        return this;
+    }
+    public DBInterface dbApplicationFunctions(DBApplicationFunctions toAdd){
+        this.dba = toAdd;
+        return this;
+    }
+    public DBInterface gson(Gson toAdd){
+        this.gson = toAdd;
+        return this;
+    }
+    public DBInterface gsonTypeToken(TypeToken toAdd){
+        this.type = toAdd.getType();
+        return this;
+    }
+
+    public DBInterface dbManagerThread(DBManager toAdd){
+        this.DBManagerThread =new Thread(toAdd);
+        return this;
+    }
+
+    public void startDBManagerThread(){
+        this.DBManagerThread.start();
+    }
+
+
     public DBInterface(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();

@@ -13,15 +13,24 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HashMap;
 
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Stream;
 
 import javax.xml.bind.DatatypeConverter;
 
+import com.google.gson.Gson;
 import com.jayway.jsonpath.JsonPath;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 
+import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
+import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalscheduler.pNode;
 import io.cresco.library.messaging.MsgEvent;
+import io.cresco.library.messaging.RPC;
+import io.cresco.library.plugin.Config;
+import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.utilities.CLogger;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -167,7 +176,7 @@ class DBInterfaceTest {
         return plugin!= null && agentExists(region,agent) && region_contents.get(region).get(agent).containsKey(plugin);
     }
     @org.junit.jupiter.api.BeforeAll
-    void init_model_db() {
+    void init_model_db() throws  Exception {
         Map<String,String> plugins_reg_agents = new HashMap<>();
         Map<String,Map<String,String>> agents_in_diff_region = new HashMap<>();
         plugins_reg_agents.put("plugin/0","io.cresco.sysinfo");
@@ -184,20 +193,70 @@ class DBInterfaceTest {
         region_contents.put("global_region",agents_in_global_region);
 
         jp = new JSONParser();
-        try {
-            model_db = OrientHelpers.getInMemoryTestDB(db_export_file_path).orElseThrow(() -> new Exception("Can't get test db"));
-        }
-        catch(Exception ex){
-            System.out.println("Caught some exception while trying to set up DB for tests");
-            ex.printStackTrace();
-        }
+
+        model_db = OrientHelpers.getInMemoryTestDB(db_export_file_path).orElseThrow(() -> new Exception("Can't get test db"));
+
 
     }
     @BeforeEach
     void set_up_controller() {
         Map<String,Object> pluginConf = CrescoHelpers.getMockPluginConfig(testingConf.getAsMap());
         test_db = model_db.copy();
-        gdb = new DBInterface4Test(test_db);
+        /*plugin.getGlobalPluginMsgEvent
+plugin.sendRPC //needs an override
+plugin.getLogger
+.getConfig*/
+        PluginBuilder testpb = new PluginBuilder()
+                .config(new Config(CrescoHelpers.getMockPluginConfig(null)))
+                .baseClassName("TEST_PLUGINBUILDER");
+
+        testpb = testpb.rpc(new RPC(testpb));
+
+        ControllerEngine testce = new ControllerEngine()
+                .pluginBuilder(testpb)
+                .logger(testpb.getLogger("Test_Controller_Engine", CLogger.Level.Trace));
+
+        //DBInterface testgdb = new DBInterface(testce);
+
+        DBEngine dbe = new DBEngine();
+        dbe.db = test_db;
+        dbe.factory = new OrientGraphFactory(dbe.db.getURL());
+        dbe.controllerEngine = testce;
+        dbe.plugin = testpb;
+
+        DBApplicationFunctions dba = new DBApplicationFunctions();
+        dba.controllerEngine = testce;
+        dba.factory = dbe.factory;
+        dba.logger = testpb.getLogger("Test_DBAppFunc",CLogger.Level.Trace);
+        dba.retryCount = 50;
+
+        DBBaseFunctions dbb = new DBBaseFunctions();
+        dbb.logger = testpb.getLogger("Test_DBBaseFun",CLogger.Level.Trace);
+        dbb.factory = dbe.factory;
+        dbb.controllerEngine = testce;
+        dbb.plugin = testpb;
+        dbb.retryCount = 50;
+        dbb.db = dbe.db;
+
+        BlockingQueue dbManQueue = new LinkedBlockingQueue();
+        DBManager dbm = new DBManager()
+                .controllerEngine(testce)
+                .pluginBuilder(testpb)
+                .logger(testpb.getLogger("Test_DBMan", CLogger.Level.Trace))
+                .importQueue(dbManQueue);
+
+        DBInterface testgdb = new DBInterface()
+                .controllerEngine(testce)
+                .pluginBuilder(testpb)
+                .dbEngine(dbe)
+                .dbApplicationFunctions(dba)
+                .dbBaseFunctions(dbb)
+                .dbManagerThread(dbm)
+                .gson(new Gson())
+                .importQueue(dbManQueue)
+                .logger(testpb.getLogger("Test_DBInterface", CLogger.Level.Trace));
+        testce = testce.dbInterface(testgdb);
+        gdb = testce.getGDB();
     }
 
    /* @AfterEach

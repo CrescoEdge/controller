@@ -84,8 +84,52 @@ public class ControllerEngine {
     private Thread discoveryUDPEngineThread;
     private Thread discoveryTCPEngineThread;
 
-    //Added to make subclassing this for testing easier
-    protected ControllerEngine(){};
+    //Added to make testing easier and increase flexibility
+    public ControllerEngine(){}
+
+    public ControllerEngine dbInterface(DBInterface toAdd){
+        this.gdb = toAdd;
+        return this;
+    }
+
+    public ControllerEngine pluginBuilder(PluginBuilder toAdd) {
+        this.plugin = toAdd;
+        return this;
+    }
+
+    public ControllerEngine controllerState(ControllerState toAdd){
+        this.cstate = toAdd;
+        return this;
+    }
+    public ControllerEngine logger(CLogger toAdd){
+        this.logger = toAdd;
+        return this;
+    }
+
+    public ControllerEngine messageRouter(MsgRouter toAdd){
+        this.msgRouter = toAdd;
+        return this;
+    }
+
+    public ControllerEngine agentExecutor(AgentExecutor toAdd){
+        this.executor = toAdd;
+        return this;
+    }
+
+    public ControllerEngine pluginAdmin(PluginAdmin toAdd){
+        this.pluginAdmin = toAdd;
+        return this;
+    }
+
+    public ControllerEngine measurementEngine(MeasurementEngine toAdd){
+        this.measurementEngine = toAdd;
+        return this;
+    }
+
+    public ControllerEngine msgInProcessQueue(ExecutorService toAdd){
+        this.msgInProcessQueue = toAdd;
+        return this;
+    }
 
     public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin){
 

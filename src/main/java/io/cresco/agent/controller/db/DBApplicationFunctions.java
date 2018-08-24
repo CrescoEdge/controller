@@ -29,18 +29,18 @@ import java.util.*;
 
 public class DBApplicationFunctions {
 
-    private ControllerEngine controllerEngine;
-    private PluginBuilder plugin;
-    private CLogger logger;
-    private OrientGraphFactory factory;
+    protected ControllerEngine controllerEngine;
+    protected PluginBuilder plugin;
+    protected CLogger logger;
+    protected OrientGraphFactory factory;
     //private ODatabaseDocumentTx db;
-    private int retryCount;
+    protected int retryCount;
     //private DBEngine dbe;
     //private OrientGraph odb;
     //private OPartitionedDatabasePool pool;
 
     //NMS Added no-arg constructor for testing
-    protected DBApplicationFunctions(){}
+    public DBApplicationFunctions(){}
 
     public DBApplicationFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
         this.controllerEngine = controllerEngine;

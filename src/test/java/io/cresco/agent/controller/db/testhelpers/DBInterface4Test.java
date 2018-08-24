@@ -3,6 +3,8 @@ package io.cresco.agent.controller.db.testhelpers;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import io.cresco.agent.controller.db.DBApplicationFunctions;
+import io.cresco.agent.controller.db.DBBaseFunctions;
 import io.cresco.agent.controller.db.DBInterface;
 import io.cresco.library.utilities.CLogger;
 
@@ -39,8 +41,9 @@ public class DBInterface4Test extends DBInterface {
 
         this.DBManagerThread = new Thread(new DBManager4Test(importQueue,this));
         this.DBManagerThread.start();
-        //TODO:HERE!
-        super.setLogger(controllerEngine.getPluginBuilder().);
+        //super.setLogger(new CLogger("DBInterface4Test","DBInterface4Test",CLogger.Level.Trace));
+        super.dba = new DBApplicationFunctions();
+        super.gdb = new DBBaseFunctions();
     }
 
     public boolean getDBManagerIsActive(){

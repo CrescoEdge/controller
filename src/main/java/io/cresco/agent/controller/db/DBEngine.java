@@ -11,17 +11,17 @@ import io.cresco.library.utilities.CLogger;
 
 public class DBEngine {
 
-	public OrientGraphFactory factory;
-	public ODatabaseDocumentTx db;
-	private ControllerEngine controllerEngine;
-    private PluginBuilder plugin;
-    private CLogger logger;
+	protected OrientGraphFactory factory;
+	protected ODatabaseDocumentTx db;
+    protected ControllerEngine controllerEngine;
+    protected PluginBuilder plugin;
+    protected CLogger logger;
     //public OrientGraphFactory factory;
     public OPartitionedDatabasePool pool;
-    private int retryCount;
+    protected int retryCount;
 
     //Added no-arg constructor for testing
-    protected DBEngine(){}
+    public DBEngine(){}
 
     public DBEngine(ControllerEngine controllerEngine) {
 
