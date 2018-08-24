@@ -1,5 +1,6 @@
 package io.cresco.agent.controller.netdiscovery;
 
+import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -24,6 +25,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     private PluginBuilder plugin;
     private CLogger logger;
     private DiscoveryCrypto discoveryCrypto;
+    private Gson gson;
     private int state = 0;
 
     public TCPDiscoveryEngineHandler(ControllerEngine controllerEngine) {
@@ -31,34 +33,35 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(TCPDiscoveryEngineHandler.class.getName(),CLogger.Level.Info);
         discoveryCrypto = new DiscoveryCrypto(controllerEngine);
+        gson = new Gson();
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // Echo back the received object to the client.
-        logger.info("SERVER STATE = " + state);
+        logger.info("SERVER READ = " + state);
+
         try {
 
-            if(state == 0) {
-                MsgEvent me = (MsgEvent) msg;
+            MsgEvent me = gson.fromJson((String)msg, MsgEvent.class);
                 MsgEvent rme = processMessage(me);
-                ctx.write(rme);
-                state = 1;
-
-            }
+                ctx.write(gson.toJson(rme));
         } catch(Exception ex) {
             logger.error("channelRead" + ex.getMessage());
             ctx.close();
         }
+
     }
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
+        logger.info("SERVER COMPELTE = " + state);
         ctx.flush();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        logger.error("SERVER ERRROR: " + cause.getMessage());
         cause.printStackTrace();
         ctx.close();
     }

@@ -379,6 +379,7 @@ public class ControllerEngine {
                         TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
                         List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), pcbrokerAddress, true);
 
+                        logger.info("Message: " + certDiscovery.get(0).getParams().toString());
                         String cbrokerAddress = certDiscovery.get(0).getParam("dst_ip");
                         String cbrokerValidatedAuthenication = certDiscovery.get(0).getParam("validated_authenication");
                         String cRegion = certDiscovery.get(0).getParam("dst_region");
@@ -431,6 +432,10 @@ public class ControllerEngine {
             }
         } catch (Exception ex) {
             logger.error("initAgent() Error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
 
         return isInit;
@@ -448,6 +453,7 @@ public class ControllerEngine {
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
 
             discoveryList.addAll(ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), plugin.getConfig().getStringParam("regional_controller_host")));
+
             logger.debug("Static Agent Connection count = {}" + discoveryList.size());
             if(discoveryList.size() == 0) {
                 logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");

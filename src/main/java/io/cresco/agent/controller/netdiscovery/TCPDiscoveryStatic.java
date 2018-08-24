@@ -39,7 +39,8 @@ public class TCPDiscoveryStatic {
 
         List<MsgEvent> discoveredList = new ArrayList<>();
 
-        boolean isSSL = plugin.getConfig().getBooleanParam("netdiscoveryssl",true);
+        //boolean isSSL = plugin.getConfig().getBooleanParam("netdiscoveryssl",false);
+        boolean isSSL = false;
         int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
 
 
@@ -65,21 +66,13 @@ public class TCPDiscoveryStatic {
                             }
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)),
                                     new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
                         }
                     });
 
             // Start the connection attempt.
-            logger.info("CREATE NEW CLIENT CONNECTION");
             b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
-
-            if(discoveredList == null) {
-                logger.error("Failure during remote host communications!");
-            } else {
-                logger.info("DL = " + discoveredList.size() + " hosts");
-            }
-
 
         } finally {
             group.shutdownGracefully();
@@ -91,11 +84,11 @@ public class TCPDiscoveryStatic {
         List<MsgEvent> dList = null;
         try {
             dList = discover(disType, discoveryTimeout, hostAddress, false);
+
         } catch(Exception ex) {
             logger.error(ex.getMessage());
         }
         return dList;
-
     }
 
 

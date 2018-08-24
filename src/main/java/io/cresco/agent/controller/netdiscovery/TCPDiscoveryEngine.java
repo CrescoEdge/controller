@@ -19,6 +19,9 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 
 public class TCPDiscoveryEngine implements Runnable {
     private ControllerEngine controllerEngine;
@@ -31,6 +34,7 @@ public class TCPDiscoveryEngine implements Runnable {
     private static EventLoopGroup workerGroup;
 
     public TCPDiscoveryEngine(ControllerEngine controllerEngine)   {
+        Logger.getLogger("io.netty").setLevel(Level.OFF);
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(TCPDiscoveryEngine.class.getName(),CLogger.Level.Info);
@@ -73,7 +77,7 @@ public class TCPDiscoveryEngine implements Runnable {
                             }
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(Integer.MAX_VALUE,ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)),
                                     new TCPDiscoveryEngineHandler(controllerEngine));
                         }
                     });
@@ -96,6 +100,7 @@ public class TCPDiscoveryEngine implements Runnable {
             workerGroup.shutdownGracefully();
         } catch(Exception ex) {
             //logger.error(ex.getMessage());
+            ex.printStackTrace();
         }
     }
 
