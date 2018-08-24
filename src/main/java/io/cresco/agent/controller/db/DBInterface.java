@@ -36,6 +36,59 @@ public class DBInterface {
     private Thread DBManagerThread;
     private BlockingQueue<String> importQueue;
 
+    //NMS Added no-arg constructor and builder-style stuff for testing
+    public DBInterface(){}
+
+    public DBInterface controllerEngine(ControllerEngine toAdd){
+        this.controllerEngine = toAdd;
+        return this;
+    }
+
+    public DBInterface pluginBuilder(PluginBuilder toAdd){
+        this.plugin = toAdd;
+        return this;
+    }
+
+    public DBInterface logger(CLogger toAdd){
+        this.logger = toAdd;
+        return this;
+    }
+
+    public DBInterface importQueue(BlockingQueue<String> toAdd){
+        this.importQueue = toAdd;
+        return this;
+    }
+
+    public DBInterface dbEngine(DBEngine toAdd){
+        this.gde = toAdd;
+        return this;
+    }
+    public DBInterface dbBaseFunctions(DBBaseFunctions toAdd){
+        this.gdb = toAdd;
+        return this;
+    }
+    public DBInterface dbApplicationFunctions(DBApplicationFunctions toAdd){
+        this.dba = toAdd;
+        return this;
+    }
+    public DBInterface gson(Gson toAdd){
+        this.gson = toAdd;
+        return this;
+    }
+    public DBInterface gsonTypeToken(TypeToken toAdd){
+        this.type = toAdd.getType();
+        return this;
+    }
+
+    public DBInterface dbManagerThread(DBManager toAdd){
+        this.DBManagerThread =new Thread(toAdd);
+        return this;
+    }
+
+    public void startDBManagerThread(){
+        this.DBManagerThread.start();
+    }
+
 
     public DBInterface(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -655,8 +708,8 @@ public class DBInterface {
 
     }
 
-
-    private String getGlobalResourceInfo() {
+    //NMS change to package private to facilitate testing
+    protected String getGlobalResourceInfo() {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;
@@ -731,7 +784,7 @@ public class DBInterface {
         return queryReturn;
 
     }
-    private String getRegionResourceInfo(String actionRegion) {
+    protected String getRegionResourceInfo(String actionRegion) {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;
@@ -806,7 +859,7 @@ public class DBInterface {
         return queryReturn;
 
     }
-    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
+    protected String getAgentResourceInfo(String actionRegion, String actionAgent) {
         String queryReturn = null;
 
         Map<String,List<Map<String,String>>> queryMap;

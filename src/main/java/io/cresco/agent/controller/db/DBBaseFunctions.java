@@ -33,20 +33,23 @@ import java.util.zip.GZIPOutputStream;
 
 public class DBBaseFunctions {
 
-    private ControllerEngine controllerEngine;
-    private PluginBuilder plugin;
-    private CLogger logger;
-    private OrientGraphFactory factory;
-    private ODatabaseDocumentTx db;
-    private int retryCount;
+    protected ControllerEngine controllerEngine;
+    protected PluginBuilder plugin;
+    protected CLogger logger;
+    protected OrientGraphFactory factory;
+    protected ODatabaseDocumentTx db;
+    protected int retryCount;
 
     private Gson gson;
     //private DBEngine dbe;
-    public OPartitionedDatabasePool pool;
-    private Boolean regionalImportActive = false;
+    protected OPartitionedDatabasePool pool;
+    protected Boolean regionalImportActive = false;
 
     public String[] aNodeIndexParams = {"platform","environment","location"};
     public String[] pNodeIndexParams = {"pluginname","jarfile"};
+
+    //NMS added no-arg constructor for testing
+    public DBBaseFunctions(){}
 
     public DBBaseFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
         this.controllerEngine = controllerEngine;
