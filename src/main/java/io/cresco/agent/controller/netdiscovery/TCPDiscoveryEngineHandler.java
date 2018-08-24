@@ -39,7 +39,6 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // Echo back the received object to the client.
-        logger.info("SERVER READ = " + state);
 
         try {
 
@@ -55,13 +54,11 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        logger.info("SERVER COMPELTE = " + state);
         ctx.flush();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("SERVER ERRROR: " + cause.getMessage());
         cause.printStackTrace();
         ctx.close();
     }

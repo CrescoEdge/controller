@@ -34,7 +34,6 @@ public class TCPDiscoveryEngine implements Runnable {
     private static EventLoopGroup workerGroup;
 
     public TCPDiscoveryEngine(ControllerEngine controllerEngine)   {
-        Logger.getLogger("io.netty").setLevel(Level.OFF);
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(TCPDiscoveryEngine.class.getName(),CLogger.Level.Info);
@@ -77,7 +76,7 @@ public class TCPDiscoveryEngine implements Runnable {
                             }
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
                                     new TCPDiscoveryEngineHandler(controllerEngine));
                         }
                     });

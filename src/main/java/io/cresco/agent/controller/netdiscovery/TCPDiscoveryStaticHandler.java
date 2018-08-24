@@ -43,7 +43,6 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-        logger.info("CLIENT ACTIVE");
 
         // Send the first message if this handler is a client-side handler.
         MsgEvent me = genDiscoverMsg();
@@ -57,21 +56,18 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
-        logger.info("CLIENT READ");
         String remoteHost = ((InetSocketAddress)ctx.channel().remoteAddress()).getAddress().getHostAddress();
         processIncoming((String)msg, remoteHost);
     }
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        logger.info("CLIENT READ COMPLETE");
         ctx.flush();
         ctx.close();
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("ERRORED: " + cause.getMessage());
         cause.printStackTrace();
         ctx.close();
         discoveredList = null;

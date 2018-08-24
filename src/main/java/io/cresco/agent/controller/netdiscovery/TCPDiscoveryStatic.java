@@ -66,7 +66,7 @@ public class TCPDiscoveryStatic {
                             }
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(Integer.MAX_VALUE, ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
                                     new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
                         }
                     });
