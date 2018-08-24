@@ -24,6 +24,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     private PluginBuilder plugin;
     private CLogger logger;
     private DiscoveryCrypto discoveryCrypto;
+    private int state = 0;
 
     public TCPDiscoveryEngineHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -35,14 +36,18 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // Echo back the received object to the client.
+        logger.info("SERVER STATE = " + state);
         try {
-            MsgEvent me = (MsgEvent)msg;
-            MsgEvent rme = processMessage(me);
 
-            ctx.write(rme);
-            //me = processMessage(rme);
+            if(state == 0) {
+                MsgEvent me = (MsgEvent) msg;
+                MsgEvent rme = processMessage(me);
+                ctx.write(rme);
+                state = 1;
+
+            }
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("channelRead" + ex.getMessage());
             ctx.close();
         }
     }

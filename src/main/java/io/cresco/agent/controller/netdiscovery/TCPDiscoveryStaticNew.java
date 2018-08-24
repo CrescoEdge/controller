@@ -21,17 +21,17 @@ import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TCPDiscoveryStatic {
+public class TCPDiscoveryStaticNew {
     //private static final Logger logger = LoggerFactory.getLogger(UDPDiscoveryStatic.class);
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
 
-    public TCPDiscoveryStatic(ControllerEngine controllerEngine) {
+    public TCPDiscoveryStaticNew(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
-        this.logger = plugin.getLogger(TCPDiscoveryStatic.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(TCPDiscoveryStaticNew.class.getName(),CLogger.Level.Info);
     }
 
     public List<MsgEvent> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, Boolean sendCert) throws Exception  {
@@ -71,16 +71,7 @@ public class TCPDiscoveryStatic {
                     });
 
             // Start the connection attempt.
-            logger.info("CREATE NEW CLIENT CONNECTION");
             b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
-
-            if(discoveredList == null) {
-                logger.error("Failure during remote host communications!");
-            } else {
-                logger.info("DL = " + discoveredList.size() + " hosts");
-            }
-
-
         } finally {
             group.shutdownGracefully();
         }

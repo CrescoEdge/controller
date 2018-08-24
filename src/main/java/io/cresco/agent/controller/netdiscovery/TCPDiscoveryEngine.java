@@ -20,41 +20,47 @@ import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 
 
-public class TCPDiscoveryEngine {
+public class TCPDiscoveryEngine implements Runnable {
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
     private boolean isSSL = false;
     private int discoveryPort;
 
-    private EventLoopGroup bossGroup;
-    private EventLoopGroup workerGroup;
+    private static EventLoopGroup bossGroup;
+    private static EventLoopGroup workerGroup;
 
-    public TCPDiscoveryEngine(ControllerEngine controllerEngine) {
+    public TCPDiscoveryEngine(ControllerEngine controllerEngine)   {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(TCPDiscoveryEngine.class.getName(),CLogger.Level.Info);
 
         logger.trace("Initializing");
 
-        isSSL = plugin.getConfig().getBooleanParam("netdiscoveryssl",true);
+        //isSSL = plugin.getConfig().getBooleanParam("netdiscoveryssl",false);
+        //enable when client supports
+        isSSL = false;
         discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
     }
 
-    public void runServer() throws Exception {
+    public void run() {
         // Configure SSL.
-        final SslContext sslCtx;
-        if (isSSL) {
-            SelfSignedCertificate ssc = new SelfSignedCertificate();
-            sslCtx = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey()).build();
-        } else {
-            sslCtx = null;
-        }
-
-        bossGroup = new NioEventLoopGroup();
-        workerGroup = new NioEventLoopGroup();
         try {
+
+            final SslContext sslCtx;
+            if (isSSL) {
+                SelfSignedCertificate ssc = new SelfSignedCertificate();
+                sslCtx = SslContextBuilder.forServer(ssc.certificate(), ssc.privateKey()).build();
+            } else {
+                sslCtx = null;
+            }
+
+            bossGroup = new NioEventLoopGroup();
+            workerGroup = new NioEventLoopGroup();
+
+
             ServerBootstrap b = new ServerBootstrap();
+
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
                     .handler(new LoggingHandler(LogLevel.INFO))
@@ -67,7 +73,7 @@ public class TCPDiscoveryEngine {
                             }
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(Integer.MAX_VALUE,ClassResolvers.cacheDisabled(null)),
                                     new TCPDiscoveryEngineHandler(controllerEngine));
                         }
                     });
@@ -76,18 +82,20 @@ public class TCPDiscoveryEngine {
 
             // Bind and start to accept incoming connections.
             b.bind(discoveryPort).sync().channel().closeFuture().sync();
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
         } finally {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         }
     }
 
-    public void stopServer() {
+    public static void shutdown() {
         try {
             bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
+            //logger.error(ex.getMessage());
         }
     }
 
