@@ -145,11 +145,12 @@ public class StaticPluginLoader implements Runnable  {
                             }
                             isStaticInit = true;
                         }
-                        logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo
                             //required "org.osgi.service.http.HttpService"
                             if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
+                                logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
+
                                 Map<String, Object> map = new HashMap<>();
                                 map.put("pluginname", "io.cresco.sysinfo");
                                 map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");

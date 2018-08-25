@@ -140,7 +140,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
             //String validateMsgEvent(rme)
             //       validatedAuthenication
 
-            if (controllerEngine.reachableAgents().size() < plugin.getConfig().getIntegerParam("max_region_size",250))  {
+            if (controllerEngine.reachableAgents().size() < plugin.getConfig().getIntegerParam("max_region_size",Integer.MAX_VALUE))  {
 
                 String validatedAuthenication = validateMsgEvent(rme); //create auth string
 
