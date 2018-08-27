@@ -108,17 +108,17 @@ public class OrientHelpers {
         return success;
     }
 
-    public static Optional<ODatabaseDocumentTx> getInMemoryTestDB(InputStream dbBackup){
+    public static Optional<ODatabaseDocumentTx> getInMemoryTestDB(InputStream dbBackup) throws FileNotFoundException,IOException{
         FileInputStream backupFile;
 
         ODatabaseDocumentTx newdb=null;
-        try{
+        //try{
             newdb = new ODatabaseDocumentTx("memory:internalDb").create();
             //newdb.restore(backupFile,null,null,getCommandListener());
             ODatabaseImport imp = new ODatabaseImport(newdb, dbBackup, getCommandListener());
             imp.importDatabase();
             imp.close();
-        }
+        /*}
         catch(FileNotFoundException ex){
             System.out.println("Can't find backup file to create new db");
             ex.printStackTrace();
@@ -126,7 +126,7 @@ public class OrientHelpers {
         catch(IOException ex){
             System.out.println("Can't open internal DB instance for some reason");
             ex.printStackTrace();
-        }
+        }*/
         return Optional.ofNullable(newdb);
     }
 

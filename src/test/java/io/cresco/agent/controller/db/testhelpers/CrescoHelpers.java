@@ -35,8 +35,9 @@ public class CrescoHelpers {
         Map<String,Object> testConfig = new HashMap<>();
         testConfig.put("pluginname","some_plugin_name");
         testConfig.put("jarfile","some_plugin.jar");
-        testConfig.put("md5","65388b8d8bf462df2cd3910bcada4110"); //output of md5sum command with "FAKE" as arg
-        testConfig.put("version","9.99.999");
+        testConfig.put("md5","DefinitelyRealMD5"); //output of md5sum command with "FAKE" as arg
+        testConfig.put("version","NO_VERSION");
+        testConfig.put("pluginID","TESTID/0");
 
         if(GDBConfigMap != null){
             testConfig.putAll(GDBConfigMap);

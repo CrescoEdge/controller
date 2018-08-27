@@ -36,9 +36,36 @@ public class AgentServiceImpl implements AgentService {
     private PluginAdmin pluginAdmin;
     private CLogger logger;
 
-    public AgentServiceImpl() {
+    public AgentServiceImpl() {}
 
+    public AgentServiceImpl controllerEngine(ControllerEngine toAdd){
+        this.controllerEngine = toAdd;
+        return this;
+    }
 
+    public AgentServiceImpl controllerState(ControllerState toAdd){
+        this.controllerState = toAdd;
+        return this;
+    }
+
+    public AgentServiceImpl agentState(AgentState toAdd){
+        this.agentState = toAdd;
+        return this;
+    }
+
+    private AgentServiceImpl pluginBuilder(PluginBuilder toAdd){
+        this.plugin = toAdd;
+        return this;
+    }
+
+    private AgentServiceImpl pluginAdmin(PluginAdmin toAdd){
+        this.pluginAdmin = toAdd;
+        return this;
+    }
+
+    private AgentServiceImpl logger(CLogger toAdd){
+        this.logger = toAdd;
+        return this;
     }
 
     @Activate

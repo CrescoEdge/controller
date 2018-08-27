@@ -14,24 +14,33 @@ import java.util.HashSet;
 import java.util.HashMap;
 
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import javax.xml.bind.DatatypeConverter;
 
 import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.jayway.jsonpath.JsonPath;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 
 import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
+import io.cresco.agent.controller.communication.MsgRouter;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalscheduler.pNode;
+import io.cresco.agent.core.AgentServiceImpl;
+import io.cresco.library.agent.AgentService;
+import io.cresco.library.agent.AgentState;
+import io.cresco.library.agent.ControllerState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.messaging.RPC;
 import io.cresco.library.plugin.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.commons.io.IOUtils;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -54,9 +63,9 @@ class DBInterfaceTest {
 
     private final GDBConf testingConf = new GDBConf("test_runner","test","localhost","cresco_test");
 
-    private  String db_export_file_path;
-    private  String regional_db_export_file_path;
+    private  InputStream all_db_file_stream,regional_db_file_stream;
 
+    private ControllerEngine testce;
     private ODatabaseDocumentTx model_db;
     private ODatabaseDocumentTx test_db;
 
@@ -209,10 +218,10 @@ class DBInterfaceTest {
         jp = new JSONParser();
 
         Class clazz = DBInterfaceTest.class;
-        GZIPInputStream all_db_file_stream = new GZIPInputStream(clazz.getResourceAsStream("/global_region_agent.gz"));
-        GZIPInputStream regional_db_file_stream = new GZIPInputStream(clazz.getResourceAsStream("/cresco_regional.gz"));
+        all_db_file_stream = new BufferedInputStream(clazz.getResourceAsStream("/global_region_agent.gz"));
+        regional_db_file_stream = new BufferedInputStream(clazz.getResourceAsStream("/cresco_regional.gz"));
 
-        model_db = OrientHelpers.getInMemoryTestDB(all_db_file_stream).orElseThrow(() -> new Exception("Can't get test db"));
+        model_db = OrientHelpers.getInMemoryTestDB(new GZIPInputStream(all_db_file_stream)).orElseThrow(() -> new Exception("Can't get test db"));
     }
 
     @BeforeEach
@@ -223,15 +232,18 @@ class DBInterfaceTest {
 plugin.sendRPC //needs an override
 plugin.getLogger
 .getConfig*/
-        PluginBuilder testpb = new PluginBuilder()
+        PluginBuilder testpb = new MockPluginBuilder()
                 .config(new Config(CrescoHelpers.getMockPluginConfig(null)))
                 .baseClassName("TEST_PLUGINBUILDER");
 
         testpb = testpb.rpc(new RPC(testpb));
 
-        ControllerEngine testce = new ControllerEngine()
+        testce = new ControllerEngine()
                 .pluginBuilder(testpb)
-                .logger(testpb.getLogger("Test_Controller_Engine", CLogger.Level.Trace));
+                .logger(testpb.getLogger("Test_Controller_Engine", CLogger.Level.Trace))
+                .msgInProcessQueue(Executors.newCachedThreadPool());
+        MsgRouter msgRouter = new MsgRouter(testce);
+        testce = testce.messageRouter(msgRouter);
 
         //DBInterface testgdb = new DBInterface(testce);
 
@@ -271,11 +283,23 @@ plugin.getLogger
                 .dbManagerThread(dbm)
                 .gson(new Gson())
                 .importQueue(dbManQueue)
-                .logger(testpb.getLogger("Test_DBInterface", CLogger.Level.Trace));
+                .logger(testpb.getLogger("Test_DBInterface", CLogger.Level.Trace))
+                .gsonTypeToken(new TypeToken<Map<String, List<Map<String, String>>>>() {});
+
         testce = testce.dbInterface(testgdb);
+
         gdb = testce.getGDB();
+        gdb.startDBManagerThread();
     }
 
+    public AgentService getMockAgentService(String region) {
+        ControllerState cs = new ControllerState();
+        cs.setRegionInit(region, "rc_agent", "INIT_REGION_FOR_TEST");
+        cs.setRegionGlobalInit("INIT_REGION_GLOBAL_TEST");
+        cs.setRegionalGlobalSuccess("global_region", "gc_agent", "INIT_REGION_GLOBAL_TEST_SUCCESS");
+        AgentState as = new AgentState(cs);
+        return new AgentServiceImpl().controllerEngine(testce).agentState(as);
+    }
    /* @AfterEach
     void tear_down_controller(){
         ce.setDBManagerActive(false);
@@ -323,33 +347,24 @@ plugin.getLogger
      *
      */
     @Test
-    void submitDBImport_test() {
+    void submitDBImport_test() throws InterruptedException, IOException {
         String expected_regions = "{\"regions\":[{\"name\":\"different_test_region\",\"agents\":\"2\"},{\"name\":\""+
                 "global_region\",\"agents\":\"1\"},{\"name\":\"yet_another_test_region\",\"agents\":\"1\"}]}";
         String expected_agents = "{\"agents\":[{\"environment\":\"environment\",\"plugins\":\"1\",\"name\":\"another_r"+
                 "c\",\"location\":\"location\",\"region\":\"yet_another_test_region\",\"platform\":\"platform\"}]}";
         String expected_plugins = "{\"plugins\":[{\"agent\":\"another_rc\",\"name\":\"plugin/0\",\"region\":\"yet_anot"+
                 "her_test_region\"}]}";
-        try {
-            byte[] importData = Files.readAllBytes(Paths.get(regional_db_export_file_path));
-            gdb.submitDBImport(DatatypeConverter.printBase64Binary(importData));
-            Thread.sleep(5000);//Import runs in another thread so we need to give it time to work
-            String newRegionList = gdb.getRegionList();
-            assertEquals(expected_regions,newRegionList);
-            String newAgentList = gdb.getAgentList("yet_another_test_region");
-            assertEquals(expected_agents,newAgentList);
-            String newPluginList = gdb.getPluginList("yet_another_test_region","another_rc");
-            assertEquals(expected_plugins,newPluginList);
-        }
-        catch(FileNotFoundException ex) {
-            fail(String.format("Could not find regional db export file at %s",regional_db_export_file_path),ex);
-        }
-        catch(IOException ex) {
-            fail(String.format("Could not read regional db export file at %s",regional_db_export_file_path),ex);
-        }
-        catch(InterruptedException ex) {
-            System.out.println("Threadus Interruptus");
-        }
+
+        byte[] importData = IOUtils.toByteArray(regional_db_file_stream) ;
+
+        gdb.submitDBImport(DatatypeConverter.printBase64Binary(importData));
+        Thread.sleep(5000);//Import runs in another thread so we need to give it time to work
+        String newRegionList = gdb.getRegionList();
+        assertEquals(expected_regions, newRegionList);
+        String newAgentList = gdb.getAgentList("yet_another_test_region");
+        assertEquals(expected_agents, newAgentList);
+        String newPluginList = gdb.getPluginList("yet_another_test_region", "another_rc");
+        assertEquals(expected_plugins, newPluginList);
     }
 
     /**
@@ -370,33 +385,58 @@ plugin.getLogger
                         ",\"location\":\"location\",\"region\":\"different_test_region\",\""+
                         "platform\":\"platform\"},{\"environment\":\"environment\",\"plugins\":\"1\",\"name\":\"rc_agent\",\"l"+
                         "ocation\":\"location\",\"region\":\"different_test_region\",\"platform\":\"platform\"}]}");
-        if(region == null || region.equals("")){
-            assertEquals("{\"agents\":[]}",gdb.getAgentList(region));
+
+        if(region == null){
+            assertEquals("{\"agents\":[{\"environment\":\"environment\"," +
+                            "\"plugins\":\"1\",\"name\":\"agent_smith\"," +
+                            "\"location\":\"location\"," +
+                            "\"region\":\"different_test_region\"," +
+                            "\"platform\":\"platform\"}," +
+                            "{\"environment\":\"environment\"," +
+                            "\"plugins\":\"1\",\"name\":\"rc_agent\"," +
+                            "\"location\":\"location\"," +
+                            "\"region\":\"different_test_region\"," +
+                            "\"platform\":\"platform\"}," +
+                            "{\"environment\":\"environment\"," +
+                            "\"plugins\":\"3\",\"name\":\"gc_agent\"," +
+                            "\"location\":\"location\"," +
+                            "\"region\":\"global_region\"," +
+                            "\"platform\":\"platform\"}]}"
+                    ,gdb.getAgentList(region));
+        } else {
+            if (regionExists(region)) assertEquals(expected_output.get(region), gdb.getAgentList(region));
+            else assertEquals("{\"agents\":[]}", gdb.getAgentList(region));
         }
-        assertEquals(expected_output.get(region), gdb.getAgentList(region));
+    }
 
+    /**
+     * The function 'getPluginListRepoSet' only seems to use the database to figure out where the repo plugin lives (should be global
+     * controller). Thus we may need a test that checks the lower-level function the aforementioned one depends on.
+     * Added parameter to initialize controllerstate/agentstate. That might not matter since I ended up just bypassing the RPC.
+     */
+    @ParameterizedTest
+    @MethodSource("getRegions")
+    void getPluginListRepo_test(String region) {
+
+        testce.getPluginBuilder().setAgentService(getMockAgentService(region));
+
+        assertEquals("{\"plugins\":[{\"pluginname\":\"some_plugin_name\"," +
+                "\"version\":\"NO_VERSION\",\"jarfile\":\"some_plugin.jar\"," +
+                "\"pluginID\":\"TESTID/0\",\"md5\":\"DefinitelyRealMD5\"}]}",gdb.getPluginListRepo());
     }
 
     /**
      * The function 'getPluginListRepoSet' only seems to use the database to figure out where the repo plugin lives (should be global
      * controller). Thus we may need a test that checks the lower-level function the aforementioned one depends on.
      */
-    @RepeatedTest(REPEAT_COUNT)
-    void getPluginListRepo_test() {
-        assertEquals("{\"plugins\":[{\"jarfile\":\"fake.jar\",\"version\":\"NO_VERSION\",\"md5\":\"DefinitelyR"+
-                "ealMD5\"}]}",gdb.getPluginListRepo());
-    }
-
-    /**
-     * The function 'getPluginListRepoSet' only seems to use the database to figure out where the repo plugin lives (should be global
-     * controller). Thus we may need a test that checks the lower-level function the aforementioned one depends on.
-     */
-    @RepeatedTest(REPEAT_COUNT)
-    void getPluginListRepoSet_test() {
+    @ParameterizedTest
+    @MethodSource("getRegions")
+    void getPluginListRepoSet_test(String region) {
+        testce.getPluginBuilder().setAgentService(getMockAgentService(region));
         Map<String,List<pNode>> plist = gdb.getPluginListRepoSet();
         for(pNode aplugin : plist.get("some_plugin_name")){
             assertTrue(
-                    aplugin.isEqual("some_plugin_name","some_plugin.jar","65388b8d8bf462df2cd3910bcada4110","9.99.999")
+                    aplugin.isEqual("some_plugin_name","some_plugin.jar","DefinitelyRealMD5","NO_VERSION")
             );
         }
 
@@ -405,10 +445,14 @@ plugin.getLogger
     /**
      * This test is similar to the getPluginListRepoSet_test() because it depends on the same lower-level db function.
      */
-    @RepeatedTest(REPEAT_COUNT)
-    void getPluginListRepoInventory_test() {
-        String expected = "{\"server\":[],\"plugins\":[{\"pluginname\":\"some_plugin_name\",\"jarfile\":\"some_plugin."+
-                "jar\",\"version\":\"9.99.999\",\"md5\":\"65388b8d8bf462df2cd3910bcada4110\"}]}";
+    @ParameterizedTest
+    @MethodSource("getRegions")
+    void getPluginListRepoInventory_test(String region) {
+        testce.getPluginBuilder().setAgentService(getMockAgentService(region));
+        String expected = "{\"server\":[],\"plugins\":[{\"pluginname" +
+                "\":\"some_plugin_name\",\"version\":\"NO_VERSION\"," +
+                "\"jarfile\":\"some_plugin.jar\",\"pluginID\":\"TESTID/0\"," +
+                "\"md5\":\"DefinitelyRealMD5\"}]}";
         List<String> repoList = gdb.getPluginListRepoInventory();
         for(String res : repoList){
             assertEquals(expected,res);
@@ -560,7 +604,7 @@ plugin.getLogger
      */
     @ParameterizedTest
     @MethodSource("getRegionAgentPluginidTriples")
-    void getIsAttachedMetrics_test(String region, String agent, String pluginid) {
+        void getIsAttachedMetrics_test(String region, String agent, String pluginid) {
         String actual = gdb.getIsAttachedMetrics(region, agent, pluginid);
         assertNotEquals("[]",actual);
     }
@@ -594,7 +638,7 @@ plugin.getLogger
         } else if (region != null && (agent == null)) {
             assertEquals(gdb.getRegionResourceInfo(region),actual);
         } else if (region == null && agent != null) {
-            fail("Need to decide what \"not found\" should look like");
+            fail(NOT_FOUND);
         } else {
             assertEquals(gdb.getGlobalResourceInfo(),actual);
         }

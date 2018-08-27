@@ -121,59 +121,6 @@ public class DBApplicationFunctions {
         return isRemoved;
     }
 
-    /*
-    public void clearCache() {
-        factory.getDatabase().getLocalCache().invalidate();
-    }
-*/
-    /*
-    public List<String> getPipelineINodes(String pipelineId) {
-        List<String> iNodeList = null;
-        try {
-            iNodeList = new ArrayList<>();
-            getresourceNodeList(pipelineId,null);
-            List<String> vNodeList = getNodeIdFromEdge("pipeline", "isVNode", "vnode_id", true, "pipeline_id", pipelineId);
-            for(String vNodeId : vNodeList) {
-                logger.debug("vnodes " + vNodeId);
-                iNodeList.addAll(getNodeIdFromEdge("vnode", "isINode", "inode_id", true, "vnode_id", vNodeId));
-            }
-
-        }
-        catch(Exception ex) {
-            logger.error("removePipeline " + ex.getMessage());
-        }
-        return iNodeList;
-    }
-
-    public List<String> removePipeline(String pipelineId) {
-        List<String> iNodeList = null;
-        try {
-            iNodeList = new ArrayList<>();
-            getresourceNodeList(pipelineId,null);
-            List<String> vNodeList = getNodeIdFromEdge("pipeline", "isVNode", "vnode_id", true, "pipeline_id", pipelineId);
-            for(String vNodeId : vNodeList) {
-                logger.debug("vnodes " + vNodeId);
-                iNodeList.addAll(getNodeIdFromEdge("vnode", "isINode", "inode_id", true, "vnode_id", vNodeId));
-                for(String iNodeId : iNodeList) {
-                    logger.debug("inodes " + iNodeId);
-                    List<String> eNodeList = getNodeIdFromEdge("inode", "in", "enode_id", false, "inode_id",iNodeId);
-                    eNodeList.addAll(getNodeIdFromEdge("inode", "out", "enode_id",true, "inode_id",iNodeId));
-                    for(String eNodeId : eNodeList) {
-                        logger.debug("enodes " + eNodeId);
-                        removeNode(getENodeNodeId(eNodeId));
-                    }
-                }
-                removeNode(getVNodeNodeId(vNodeId));
-            }
-
-            //removeNode(getPipelineNodeId(pipelineId));
-        }
-        catch(Exception ex) {
-            logger.error("removePipeline " + ex.getMessage());
-        }
-        return iNodeList;
-    }
-       */
     public String getTenantNodeId(String tenantId) {
         String node_id = null;
         OrientGraph graph = null;
