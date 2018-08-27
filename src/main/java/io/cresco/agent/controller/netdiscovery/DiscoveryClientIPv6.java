@@ -20,11 +20,6 @@ public class DiscoveryClientIPv6 {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientIPv6.class.getName(),CLogger.Level.Info);
 
-        //this.logger = new CLogger(DiscoveryClientIPv6.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID());
-        //this.agentcontroller = agentcontroller;
-        //discoveryTimeout = Integer.parseInt(PluginEngine.config.getParam("discoverytimeout"));
-        //System.out.println("DiscoveryClient : discoveryTimeout = " + discoveryTimeout);
-        //discoveryTimeout = 1000;
     }
 
     public List<MsgEvent> getDiscoveryResponse(DiscoveryType disType, int discoveryTimeout) {
@@ -44,12 +39,6 @@ public class DiscoveryClientIPv6 {
             logger.debug("Searching {}", multiCastNetwork);
             discoveryList.addAll(dcw.discover());
 
-            //limit discovery for the moment
-            //Searching site network [ff05::1:c]
-            //multiCastNetwork = "ff05::1:c";
-            //dcw = new DiscoveryClientWorkerIPv6(discoveryTimeout,multiCastNetwork);
-            //System.out.println("DiscoveryClientIPv6 : searching " + multiCastNetwork);
-            //dcw.discover();
         } catch (Exception ex) {
             logger.error("getDiscoveryMap {}", ex.getMessage());
 

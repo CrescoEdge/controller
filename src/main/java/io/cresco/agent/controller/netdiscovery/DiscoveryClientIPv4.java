@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DiscoveryClientIPv4 {
-    //private int discoveryTimeout;
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
@@ -21,11 +20,6 @@ public class DiscoveryClientIPv4 {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientIPv4.class.getName(),CLogger.Level.Info);
-        //this.logger = new CLogger(DiscoveryClientIPv4.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(),CLogger.Level.Info);
-        this.plugin = plugin;
-        //discoveryTimeout = Integer.parseInt(PluginEngine.config.getParam("discoverytimeout"));
-        //System.out.println("DiscoveryClient : discoveryTimeout = " + discoveryTimeout);
-        //discoveryTimeout = 1000;
     }
 
     public List<MsgEvent> getDiscoveryResponse(DiscoveryType disType, int discoveryTimeout) {
@@ -54,32 +48,9 @@ public class DiscoveryClientIPv4 {
         return discoveryList;
     }
 
-	/*public void getDiscoveryMap(int discoveryTimeout)
-	{
-		try
-		{
-			while(PluginEngine.clientDiscoveryActiveIPv4)
-			{
-				System.out.println("DiscoveryClient : Discovery already underway : waiting..");
-				Thread.sleep(2500);
-			}
-			PluginEngine.clientDiscoveryActiveIPv4 = true;
-			DiscoveryClientWorkerIPv4 dcw = new DiscoveryClientWorkerIPv4(discoveryTimeout);
-			dcw.discover();
-		}
-		catch(Exception ex)
-		{
-			System.out.println("DiscoveryClient Error : " + ex.toString());
-		}
-		PluginEngine.clientDiscoveryActiveIPv4 = false;
-		
-	}*/
-
     public boolean isReachable(String hostname) {
         boolean reachable = false;
         try {
-            //also, this fails for an invalid address, like "www.sjdosgoogle.com1234sd"
-            //InetAddress[] addresses = InetAddress.getAllByName("www.google.com");
             InetAddress address = InetAddress.getByName(hostname);
 
             reachable = address.isReachable(10000);
