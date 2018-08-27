@@ -59,9 +59,7 @@ public class AgentDiscovery {
                 controllerEngine.getGDB().watchDogUpdate(le);
 
 
-                if (controllerEngine.getDiscoveryMap().containsKey(discoverString)) {
-                    controllerEngine.getDiscoveryMap().remove(discoverString); //remove discovery block
-                }
+                controllerEngine.getDiscoveryMap().remove(discoverString); //remove discovery block
 
             }
 

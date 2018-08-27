@@ -2260,7 +2260,7 @@ public class DBBaseFunctions {
 
             export.exportDatabase();
 
-            String exportStringRaw = new String(os.toByteArray(),"UTF-8");
+            String exportStringRaw = new String(os.toByteArray(), StandardCharsets.UTF_8);
 
             logger.trace("[" + exportString + "]");
 

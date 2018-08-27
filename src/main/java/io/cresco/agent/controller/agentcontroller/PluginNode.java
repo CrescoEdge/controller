@@ -49,7 +49,7 @@ public class PluginNode {
     status_code = 92; //timeout on disable verification
      */
 
-    public PluginNode(String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+    public PluginNode(String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
 
 
         this.pluginID = pluginID;

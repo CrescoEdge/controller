@@ -1133,9 +1133,7 @@ public class ControllerEngine {
     public boolean isLocalBroker() {
 
         if(this.brokerAddressAgent != null) {
-            if((this.brokerAddressAgent.equals("[::1]")) || ((this.brokerAddressAgent.equals("localhost")))) {
-                return true;
-            }
+            return (this.brokerAddressAgent.equals("[::1]")) || ((this.brokerAddressAgent.equals("localhost")));
         }
         return false;
     }

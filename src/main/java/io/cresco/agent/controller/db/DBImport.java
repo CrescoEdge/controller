@@ -39,7 +39,6 @@ import com.orientechnologies.orient.core.serialization.serializer.record.string.
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
@@ -68,7 +67,7 @@ public class DBImport {
     private ODatabaseDocumentTx db;
     private DBBaseFunctions gdb;
 
-    public DBImport(ControllerEngine controllerEngine, final InputStream iStream, DBBaseFunctions gdb, ODatabaseDocumentTx db) throws IOException {
+    public DBImport(ControllerEngine controllerEngine, final InputStream iStream, DBBaseFunctions gdb, ODatabaseDocumentTx db) {
 
         this.logger = controllerEngine.getPluginBuilder().getLogger(DBImport.class.getName(),CLogger.Level.Info);
 
@@ -117,9 +116,7 @@ public class DBImport {
 
                 for(String importedNode : importedList) {
                 logger.debug("imported node " + importedNode);
-                if(regionList.contains(importedNode)) {
                     regionList.remove(importedNode);
-                }
             }
             for(String lostNode : regionList) {
                 logger.debug("Removing node :" + lostNode);

@@ -19,9 +19,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
 
 public class TCPDiscoveryEngine implements Runnable {
     private ControllerEngine controllerEngine;
@@ -69,7 +66,7 @@ public class TCPDiscoveryEngine implements Runnable {
                     .handler(new LoggingHandler(LogLevel.INFO))
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
-                        public void initChannel(SocketChannel ch) throws Exception {
+                        public void initChannel(SocketChannel ch) {
                             ChannelPipeline p = ch.pipeline();
                             if (sslCtx != null) {
                                 p.addLast(sslCtx.newHandler(ch.alloc()));

@@ -1477,9 +1477,7 @@ public class DBInterface {
                             String subpluginId = configMap.get("pluginid");
 
                             //remove agentcontroller from remove list of new config exist
-                            if(pluginRemoveList.contains(subpluginId)) {
-                                pluginRemoveList.remove(subpluginId);
-                            }
+                            pluginRemoveList.remove(subpluginId);
 
                             if(gdb.getNodeId(region,agent,subpluginId) == null) {
                                 gdb.addNode(region, agent, subpluginId);

@@ -6,6 +6,7 @@ import io.cresco.library.utilities.CLogger;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.security.MessageDigest;
 import java.util.Arrays;
@@ -23,7 +24,7 @@ public class DiscoveryCrypto {
     private Key generateKeyFromString(final String secKey) throws Exception {
         //String SALT = "MrSaltyManBaby";
         String SALT = "jG0vixSqlM8bCf";
-        byte[] keyVal = (SALT + secKey).getBytes("UTF-8");
+        byte[] keyVal = (SALT + secKey).getBytes(StandardCharsets.UTF_8);
         MessageDigest sha = MessageDigest.getInstance("SHA-1");
         keyVal = sha.digest(keyVal);
         keyVal = Arrays.copyOf(keyVal, 16); // use only first 128 bit

@@ -59,7 +59,7 @@ public class TCPDiscoveryStatic {
                     .channel(NioSocketChannel.class)
                     .handler(new ChannelInitializer<SocketChannel>() {
                         @Override
-                        public void initChannel(SocketChannel ch) throws Exception {
+                        public void initChannel(SocketChannel ch) {
                             ChannelPipeline p = ch.pipeline();
                             if (sslCtx != null) {
                                 p.addLast(sslCtx.newHandler(ch.alloc(), hostAddress, discoveryPort));

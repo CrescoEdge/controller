@@ -8,7 +8,8 @@ import io.cresco.library.utilities.CLogger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 
-import java.io.*;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.security.cert.Certificate;
 import java.util.List;

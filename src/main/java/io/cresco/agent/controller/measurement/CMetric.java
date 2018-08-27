@@ -46,12 +46,12 @@ public class CMetric {
 	}
 
 
-	public static enum Type {
+	public enum Type {
 		APP, //require inode and resource node
 	  	NODE, //require nothing
 		EDGE; //require edge id
 
-		private Type() {
+		Type() {
 
 		}
 	}
