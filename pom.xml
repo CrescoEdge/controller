@@ -13,7 +13,7 @@
         <jdk>1.8</jdk>
 
         <maven.compiler.version>3.8.0</maven.compiler.version>
-        <maven.bundle.compiler.version>3.5.0</maven.bundle.compiler.version>
+        <maven.bundle.compiler.version>3.5.1</maven.bundle.compiler.version>
 
         <activemq.version>5.15.4</activemq.version>
         <orientdb.version>2.2.36</orientdb.version>
