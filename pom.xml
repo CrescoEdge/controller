@@ -11,7 +11,10 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jdk>1.8</jdk>
-        <maven.compiler.version>3.5.1</maven.compiler.version>
+
+        <maven.compiler.version>3.8.0</maven.compiler.version>
+        <maven.bundle.compiler.version>3.5.0</maven.bundle.compiler.version>
+
         <activemq.version>5.15.4</activemq.version>
         <orientdb.version>2.2.36</orientdb.version>
 
@@ -20,19 +23,20 @@
 
     <dependencies>
 
-        <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.core -->
-
+        <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
         <dependency>
             <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.core</artifactId>
-            <version>6.0.0</version>
+            <artifactId>osgi.core</artifactId>
+            <version>7.0.0</version>
             <scope>provided</scope>
         </dependency>
 
+        <!-- https://mvnrepository.com/artifact/org.osgi/osgi.annotation -->
         <dependency>
             <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.annotation</artifactId>
-            <version>6.0.0</version>
+            <artifactId>osgi.annotation</artifactId>
+            <version>7.0.0</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.component.annotations -->
@@ -56,14 +60,6 @@
             <groupId>org.osgi</groupId>
             <artifactId>org.osgi.service.cm</artifactId>
             <version>1.6.0</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.repository -->
-        <dependency>
-            <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.service.repository</artifactId>
-            <version>1.1.0</version>
             <scope>provided</scope>
         </dependency>
 
@@ -391,7 +387,7 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
-                <version>3.5.1</version>
+                <version>${maven.bundle.compiler.version}</version>
                 <extensions>true</extensions>
                 <configuration>
 
