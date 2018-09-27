@@ -1061,6 +1061,7 @@ public class ControllerEngine {
     public Thread getActiveBrokerManagerThread() {
         return activeBrokerManagerThread;
     }
+
     public void setActiveBrokerManagerThread(Thread activeBrokerManagerThread) {
         this.activeBrokerManagerThread = activeBrokerManagerThread;
     }
@@ -1075,7 +1076,85 @@ public class ControllerEngine {
     }
 
     public void closeCommunications() {
+        try {
+            if (this.restartOnShutdown)
+                logger.info("Tearing down services");
+            else
+                logger.info("Shutting down");
 
+            this.DiscoveryActive = false;
+
+            if(!stopNetDiscoveryEngine()) {
+                logger.error("Failed to stop Network Discovery Engine");
+            }
+
+
+            this.GlobalControllerManagerActive = false;
+            if (this.globalControllerManagerThread!= null) {
+                logger.trace("Global HealthWatcher shutting down");
+                this.regionHealthWatcher.communicationsHealthTimer.cancel();
+                this.regionHealthWatcher.regionalUpdateTimer.cancel();
+                this.globalControllerManagerThread.join();
+                this.globalControllerManagerThread = null;
+                logger.info("Global HealthWatcher shutting down");
+
+            }
+
+            if (this.regionHealthWatcher != null) {
+                logger.trace("Region HealthWatcher shutting down");
+                //in case its not canceled as part of global
+                this.regionHealthWatcher.communicationsHealthTimer.cancel();
+                this.regionHealthWatcher.regionalUpdateTimer.cancel();
+                this.regionHealthWatcher = null;
+                logger.info("Region HealthWatcher shutting down");
+
+            }
+            this.ActiveBrokerManagerActive = false;
+
+            //this.getIncomingCanidateBrokers().offer(null);
+            if (this.activeBrokerManagerThread != null) {
+                logger.trace("Active Broker Manager shutting down");
+                this.activeBrokerManagerThread.interrupt();
+                this.activeBrokerManagerThread.join();
+                this.activeBrokerManagerThread = null;
+                logger.info("Active Broker Manager shutting down");
+            }
+            if (this.ap != null) {
+                logger.trace("Producer shutting down");
+                this.ap.shutdown();
+                this.ap = null;
+                logger.info("Producer shutting down");
+            }
+
+            this.ConsumerThreadActive = false;
+
+            if (this.broker != null) {
+                logger.trace("Broker shutting down");
+                this.broker.stopBroker();
+                this.broker = null;
+                logger.info("Broker shutting down");
+
+            }
+
+            //disable
+            this.DBManagerActive = false;
+            logger.info("DB shutting down");
+
+
+            if (this.restartOnShutdown) {
+                while(!commInit()); //reinit everything
+                this.restartOnShutdown = false;
+            }
+
+        } catch (Exception ex) {
+            logger.error("shutdown {}", ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        System.out.println("SHUTDOWN COMPLETE!!!");
+        logger.info("complete comm shutting down");
 
     }
 

@@ -130,7 +130,13 @@ public class AgentServiceImpl implements AgentService {
         }
     }
 
-    @Modified
+    @Activate
+    void deactivate(BundleContext context) {
+        plugin.setIsActive(false);
+        controllerEngine.closeCommunications();
+    }
+
+        @Modified
     void modified(BundleContext context, Map<String,Object> map) {
         logger.info("Modified Config Map PluginID:" + map.get("pluginID"));
     }
