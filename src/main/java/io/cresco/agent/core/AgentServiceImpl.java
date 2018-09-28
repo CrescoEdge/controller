@@ -11,10 +11,7 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.osgi.framework.BundleContext;
 import org.osgi.service.cm.ConfigurationAdmin;
-import org.osgi.service.component.annotations.Activate;
-import org.osgi.service.component.annotations.Component;
-import org.osgi.service.component.annotations.Modified;
-import org.osgi.service.component.annotations.Reference;
+import org.osgi.service.component.annotations.*;
 
 import java.io.File;
 import java.util.HashMap;
@@ -130,13 +127,23 @@ public class AgentServiceImpl implements AgentService {
         }
     }
 
-    @Activate
+    @Deactivate
     void deactivate(BundleContext context) {
-        plugin.setIsActive(false);
-        controllerEngine.closeCommunications();
+        if(logger != null) {
+            logger.info("Deactivate Controller");
+        }
+
+        if(plugin != null) {
+            plugin.setIsActive(false);
+        }
+
+        if(controllerEngine != null) {
+            controllerEngine.closeCommunications();
+        }
+
     }
 
-        @Modified
+    @Modified
     void modified(BundleContext context, Map<String,Object> map) {
         logger.info("Modified Config Map PluginID:" + map.get("pluginID"));
     }

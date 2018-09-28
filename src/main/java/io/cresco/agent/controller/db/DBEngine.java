@@ -3,10 +3,17 @@ package io.cresco.agent.controller.db;
 import com.orientechnologies.orient.client.remote.OServerAdmin;
 import com.orientechnologies.orient.core.db.OPartitionedDatabasePool;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.server.OServer;
+import com.orientechnologies.orient.server.OServerMain;
+import com.orientechnologies.orient.server.config.OServerConfiguration;
+import com.orientechnologies.orient.server.config.OServerSecurityConfiguration;
+import com.orientechnologies.orient.server.config.OServerUserConfiguration;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+
+import java.util.UUID;
 
 
 public class DBEngine {
@@ -19,6 +26,7 @@ public class DBEngine {
     //public OrientGraphFactory factory;
     public OPartitionedDatabasePool pool;
     private int retryCount;
+    private OServer server;
 
     public DBEngine(ControllerEngine controllerEngine) {
 
@@ -33,7 +41,7 @@ public class DBEngine {
 
         //set config values
         //OGlobalConfiguration.PROFILER_ENABLED.setValue(Boolean.TRUE);
-
+        setServer();
         setPool();
         /*
         String host = agentcontroller.getConfig().getStringParam("gdb_host");
@@ -61,10 +69,57 @@ public class DBEngine {
         */
     }
 
+    public void shutdown() {
+
+        try {
+
+            if(factory != null) {
+                factory.close();
+            }
+            if(db != null) {
+                db.close();
+            }
+            if(pool != null) {
+                pool.close();
+            }
+
+            if(server != null) {
+                server.shutdown();
+            }
+
+
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
+        }
+
+    }
+
+    private void setServer() {
+        try {
+
+            server = OServerMain.create();
+            OServerConfiguration cfg = new OServerConfiguration();
+            OServerSecurityConfiguration sec = new OServerSecurityConfiguration();
+                OServerUserConfiguration user = new OServerUserConfiguration();
+                user.name = "root";
+                user.password = UUID.randomUUID().toString();
+                sec.users.add(user);
+                cfg.security = sec;
+            // FILL THE OServerConfiguration OBJECT
+            server.startup(cfg);
+            server.activate();
+
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
+        }
+    }
 
     //upload
     private void setPool() {
         try {
+
+
+
             String host = plugin.getConfig().getStringParam("gdb_host");
             //String host = null;
             String username = plugin.getConfig().getStringParam("gdb_username");

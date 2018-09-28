@@ -95,7 +95,7 @@ public class ResourceSchedulerEngine implements Runnable {
 			{
 				try
 				{
-					MsgEvent ce = controllerEngine.getResourceScheduleQueue().take();
+					MsgEvent ce = controllerEngine.getResourceScheduleQueue().poll();
 					if(ce != null)
 					{
                         logger.debug("me.added");
@@ -142,7 +142,10 @@ public class ResourceSchedulerEngine implements Runnable {
                             logger.debug("Incoming Remove Request : resource_id: " + ce.getParam("resource_id") + " inode_id: " + ce.getParam("inode_id") + " pnodeMap: " + pNodeMap.toString());
                             new Thread(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id"))).start();
 						}
-					}
+					} else
+                    {
+                        Thread.sleep(1000);
+                    }
 
 				}
 				catch(Exception ex)

@@ -107,7 +107,7 @@ public class ActiveBroker {
 		        map.setDefaultEntry(entry);
 
 				broker = new SslBrokerService();
-				broker.setUseShutdownHook(false);
+				broker.setUseShutdownHook(true);
 				broker.setPersistent(false);
 				broker.setBrokerName(brokerName);
 				broker.setSchedulePeriodForDestinationPurge(2500);
@@ -231,10 +231,14 @@ public class ActiveBroker {
 	
 	public void stopBroker() {
 		try {
-			connector.stop();
 			ServiceStopper stopper = new ServiceStopper();
 			//broker.getManagementContext().stop();
-            broker.stopAllConnectors(stopper);
+			for(TransportConnector tc : broker.getTransportConnectors()) {
+				tc.stop();
+
+			}
+			connector.stop();
+			broker.stopAllConnectors(stopper);
             broker.stop();
 
 			while(!broker.isStopped()) {

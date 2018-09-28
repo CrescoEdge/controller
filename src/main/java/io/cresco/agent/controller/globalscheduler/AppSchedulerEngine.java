@@ -41,7 +41,6 @@ public class AppSchedulerEngine implements Runnable {
     public void run() {
         try
         {
-
             ghw.AppSchedulerActive = true;
             while (ghw.AppSchedulerActive)
             {

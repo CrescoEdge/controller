@@ -59,6 +59,17 @@ public class DBInterface {
         this.DBManagerThread.start();
     }
 
+    public void shutdown() {
+
+        try {
+            gde.shutdown();
+            gde = null;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
+
+    }
+
     /*
     public Thread getDBManagerThread() {
         return DBManagerThread;

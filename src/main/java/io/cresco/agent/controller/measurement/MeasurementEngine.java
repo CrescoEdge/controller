@@ -50,6 +50,7 @@ public class MeasurementEngine {
         crescoMeterRegistry = plugin.getCrescoMeterRegistry();
 
 
+
         metricInit();
 
         //logger.error("STARTED M ENGINE");
@@ -108,6 +109,15 @@ public class MeasurementEngine {
         }
         */
 
+    }
+
+    public void shutdown() {
+        try {
+            crescoMeterRegistry.close();
+            crescoMeterRegistry = null;
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
+        }
     }
 
     public List<Map<String,String>> getMetricGroupList(String group) {

@@ -1088,6 +1088,9 @@ public class ControllerEngine {
                 logger.error("Failed to stop Network Discovery Engine");
             }
 
+            if(this.measurementEngine != null) {
+                this.measurementEngine.shutdown();
+            }
 
             this.GlobalControllerManagerActive = false;
             if (this.globalControllerManagerThread!= null) {
@@ -1109,6 +1112,16 @@ public class ControllerEngine {
                 logger.info("Region HealthWatcher shutting down");
 
             }
+
+            if(this.agentHealthWatcher != null) {
+                logger.trace("Agent HealthWatcher shutting down");
+                this.agentHealthWatcher.shutdown(true);
+                this.agentHealthWatcher.timer.cancel();
+                this.agentHealthWatcher = null;
+                logger.info("Agent HealthWatcher shutting down");
+            }
+
+
             this.ActiveBrokerManagerActive = false;
 
             //this.getIncomingCanidateBrokers().offer(null);
@@ -1127,6 +1140,21 @@ public class ControllerEngine {
             }
 
             this.ConsumerThreadActive = false;
+
+            if(this.kpip != null) {
+                logger.trace("KPI Producer Shutdown");
+                this.kpip.shutdown();
+                logger.trace("KPI Producer Shutdown");
+
+            }
+
+            if (this.kpiBroker != null) {
+                logger.trace("KPIBroker shutting down");
+                this.kpiBroker.stopBroker();
+                this.kpiBroker = null;
+                logger.info("KPIBroker shutting down");
+
+            }
 
             if (this.broker != null) {
                 logger.trace("Broker shutting down");

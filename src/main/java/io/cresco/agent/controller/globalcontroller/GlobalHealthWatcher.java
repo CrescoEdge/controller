@@ -48,6 +48,12 @@ public class GlobalHealthWatcher implements Runnable {
 
 	public void shutdown() {
 
+        regionalUpdateTimer.cancel();
+
+        SchedulerActive = false;
+        AppSchedulerActive = false;
+
+
         if(!controllerEngine.cstate.isGlobalController()) {
             if (controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
                 MsgEvent le = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
