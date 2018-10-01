@@ -6,6 +6,7 @@ import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.server.OServer;
 import com.orientechnologies.orient.server.OServerMain;
 import com.orientechnologies.orient.server.config.OServerConfiguration;
+import com.orientechnologies.orient.server.config.OServerResourceConfiguration;
 import com.orientechnologies.orient.server.config.OServerSecurityConfiguration;
 import com.orientechnologies.orient.server.config.OServerUserConfiguration;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
@@ -13,6 +14,10 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 
@@ -41,7 +46,6 @@ public class DBEngine {
 
         //set config values
         //OGlobalConfiguration.PROFILER_ENABLED.setValue(Boolean.TRUE);
-        setServer();
         setPool();
         /*
         String host = agentcontroller.getConfig().getStringParam("gdb_host");
@@ -71,6 +75,7 @@ public class DBEngine {
 
     public void shutdown() {
 
+
         try {
 
             if(factory != null) {
@@ -89,7 +94,7 @@ public class DBEngine {
 
 
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("shutdown() : " + ex.getMessage());
         }
 
     }
@@ -97,20 +102,37 @@ public class DBEngine {
     private void setServer() {
         try {
 
+            //public OServerResourceConfiguration(final String iName, final String iRoles) {
+            //public OServerUserConfiguration(final String iName, final String iPassword, final String iResources) {
+
+
             server = OServerMain.create();
             OServerConfiguration cfg = new OServerConfiguration();
+
+            OServerResourceConfiguration res = new OServerResourceConfiguration("root","admin");
+            List<OServerResourceConfiguration> resList = new ArrayList<>();
+            resList.add(res);
+
+            OServerUserConfiguration user = new OServerUserConfiguration("root",UUID.randomUUID().toString(),"admin");
+            List<OServerUserConfiguration> userList = new ArrayList<>();
+            userList.add(user);
+
             OServerSecurityConfiguration sec = new OServerSecurityConfiguration();
-                OServerUserConfiguration user = new OServerUserConfiguration();
-                user.name = "root";
-                user.password = UUID.randomUUID().toString();
-                sec.users.add(user);
-                cfg.security = sec;
+            sec.resources = resList;
+            sec.users = userList;
+
+            cfg.security = sec;
             // FILL THE OServerConfiguration OBJECT
-            server.startup(cfg);
-            server.activate();
+
+            //server.startup(cfg);
+            //server.activate();
 
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error("setServer : " + ex.getMessage());
+            logger.error(sw.toString());
         }
     }
 
@@ -137,7 +159,7 @@ public class DBEngine {
                     if (removeDB(iURI, username, password, dbname)) {
                         logger.debug("removed DB");
                     } else {
-                        logger.error("failed remove DB");
+                        logger.error("setPool() : failed remove DB");
                     }
                 }
                 if(createDB(iURI,username,password)) {
@@ -160,6 +182,10 @@ public class DBEngine {
 
             }
             else {
+
+                setServer();
+
+
                 //iURI = "memory:internalDb/" + dbname;
                 //db = new ODatabaseDocumentTx(iURI).create();
                 //pool = new OPartitionedDatabasePool(iURI, username,password).setAutoCreate(true);
@@ -169,7 +195,6 @@ public class DBEngine {
                 //OGlobalConfiguration.dumpConfiguration(System.out);
 
                 factory = new OrientGraphFactory("memory:internalDb");
-
 
             }
 
@@ -196,7 +221,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error(controllerEngine.getStringFromError(ex));
+            logger.error("dbExist() : " + controllerEngine.getStringFromError(ex));
         }
         return exist;
     }
@@ -210,7 +235,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error(controllerEngine.getStringFromError(ex));
+            logger.error("removeDB()" + controllerEngine.getStringFromError(ex));
         }
         return exist;
     }
@@ -219,6 +244,7 @@ public class DBEngine {
         boolean exist = false;
         try {
             OServerAdmin serverAdmin = new OServerAdmin(iURI).connect(username, password);
+
             //serverAdmin.createDatabase(dbname, "graph", "plocal");
             //serverAdmin.createDatabase("graph", "plocal");
             //OServerAdmin serverAdmin = new OServerAdmin("remote:localhost/cresco").connect("root", "cody01");
@@ -229,7 +255,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error(controllerEngine.getStringFromError(ex));
+            logger.error("createDB() " + controllerEngine.getStringFromError(ex));
         }
         return exist;
     }
