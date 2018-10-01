@@ -1088,9 +1088,6 @@ public class ControllerEngine {
                 logger.error("Failed to stop Network Discovery Engine");
             }
 
-            if(this.measurementEngine != null) {
-                this.measurementEngine.shutdown();
-            }
 
             this.GlobalControllerManagerActive = false;
             if (this.globalControllerManagerThread!= null) {
@@ -1121,6 +1118,9 @@ public class ControllerEngine {
                 logger.info("Agent HealthWatcher shutting down");
             }
 
+            if(this.measurementEngine != null) {
+                this.measurementEngine.shutdown();
+            }
 
             this.ActiveBrokerManagerActive = false;
 
