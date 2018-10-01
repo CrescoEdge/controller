@@ -1122,6 +1122,15 @@ public class ControllerEngine {
                 this.measurementEngine.shutdown();
             }
 
+            if (this.ap != null) {
+                logger.trace("Producer shutting down");
+                this.ap.shutdown();
+                this.ap = null;
+                logger.info("Producer shutting down");
+            }
+
+            this.ConsumerThreadActive = false;
+
             this.ActiveBrokerManagerActive = false;
 
             //this.getIncomingCanidateBrokers().offer(null);
@@ -1132,14 +1141,6 @@ public class ControllerEngine {
                 this.activeBrokerManagerThread = null;
                 logger.info("Active Broker Manager shutting down");
             }
-            if (this.ap != null) {
-                logger.trace("Producer shutting down");
-                this.ap.shutdown();
-                this.ap = null;
-                logger.info("Producer shutting down");
-            }
-
-            this.ConsumerThreadActive = false;
 
             if(this.kpip != null) {
                 logger.trace("KPI Producer Shutdown");
