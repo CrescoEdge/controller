@@ -10,6 +10,7 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -308,11 +309,10 @@ public class AgentExecutor implements Executor {
         return jarFilePath;
     }
 
-    private boolean pluginIsLocal(Map<String,String> hm) {
+    private boolean pluginIsLocal(Map<String,String> hm) throws IOException {
 
         boolean isLocal = false;
 
-        try {
             String jarFilePath = null;
 
             String pluginName = hm.get("pluginname");
@@ -341,9 +341,7 @@ public class AgentExecutor implements Executor {
                     }
                 }
             }
-        } catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
+
         return isLocal;
     }
 
