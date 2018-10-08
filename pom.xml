@@ -19,6 +19,7 @@
         <activemq.version>5.15.6</activemq.version>
     </properties>
 
+
     <dependencies>
 
         <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
