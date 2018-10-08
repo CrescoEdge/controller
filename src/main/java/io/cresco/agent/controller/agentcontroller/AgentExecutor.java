@@ -309,35 +309,40 @@ public class AgentExecutor implements Executor {
     }
 
     private boolean pluginIsLocal(Map<String,String> hm) {
+
         boolean isLocal = false;
 
-        String jarFilePath = null;
+        try {
+            String jarFilePath = null;
 
-        String pluginName = hm.get("pluginname");
-        String version = hm.get("version");
+            String pluginName = hm.get("pluginname");
+            String version = hm.get("version");
 
-        File repoCacheDir = getRepoCacheDir();
-        if(repoCacheDir != null) {
+            File repoCacheDir = getRepoCacheDir();
+            if (repoCacheDir != null) {
 
-            List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
-            if(pluginList != null) {
-                for (Map<String, String> params : pluginList) {
-                    String pluginNameLocal = params.get("pluginname");
-                    String versionLocal = params.get("version");
+                List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
+                if (pluginList != null) {
+                    for (Map<String, String> params : pluginList) {
+                        String pluginNameLocal = params.get("pluginname");
+                        String versionLocal = params.get("version");
 
-                    if ((pluginName != null) && (version != null)) {
+                        if ((pluginName != null) && (version != null)) {
 
-                        if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
-                            isLocal = true;
-                        }
+                            if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
+                                isLocal = true;
+                            }
 
-                    } else {
-                        if (pluginName.equals(pluginNameLocal)) {
-                            isLocal = true;
+                        } else {
+                            if (pluginName.equals(pluginNameLocal)) {
+                                isLocal = true;
+                            }
                         }
                     }
                 }
             }
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
         }
         return isLocal;
     }
