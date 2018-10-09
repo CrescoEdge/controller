@@ -180,13 +180,13 @@ public class RegionHealthWatcher {
                     if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
                         logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
                         //mark node disabled
-                        controllerEngine.getGDB().gdb.setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
+                        controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
 
                     }
                     else if(entry.getValue() == NodeStatusType.LOST) { //will include more items once nodes update correctly
                         logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
                         //remove nodes
-                        Map<String,String> edgeParams = controllerEngine.getGDB().gdb.getEdgeParamsNoTx(entry.getKey());
+                        Map<String,String> edgeParams = controllerEngine.getGDB().getEdgeParamsNoTx(entry.getKey());
                         //String nodeId = controllerEngine.getGDB().gdb.getNodeId(edgeMap.get("region"),null,null);
                         //Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
                         String region = edgeParams.get("region");
@@ -196,7 +196,7 @@ public class RegionHealthWatcher {
                         controllerEngine.getGDB().removeNode(region,agent,pluginId);
                     }
                     else if(entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
-                        Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
+                        Map<String,String> nodeParams = controllerEngine.getGDB().getNodeParams(entry.getKey());
                         for (Map.Entry<String, String> entry2 : nodeParams.entrySet()) {
                             logger.error("Key = " + entry2.getKey() + ", Value = " + entry2.getValue());
                         }

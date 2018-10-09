@@ -37,24 +37,24 @@ public class PollRemovePipeline implements Runnable {
 	 public void run() {
 	        try {
 
-	            int pipelineStatus = controllerEngine.getGDB().dba.getPipelineStatusCode(pipelineId);
+	            int pipelineStatus = controllerEngine.getGDB().getPipelineStatusCode(pipelineId);
 
                 //logger.error("PIPELINE ID " + pipelineId + " SCHEDILER FOR REMOVAL!!! STATUS " + pipelineStatus);
 
                 //if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
                 if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
 
-                    controllerEngine.getGDB().dba.setPipelineStatus(pipelineId, "9", "Pipeline Scheduled for Removal");
+                    controllerEngine.getGDB().setPipelineStatus(pipelineId, "9", "Pipeline Scheduled for Removal");
 
 
-					gpay = controllerEngine.getGDB().dba.getPipelineObj(pipelineId);
+					gpay = controllerEngine.getGDB().getPipelineObj(pipelineId);
                     //logger.error("pluginsid : " + pipelineId + " status_code " + controllerEngine.getGDB().dba.getPipelineStatus(pipelineId) + " pipleinId payload:" + gpay.pipeline_id);
                     if (pipelineId.equals(gpay.pipeline_id)) {
 
 						pipelineNodes = new ArrayList<>(gpay.nodes);
 						for (gNode gnode : pipelineNodes) {
 
-						    int statusCode = controllerEngine.getGDB().dba.getINodeStatus(gnode.node_id);
+						    int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
 						    if((statusCode >= 10) && (statusCode < 19))  { //running somewhere
 
                                 MsgEvent me = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
@@ -69,14 +69,14 @@ public class PollRemovePipeline implements Runnable {
                                 */
 
                                 //ghw.resourceScheduleQueue.add(me);
-                                controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_code","9");
-                                controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_desc","iNode Pipeline Scheduled for Removal");
+                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","9");
+                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode Pipeline Scheduled for Removal");
 
                                 controllerEngine.getResourceScheduleQueue().add(me);
                             }
                             else if(statusCode > 19) {
-                                controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_code","8");
-                                controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_desc","iNode Disabled");
+                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","8");
+                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode Disabled");
                             }
 						}
                     //start watch loop
@@ -92,16 +92,16 @@ public class PollRemovePipeline implements Runnable {
                             }
 
                             for(gNode gnode : checkList) {
-                                int statusCode = controllerEngine.getGDB().dba.getINodeStatus(gnode.node_id);
+                                int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
                                 if (statusCode != 9) {
                                     if(statusCode == 8) {
-                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_code"));
+                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
                                         pipelineNodes.remove(gnode);
                                     }
                                     if(statusCode > 19) {
                                         errorList.add(gnode);
                                         pipelineNodes.remove(gnode);
-                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_code"));
+                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
 
                                     }
                                 }
@@ -112,10 +112,10 @@ public class PollRemovePipeline implements Runnable {
                         }
                         //end watch loop
                         if(errorList.isEmpty()) {
-                            controllerEngine.getGDB().dba.removePipeline(pipelineId);
+                            controllerEngine.getGDB().removePipeline(pipelineId);
                             logger.debug("pipelineid " + pipelineId + " removed!");
                         } else {
-                            controllerEngine.getGDB().dba.setPipelineStatus(pipelineId, "80", "Pipeline Failed Removal");
+                            controllerEngine.getGDB().setPipelineStatus(pipelineId, "80", "Pipeline Failed Removal");
                             logger.error("PipelineID: " + pipelineId + " Removal Failed!");
                         }
                     }
@@ -125,7 +125,7 @@ public class PollRemovePipeline implements Runnable {
 		   catch(Exception ex)
 		   {
              logger.error("PollAddPipeline : " + ex.getMessage());
-               controllerEngine.getGDB().dba.setPipelineStatus(pipelineId, "90", "Pipeline Failed Removal");
+               controllerEngine.getGDB().setPipelineStatus(pipelineId, "90", "Pipeline Failed Removal");
                logger.error("PipelineID: " + pipelineId + " Removal Schedule Failed!");
 	       }
 	    }

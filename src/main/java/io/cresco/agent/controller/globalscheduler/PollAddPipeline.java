@@ -65,8 +65,8 @@ public class PollAddPipeline implements Runnable {
                     me.setCompressedParam("configparams",gson.toJson(gnode.params));
                     //me.setParam("configparams", configparms.toString());
                     logger.debug("Message [" + me.getParams().toString() + "]");
-                    controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_code","4");
-                    controllerEngine.getGDB().dba.setINodeParam(gnode.node_id,"status_desc","iNode resources scheduled.");
+                    controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","4");
+                    controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode resources scheduled.");
 
                     controllerEngine.getResourceScheduleQueue().add(me);
 
@@ -83,13 +83,13 @@ public class PollAddPipeline implements Runnable {
                     }
 
                     for(gNode gnode : checkList) {
-                        int statusCode = Integer.parseInt(controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_code"));
+                        int statusCode = Integer.parseInt(controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
                         logger.debug("PipelineId " + pipelineId + " Status " + statusCode);
                         if (statusCode != 4) {
                             //logger.debug("PollAddPipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_code"));
                             pipelineNodes.remove(gnode);
                             if(statusCode != 10) {
-                                String statusDesc = controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_desc");
+                                String statusDesc = controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_desc");
                                 logger.error("PipelineId " + pipelineId + " Status Code " + statusCode + " Status Desc " + statusDesc);
                                 errorList.add(gnode);
                             }
@@ -100,10 +100,10 @@ public class PollAddPipeline implements Runnable {
 
 	        	}
                 if(errorList.isEmpty()) {
-                    controllerEngine.getGDB().dba.setPipelineStatus(pipelineId, "10", "Pipeline Active");
+                    controllerEngine.getGDB().setPipelineStatus(pipelineId, "10", "Pipeline Active");
                     logger.debug("PipelineId " + pipelineId + " Pipeline Active");
                 } else {
-                    controllerEngine.getGDB().dba.setPipelineStatus(pipelineId, "50", "Pipeline Failed Resource Assignment");
+                    controllerEngine.getGDB().setPipelineStatus(pipelineId, "50", "Pipeline Failed Resource Assignment");
                     logger.error("PipelineId " + pipelineId + " Failed Resource Assignment");
                 }
 

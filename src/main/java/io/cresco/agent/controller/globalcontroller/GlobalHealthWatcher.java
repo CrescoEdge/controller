@@ -531,7 +531,7 @@ public class GlobalHealthWatcher implements Runnable {
 	    try {
             if(!this.controllerEngine.cstate.isGlobalController()) {
                 //TODO Enable Export
-                String dbexport = controllerEngine.getGDB().gdb.getDBExport();
+                String dbexport = controllerEngine.getGDB().getDBExport();
 
                 if (doRegionalUpdate(dbexport)) {
 
@@ -613,7 +613,7 @@ public class GlobalHealthWatcher implements Runnable {
                     if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
                         logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
                         //mark node disabled
-                        controllerEngine.getGDB().gdb.setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
+                        controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
                     }
                     else if(entry.getValue() == NodeStatusType.LOST) { //will include more items once nodes update correctly
                         /*
@@ -626,7 +626,7 @@ public class GlobalHealthWatcher implements Runnable {
                         logger.error("Removing " + region + " " + agent + " " + pluginId);
                         controllerEngine.getGDB().removeNode(region,agent,pluginId);
                         */
-                        Map<String,String> edgeParams = controllerEngine.getGDB().gdb.getEdgeParamsNoTx(entry.getKey());
+                        Map<String,String> edgeParams = controllerEngine.getGDB().getEdgeParamsNoTx(entry.getKey());
                         //String nodeId = controllerEngine.getGDB().gdb.getNodeId(edgeMap.get("region"),null,null);
                         //Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
                         String region = edgeParams.get("region");

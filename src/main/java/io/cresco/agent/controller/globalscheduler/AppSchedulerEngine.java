@@ -53,7 +53,7 @@ public class AppSchedulerEngine implements Runnable {
 
                         logger.debug("gPayload.added");
 
-                        gPayload createdPipeline = controllerEngine.getGDB().dba.createPipelineNodes(gpay);
+                        gPayload createdPipeline = controllerEngine.getGDB().createPipelineNodes(gpay);
 
                         if(createdPipeline.status_code.equals("3")) {
                             logger.debug("Created Pipeline Records: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
@@ -65,15 +65,15 @@ public class AppSchedulerEngine implements Runnable {
 
 
                                 //all metrics
-                                case 1: controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"40","Failed to schedule pipeline resources exception.");
+                                case 1: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"40","Failed to schedule pipeline resources exception.");
                                     break;
                                 case 4: //all is good!
                                     break;
                                         //controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"4","Pipeline resources scheduled.");
                                         //moved into schedulePipeline to prevent race condition
-                                case 60: controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"60","Failed to schedule pipeline node resources.");
+                                case 60: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"60","Failed to schedule pipeline node resources.");
                                     break;
-                                case 61: controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"61","Failed to schedule pipeline edge resources.");
+                                case 61: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"61","Failed to schedule pipeline edge resources.");
                                     break;
 
                                 default:
@@ -117,7 +117,7 @@ public class AppSchedulerEngine implements Runnable {
     public int schedulePipeline(String pipeline_id) {
         int scheduleStatus = 1;
         try {
-            gPayload gpay = controllerEngine.getGDB().dba.getPipelineObj(pipeline_id);
+            gPayload gpay = controllerEngine.getGDB().getPipelineObj(pipeline_id);
             logger.debug("checkPipeline started for Pipeline_id:" + gpay.pipeline_id + " Pipeline_name:" + gpay.pipeline_name);
 
             List<String> badINodes = new ArrayList<String>();
@@ -126,7 +126,7 @@ public class AppSchedulerEngine implements Runnable {
                 String iNode_id = node.node_id;
 
                 logger.debug("Checking iNode_id:" + iNode_id);
-                controllerEngine.getGDB().dba.addINodeResource(gpay.pipeline_id, iNode_id);
+                controllerEngine.getGDB().addINodeResource(gpay.pipeline_id, iNode_id);
 
             }
 
@@ -161,7 +161,7 @@ public class AppSchedulerEngine implements Runnable {
                 if(assignedNodeList.size() == schedulemaps.get("assigned").size()) {
                     //set DB as scheduled
                     logger.debug("Submitting Resource Pipeline for Scheduling " + gpay.pipeline_id);
-                    controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id, "4", "Pipeline resources scheduled.");
+                    controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id, "4", "Pipeline resources scheduled.");
                     addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, schedulemaps.get("assigned"), gpay.pipeline_id));
                     logger.debug("Submitted Resource Pipeline for Scheduling");
                     scheduleStatus = 4;
@@ -183,7 +183,7 @@ public class AppSchedulerEngine implements Runnable {
     public boolean nodeExist(String region, String agent) {
         boolean nodeExist = false;
         try {
-            String nodeId = controllerEngine.getGDB().gdb.getNodeId(region,agent,null);
+            String nodeId = controllerEngine.getGDB().getNodeId(region,agent,null);
             if(nodeId != null) {
                 nodeExist = true;
             }
@@ -197,7 +197,7 @@ public class AppSchedulerEngine implements Runnable {
     public boolean locationExist(String location) {
         boolean isLocation = false;
         //String getINodeId(String resource_id, String inode_id)
-        List<String> aNodeLocations = controllerEngine.getGDB().gdb.getANodeFromIndex("location",location);
+        List<String> aNodeLocations = controllerEngine.getGDB().getANodeFromIndex("location",location);
         if(aNodeLocations.size() > 0) {
             isLocation = true;
         }
@@ -269,7 +269,7 @@ public class AppSchedulerEngine implements Runnable {
                 } else if(node.params.containsKey("location")) {
                     String nodeId = getLocationNodeId(node.params.get("location"));
                     if(nodeId != null) {
-                        Map<String,String> nodeMap = controllerEngine.getGDB().gdb.getNodeParams(nodeId);
+                        Map<String,String> nodeMap = controllerEngine.getGDB().getNodeParams(nodeId);
                         node.params.put("location_region",nodeMap.get("region"));
                         node.params.put("location_agent",nodeMap.get("agent"));
                         unAssignedNodes.remove(node);
@@ -292,7 +292,7 @@ public class AppSchedulerEngine implements Runnable {
     private String getLocationNodeId(String location) {
         String locationNodeId = null;
         try {
-            List<String> aNodeList = controllerEngine.getGDB().gdb.getANodeFromIndex("location", location);
+            List<String> aNodeList = controllerEngine.getGDB().getANodeFromIndex("location", location);
             if(!aNodeList.isEmpty()) {
                 locationNodeId = aNodeList.get(0);
             }

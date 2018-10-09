@@ -26,8 +26,8 @@ public class DBInterfaceEngine {
     private PluginBuilder plugin;
     private CLogger logger;
     private DBEngine gde;
-    public DBBaseFunctions gdb;
-    public DBApplicationFunctions dba;
+    private DBBaseFunctions gdb;
+    private DBApplicationFunctions dba;
     private ControllerEngine controllerEngine;
 
     private Gson gson;
@@ -1588,6 +1588,126 @@ public class DBInterfaceEngine {
             logger.error("GraphDBUpdater : removeNode ERROR : " + ex.toString());
         }
         return wasRemoved;
+    }
+
+    public boolean setEdgeParam(String edgeId, String paramKey, String paramValue) {
+        return gdb.setEdgeParam(edgeId, paramKey, paramValue);
+    }
+
+    public Map<String,String> getEdgeParamsNoTx(String edgeId) {
+        return gdb.getEdgeParamsNoTx(edgeId);
+    }
+
+    public Map<String,String> getNodeParams(String node_id) {
+        return gdb.getNodeParams(node_id);
+    }
+
+    public String getINodeParams(String iNode_id) {
+        return dba.getINodeParams(iNode_id);
+    }
+
+    public String getINodeParam(String inode_id, String param) {
+        return dba.getINodeParam(inode_id, param);
+    }
+
+    public Map<String,String> getpNodeINode(String iNode_id) {
+        return dba.getpNodeINode(iNode_id);
+    }
+
+    public List<String> getANodeFromIndex(String indexName, String indexValue) {
+        return gdb.getANodeFromIndex(indexName, indexValue);
+    }
+
+    public boolean setINodeParam(String inode_id, String paramKey, String paramValue) {
+        return dba.setINodeParam(inode_id, paramKey, paramValue);
+    }
+
+    public String addEdge(String src_region, String src_agent, String src_plugin, String dst_region, String dst_agent, String dst_plugin, String className, Map<String,String> paramMap) {
+        return gdb.addEdge(src_region, src_agent, src_plugin, dst_region, dst_agent, dst_plugin, className, paramMap);
+    }
+
+    public String getPipeline(String pipelineId) {
+        return dba.getPipeline(pipelineId);
+    }
+
+    public gPayload createPipelineRecord(String tenant_id, String gPayload) {
+        return dba.createPipelineRecord(tenant_id, gPayload);
+    }
+
+    public String addINode(String resource_id, String inode_id) {
+        return dba.addINode(resource_id, inode_id);
+    }
+
+    public boolean updateKPI(String region, String agent, String pluginId, String resource_id, String inode_id, Map<String,String> params) {
+        return dba.updateKPI(region, agent, pluginId, resource_id, inode_id, params);
+    }
+
+    public String getDBExport() {
+        return gdb.getDBExport();
+    }
+
+    public gPayload createPipelineNodes(gPayload gpay) {
+        return dba.createPipelineNodes(gpay);
+    }
+
+    /*
+    public boolean setPipelineStatus(gPayload gpay) {
+        return dba.setPipelineStatus(gpay);
+    }
+    */
+    public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc) {
+        return dba.setPipelineStatus(pipelineId, status_code, status_desc);
+    }
+
+    public gPayload getPipelineObj(String pipelineId) {
+        return dba.getPipelineObj(pipelineId);
+    }
+
+    public String addINodeResource(String resource_id, String inode_id) {
+        return dba.addINodeResource(resource_id, inode_id);
+    }
+
+    public String getNodeId(String region, String agent, String plugin) {
+        return gdb.getNodeId(region, agent, plugin);
+    }
+
+    public int getPipelineStatusCode(String pipelineId) {
+        return dba.getPipelineStatusCode(pipelineId);
+    }
+
+    public int getINodeStatus(String INodeId) {
+        return dba.getINodeStatus(INodeId);
+    }
+
+    public boolean removePipeline(String pipelineId) {
+        return dba.removePipeline(pipelineId);
+    }
+
+    public List<String> getNodeList(String region, String agent, String plugin) {
+        return gdb.getNodeList(region, agent, plugin);
+    }
+
+    public String addIsAttachedEdge(String resource_id, String inode_id, String region, String agent, String plugin) {
+        return dba.addIsAttachedEdge(resource_id, inode_id, region, agent, plugin);
+    }
+
+    /*
+    public String getResourceEdgeId(String resource_id, String inode_id, String region, String agent, String pluginId) {
+        return dba.getResourceEdgeId(resource_id, inode_id, region, agent, pluginId);
+
+    }
+    */
+
+    public String getResourceEdgeId(String resource_id, String inode_id) {
+        return dba.getResourceEdgeId(resource_id, inode_id);
+
+    }
+    public String getIsAssignedParam(String edge_id,String param_name) {
+        return dba.getIsAssignedParam(edge_id, param_name);
+    }
+
+    public boolean setDBImport(String exportData) {
+        return gdb.setDBImport(exportData);
     }
 
 }

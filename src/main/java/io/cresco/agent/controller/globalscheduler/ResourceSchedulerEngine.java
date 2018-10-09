@@ -110,8 +110,8 @@ public class ResourceSchedulerEngine implements Runnable {
                             if(pluginNode == null)
 							{
                                 logger.error("pluginnode == null");
-								if((controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_code","1")) &&
-										(controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Failed Activation : Plugin not found!")))
+								if((controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_code","1")) &&
+										(controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Failed Activation : Plugin not found!")))
 								{
 									logger.debug("Provisioning Failed: No matching plugins found!");
 								}
@@ -138,7 +138,7 @@ public class ResourceSchedulerEngine implements Runnable {
 						}
 						else if(ce.getParam("globalcmd").equals("removeplugin"))
 						{
-							Map<String,String> pNodeMap = controllerEngine.getGDB().dba.getpNodeINode(ce.getParam("inode_id"));
+							Map<String,String> pNodeMap = controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id"));
                             logger.debug("Incoming Remove Request : resource_id: " + ce.getParam("resource_id") + " inode_id: " + ce.getParam("inode_id") + " pnodeMap: " + pNodeMap.toString());
                             new Thread(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id"))).start();
 						}
@@ -335,16 +335,16 @@ public class ResourceSchedulerEngine implements Runnable {
 		String agent_path = null;
 		try
 		{
-			List<String> regionList = controllerEngine.getGDB().gdb.getNodeList(null,null,null);
+			List<String> regionList = controllerEngine.getGDB().getNodeList(null,null,null);
 			//logger.debug("Region Count: " + regionList.size());
 			for(String region : regionList)
 			{
-				List<String> agentList = controllerEngine.getGDB().gdb.getNodeList(region,null,null);
+				List<String> agentList = controllerEngine.getGDB().getNodeList(region,null,null);
 				//logger.debug("Agent Count: " + agentList.size());
 				
 				for(String agent: agentList)
 				{
-					List<String> pluginList = controllerEngine.getGDB().gdb.getNodeList(region,agent,null);
+					List<String> pluginList = controllerEngine.getGDB().getNodeList(region,agent,null);
 					int pluginCount = 0;
 					if(pluginList != null)
 					{

@@ -43,7 +43,7 @@ public class DBManager implements Runnable  {
 	private void processDBImports() {
 		try {
 			while (!importQueue.isEmpty()) {
-				controllerEngine.getGDB().gdb.setDBImport(importQueue.take());
+				controllerEngine.getGDB().setDBImport(importQueue.take());
 			}
 		} catch(Exception ex) {
 			logger.error("processDBImports() Error : " + ex.toString());

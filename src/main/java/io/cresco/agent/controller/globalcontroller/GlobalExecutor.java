@@ -467,14 +467,14 @@ public class GlobalExecutor implements Executor {
         {
             if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null))
             {
-                String status_code = controllerEngine.getGDB().dba.getINodeParam(ce.getParam("inode_id"),"status_code");
-                String status_desc = controllerEngine.getGDB().dba.getINodeParam(ce.getParam("inode_id"),"status_desc");
+                String status_code = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_code");
+                String status_desc = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_desc");
                 if((status_code != null) && (status_desc != null))
                 {
                     ce.setParam("status_code",status_code);
                     ce.setParam("status_desc",status_desc);
 
-                    Map<String,String> nodeMap = controllerEngine.getGDB().dba.getpNodeINode(ce.getParam("inode_id"));
+                    Map<String,String> nodeMap = controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id"));
                     Gson gson = new Gson();
                     String pNodeMapString = gson.toJson(nodeMap);
                     ce.setCompressedParam("pnode",pNodeMapString);
@@ -566,7 +566,7 @@ public class GlobalExecutor implements Executor {
                 String indexName = ce.getParam("environment_id");
                 String indexValue = ce.getParam("environment_value");
 
-                List<String> envNodeList = controllerEngine.getGDB().gdb.getANodeFromIndex(indexName, indexValue);
+                List<String> envNodeList = controllerEngine.getGDB().getANodeFromIndex(indexName, indexValue);
                 ce.setParam("count",String.valueOf(envNodeList.size()));
             }
             else
@@ -631,8 +631,8 @@ public class GlobalExecutor implements Executor {
         {
             if((ce.getParam("action_inodeid") != null) && (ce.getParam("action_statuscode") != null) && (ce.getParam("action_statusdesc") != null))
             {
-                controllerEngine.getGDB().dba.setINodeParam(ce.getParam("action_inodeid"),"status_code",ce.getParam("action_statuscode"));
-                controllerEngine.getGDB().dba.setINodeParam(ce.getParam("action_inodeid"),"status_desc",ce.getParam("action_statusdesc"));
+                controllerEngine.getGDB().setINodeParam(ce.getParam("action_inodeid"),"status_code",ce.getParam("action_statuscode"));
+                controllerEngine.getGDB().setINodeParam(ce.getParam("action_inodeid"),"status_desc",ce.getParam("action_statusdesc"));
                 ce.setParam("success", Boolean.TRUE.toString());
             } else {
                 ce.setParam("error", "Missing Information action_inodeid=" + ce.getParam("action_inodeid") + " action_statuscode=" + ce.getParam("action_statuscode") + " action_statusdesc=" + ce.getParam("action_statusdesc"));
@@ -682,7 +682,7 @@ public class GlobalExecutor implements Executor {
             paramMap.put("region", ce.getParam("src_region"));
 
 
-            String edgeId = controllerEngine.getGDB().gdb.addEdge(ce.getSrcRegion(),null,null, ce.getDstRegion(), null,null,"isRegionHealth",paramMap);
+            String edgeId = controllerEngine.getGDB().addEdge(ce.getSrcRegion(),null,null, ce.getDstRegion(), null,null,"isRegionHealth",paramMap);
 
             ce.setParam("is_registered","true");
         }
@@ -714,10 +714,10 @@ public class GlobalExecutor implements Executor {
         try {
 
             if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null)) {
-                if(controllerEngine.getGDB().dba.getpNodeINode(ce.getParam("inode_id")) != null)
+                if(controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id")) != null)
                 {
-                    if((controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_code","10")) &&
-                            (controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_desc","iNode scheduled for removal.")))
+                    if((controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_code","10")) &&
+                            (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_desc","iNode scheduled for removal.")))
                     {
                         ce.setParam("status_code","10");
                         ce.setParam("status_desc","iNode scheduled for removal.");
@@ -820,7 +820,7 @@ public class GlobalExecutor implements Executor {
             if(ce.getParam("action_pipelineid") != null) {
                 String pipelineId = ce.getParam("action_pipelineid");
                 if(pipelineId != null) {
-                    String pipelinString = controllerEngine.getGDB().dba.getPipeline(pipelineId);
+                    String pipelinString = controllerEngine.getGDB().getPipeline(pipelineId);
                     if(pipelinString != null) {
                         logger.trace("removePipelineExecutor.execute(new PollRemovePipeline(agentcontroller, pipelineId));");
                         removePipelineExecutor.execute(new PollRemovePipeline(controllerEngine, pipelineId));
@@ -879,7 +879,7 @@ public class GlobalExecutor implements Executor {
                 }
                 */
 
-                gPayload gpay = controllerEngine.getGDB().dba.createPipelineRecord(tenantID, pipelineJSON);
+                gPayload gpay = controllerEngine.getGDB().createPipelineRecord(tenantID, pipelineJSON);
 
                 //add to scheduling queue
                 controllerEngine.getAppScheduleQueue().add(gpay);
@@ -905,13 +905,13 @@ public class GlobalExecutor implements Executor {
 
             if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null) && (ce.getParam("configparams") != null)) {
 
-                if(controllerEngine.getGDB().dba.getpNodeINode(ce.getParam("inode_id")) == null)
+                if(controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id")) == null)
                 {
-                    if(controllerEngine.getGDB().dba.addINode(ce.getParam("resource_id"),ce.getParam("inode_id")) != null)
+                    if(controllerEngine.getGDB().addINode(ce.getParam("resource_id"),ce.getParam("inode_id")) != null)
                     {
-                        if((controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_code","0")) &&
-                                (controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Scheduled.")) &&
-                                (controllerEngine.getGDB().dba.setINodeParam(ce.getParam("inode_id"),"configparams",ce.getParam("configparams"))))
+                        if((controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_code","0")) &&
+                                (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Scheduled.")) &&
+                                (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"configparams",ce.getParam("configparams"))))
                         {
                             ce.setParam("status_code","0");
                             ce.setParam("status_desc","iNode Scheduled");
@@ -1023,7 +1023,7 @@ public class GlobalExecutor implements Executor {
 				//forward KPI
             controllerEngine.getKPIProducer().sendMessage(region,agent,pluginid,resource_id,inode_id,params);
                 //record KPI
-            controllerEngine.getGDB().dba.updateKPI(region, agent, pluginid, resource_id, inode_id, params);
+            controllerEngine.getGDB().updateKPI(region, agent, pluginid, resource_id, inode_id, params);
 
         }
         catch(Exception ex) {

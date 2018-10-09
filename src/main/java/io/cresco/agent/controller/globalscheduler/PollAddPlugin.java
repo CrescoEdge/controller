@@ -48,32 +48,32 @@ public class PollAddPlugin implements Runnable {
 					String status_desc_plugin = re.getParam("status_desc");
 
 
-					controllerEngine.getGDB().dba.addIsAttachedEdge(resource_id, inode_id, region, agent, pluginId);
+					controllerEngine.getGDB().addIsAttachedEdge(resource_id, inode_id, region, agent, pluginId);
 
 					if((status_code_plugin == null) || (status_desc_plugin == null)) {
-						controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_code", "42");
-						controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_desc", "iNode Missing Status Parameters.");
+						controllerEngine.getGDB().setINodeParam(inode_id, "status_code", "42");
+						controllerEngine.getGDB().setINodeParam(inode_id, "status_desc", "iNode Missing Status Parameters.");
 					} else {
 						if (Integer.parseInt(status_code_plugin) == 10) {
-							controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_code", "10");
-							controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_desc", "iNode Active.");
+							controllerEngine.getGDB().setINodeParam(inode_id, "status_code", "10");
+							controllerEngine.getGDB().setINodeParam(inode_id, "status_desc", "iNode Active.");
 						} else {
-							controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_code", status_code_plugin);
-							controllerEngine.getGDB().dba.setINodeParam(inode_id, "status_desc", status_desc_plugin);
+							controllerEngine.getGDB().setINodeParam(inode_id, "status_code", status_code_plugin);
+							controllerEngine.getGDB().setINodeParam(inode_id, "status_desc", status_desc_plugin);
 						}
 					}
 				} else {
 					logger.debug("pollAddPlugin : unable to verify iNode activation!  inode_id=" + inode_id);
-					controllerEngine.getGDB().dba.setINodeParam(inode_id,"status_code","40");
-					controllerEngine.getGDB().dba.setINodeParam(inode_id,"status_desc","iNode Failed Scheduling.");
+					controllerEngine.getGDB().setINodeParam(inode_id,"status_code","40");
+					controllerEngine.getGDB().setINodeParam(inode_id,"status_desc","iNode Failed Scheduling.");
 				}
 
 	        }
 		   catch(Exception ex)
 		   {
                logger.debug("ResourceSchedulerEngine : pollAddPlugin : unable to verify iNode activation!  inode_id=" + inode_id);
-               controllerEngine.getGDB().dba.setINodeParam(inode_id,"status_code","41");
-               controllerEngine.getGDB().dba.setINodeParam(inode_id,"status_desc","iNode Failed Scheduling Exception.");
+               controllerEngine.getGDB().setINodeParam(inode_id,"status_code","41");
+               controllerEngine.getGDB().setINodeParam(inode_id,"status_desc","iNode Failed Scheduling Exception.");
 
                logger.error("PollAddPlugin: Error " + ex.getMessage());
                StringWriter errors = new StringWriter();
