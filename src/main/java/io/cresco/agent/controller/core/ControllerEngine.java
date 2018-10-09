@@ -5,7 +5,7 @@ import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.communication.*;
-import io.cresco.agent.controller.db.DBInterfaceEngine;
+import io.cresco.agent.controller.db.DBInterfaceImpl;
 import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
@@ -69,7 +69,7 @@ public class ControllerEngine {
     private ActiveAgentConsumer activeAgentConsumer;
     private ActiveBroker broker;
     private KPIBroker kpiBroker;
-    private DBInterfaceEngine gdb;
+    private DBInterfaceImpl gdb;
     private KPIProducer kpip;
     private ActiveProducer ap;
     private AgentHealthWatcher agentHealthWatcher;
@@ -729,7 +729,7 @@ public class ControllerEngine {
 
             //removed region consumer, no longer needed things to go agents
 
-            this.gdb = new DBInterfaceEngine(this);
+            this.gdb = new DBInterfaceImpl(this);
             logger.debug("RegionalControllerDB Service Started");
 
             //DB manager
@@ -738,7 +738,7 @@ public class ControllerEngine {
             this.DBManagerThread = new Thread(new DBManager(this, this.gdb.importQueue));
             this.DBManagerThread.start();
 
-            //started by DBInterfaceEngine
+            //started by DBInterfaceImpl
             while (!this.DBManagerActive) {
                 Thread.sleep(1000);
             }
@@ -1001,10 +1001,10 @@ public class ControllerEngine {
         this.appScheduleQueue = appScheduleQueue;
     }
 
-    public DBInterfaceEngine getGDB() {
+    public DBInterfaceImpl getGDB() {
         return gdb;
     }
-    public void setGDB(DBInterfaceEngine gdb) {
+    public void setGDB(DBInterfaceImpl gdb) {
         this.gdb = gdb;
     }
 

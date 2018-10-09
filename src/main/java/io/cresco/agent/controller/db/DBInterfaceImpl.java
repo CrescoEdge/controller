@@ -21,7 +21,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class DBInterfaceEngine {
+public class DBInterfaceImpl implements DBInterface {
 
     private PluginBuilder plugin;
     private CLogger logger;
@@ -36,12 +36,12 @@ public class DBInterfaceEngine {
     public BlockingQueue<String> importQueue;
 
 
-    public DBInterfaceEngine(ControllerEngine controllerEngine) {
+    public DBInterfaceImpl(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
-        this.logger = plugin.getLogger(DBInterfaceEngine.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
 
-        //this.logger = new CLogger(DBInterfaceEngine.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
+        //this.logger = new CLogger(DBInterfaceImpl.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
         //this.agentcontroller = agentcontroller;
         this.importQueue = new LinkedBlockingQueue<>();
         this.gde = new DBEngine(this.plugin);
@@ -63,16 +63,6 @@ public class DBInterfaceEngine {
         }
 
     }
-
-    /*
-    public Thread getDBManagerThread() {
-        return DBManagerThread;
-    }
-
-    public void setDBManagerThread(Thread activeDBManagerThread) {
-        this.DBManagerThread = activeDBManagerThread;
-    }
-    */
 
     public Map<String,String> paramStringToMap(String param) {
         Map<String,String> params = null;
@@ -508,7 +498,6 @@ public class DBInterfaceEngine {
         return queryReturn;
     }
 
-
     public String getPluginList(String actionRegion, String actionAgent) {
         String queryReturn = null;
 
@@ -660,7 +649,6 @@ public class DBInterfaceEngine {
 
     }
 
-
     private String getGlobalResourceInfo() {
         String queryReturn = null;
 
@@ -736,6 +724,7 @@ public class DBInterfaceEngine {
         return queryReturn;
 
     }
+
     private String getRegionResourceInfo(String actionRegion) {
         String queryReturn = null;
 
@@ -811,6 +800,7 @@ public class DBInterfaceEngine {
         return queryReturn;
 
     }
+
     private String getAgentResourceInfo(String actionRegion, String actionAgent) {
         String queryReturn = null;
 
@@ -1650,11 +1640,6 @@ public class DBInterfaceEngine {
         return dba.createPipelineNodes(gpay);
     }
 
-    /*
-    public boolean setPipelineStatus(gPayload gpay) {
-        return dba.setPipelineStatus(gpay);
-    }
-    */
     public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc) {
         return dba.setPipelineStatus(pipelineId, status_code, status_desc);
     }
@@ -1690,13 +1675,6 @@ public class DBInterfaceEngine {
     public String addIsAttachedEdge(String resource_id, String inode_id, String region, String agent, String plugin) {
         return dba.addIsAttachedEdge(resource_id, inode_id, region, agent, plugin);
     }
-
-    /*
-    public String getResourceEdgeId(String resource_id, String inode_id, String region, String agent, String pluginId) {
-        return dba.getResourceEdgeId(resource_id, inode_id, region, agent, pluginId);
-
-    }
-    */
 
     public String getResourceEdgeId(String resource_id, String inode_id) {
         return dba.getResourceEdgeId(resource_id, inode_id);
