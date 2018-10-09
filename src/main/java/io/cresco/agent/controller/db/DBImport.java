@@ -37,6 +37,7 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.OJSONReader;
 import com.orientechnologies.orient.core.serialization.serializer.record.string.ORecordSerializerJSON;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.InputStream;
@@ -67,9 +68,9 @@ public class DBImport {
     private ODatabaseDocumentTx db;
     private DBBaseFunctions gdb;
 
-    public DBImport(ControllerEngine controllerEngine, final InputStream iStream, DBBaseFunctions gdb, ODatabaseDocumentTx db) {
+    public DBImport(PluginBuilder plugin, final InputStream iStream, DBBaseFunctions gdb, ODatabaseDocumentTx db) {
 
-        this.logger = controllerEngine.getPluginBuilder().getLogger(DBImport.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(DBImport.class.getName(),CLogger.Level.Info);
 
         //this.logger = new CLogger(DBImport.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
         this.db = db;

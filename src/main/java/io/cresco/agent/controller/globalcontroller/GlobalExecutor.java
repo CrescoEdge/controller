@@ -880,6 +880,10 @@ public class GlobalExecutor implements Executor {
                 */
 
                 gPayload gpay = controllerEngine.getGDB().dba.createPipelineRecord(tenantID, pipelineJSON);
+
+                //add to scheduling queue
+                controllerEngine.getAppScheduleQueue().add(gpay);
+
                 //String returnGpipeline = controllerEngine.getGDB().dba.JsonFromgPayLoad(gpay);
                 //remove for the sake of network traffic
                 ce.removeParam("action_gpipeline");
@@ -1016,6 +1020,9 @@ public class GlobalExecutor implements Executor {
 				ce.removeParam("dst_region");
 				ce.removeParam("dst_plugin");
 				*/
+				//forward KPI
+            controllerEngine.getKPIProducer().sendMessage(region,agent,pluginid,resource_id,inode_id,params);
+                //record KPI
             controllerEngine.getGDB().dba.updateKPI(region, agent, pluginid, resource_id, inode_id, params);
 
         }

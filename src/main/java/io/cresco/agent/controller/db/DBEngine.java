@@ -25,18 +25,16 @@ public class DBEngine {
 
 	public OrientGraphFactory factory;
 	public ODatabaseDocumentTx db;
-	private ControllerEngine controllerEngine;
-    private PluginBuilder plugin;
+	private PluginBuilder plugin;
     private CLogger logger;
     //public OrientGraphFactory factory;
     public OPartitionedDatabasePool pool;
     private int retryCount;
     private OServer server;
 
-    public DBEngine(ControllerEngine controllerEngine) {
+    public DBEngine(PluginBuilder plugin) {
 
-        this.controllerEngine = controllerEngine;
-        this.plugin = controllerEngine.getPluginBuilder();
+        this.plugin = plugin;
         this.logger = plugin.getLogger(DBEngine.class.getName(),CLogger.Level.Info);
 
         //this.agentcontroller = agentcontroller;
@@ -206,7 +204,7 @@ public class DBEngine {
         }
         catch(Exception ex) {
             logger.error("setPool : " + ex.getMessage());
-            logger.error(controllerEngine.getStringFromError(ex));
+            logger.error(getStringFromError(ex));
         }
 
     }
@@ -221,7 +219,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error("dbExist() : " + controllerEngine.getStringFromError(ex));
+            logger.error("dbExist() : " + getStringFromError(ex));
         }
         return exist;
     }
@@ -235,7 +233,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error("removeDB()" + controllerEngine.getStringFromError(ex));
+            logger.error("removeDB()" + getStringFromError(ex));
         }
         return exist;
     }
@@ -255,7 +253,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            logger.error("createDB() " + controllerEngine.getStringFromError(ex));
+            logger.error("createDB() " + getStringFromError(ex));
         }
         return exist;
     }
@@ -297,226 +295,10 @@ public class DBEngine {
     }
 
 
-    /*
-
-    boolean createVertexIndex(String className, String indexName, boolean isUnique)
-    {
-        boolean wasCreated = false;
-        try
-        {
-            OrientGraphNoTx txGraph = factory.getNoTx();
-            //OSchema schema = ((OrientGraph)odb).getRawGraph().getMetadata().getSchema();
-            OSchema schema = ((OrientGraphNoTx)txGraph).getRawGraph().getMetadata().getSchema();
-
-            if (schema.existsClass(className))
-            {
-                OClass vt = txGraph.getVertexType(className);
-                //OClass vt = txGraph.createVertexType(className);
-                vt.createProperty(indexName, OType.STRING);
-
-                if(isUnique)
-                {
-                    vt.createIndex(className + "." + indexName, OClass.INDEX_TYPE.UNIQUE, indexName);
-                }
-                else
-                {
-                    vt.createIndex(className + "." + indexName, OClass.INDEX_TYPE.NOTUNIQUE, indexName);
-                }
-
-                wasCreated = true;
-            }
-
-            txGraph.commit();
-            txGraph.shutdown();
-        }
-        catch(Exception ex)
-        {
-            logger.debug("DBEngine : createVertexIndex : Error " + ex.toString());
-        }
-
-        return wasCreated;
+    public String getStringFromError(Exception ex) {
+        StringWriter errors = new StringWriter();
+        ex.printStackTrace(new PrintWriter(errors));
+        return errors.toString();
     }
 
-    boolean createVertexIndex(String className, String[] props, String indexName, boolean isUnique)
-    {
-        boolean wasCreated = false;
-        OrientGraphNoTx txGraph = factory.getNoTx();
-        //OSchema schema = ((OrientGraph)odb).getRawGraph().getMetadata().getSchema();
-        OSchema schema = ((OrientGraphNoTx)txGraph).getRawGraph().getMetadata().getSchema();
-
-        if (schema.existsClass(className))
-        {
-            OClass vt = txGraph.getVertexType(className);
-            //OClass vt = txGraph.createVertexType(className);
-            for(String prop : props)
-            {
-                vt.createProperty(prop, OType.STRING);
-            }
-            if(isUnique)
-            {
-                vt.createIndex(className + "." + indexName, OClass.INDEX_TYPE.UNIQUE, props);
-            }
-            else
-            {
-                vt.createIndex(className + "." + indexName, OClass.INDEX_TYPE.NOTUNIQUE, props);
-            }
-
-            wasCreated = true;
-        }
-        txGraph.commit();
-        txGraph.shutdown();
-        return wasCreated;
-    }
-
-    boolean createVertexClass(String className, String[] props)
-    {
-        boolean wasCreated = false;
-        OrientGraphNoTx txGraph = factory.getNoTx();
-        //OSchema schema = ((OrientGraph)odb).getRawGraph().getMetadata().getSchema();
-        OSchema schema = ((OrientGraphNoTx)txGraph).getRawGraph().getMetadata().getSchema();
-
-        if (!schema.existsClass(className))
-        {
-            OClass vt = txGraph.createVertexType(className);
-            for(String prop : props)
-                vt.createProperty(prop, OType.STRING);
-            vt.createIndex(className + ".nodePath", OClass.INDEX_TYPE.UNIQUE, props);
-            txGraph.commit();
-            if (schema.existsClass(className)) {
-                wasCreated = true;
-            }
-        }
-        txGraph.shutdown();
-        return wasCreated;
-    }
-
-    boolean createEdgeClass(String className, String[] props)
-    {
-        boolean wasCreated = false;
-        OrientGraphNoTx txGraph = factory.getNoTx();
-        //OSchema schema = ((OrientGraph)odb).getRawGraph().getMetadata().getSchema();
-        OSchema schema = ((OrientGraphNoTx)txGraph).getRawGraph().getMetadata().getSchema();
-
-        if (!schema.existsClass(className))
-        {
-            OClass et = txGraph.createEdgeType(className);
-            if(props != null) {
-                for (String prop : props) {
-                    et.createProperty(prop, OType.STRING);
-                }
-                et.createIndex(className + ".edgeProp", OClass.INDEX_TYPE.UNIQUE, props);
-            }
-            wasCreated = true;
-        }
-        txGraph.commit();
-        txGraph.shutdown();
-        return wasCreated;
-    }
-
-
-    public String getNodeClass(String region, String agent, String agentcontroller)
-    {
-        try
-        {
-            if((region != null) && (agent == null) && (agentcontroller == null))
-            {
-                return "rNode";
-            }
-            else if((region != null) && (agent != null) && (agentcontroller == null))
-            {
-                return "aNode";
-            }
-            else if((region != null) && (agent != null) && (agentcontroller != null))
-            {
-                return "pNode";
-            }
-        }
-        catch(Exception ex)
-        {
-            logger.debug("getNodeClass: Error " + ex.toString());
-        }
-        return null;
-
-    }
-
-    public boolean updateEdge(String edge_id, Map<String,String> params)
-    {
-        boolean isUpdated = false;
-        int count = 0;
-        try
-        {
-
-            while((!isUpdated) && (count != retryCount))
-            {
-                if(count > 0)
-                {
-                    //logger.debug("ADDNODE RETRY : region=" + region + " agent=" + agent + " agentcontroller" + agentcontroller);
-                    Thread.sleep((long)(Math.random() * 1000)); //random wait to prevent sync error
-                }
-                isUpdated = IupdateEdge(edge_id, params);
-                count++;
-
-            }
-
-            if((!isUpdated) && (count == retryCount))
-            {
-                logger.debug("DBEngine : updateEdge : Failed to update edge in " + count + " retrys");
-            }
-        }
-        catch(Exception ex)
-        {
-            logger.debug("DBEngine : updateEdge : Error " + ex.toString());
-        }
-
-        return isUpdated;
-    }
-
-    private boolean IupdateEdge(String edge_id, Map<String,String> params)
-    {
-        boolean isUpdated = false;
-        OrientGraph graph = null;
-        try
-        {
-            graph = factory.getTx();
-            Edge edge = graph.getEdge(edge_id);
-            if(edge != null)
-            {
-                for (Entry<String, String> entry : params.entrySet())
-                {
-                    edge.setProperty(entry.getKey(), entry.getValue());
-                }
-                graph.commit();
-                isUpdated = true;
-            }
-            else
-            {
-                logger.debug("IupdateEdge: no edge found for edge_id=" + edge_id);
-            }
-
-        }
-        catch(com.orientechnologies.orient.core.storage.ORecordDuplicatedException exc)
-        {
-            //eat exception.. this is not normal and should log somewhere
-        }
-        catch(com.orientechnologies.orient.core.exception.OConcurrentModificationException exc)
-        {
-            //eat exception.. this is normal
-        }
-        catch(Exception ex)
-        {
-            long threadId = Thread.currentThread().getId();
-            logger.debug("IupdateEdge: thread_id: " + threadId + " Error " + ex.toString());
-        }
-        finally
-        {
-            if(graph != null)
-            {
-                graph.shutdown();
-            }
-        }
-        return isUpdated;
-
-    }
-
-*/
 }

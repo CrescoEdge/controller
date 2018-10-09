@@ -23,18 +23,17 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public class DBInterface {
 
-    private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
     private DBEngine gde;
     public DBBaseFunctions gdb;
     public DBApplicationFunctions dba;
+    private ControllerEngine controllerEngine;
 
     private Gson gson;
     private Type type;
 
-    private Thread DBManagerThread;
-    private BlockingQueue<String> importQueue;
+    public BlockingQueue<String> importQueue;
 
 
     public DBInterface(ControllerEngine controllerEngine) {
@@ -45,18 +44,13 @@ public class DBInterface {
         //this.logger = new CLogger(DBInterface.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
         //this.agentcontroller = agentcontroller;
         this.importQueue = new LinkedBlockingQueue<>();
-        this.gde = new DBEngine(controllerEngine);
-        this.gdb = new DBBaseFunctions(controllerEngine,gde);
-        this.dba = new DBApplicationFunctions(controllerEngine,gde);
+        this.gde = new DBEngine(this.plugin);
+        this.gdb = new DBBaseFunctions(plugin,gde);
+        this.dba = new DBApplicationFunctions(plugin,gde,gdb);
         this.gson = new Gson();
         this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
 
-        //DB manager
-        logger.debug("Starting DB Manager");
-        logger.debug("Starting Broker Manager");
-        this.DBManagerThread = new Thread(new DBManager(controllerEngine, importQueue));
-        this.DBManagerThread.start();
     }
 
     public void shutdown() {

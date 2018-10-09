@@ -33,7 +33,6 @@ import java.util.zip.GZIPOutputStream;
 
 public class DBBaseFunctions {
 
-    private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
     private OrientGraphFactory factory;
@@ -48,9 +47,8 @@ public class DBBaseFunctions {
     public String[] aNodeIndexParams = {"platform","environment","location"};
     public String[] pNodeIndexParams = {"pluginname","jarfile"};
 
-    public DBBaseFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
-        this.controllerEngine = controllerEngine;
-        this.plugin = controllerEngine.getPluginBuilder();
+    public DBBaseFunctions(PluginBuilder plugin, DBEngine dbe) {
+        this.plugin = plugin;
         this.logger = plugin.getLogger(DBBaseFunctions.class.getName(),CLogger.Level.Info);
 
         //this.logger = new CLogger(DBBaseFunctions.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
@@ -2118,7 +2116,7 @@ public class DBBaseFunctions {
                 createdDb = true;
             }
 
-            DBImport dbImport = new DBImport(controllerEngine, is, this,db);
+            DBImport dbImport = new DBImport(this.plugin, is, this,db);
             isImported = dbImport.importDump();
             if(createdDb) {
                 db.close();

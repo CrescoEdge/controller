@@ -6,6 +6,7 @@ import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.communication.*;
 import io.cresco.agent.controller.db.DBInterface;
+import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.netdiscovery.*;
@@ -83,6 +84,7 @@ public class ControllerEngine {
     private Thread globalControllerManagerThread;
     private Thread discoveryUDPEngineThread;
     private Thread discoveryTCPEngineThread;
+    private Thread DBManagerThread;
 
 
     public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin){
@@ -727,8 +729,15 @@ public class ControllerEngine {
 
             //removed region consumer, no longer needed things to go agents
 
-            this.gdb = new DBInterface(this); //start com.researchworx.cresco.controller.db service
+            this.gdb = new DBInterface(this);
             logger.debug("RegionalControllerDB Service Started");
+
+            //DB manager
+            logger.debug("Starting DB Manager");
+            logger.debug("Starting Broker Manager");
+            this.DBManagerThread = new Thread(new DBManager(this, this.gdb.importQueue));
+            this.DBManagerThread.start();
+
             //started by DBInterface
             while (!this.DBManagerActive) {
                 Thread.sleep(1000);

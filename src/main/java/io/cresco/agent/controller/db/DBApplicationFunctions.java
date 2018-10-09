@@ -29,19 +29,21 @@ import java.util.*;
 
 public class DBApplicationFunctions {
 
-    private ControllerEngine controllerEngine;
+    //private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
     private OrientGraphFactory factory;
     //private ODatabaseDocumentTx db;
     private int retryCount;
+    private DBBaseFunctions gdb;
     //private DBEngine dbe;
     //private OrientGraph odb;
     //private OPartitionedDatabasePool pool;
 
-    public DBApplicationFunctions(ControllerEngine controllerEngine, DBEngine dbe) {
-        this.controllerEngine = controllerEngine;
-        this.plugin = controllerEngine.getPluginBuilder();
+    public DBApplicationFunctions(PluginBuilder plugin, DBEngine dbe, DBBaseFunctions gdb) {
+        //this.controllerEngine = controllerEngine;
+        this.gdb = gdb;
+        this.plugin = plugin;
         this.logger = plugin.getLogger(DBApplicationFunctions.class.getName(),CLogger.Level.Info);
 
         //this.logger = new CLogger(DBApplicationFunctions.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
@@ -56,6 +58,8 @@ public class DBApplicationFunctions {
 
         //create basic application constructs
         initCrescoDB();
+
+
 
         //object
         //OObjectDatabaseTx db = new OObjectDatabaseTx(dbe.pool.acquire());
@@ -664,7 +668,7 @@ public class DBApplicationFunctions {
         catch(Exception ex)
         {
             logger.debug("setPipelineStatus Error: " + ex.toString());
-            logger.debug(controllerEngine.getStringFromError(ex));
+            logger.debug(getStringFromError(ex));
         }
         finally
         {
@@ -2077,7 +2081,9 @@ public class DBApplicationFunctions {
                 else {
                     logger.debug("Post vPipeline commit of node " + getPipelineNodeId(gpay.pipeline_id));
                 }
-                controllerEngine.getAppScheduleQueue().add(gpay);
+
+                //todo add to queue upstream
+                //controllerEngine.getAppScheduleQueue().add(gpay);
 
             }
             else {
@@ -2745,7 +2751,8 @@ public class DBApplicationFunctions {
             edgeList = new ArrayList<>();
             if((region != null) && (agent != null) && (pluginId != null))
             {
-                String nodeId = controllerEngine.getGDB().gdb.getNodeId(region,agent,pluginId);
+
+                String nodeId = gdb.getNodeId(region,agent,pluginId);
                 if(nodeId != null) {
                     graph = factory.getNoTx();
                     String queryString = "SELECT * from isAssigned where out = \"" + nodeId + "\"";
@@ -3275,7 +3282,7 @@ public class DBApplicationFunctions {
                 if((resource_id != null) && (inode_id != null) && (region != null) && (agent != null) && (pluginId != null))
                 {
                     String inode_node_id = getINodeNodeId(inode_id);
-                    String pnode_node_id = controllerEngine.getGDB().gdb.getNodeId(region,agent,pluginId);
+                    String pnode_node_id = gdb.getNodeId(region,agent,pluginId);
                     if((inode_node_id != null) && (pnode_node_id != null))
                     {
                         graph = factory.getTx();
@@ -3416,7 +3423,9 @@ public class DBApplicationFunctions {
         try
         {
 
-            node_id = controllerEngine.getGDB().dba.getINodeNodeId(inode_id);
+            node_id = getINodeNodeId(inode_id);
+
+            //node_id = controllerEngine.getGDB().dba.getINodeNodeId(inode_id);
             if(node_id != null)
             {
                 resource_node_id = getResourceNodeId(resource_id);
@@ -3930,22 +3939,11 @@ public class DBApplicationFunctions {
         String edge_id = null;
         try
         {
-            //distribute to KPI Broker
-            /*
-            Map<String,String> perfMap = new HashMap<>();
-            perfMap.putAll(params);
-            perfMap.put("region", region);
-            perfMap.put("agent", agent);
-            perfMap.put("agentcontroller", pluginId);
-            perfMap.put("resourceid", resource_id);
-            perfMap.put("inodeid", inode_id);
-            */
-            controllerEngine.getKPIProducer().sendMessage(region,agent,pluginId,resource_id,inode_id,params);
 
             //make sure nodes exist
             String resource_node_id = getResourceNodeId(resource_id);
             String inode_node_id = getINodeNodeId(inode_id);
-            String plugin_node_id = controllerEngine.getGDB().gdb.getNodeId(region,agent,pluginId);
+            String plugin_node_id = gdb.getNodeId(region,agent,pluginId);
 
             //create node if not seen.. this needs to be changed.
             if(plugin_node_id != null) {
@@ -4042,6 +4040,12 @@ public class DBApplicationFunctions {
         return isUpdated;
     }
 
+
+    public String getStringFromError(Exception ex) {
+        StringWriter errors = new StringWriter();
+        ex.printStackTrace(new PrintWriter(errors));
+        return errors.toString();
+    }
 
 
 }
