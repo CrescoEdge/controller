@@ -2,9 +2,9 @@ package io.cresco.agent.controller.globalscheduler;
 
 
 
-import io.cresco.agent.controller.app.gNode;
-import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.app.gNode;
+import io.cresco.library.app.gPayload;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;

@@ -1,9 +1,9 @@
 package io.cresco.agent.controller.globalcontroller;
 
 import com.google.gson.Gson;
-import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalscheduler.PollRemovePipeline;
+import io.cresco.library.app.gPayload;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;

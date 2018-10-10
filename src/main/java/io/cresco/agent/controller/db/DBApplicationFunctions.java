@@ -13,10 +13,9 @@ import com.tinkerpop.blueprints.Vertex;
 import com.tinkerpop.blueprints.impls.orient.OrientGraph;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphNoTx;
-import io.cresco.agent.controller.app.gEdge;
-import io.cresco.agent.controller.app.gNode;
-import io.cresco.agent.controller.app.gPayload;
-import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.app.gEdge;
+import io.cresco.library.app.gNode;
+import io.cresco.library.app.gPayload;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 

@@ -1,11 +1,11 @@
 package io.cresco.agent.controller.globalscheduler;
 
 
-import io.cresco.agent.controller.app.gEdge;
-import io.cresco.agent.controller.app.gNode;
-import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
+import io.cresco.library.app.gEdge;
+import io.cresco.library.app.gNode;
+import io.cresco.library.app.gPayload;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 

@@ -2,10 +2,12 @@ package io.cresco.agent.controller.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import io.cresco.agent.controller.app.gPayload;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.globalscheduler.pNode;
 import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
+import io.cresco.library.app.gPayload;
+import io.cresco.library.app.pNode;
+import io.cresco.library.db.DBService;
+import io.cresco.library.db.NodeStatusType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -21,7 +23,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class DBInterfaceImpl implements DBInterface {
+public class DBInterfaceImpl implements DBService {
 
     private PluginBuilder plugin;
     private CLogger logger;
@@ -1270,7 +1272,7 @@ public class DBInterfaceImpl implements DBInterface {
                 else {
                     //Plugins will trigger this problem, need to fix Cresco Library
                     logger.error(nodeId + " could not find watchdog_ts or watchdog_rate");
-                    nodeStatusMap.put(nodeId,NodeStatusType.ERROR);
+                    nodeStatusMap.put(nodeId, NodeStatusType.ERROR);
                 }
             }
         }

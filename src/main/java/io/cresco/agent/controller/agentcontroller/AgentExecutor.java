@@ -3,7 +3,7 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.globalscheduler.pNode;
+import io.cresco.library.app.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
@@ -113,7 +113,7 @@ public class AgentExecutor implements Executor {
 
             if(!jarIsLocal) {
                 //try to download node
-                pNode node = gson.fromJson(ce.getCompressedParam("pnode"),pNode.class);
+                pNode node = gson.fromJson(ce.getCompressedParam("pnode"), pNode.class);
                 jarIsLocal = getPlugin(node);
             }
 
