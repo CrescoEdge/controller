@@ -2,7 +2,7 @@ package io.cresco.agent.controller.regionalcontroller;
 
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.library.db.NodeStatusType;
+import io.cresco.agent.controller.db.NodeStatusType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
