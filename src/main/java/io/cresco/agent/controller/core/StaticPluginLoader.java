@@ -3,10 +3,13 @@ package io.cresco.agent.controller.core;
 import io.cresco.agent.core.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.osgi.framework.Constants;
 
 import java.io.File;
 import java.net.URL;
+import java.util.Dictionary;
 import java.util.HashMap;
+import java.util.Hashtable;
 import java.util.Map;
 
 public class StaticPluginLoader implements Runnable  {
@@ -133,6 +136,7 @@ public class StaticPluginLoader implements Runnable  {
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
                                 }
                                 //load global
+
                                 if(controllerEngine.getPluginAdmin().serviceExist("org.osgi.service.http.HttpService")) {
 
                                     if (plugin.getConfig().getBooleanParam("enable_web", true)) {
@@ -142,6 +146,7 @@ public class StaticPluginLoader implements Runnable  {
                                         String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
                                     }
                                 }
+
                             }
                             isStaticInit = true;
                         }

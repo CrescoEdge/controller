@@ -359,6 +359,18 @@ public class PluginAdmin {
         return returnPluginID;
     }
 
+    public void addDirectConfig(String factoryPid, Dictionary<String, Object> properties) {
+
+        try {
+            Configuration configuration = confAdmin.createFactoryConfiguration(factoryPid, null);
+            configuration.update(properties);
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
     public String addConfig(String pluginName, Map<String,Object> map) {
 
         String pluginID = null;
@@ -427,6 +439,11 @@ public class PluginAdmin {
                             int statusCode = 7;
                             String statusDesc = "Plugin instance could not be started";
                             try {
+                                while(ps == null) {
+                                    logger.error("PLUGIN SERVICE FOR PLUGIN " + pluginID + " is Null");
+                                    Thread.sleep(1000);
+                                }
+
                                 if(ps.isStarted()) {
                                   statusCode = 10;
                                   statusDesc = "Plugin Active";
