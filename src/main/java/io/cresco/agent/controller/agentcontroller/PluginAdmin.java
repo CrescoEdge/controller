@@ -545,6 +545,55 @@ public class PluginAdmin {
         return exportString;
     }
 
+    public boolean checkService(String className, String componentName) {
+
+        return checkService(className, componentName, 1);
+
+    }
+    public boolean checkService(String className, String componentName, int TRYCOUNT) {
+        boolean isStarted = false;
+
+        try {
+            ServiceReference<?>[] servRefs = null;
+            int count = 0;
+
+            while ((!isStarted) && (count < TRYCOUNT)) {
+
+                String filterString = "(component.name=" + componentName + ")";
+                Filter filter = context.createFilter(filterString);
+
+                //servRefs = context.getServiceReferences(PluginService.class.getName(), filterString);
+                servRefs = context.getServiceReferences(className, filterString);
+
+                //System.out.println("REFS : " + servRefs.length);
+                if (servRefs == null || servRefs.length == 0) {
+                    //System.out.println("NULL FOUND NOTHING!");
+
+                } else {
+                    //System.out.println("Running Service Count: " + servRefs.length);
+
+                    for (ServiceReference sr : servRefs) {
+
+                        boolean assign = servRefs[0].isAssignableTo(context.getBundle(), className);
+
+                        if(assign) {
+                            isStarted = true;
+                        }
+                    }
+                }
+                count++;
+                Thread.sleep(1000);
+            }
+            if(servRefs == null) {
+                System.out.println("COULD NOT START PLUGIN COULD NOT GET SERVICE");
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return isStarted;
+    }
+
+
     public Bundle installInternalBundleJars(String bundleName) {
 
         Bundle installedBundle = null;

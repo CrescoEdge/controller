@@ -22,6 +22,17 @@
 
     <dependencies>
 
+
+        <!-- https://mvnrepository.com/artifact/org.apache.aries.jax.rs/org.apache.aries.jax.rs.whiteboard -->
+        <dependency>
+            <groupId>org.apache.aries.jax.rs</groupId>
+            <artifactId>org.apache.aries.jax.rs.whiteboard</artifactId>
+            <version>1.0.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+
+
         <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
         <dependency>
             <groupId>org.osgi</groupId>

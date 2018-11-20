@@ -144,7 +144,10 @@ public class StaticPluginLoader implements Runnable  {
                                         map.put("pluginname", "io.cresco.dashboard");
                                         map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
                                         String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+
                                     }
+                                } else {
+                                    logger.error("org.osgi.service.http.HttpService : Does not exist");
                                 }
 
                             }
