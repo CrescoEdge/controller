@@ -377,6 +377,8 @@ public class PluginAdmin {
                                 bundleMap.get(bundleID).add(pluginID);
                             }
 
+
+
                                 if (startPlugin(pluginID)) {
                                 returnPluginID = pluginID;
                             } else {
