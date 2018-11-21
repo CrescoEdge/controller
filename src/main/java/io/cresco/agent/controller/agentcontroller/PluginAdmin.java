@@ -30,10 +30,15 @@ public class PluginAdmin {
     private ConfigurationAdmin confAdmin;
     private Map<String,Configuration> configMap;
     private Map<String,PluginNode> pluginMap;
+    private Map<Long,List<String>> bundleMap;
+
+
     private CLogger logger;
 
     private AtomicBoolean lockConfig = new AtomicBoolean();
     private AtomicBoolean lockPlugin = new AtomicBoolean();
+    private AtomicBoolean lockBundle = new AtomicBoolean();
+
 
     private AgentState agentState;
 
@@ -50,6 +55,8 @@ public class PluginAdmin {
         this.gson = new Gson();
         this.configMap = Collections.synchronizedMap(new HashMap<>());
         this.pluginMap = Collections.synchronizedMap(new HashMap<>());
+        this.bundleMap = Collections.synchronizedMap(new HashMap<>());
+
         this.context = context;
         this.agentState = agentState;
         logger = pluginBuilder.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
@@ -196,6 +203,18 @@ public class PluginAdmin {
         return  isStopped;
     }
 
+    public boolean removeBundle(long bundleID) {
+        boolean isRemoved = false;
+        try {
+            context.getBundle(bundleID).uninstall();
+            isRemoved = true;
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return  isRemoved;
+    }
+
+
     public boolean stopPlugin(String pluginId) {
         boolean isStopped = false;
         try {
@@ -203,11 +222,13 @@ public class PluginAdmin {
             String jarFilePath = null;
             String pid = null;
             boolean isPluginStopped = false;
+            long bundleID = -1;
 
             synchronized (lockPlugin) {
                 if (pluginMap.containsKey(pluginId)) {
                     jarFilePath = pluginMap.get(pluginId).getJarPath();
                     isPluginStopped = pluginMap.get(pluginId).getPluginService().isStopped();
+                    bundleID = pluginMap.get(pluginId).getBundleID();
                 }
             }
 
@@ -216,6 +237,25 @@ public class PluginAdmin {
             }
 
             if(isPluginStopped) {
+
+                //stop bundle if only active plugin using it
+                boolean stopBundle = false;
+                synchronized (lockBundle) {
+                    if(bundleMap.containsKey(bundleID)) {
+                        bundleMap.get(bundleID).remove(pluginId);
+                        if(bundleMap.get(bundleID).size() == 0) {
+                            bundleMap.remove(bundleID);
+                            stopBundle = true;
+                        }
+                    }
+                }
+
+                if(stopBundle) {
+                    stopBundle(bundleID);
+                    removeBundle(bundleID);
+                }
+
+
 
                 if ((jarFilePath != null) && (pid != null)) {
 
@@ -326,12 +366,18 @@ public class PluginAdmin {
 
                     if (startBundle(bundleID)) {
                         if (pluginID != null) {
-                            PluginNode pluginNode = new PluginNode(pluginID, pluginName, jarFile, map);
+                            PluginNode pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map);
                             synchronized (lockPlugin) {
                                 pluginMap.put(pluginID, pluginNode);
                             }
+                            synchronized (lockBundle) {
+                                if(!bundleMap.containsKey(bundleID)) {
+                                    bundleMap.put(bundleID,new ArrayList<>());
+                                }
+                                bundleMap.get(bundleID).add(pluginID);
+                            }
 
-                            if (startPlugin(pluginID)) {
+                                if (startPlugin(pluginID)) {
                                 returnPluginID = pluginID;
                             } else {
                                 System.out.println("Could not start agentcontroller " + pluginID + " pluginName " + pluginName + " no bundle " + jarFile);

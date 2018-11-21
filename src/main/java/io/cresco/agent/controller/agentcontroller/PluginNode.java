@@ -27,7 +27,7 @@ public class PluginNode {
     private long watchdog_ts = 0;
     private long watchdogtimer = 0;
     private long runtime = 0;
-
+    private long bundleID;
 
     private PluginService pluginService;
     private Map<String,Object> configMap;
@@ -49,9 +49,9 @@ public class PluginNode {
     status_code = 92; //timeout on disable verification
      */
 
-    public PluginNode(String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
+    public PluginNode(long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
 
-
+        this.bundleID = bundleID;
         this.pluginID = pluginID;
         this.jarPath = jarPath;
         this.configMap = configMap;
@@ -74,6 +74,10 @@ public class PluginNode {
         //URLClassLoader loader = new URLClassLoader(new URL[] {new File(jarPath).toURI().toURL()}, this.getClass().getClassLoader());
         //ResourceFinder finder = new ResourceFinder("META-INF/services", loader, url);
 
+    }
+
+    public long getBundleID() {
+        return bundleID;
     }
 
     public Map<String, Object> getConfigMap() {
