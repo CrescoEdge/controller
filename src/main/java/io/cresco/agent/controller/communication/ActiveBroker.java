@@ -148,10 +148,12 @@ public class ActiveBroker {
 
 
 				if (plugin.isIPv6())
-					connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
+					//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
+					connector.setUri(new URI("ssl://[::]:"+ discoveryPort));
 
 				else
-					connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
+					//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
+					connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort));
 
 
                 /*
@@ -300,7 +302,8 @@ public class ActiveBroker {
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
 			logger.info("Added Network Connector to Broker URI: static:ssl://" + URI + ":" + discoveryPort);
 			logger.trace("URI: static:ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
-			bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
+			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
+			bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort));
 
 			bridge.setUserName(brokerUserName);
             bridge.setPassword(brokerPassword);
