@@ -23,7 +23,6 @@
 
     <dependencies>
 
-
         <!-- https://mvnrepository.com/artifact/org.apache.aries.jax.rs/org.apache.aries.jax.rs.whiteboard -->
         <dependency>
             <groupId>org.apache.aries.jax.rs</groupId>
