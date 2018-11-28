@@ -23,13 +23,14 @@
 
     <dependencies>
 
-        <!-- https://mvnrepository.com/artifact/org.apache.aries.jax.rs/org.apache.aries.jax.rs.whiteboard -->
+        <!--
         <dependency>
             <groupId>org.apache.aries.jax.rs</groupId>
             <artifactId>org.apache.aries.jax.rs.whiteboard</artifactId>
             <version>1.0.1</version>
             <scope>provided</scope>
         </dependency>
+        -->
 
         <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
         <dependency>
@@ -39,13 +40,14 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.osgi/osgi.annotation -->
+        <!--
         <dependency>
             <groupId>org.osgi</groupId>
             <artifactId>osgi.annotation</artifactId>
             <version>6.0.1</version>
             <scope>provided</scope>
         </dependency>
+        -->
 
         <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.component.annotations -->
         <dependency>
@@ -55,13 +57,14 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.metatype.annotations -->
+        <!--
         <dependency>
             <groupId>org.osgi</groupId>
             <artifactId>org.osgi.service.metatype.annotations</artifactId>
             <version>1.4.0</version>
             <scope>provided</scope>
         </dependency>
+        -->
 
         <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.cm -->
         <dependency>
@@ -116,6 +119,7 @@
             </exclusions>
         </dependency>
 
+        <!--
         <dependency>
             <groupId>org.apache.activemq</groupId>
             <artifactId>activemq-pool</artifactId>
@@ -131,6 +135,7 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        -->
 
         <dependency>
             <groupId>org.apache.geronimo.specs</groupId>
@@ -156,8 +161,6 @@
             <version>1.4.2</version>
         </dependency>
 
-
-
         <dependency>
             <groupId>net.java.dev.jna</groupId>
             <artifactId>jna</artifactId>
@@ -173,25 +176,7 @@
 
         <dependency>
             <groupId>io.netty</groupId>
-            <artifactId>netty-handler</artifactId>
-            <version>4.1.28.Final</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.netty</groupId>
             <artifactId>netty-buffer</artifactId>
-            <version>4.1.28.Final</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-transport</artifactId>
-            <version>4.1.28.Final</version>
-        </dependency>
-
-        <dependency>
-            <groupId>io.netty</groupId>
-            <artifactId>netty-codec</artifactId>
             <version>4.1.28.Final</version>
         </dependency>
 
@@ -204,6 +189,24 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-resolver</artifactId>
+            <version>4.1.28.Final</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-handler</artifactId>
+            <version>4.1.28.Final</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-transport</artifactId>
+            <version>4.1.28.Final</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-codec</artifactId>
             <version>4.1.28.Final</version>
         </dependency>
 
@@ -232,12 +235,13 @@
             </exclusions>
         </dependency>
 
+        <!--
         <dependency>
             <groupId>commons-lang</groupId>
             <artifactId>commons-lang</artifactId>
             <version>2.6</version>
         </dependency>
-
+        -->
 
         <!-- OrientDB -->
 
@@ -367,13 +371,21 @@
             <version>${gson.version}</version>
         </dependency>
 
+        <!--
         <dependency>
             <groupId>org.ops4j.pax.logging</groupId>
             <artifactId>pax-logging-log4j2</artifactId>
             <version>1.10.1</version>
             <scope>provided</scope>
         </dependency>
+        -->
 
+        <!-- https://mvnrepository.com/artifact/javax.xml.bind/jaxb-api -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.2.2</version>
+        </dependency>
 
 
     </dependencies>
