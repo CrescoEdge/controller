@@ -266,6 +266,8 @@ public class AppSchedulerEngine implements Runnable {
             for(gNode node : nodes) {
                 //nodeIds.add(node.node_id);
                 if(edgeNodeMap.containsKey(node.node_id)) {
+
+
                     String edgePayload = gson.toJson(edgeNodeMap.get(node.node_id));
                     //logger.error("EDGE PAYLOAD: " + edgePayload);
                     node.params.put("edges",edgePayload);
