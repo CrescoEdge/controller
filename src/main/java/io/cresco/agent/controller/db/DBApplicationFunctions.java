@@ -1567,8 +1567,8 @@ public class DBApplicationFunctions {
                             logger.debug("post edge.node_from=" + edge.node_from);
                             logger.debug("post edge.node_to=" + edge.node_to);
 
-                            logger.debug("edge.node_from inode: " + eNodeHm.get(edge.node_from));
-                            logger.debug("edge.node_to inode: " + eNodeHm.get(edge.node_to));
+                            //logger.debug("edge.node_from inode: " + eNodeHm.get(edge.node_from));
+                            //logger.debug("edge.node_to inode: " + eNodeHm.get(edge.node_to));
 
                         }
                     }
