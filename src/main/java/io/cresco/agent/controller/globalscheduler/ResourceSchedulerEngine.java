@@ -130,6 +130,10 @@ public class ResourceSchedulerEngine implements Runnable {
 									logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
 									MsgEvent me = addPlugin(region,agent,ce.getParam("configparams"));
                                     me.setCompressedParam("pnode",gson.toJson(pluginNode));
+                                    me.setParam("edges",ce.getParam("edges"));
+
+
+
 									logger.debug("pluginadd message: " + me.getParams().toString());
 
 

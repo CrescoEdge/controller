@@ -562,6 +562,10 @@ public class DBApplicationFunctions {
             logger.debug("-I6 ");
 
             Edge iEdge = graph.addEdge(null, eNode_from, eNode_to, "isEConnected");
+
+            edge_id = UUID.randomUUID().toString();
+            iEdge.setProperty("edge_id", edge_id);
+
 			/*
 			 public Iterable<Edge> getEdges(OrientVertex iDestination,
                                Direction iDirection,
@@ -1489,13 +1493,13 @@ public class DBApplicationFunctions {
             HashMap<String,String> iNodeHm = new HashMap<>();
             HashMap<String,String> vNodeHm = new HashMap<>();
 
+
             for(gNode node : gpay.nodes)
             {
                 try
                 {
                     //add resource_id to configs
                     node.params.put("resource_id",gpay.pipeline_id);
-                    //
 
                     String vNode_id = createVNode(gpay.pipeline_id, node,true);
                     vNodeHm.put(node.node_id, vNode_id);
@@ -1510,6 +1514,7 @@ public class DBApplicationFunctions {
                     //Create iNode I/O Nodes
                     String eNodeIn_id = createENode(iNode_id, true);
                     String eNodeOut_id = createENode(iNode_id, false);
+
                     logger.debug("eNodeIn:" + getENodeNodeId(eNodeIn_id) + " eNodeOut: " + getENodeNodeId(eNodeOut_id));
 
                     //assoicateNtoV(vNode_id,iNode_id);
@@ -1525,8 +1530,13 @@ public class DBApplicationFunctions {
                 }
             }
 
-            for(gEdge edge : gpay.edges)
-            {
+            /*
+            HashMap<String,String> eNodeHm = new HashMap<>();
+            eNodeHm.put(iNode_id,eNodeIn_id);
+            eNodeHm.put(iNode_id,eNodeOut_id);
+            */
+
+            for(gEdge edge : gpay.edges) {
                 try
                 {
                     //createGEdge(edge);
@@ -1538,14 +1548,27 @@ public class DBApplicationFunctions {
                             logger.debug("From vID : " + edge.node_from + " TO vID: " + edge.node_to);
                             String edge_id = createVEdge(vNodeHm.get(edge.node_from), vNodeHm.get(edge.node_to));
                             edge.edge_id = edge_id;
-                            logger.debug("vedgeid: " + edge_id + " from: " + iNodeHm.get(edge.node_from) + " to:" + vNodeHm.get(edge.node_to));
+
+                            logger.debug("vedgeid: " + edge_id + " from: " + vNodeHm.get(edge.node_from) + " to:" + vNodeHm.get(edge.node_to));
 
                             //create edge between inodes
                             String iedge_id = createIEdge(iNodeHm.get(edge.node_from), iNodeHm.get(edge.node_to));
+                            logger.debug("iedgeid: " + iedge_id + " from: " + iNodeHm.get(edge.node_from) + " to:" + iNodeHm.get(edge.node_to));
+
                             //assign vEdge ID
-                            edge.node_from = vNodeHm.get(edge.node_from);
-                            edge.node_to = vNodeHm.get(edge.node_to);
-                            logger.debug("iedgeid: " + iedge_id + " from: " + iNodeHm.get(edge.node_from) + " to:" + vNodeHm.get(edge.node_to));
+                            logger.debug("pre edge.node_from=" + edge.node_from);
+                            logger.debug("pre edge.node_to=" + edge.node_to);
+
+                            edge.edge_id = iedge_id;
+
+                            edge.node_from = iNodeHm.get(edge.node_from);
+                            edge.node_to = iNodeHm.get(edge.node_to);
+
+                            logger.debug("post edge.node_from=" + edge.node_from);
+                            logger.debug("post edge.node_to=" + edge.node_to);
+
+                            logger.debug("edge.node_from inode: " + eNodeHm.get(edge.node_from));
+                            logger.debug("edge.node_to inode: " + eNodeHm.get(edge.node_to));
 
                         }
                     }
@@ -1556,6 +1579,8 @@ public class DBApplicationFunctions {
                     logger.debug("createPipelineNodes Edge: " + ex.toString());
                 }
             }
+
+
             //return gpay;
             gpay.status_code = "3";
             gpay.status_desc = "Pipeline Nodes Created.";
@@ -2050,28 +2075,6 @@ public class DBApplicationFunctions {
                 Vertex vTenant = graph.getVertex(tenantNode);
                 Edge eLives = graph.addEdge(null, vPipeline, vTenant, "isPipeline");
 
-                //graph.commit();
-                //odb.commit();
-                /*
-                if(getPipelineNodeId(gpay.pipeline_id) == null) {
-                    logger.error("Pipeline record was not saved to database!");
-                }
-                else {
-                    logger.debug("Post vPipeline commit of node " + getPipelineNodeId(gpay.pipeline_id));
-                }
-                String tenantNode = getTenantNodeId(tenant_id);
-                logger.error("**** CODY tenant_id : " + tenant_id + " " + tenantNode);
-                if(tenantNode != null) {
-                    Vertex vTenant = graph.getVertex(tenantNode);
-                    Edge eLives = graph.addEdge(null, vPipeline, vTenant, "isPipeline");
-                }
-                graph.commit();
-                //odb.commit();
-
-                logger.info(.add Pipeline to Scheduler Queue");
-                //agentcontroller.getAppScheduleQueue().add(gpay);
-                //return gpay;
-                */
                 graph.commit();
 
                 if(getPipelineNodeId(gpay.pipeline_id) == null) {

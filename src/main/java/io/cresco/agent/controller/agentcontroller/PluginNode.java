@@ -1,15 +1,14 @@
 package io.cresco.agent.controller.agentcontroller;
 
 
+import io.cresco.library.app.gEdge;
 import io.cresco.library.plugin.PluginService;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
@@ -31,6 +30,7 @@ public class PluginNode {
 
     private PluginService pluginService;
     private Map<String,Object> configMap;
+    private List<gEdge> edgeList;
 
     //private String inode_id;
     //private String resource_id;
@@ -49,12 +49,31 @@ public class PluginNode {
     status_code = 92; //timeout on disable verification
      */
 
+    public String getConfigValue(String configKey) {
+
+        String strValue = null;
+        Object value = configMap.get(configKey);
+        if(value != null) {
+            strValue = (String)value;
+        }
+        //return configMap.get(configKey);
+        /*
+        for (Map.Entry<String, Object> entry : configMap.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+            System.out.println(key + ":" + value);
+        }
+        */
+        return strValue;
+    }
+
     public PluginNode(long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
 
         this.bundleID = bundleID;
         this.pluginID = pluginID;
         this.jarPath = jarPath;
         this.configMap = configMap;
+        this.edgeList = new ArrayList<>();
 
         URL url = getClass().getClassLoader().getResource(jarPath);
         Manifest manifest = null;
@@ -69,11 +88,31 @@ public class PluginNode {
         name = mainAttributess.getValue("Bundle-SymbolicName");
         version = mainAttributess.getValue("Bundle-Version");
 
+        //setPluginConfigValues(configMap);
 
-        //URL url = new File(jarPath).toURI().toURL();
-        //URLClassLoader loader = new URLClassLoader(new URL[] {new File(jarPath).toURI().toURL()}, this.getClass().getClassLoader());
-        //ResourceFinder finder = new ResourceFinder("META-INF/services", loader, url);
+    }
+    public PluginNode(long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
 
+        this.bundleID = bundleID;
+        this.pluginID = pluginID;
+        this.jarPath = jarPath;
+        this.configMap = configMap;
+        this.edgeList = edgeList;
+
+        URL url = getClass().getClassLoader().getResource(jarPath);
+        Manifest manifest = null;
+        if(url != null) {
+            manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(jarPath)).getManifest();
+        } else {
+            //url = new File(jarPath).toURI().toURL();
+            manifest = new JarInputStream(new FileInputStream(new File(this.jarPath))).getManifest();
+        }
+
+        Attributes mainAttributess = manifest.getMainAttributes();
+        name = mainAttributess.getValue("Bundle-SymbolicName");
+        version = mainAttributess.getValue("Bundle-Version");
+
+        //setPluginConfigValues(configMap);
     }
 
     public long getBundleID() {
@@ -94,6 +133,10 @@ public class PluginNode {
             paramMap.put((String) pair.getKey(), (String) pair.getValue());
         }
         return paramMap;
+    }
+
+    public List<gEdge> getEdgeList() {
+        return edgeList;
     }
 
     public String getJarPath() {

@@ -49,6 +49,11 @@ public class PollAddPipeline implements Runnable {
                     gnode.params.remove("location_region");
                     gnode.params.remove("location_agent");
 
+                    if(gnode.params.containsKey("edges")) {
+                        //remove edges from config if they exist
+                        me.setCompressedParam("edges", gnode.params.get("edges"));
+                        gnode.params.remove("edges");
+                    }
 
                     /*
                     StringBuilder configparms = new StringBuilder();

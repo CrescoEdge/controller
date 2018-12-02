@@ -1,7 +1,9 @@
 package io.cresco.agent.controller.agentcontroller;
 
 import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import io.cresco.library.agent.AgentState;
+import io.cresco.library.app.gEdge;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
@@ -15,6 +17,7 @@ import org.osgi.service.cm.ConfigurationAdmin;
 
 import java.io.File;
 import java.io.InputStream;
+import java.lang.reflect.Type;
 import java.net.URL;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -355,6 +358,11 @@ public class PluginAdmin {
     }
 
     public String addPlugin(String pluginName, String jarFile, Map<String,Object> map) {
+        return addPlugin(pluginName, jarFile, map, null);
+    }
+
+    public String addPlugin(String pluginName, String jarFile, Map<String,Object> map, String edges) {
+
         String returnPluginID = null;
         if(pluginCount() < PLUGINLIMIT) {
             try {
@@ -366,7 +374,18 @@ public class PluginAdmin {
 
                     if (startBundle(bundleID)) {
                         if (pluginID != null) {
-                            PluginNode pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map);
+
+                            PluginNode pluginNode = null;
+                            if(edges != null) {
+
+                                Type type = new TypeToken<List<gEdge>>(){}.getType();
+                                List<gEdge> edgeList = gson.fromJson(edges,type);
+                                pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map, edgeList);
+
+                            } else {
+                                pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map);
+                            }
+
                             synchronized (lockPlugin) {
                                 pluginMap.put(pluginID, pluginNode);
                             }

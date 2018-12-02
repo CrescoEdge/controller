@@ -1,6 +1,7 @@
 package io.cresco.agent.controller.globalscheduler;
 
 
+import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.library.app.gEdge;
@@ -26,6 +27,7 @@ public class AppSchedulerEngine implements Runnable {
 	private CLogger logger;
     private GlobalHealthWatcher ghw;
     private ExecutorService addPipelineExecutor;
+    private Gson gson;
 
     public AppSchedulerEngine(ControllerEngine controllerEngine, GlobalHealthWatcher ghw) {
         this.controllerEngine = controllerEngine;
@@ -36,6 +38,7 @@ public class AppSchedulerEngine implements Runnable {
 		//this.agentcontroller = agentcontroller;
 		this.ghw = ghw;
         addPipelineExecutor = Executors.newFixedThreadPool(100);
+        gson = new Gson();
 	}
 
     public void run() {
@@ -162,7 +165,8 @@ public class AppSchedulerEngine implements Runnable {
                     //set DB as scheduled
                     logger.debug("Submitting Resource Pipeline for Scheduling " + gpay.pipeline_id);
                     controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id, "4", "Pipeline resources scheduled.");
-                    addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, schedulemaps.get("assigned"), gpay.pipeline_id));
+                    //addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, schedulemaps.get("assigned"), gpay.pipeline_id));
+                    addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, assignedNodeList, gpay.pipeline_id));
                     logger.debug("Submitted Resource Pipeline for Scheduling");
                     scheduleStatus = 4;
                 } else {
@@ -213,36 +217,74 @@ public class AppSchedulerEngine implements Runnable {
 
     private List<gNode> buildEdgeMaps(List<gEdge> edges, List<gNode> nodes) {
 
+        List<gNode> nodeEdgeList = null;
         try {
 
-            Map<String,gNode> nodeMap = new HashMap<>();
+            nodeEdgeList = new ArrayList<>();
+
+            //Generate a list of edges for each related node
+            Map<String,List<gEdge>> edgeNodeMap = new HashMap<>();
+
+            List<String> nodeIds = new ArrayList<>();
             for(gNode node : nodes) {
-                nodeMap.put(node.node_id,node);
+                nodeIds.add(node.node_id);
+                //nodeMap.put(node.node_id,node);
+                //logger.error("node_id=" + node.node_id);
             }
 
             //verify predicates
             for (gEdge edge : edges) {
 
-                logger.trace("edge_id=" + edge.edge_id + " node_from=" + edge.node_from + " node_to=" + edge.node_to);
+                logger.debug("edge_id=" + edge.edge_id + " node_from=" + edge.node_from + " node_to=" + edge.node_to);
 
-                if ((nodeMap.containsKey(edge.node_to)) && (nodeMap.containsKey(edge.node_from))) {
+                if ((nodeIds.contains(edge.node_to)) && (nodeIds.contains(edge.node_from))) {
                     //modify nodes
 
+                    if(!edgeNodeMap.containsKey(edge.node_to)) {
+                        edgeNodeMap.put(edge.node_to, new ArrayList<>());
+                    }
+                    if(!edgeNodeMap.containsKey(edge.node_from)) {
+                        edgeNodeMap.put(edge.node_from, new ArrayList<>());
+                    }
+
+                    //adding list to related nodes
+                    edgeNodeMap.get(edge.node_to).add(edge);
+                    edgeNodeMap.get(edge.node_from).add(edge);
+
+
                 } else {
-                    if ((!nodeMap.containsKey(edge.node_to)) && (nodeMap.containsKey(edge.node_to))) {
+                    if ((!nodeIds.contains(edge.node_to)) && (nodeIds.contains(edge.node_to))) {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_to = " + edge.node_to);
-                    } else if ((nodeMap.containsKey(edge.node_to)) && (!nodeMap.containsKey(edge.node_to))) {
+                    } else if ((nodeIds.contains(edge.node_to)) && (!nodeIds.contains(edge.node_to))) {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_from = " + edge.node_from);
                     } else {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_from = " + edge.node_from + " and missing node_to = " + edge.node_to);
                     }
                 }
             }
+
+            for(gNode node : nodes) {
+                //nodeIds.add(node.node_id);
+                if(edgeNodeMap.containsKey(node.node_id)) {
+                    String edgePayload = gson.toJson(edgeNodeMap.get(node.node_id));
+                    //logger.error("EDGE PAYLOAD: " + edgePayload);
+                    node.params.put("edges",edgePayload);
+                }
+
+
+                nodeEdgeList.add(node);
+            }
+
         }
         catch(Exception ex) {
-            ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
-        return nodes;
+
+        return nodeEdgeList;
     }
 
     private Map<String,List<gNode>> buildNodeMaps(List<gNode> nodes) {
@@ -259,6 +301,7 @@ public class AppSchedulerEngine implements Runnable {
             //verify predicates
             for (gNode node : nodes) {
                 logger.trace("node_id=" + node.node_id + " node_name=" + node.node_name + " type" + node.type + " params" + node.params.toString());
+
                 if (node.params.containsKey("location_region") && node.params.containsKey("location_agent")) {
                     if (nodeExist(node.params.get("location_region"), node.params.get("location_agent"))) {
                         unAssignedNodes.remove(node);

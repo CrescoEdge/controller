@@ -3,6 +3,7 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.app.gEdge;
 import io.cresco.library.app.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
@@ -11,6 +12,8 @@ import io.cresco.library.utilities.CLogger;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -109,6 +112,9 @@ public class AgentExecutor implements Executor {
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
 
+
+
+
             boolean jarIsLocal = pluginIsLocal(hm);
 
             if(!jarIsLocal) {
@@ -123,17 +129,22 @@ public class AgentExecutor implements Executor {
 
                 Map<String,Object> map = new HashMap<>();
 
-                Iterator it = hm.entrySet().iterator();
-                while (it.hasNext()) {
-                    Map.Entry pair = (Map.Entry)it.next();
-                    String key = it.next().toString();
-                    Object value = pair.getValue();
+                for (Map.Entry<String, String> entry : hm.entrySet()) {
+                    String key = entry.getKey();
+                    String value = entry.getValue();
                     map.put(key,value);
-                    it.remove(); // avoids a ConcurrentModificationException
                 }
 
-                String pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), jarFileName, map);
+                String pluginId = null;
+
+                if(ce.getParam("edges") != null) {
+                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), jarFileName, map, ce.getCompressedParam("edges"));
+                } else {
+                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), jarFileName, map);
+                }
+
                 if(pluginId != null) {
+
                     Map<String, String> statusMap = controllerEngine.getPluginAdmin().getPluginStatus(pluginId);
                     ce.setParam("status_code", statusMap.get("status_code"));
                     ce.setParam("status_desc", statusMap.get("status_desc"));
@@ -185,9 +196,18 @@ public class AgentExecutor implements Executor {
 
 
         } catch(Exception ex) {
+
             logger.error("pluginadd Error: " + ex.getMessage());
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+
         }
 
         return null;
