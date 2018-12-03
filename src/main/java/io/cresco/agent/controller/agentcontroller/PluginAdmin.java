@@ -380,6 +380,9 @@ public class PluginAdmin {
 
                                 Type type = new TypeToken<List<gEdge>>(){}.getType();
                                 List<gEdge> edgeList = gson.fromJson(edges,type);
+                                if(edges != null) {
+                                    map.put("edges",edges);
+                                }
                                 pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map, edgeList);
 
                             } else {

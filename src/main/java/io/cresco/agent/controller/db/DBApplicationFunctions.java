@@ -910,7 +910,6 @@ public class DBApplicationFunctions {
         return statusCode;
     }
 
-
     public Map<String,String> getPipelineStatus(String pipelineId) {
         Map<String,String> statusMap = new HashMap<>();
         OrientGraph graph = null;
@@ -968,7 +967,6 @@ public class DBApplicationFunctions {
         //return statusCode;
         return statusMap;
     }
-
 
     public Map<String,String> getPipelineParam(String pipelineId, String param) {
         //String params = null;

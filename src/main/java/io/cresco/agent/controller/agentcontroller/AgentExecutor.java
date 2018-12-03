@@ -108,12 +108,8 @@ public class AgentExecutor implements Executor {
 
         try {
 
-
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
-
-
-
 
             boolean jarIsLocal = pluginIsLocal(hm);
 
