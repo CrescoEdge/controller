@@ -2271,7 +2271,7 @@ public class DBApplicationFunctions {
                 //OrientGraph graph = factory.getTx();
                 //OrientGraphNoTx graph = factory.getNoTx();
                 graph = factory.getTx();//SELECT rid, expand(outE('isVNode')) from pipeline
-                String queryString = "SELECT rid, expand(inE('isAssigned').outV()) from inode";
+                String queryString = "SELECT rid, expand(inE('isAssigned').outV()) from inode where inode_id ='" + iNode_id + "'";
 
                 logger.debug("querystring " + queryString);
                 Iterable<Vertex> resultIterator = graph.command(new OCommandSQL(queryString)).execute();

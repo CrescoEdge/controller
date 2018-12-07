@@ -370,6 +370,10 @@ public class PluginAdmin {
                 long bundleID = addBundle(jarFile);
                 if (bundleID != -1) {
 
+                    if(edges != null) {
+                        map.put("edges",edges);
+                    }
+
                     String pluginID = addConfig(pluginName, map);
 
                     if (startBundle(bundleID)) {
@@ -377,14 +381,11 @@ public class PluginAdmin {
 
                             PluginNode pluginNode = null;
                             if(edges != null) {
+                                Type type = new TypeToken<List<gEdge>>() {
+                                }.getType();
+                                List<gEdge> edgeList = gson.fromJson(edges, type);
 
-                                Type type = new TypeToken<List<gEdge>>(){}.getType();
-                                List<gEdge> edgeList = gson.fromJson(edges,type);
-                                if(edges != null) {
-                                    map.put("edges",edges);
-                                }
                                 pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map, edgeList);
-
                             } else {
                                 pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map);
                             }
