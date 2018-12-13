@@ -38,16 +38,6 @@
             <scope>provided</scope>
         </dependency>
 
-
-        <!--
-        <dependency>
-            <groupId>org.apache.aries.jax.rs</groupId>
-            <artifactId>org.apache.aries.jax.rs.whiteboard</artifactId>
-            <version>1.0.1</version>
-            <scope>provided</scope>
-        </dependency>
-        -->
-
         <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
         <dependency>
             <groupId>org.osgi</groupId>
@@ -56,15 +46,6 @@
             <scope>provided</scope>
         </dependency>
 
-        <!--
-        <dependency>
-            <groupId>org.osgi</groupId>
-            <artifactId>osgi.annotation</artifactId>
-            <version>6.0.1</version>
-            <scope>provided</scope>
-        </dependency>
-        -->
-
         <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.component.annotations -->
         <dependency>
             <groupId>org.osgi</groupId>
@@ -72,15 +53,6 @@
             <version>1.4.0</version>
             <scope>provided</scope>
         </dependency>
-
-        <!--
-        <dependency>
-            <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.service.metatype.annotations</artifactId>
-            <version>1.4.0</version>
-            <scope>provided</scope>
-        </dependency>
-        -->
 
         <!-- https://mvnrepository.com/artifact/org.osgi/org.osgi.service.cm -->
         <dependency>
@@ -134,24 +106,6 @@
                 </exclusion>
             </exclusions>
         </dependency>
-
-        <!--
-        <dependency>
-            <groupId>org.apache.activemq</groupId>
-            <artifactId>activemq-pool</artifactId>
-            <version>${activemq.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.slf4j</groupId>
-                    <artifactId>slf4j-api</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>commons-logging</groupId>
-                    <artifactId>commons-logging</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        -->
 
         <dependency>
             <groupId>org.apache.geronimo.specs</groupId>
@@ -251,14 +205,6 @@
             </exclusions>
         </dependency>
 
-        <!--
-        <dependency>
-            <groupId>commons-lang</groupId>
-            <artifactId>commons-lang</artifactId>
-            <version>2.6</version>
-        </dependency>
-        -->
-
         <!-- OrientDB -->
 
         <!-- Embedded: 1. core 2. graphdb -->
@@ -350,19 +296,6 @@
             <artifactId>orientdb-core</artifactId>
             <version>${orientdb.version}</version>
 
-            <!--
-            <exclusions>
-                <exclusion>
-                    <groupId>net.java.dev.jna</groupId>
-                    <artifactId>jna-platform</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>net.java.dev.jna</groupId>
-                    <artifactId>jna</artifactId>
-                </exclusion>
-
-            </exclusions>
-            -->
         </dependency>
 
         <dependency>
@@ -385,15 +318,6 @@
             <artifactId>gson</artifactId>
             <version>${gson.version}</version>
         </dependency>
-
-        <!--
-        <dependency>
-            <groupId>org.ops4j.pax.logging</groupId>
-            <artifactId>pax-logging-log4j2</artifactId>
-            <version>1.10.1</version>
-            <scope>provided</scope>
-        </dependency>
-        -->
 
         <!-- https://mvnrepository.com/artifact/javax.xml.bind/jaxb-api -->
         <dependency>
