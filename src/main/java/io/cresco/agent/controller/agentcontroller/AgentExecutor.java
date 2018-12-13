@@ -214,7 +214,7 @@ public class AgentExecutor implements Executor {
 
         try {
             String plugin = ce.getParam("pluginid");
-            logger.error("disabling plugin : " + plugin);
+            logger.info("disabling plugin : " + plugin);
             boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(plugin);
 
             if(isDisabled) {

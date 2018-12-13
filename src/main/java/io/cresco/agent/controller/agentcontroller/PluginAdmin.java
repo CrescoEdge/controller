@@ -17,6 +17,8 @@ import org.osgi.service.cm.ConfigurationAdmin;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.net.URL;
 import java.util.*;
@@ -222,6 +224,8 @@ public class PluginAdmin {
         boolean isStopped = false;
         try {
 
+            logger.debug("stopPlugin: " + pluginId);
+
             String jarFilePath = null;
             String pid = null;
             boolean isPluginStopped = false;
@@ -232,11 +236,18 @@ public class PluginAdmin {
                     jarFilePath = pluginMap.get(pluginId).getJarPath();
                     isPluginStopped = pluginMap.get(pluginId).getPluginService().isStopped();
                     bundleID = pluginMap.get(pluginId).getBundleID();
+                } else {
+                    logger.error("stopPlugin() no key found for pluginid: " + pluginId);
                 }
             }
 
+            logger.debug("stopPlugin jarfilePath: " + jarFilePath);
+            logger.debug("stopPlugin ispluginstipped: " + isPluginStopped);
+            logger.debug("stopPlugin bundleId: " + bundleID);
+
             synchronized (lockConfig) {
                 pid = configMap.get(pluginId).getPid();
+                logger.debug("stopPlugin pid: " + pid);
             }
 
             if(isPluginStopped) {
@@ -245,16 +256,25 @@ public class PluginAdmin {
                 boolean stopBundle = false;
                 synchronized (lockBundle) {
                     if(bundleMap.containsKey(bundleID)) {
+                        logger.debug("stopPlugin bundleMap contains bundleID: " + bundleID);
+                        logger.debug("stopPlugin removing plugin: " + pluginId + " from bundleMap: " + bundleID);
                         bundleMap.get(bundleID).remove(pluginId);
+                        logger.debug("stopPlugin bundleMapSize: " + bundleMap.get(bundleID).size());
                         if(bundleMap.get(bundleID).size() == 0) {
+                            logger.debug("stopPlugin removing bundle: " + bundleID + " from bundleMap");
                             bundleMap.remove(bundleID);
                             stopBundle = true;
                         }
                     }
                 }
 
+                logger.debug("bundleID: " + bundleID + " isStopped: " + stopBundle);
+
+
                 if(stopBundle) {
+                    logger.debug("stopping bundleid: " + bundleID);
                     stopBundle(bundleID);
+                    logger.debug("removing bundleid:" + bundleID);
                     removeBundle(bundleID);
                 }
 
@@ -277,10 +297,15 @@ public class PluginAdmin {
                             isStopped = true;
                     }
                 }
+            } else {
+                logger.error("stopPlugin() could not stop plugin!");
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error("stopPlugin() " + errors.toString());
         }
         return  isStopped;
     }
@@ -621,6 +646,7 @@ public class PluginAdmin {
         return checkService(className, componentName, 1);
 
     }
+
     public boolean checkService(String className, String componentName, int TRYCOUNT) {
         boolean isStarted = false;
 
@@ -663,7 +689,6 @@ public class PluginAdmin {
         }
         return isStarted;
     }
-
 
     public Bundle installInternalBundleJars(String bundleName) {
 
