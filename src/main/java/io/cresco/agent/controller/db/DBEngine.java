@@ -146,8 +146,6 @@ public class DBEngine {
                         "WHERE region_id='" + region + "'";
             }
 
-            System.out.println("SQL: [" + stmtString + "]");
-
             stmt.executeUpdate(stmtString);
             stmt.close();
             conn.close();
@@ -173,7 +171,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                inodeResourceList.add(rs.getString(1));
+                String node = rs.getString(1);
+                if(!inodeResourceList.contains(node)) {
+                    inodeResourceList.add(node);
+                }
             }
 
             rs.close();
@@ -202,7 +203,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                inodeResourceList.add(rs.getString(1));
+                String node = rs.getString(1);
+                if(!inodeResourceList.contains(node)) {
+                    inodeResourceList.add(node);
+                }
             }
 
             rs.close();
@@ -228,9 +232,8 @@ public class DBEngine {
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-            while (rs.next()) {
-                status_code = rs.getInt(1);
-            }
+            rs.next();
+            status_code = rs.getInt(1);
 
             rs.close();
             stmt.close();
@@ -360,9 +363,9 @@ public class DBEngine {
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-            while (rs.next()) {
-                submission = rs.getString(1);
-            }
+           rs.next();
+           submission = rs.getString(1);
+
 
             rs.close();
             stmt.close();
@@ -538,9 +541,8 @@ public class DBEngine {
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-            while (rs.next()) {
-                inodeKPI = rs.getString(1);
-            }
+            rs.next();
+            inodeKPI = rs.getString(1);
 
             stmt.close();
             conn.close();
@@ -642,9 +644,8 @@ public class DBEngine {
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-            while (rs.next()) {
-                status_code = rs.getInt(1);
-            }
+            rs.next();
+            status_code = rs.getInt(1);
 
             rs.close();
             stmt.close();
@@ -1203,7 +1204,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                nodeList.add(rs.getString(1));
+                String node = rs.getString(1);
+                if(!nodeList.contains(node)) {
+                    nodeList.add(node);
+                }
             }
 
             rs.close();
@@ -1216,6 +1220,7 @@ public class DBEngine {
         return nodeList;
     }
 
+    /*
     public List<String> getPNodeListByType(String regionId, String agentId) {
         List<String> nodeList = null;
         try {
@@ -1257,6 +1262,7 @@ public class DBEngine {
         }
         return nodeList;
     }
+    */
 
     public List<Map<String,String>> getPluginListMapByType(String actionPluginTypeId, String actionPluginTypeValue) {
         List<Map<String,String>> configMapList = null;
@@ -1331,7 +1337,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                nodeMap.put(rs.getString(1),rs.getInt(2));
+                String key = rs.getString(1);
+                if(!nodeMap.containsKey(key)) {
+                    nodeMap.put(key, rs.getInt(2));
+                }
             }
 
             rs.close();
@@ -1375,7 +1384,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                nodeList.add(rs.getString(1));
+                String node = rs.getString(1);
+                if(!nodeList.contains(node)) {
+                    nodeList.add(node);
+                }
             }
 
             rs.close();
@@ -1481,7 +1493,10 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             while (rs.next()) {
-                nodeList.add(rs.getString(1));
+                String node = rs.getString(1);
+                if(!nodeList.contains(node)) {
+                    nodeList.add(node);
+                }
             }
 
             rs.close();
@@ -1494,45 +1509,6 @@ public class DBEngine {
         return nodeList;
     }
 
-    public void printnodes() {
-        try {
-
-            Connection conn = ds.getConnection();
-            Statement stmt = conn.createStatement();
-
-            ResultSet rs = stmt.executeQuery("SELECT * FROM pnode");
-
-
-            // print out query result
-            while (rs.next()) {
-                System.out.printf("%s\t%s\t%s\n", rs.getString("region_id"), rs.getString("agent_id"), rs.getString("plugin_id"));
-            }
-            rs.close();
-
-            rs = stmt.executeQuery("SELECT * FROM anode");
-
-            // print out query result
-            while (rs.next()) {
-                System.out.printf("%s\t%s\n", rs.getString("region_id"), rs.getString("agent_id"));
-            }
-            rs.close();
-
-            rs = stmt.executeQuery("SELECT * FROM rnode");
-
-            // print out query result
-            while (rs.next()) {
-                System.out.printf("%s\n", rs.getString("region_id"));
-            }
-            rs.close();
-
-
-            stmt.close();
-            conn.close();
-
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-    }
 
         public static DataSource setupDataSource(String connectURI) {
             return setupDataSource(connectURI,null,null);

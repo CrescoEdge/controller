@@ -90,9 +90,13 @@ public class DBInterfaceImpl implements DBInterface {
                     //fixme take into account current state
                     //add region, this will need to be more complex in future
                     dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
-                } else {
+                }
+
+                //if region update, otherwise ignore
+                if((region != null) && (agent == null)) {
                     dbe.updateNode(region,null,null,0,"Region added by Agent",0, 0, null);
                 }
+
             }
 
             //Is Agent
@@ -708,8 +712,7 @@ public class DBInterfaceImpl implements DBInterface {
             queryMap = new HashMap<>();
             List<Map<String,String>> regionArray = new ArrayList<>();
             List<String> regionList = dbe.getNodeList(null,null);
-            //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
-            //Map<String,String> rMap = new HashMap<String,String>();
+
             if(regionList != null) {
                 for (String region : regionList) {
                     Map<String,String> regionMap = new HashMap<>();

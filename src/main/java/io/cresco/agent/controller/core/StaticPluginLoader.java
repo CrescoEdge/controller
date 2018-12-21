@@ -171,8 +171,11 @@ public class StaticPluginLoader implements Runnable  {
                                 //Manually create inode configuration allowing KPI storage
                                 //String inodeId = UUID.randomUUID().toString();
                                // String inodeId = "sysinfo_inode";
-                                controllerEngine.getGDB().addINode(resourceId,inodeId,10, "iNode added by Controller StaticPlugin Loader.", gson.toJson(map));
-                                controllerEngine.getGDB().updateINodeAssignment(inodeId, 10,"iNode Active." , plugin.getRegion(), plugin.getAgent(), pluginId);
+                                //todo fix this when agents get a DB
+                                if(controllerEngine.cstate.isRegionalController()) {
+                                    controllerEngine.getGDB().addINode(resourceId, inodeId, 10, "iNode added by Controller StaticPlugin Loader.", gson.toJson(map));
+                                    controllerEngine.getGDB().updateINodeAssignment(inodeId, 10, "iNode Active.", plugin.getRegion(), plugin.getAgent(), pluginId);
+                                }
                             }
 
                         }
