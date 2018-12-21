@@ -11,7 +11,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.xml.bind.DatatypeConverter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.PrintWriter;
@@ -143,8 +142,7 @@ public class ResourceSchedulerEngine implements Runnable {
 						}
 						else if(ce.getParam("globalcmd").equals("removeplugin"))
 						{
-							Map<String,String> pNodeMap = controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id"));
-                            logger.debug("Incoming Remove Request : resource_id: " + ce.getParam("resource_id") + " inode_id: " + ce.getParam("inode_id") + " pnodeMap: " + pNodeMap.toString());
+							logger.debug("Incoming Remove Request : resource_id: " + ce.getParam("resource_id") + " inode_id: " + ce.getParam("inode_id"));
                             new Thread(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id"))).start();
 						}
 					} else
@@ -193,20 +191,6 @@ public class ResourceSchedulerEngine implements Runnable {
         return jarString;
     }
 
-    public String getJarString(String pluginFile) {
-        String jarString = null;
-	    try
-        {
-            Path path = Paths.get(pluginFile);
-            byte[] data = Files.readAllBytes(path);
-            jarString = DatatypeConverter.printBase64Binary(data);
-        }
-        catch(Exception e)
-        {
-            e.printStackTrace();
-        }
-        return jarString;
-    }
 
     private pNode verifyPlugin(MsgEvent ce) {
         pNode node = null;

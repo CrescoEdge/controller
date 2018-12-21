@@ -24,14 +24,9 @@ public class PollRemovePipeline implements Runnable {
 
 	public PollRemovePipeline(ControllerEngine controllerEngine, String pipelineId)
 	{
-		//this.logger = new CLogger(PollRemovePipeline.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
-		//this.agentcontroller = agentcontroller;
-		//this.assignedNodes = assignedNodes;
-        this.controllerEngine = controllerEngine;
+		this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PollRemovePipeline.class.getName(),CLogger.Level.Info);
-
-
         this.pipelineId = pipelineId;
 	}
 	 public void run() {
@@ -39,16 +34,13 @@ public class PollRemovePipeline implements Runnable {
 
 	            int pipelineStatus = controllerEngine.getGDB().getPipelineStatusCode(pipelineId);
 
-                //logger.error("PIPELINE ID " + pipelineId + " SCHEDILER FOR REMOVAL!!! STATUS " + pipelineStatus);
-
-                //if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
                 if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
 
                     controllerEngine.getGDB().setPipelineStatus(pipelineId, "9", "Pipeline Scheduled for Removal");
 
 
 					gpay = controllerEngine.getGDB().getPipelineObj(pipelineId);
-                    //logger.error("pluginsid : " + pipelineId + " status_code " + controllerEngine.getGDB().dba.getPipelineStatus(pipelineId) + " pipleinId payload:" + gpay.pipeline_id);
+
                     if (pipelineId.equals(gpay.pipeline_id)) {
 
 						pipelineNodes = new ArrayList<>(gpay.nodes);
@@ -61,26 +53,17 @@ public class PollRemovePipeline implements Runnable {
                                 me.setParam("globalcmd", "removeplugin");
                                 me.setParam("inode_id", gnode.node_id);
                                 me.setParam("resource_id", pipelineId);
-						        /*
-						        MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, null, null, null, "add application node");
-                                me.setParam("globalcmd", "removeplugin");
-                                me.setParam("inode_id", gnode.node_id);
-                                me.setParam("resource_id", pipelineId);
-                                */
 
-                                //ghw.resourceScheduleQueue.add(me);
-                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","9");
-                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode Pipeline Scheduled for Removal");
+						        controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,9,"iNode Pipeline Scheduled for Removal");
 
                                 controllerEngine.getResourceScheduleQueue().add(me);
                             }
                             else if(statusCode > 19) {
-                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","8");
-                                controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode Disabled");
+                                controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,8,"iNode Disabled");
                             }
 						}
-                    //start watch loop
-                        //logger.error("PollRemovePipeline : Start Listen loop");
+
+						//start watch loop
                         List<gNode> errorList = new ArrayList<>();
                         boolean isScheduling = true;
                         while(isScheduling)
@@ -95,13 +78,13 @@ public class PollRemovePipeline implements Runnable {
                                 int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
                                 if (statusCode != 9) {
                                     if(statusCode == 8) {
-                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
+                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id);
                                         pipelineNodes.remove(gnode);
                                     }
                                     if(statusCode > 19) {
                                         errorList.add(gnode);
                                         pipelineNodes.remove(gnode);
-                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
+                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id);
 
                                     }
                                 }

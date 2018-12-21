@@ -610,33 +610,22 @@ public class GlobalHealthWatcher implements Runnable {
 
                 logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
-                    if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
+                    if(entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
                         logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
                         //mark node disabled
-                        controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
+                        //controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
+                        controllerEngine.getGDB().setNodeStatusCode(entry.getKey(),null,null,40,"set STALE by global controller health watcher");
+
+                        //mark it stale
                     }
-                    else if(entry.getValue() == NodeStatusType.LOST) { //will include more items once nodes update correctly
-                        /*
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        //remove nodes
-                        Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
-                        String region = nodeParams.get("region");
-                        String agent = nodeParams.get("agent");
-                        String pluginId = nodeParams.get("agentcontroller");
-                        logger.error("Removing " + region + " " + agent + " " + pluginId);
-                        controllerEngine.getGDB().removeNode(region,agent,pluginId);
-                        */
-                        Map<String,String> edgeParams = controllerEngine.getGDB().getEdgeParamsNoTx(entry.getKey());
-                        //String nodeId = controllerEngine.getGDB().gdb.getNodeId(edgeMap.get("region"),null,null);
-                        //Map<String,String> nodeParams = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
-                        String region = edgeParams.get("region");
-                        String agent = edgeParams.get("agent");
-                        String pluginId = edgeParams.get("agentcontroller");
-                        logger.error("Removing " + region + " " + agent + " " + pluginId);
-                        controllerEngine.getGDB().removeNode(region,agent,pluginId);
+                    else if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
+                        logger.error("Setting STALE " + entry.getKey());
+                       // controllerEngine.getGDB().removeNode(region,agent,pluginId);
+                        controllerEngine.getGDB().setNodeStatusCode(entry.getKey(),null,null,50,"set LOST by global controller health watcher");
+
                     }
                     else if(entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                        //logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
                     } /*else {
                         logger.info("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());

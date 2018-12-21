@@ -3,32 +3,28 @@ package io.cresco.agent.controller.db;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
+import io.cresco.library.app.gEdge;
+import io.cresco.library.app.gNode;
 import io.cresco.library.app.gPayload;
 import io.cresco.library.app.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.xml.bind.DatatypeConverter;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DBInterfaceImpl implements DBInterface {
 
     private PluginBuilder plugin;
     private CLogger logger;
-    private DBEngine gde;
-    private DBBaseFunctions gdb;
-    private DBApplicationFunctions dba;
     private ControllerEngine controllerEngine;
+    private DBEngine dbe;
 
     private Gson gson;
     private Type type;
@@ -40,135 +36,666 @@ public class DBInterfaceImpl implements DBInterface {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
+        this.dbe = new DBEngine();
 
-        //this.logger = new CLogger(DBInterfaceImpl.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
-        //this.agentcontroller = agentcontroller;
         this.importQueue = new LinkedBlockingQueue<>();
-        this.gde = new DBEngine(this.plugin);
-        this.gdb = new DBBaseFunctions(plugin,gde);
-        this.dba = new DBApplicationFunctions(plugin,gde,gdb);
         this.gson = new Gson();
         this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
 
     }
 
-    public void shutdown() {
+    public Map<String,String> getInodeMap(String inodeId) {
+        return dbe.getInodeMap(inodeId);
+    }
+
+    public int setINodeStatusCode(String inodeId, int status_code, String status_desc) {
+        return dbe.setINodeStatusCode(inodeId,status_code,status_desc);
+    }
+
+    public gPayload getPipelineObj(String pipelineId) {
+        gPayload gpay = null;
+        try {
+
+            gpay = gson.fromJson(dbe.getResourceNodeSubmission(pipelineId), gPayload.class);
+
+        }
+        catch(Exception ex) {
+            logger.error("getPipelineObj " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return gpay;
+    }
+
+    public boolean nodeExist(String region, String agent, String plugin) {
+        return dbe.nodeExist(region,agent,plugin);
+    }
+
+    public boolean addNode(MsgEvent de) {
+        boolean wasAdded = false;
 
         try {
-            gde.shutdown();
-            gde = null;
-        } catch (Exception ex) {
-            logger.error(ex.getMessage());
-        }
 
-    }
+            String region = de.getParam("region_name");
+            String agent = de.getParam("agent_name");
+            String plugin = de.getParam("plugin_id");
 
-    public Map<String,String> paramStringToMap(String param) {
-        Map<String,String> params = null;
-        try
-        {
+            logger.debug("Adding Node: " + de.getParams().toString());
 
-            params = new HashMap<String,String>();
-            String[] pstr = param.split(",");
-            for(String str : pstr)
-            {
-                String[] pstrs = str.split("=");
-                params.put(pstrs[0], pstrs[1]);
-            }
-        }
-        catch(Exception ex)
-        {
-            logger.error("paramStringToMap " + ex.toString());
-        }
-        return params;
-    }
-
-    public Map<String,String> getResourceTotal() {
-        Map<String,String> resourceTotal = null;
-        long cpu_core_count = 0;
-        long memoryAvailable = 0;
-        long memoryTotal = 0;
-        long diskAvailable = 0;
-        long diskTotal = 0;
-        long region_count = 0;
-        long agent_count = 0;
-        long plugin_count = 0;
-
-        try
-        {
-
-
-            resourceTotal = new HashMap<>();
-            List<String> sysInfoEdgeList = controllerEngine.getGDB().dba.getIsAssignedEdgeIds("sysinfo_resource", "sysinfo_inode");
-            for(String edgeID : sysInfoEdgeList) {
-
-                Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
-                cpu_core_count += Long.parseLong(edgeParams.get("cpu-logical-count"));
-                memoryAvailable += Long.parseLong(edgeParams.get("memory-available"));
-                memoryTotal += Long.parseLong(edgeParams.get("memory-total"));
-                for (String fspair : edgeParams.get("fs-map").split(",")) {
-                    String[] fskey = fspair.split(":");
-                    diskAvailable += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-available"));
-                    diskTotal += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-total"));
+            if(region != null) {
+                if(!dbe.nodeExist(region,null,null)) {
+                    //fixme take into account current state
+                    //add region, this will need to be more complex in future
+                    dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
+                } else {
+                    dbe.updateNode(region,null,null,0,"Region added by Agent",0, 0, null);
                 }
             }
 
-            List<String> regionList = gdb.getNodeList(null,null,null);
-            //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
-            //Map<String,String> rMap = new HashMap<String,String>();
-            if(regionList != null) {
-                for (String region : regionList) {
-                    region_count++;
-                    logger.trace("Region : " + region);
-                    List<String> agentList = gdb.getNodeList(region, null, null);
-                    if (agentList != null) {
-                        for (String agent : agentList) {
-                            agent_count++;
-                            logger.trace("Agent : " + agent);
+            //Is Agent
+            if((region != null) && (agent != null) && (plugin == null)) {
 
-                            List<String> pluginList = gdb.getNodeList(region, agent, null);
-                            if (pluginList != null) {
+                if(!dbe.nodeExist(region,agent,null)) {
+                    //fixme take into account current state
+                    //add region, this will need to be more complex in future
+                    dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+                } else {
+                    dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+                }
 
-                                boolean isRecorded = false;
-                                for (String pluginId : pluginList) {
-                                    logger.trace("Plugin : " + plugin);
-                                    plugin_count++;
-                                }
-                            }
+                if (de.getParam("pluginconfigs") != null) {
+                    List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
+                            new TypeToken<List<Map<String, String>>>() {
+                            }.getType());
+
+                    //Add Plugin Information
+                    for (Map<String, String> configMap : configMapList) {
+                        String pluginId = configMap.get("pluginid");
+                        String status_code = configMap.get("status_code");
+                        String status_desc = configMap.get("status_desc");
+                        String configparams = configMap.get("configparams");
+
+                        logger.debug("Adding Sub-Node: " + configMap.toString());
+
+                        if(!nodeExist(region,agent,pluginId)) {
+                            //todo plugins need to list their watchdog peroid
+                            dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
+                        } else {
+                            dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
                         }
                     }
                 }
             }
 
-            //logger.trace("Regions :" + region_count);
-            //logger.trace("Agents :" + agent_count);
-            //logger.trace("Plugins : " + plugin_count);
-            logger.trace("Total CPU core count : " + cpu_core_count);
-            logger.trace("Total Memory Available : " + memoryAvailable);
-            logger.trace("Total Memory Total : " + memoryTotal);
-            logger.trace("Total Disk Available : " + diskAvailable);
-            logger.trace("Total Disk Total : " + diskTotal);
-            resourceTotal.put("regions",String.valueOf(region_count));
-            resourceTotal.put("agents",String.valueOf(agent_count));
-            resourceTotal.put("plugins",String.valueOf(plugin_count));
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
+            wasAdded = true;
+
+        } catch (Exception ex) {
+            System.out.println("GraphDBUpdater : addNode ERROR : " + ex.toString());
+        }
+
+        return wasAdded;
+    }
+
+    public String getPipeline(String pipelineId) {
+        return dbe.getResourceNodeSubmission(pipelineId);
+    }
+
+    public boolean watchDogUpdate(MsgEvent de) {
+        boolean wasUpdated = false;
+
+        try {
+
+
+            //logger.error("src_region:" + de.getSrcRegion() + " src_agent:" + de.getSrcAgent() + " src_plugin:" + de.getSrcPlugin());
+            //logger.error(de.getParams().toString());
+            String region = de.getParam("region_name");
+            String agent = de.getParam("agent_name");
+            String pluginId = de.getParam("plugin_id");
+
+
+            logger.debug("watchdog() region=" + region + " agent=" + agent + " agentcontroller=" + pluginId);
+
+            if(dbe.nodeExist(region,agent,pluginId)) {
+
+
+                dbe.updateWatchDogTS(region,agent,pluginId);
+
+                if((region != null) && (agent != null) && (pluginId == null)) {
+
+                    //add agentcontroller configs for agent
+                    if (de.getParam("pluginconfigs") != null) {
+
+                        List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
+                                new TypeToken<List<Map<String, String>>>() {
+                                }.getType());
+
+                        //build a list of plugins on record for an agent
+                        List<String> pluginRemoveList = dbe.getNodeList(region,agent);
+
+                        for (Map<String, String> configMap : configMapList) {
+                            String subpluginId = configMap.get("pluginid");
+
+                            //remove agentcontroller from remove list of new config exist
+                            pluginRemoveList.remove(subpluginId);
+
+                            //add new nodes not currently on the system, add node will check that they exist
+                            if(!dbe.nodeExist(region,agent,subpluginId)) {
+
+                                String status_code = configMap.get("status_code");
+                                String status_desc = configMap.get("status_desc");
+                                String configparams = configMap.get("configparams");
+
+                                logger.debug("subpluginId:" + subpluginId + " status_code=" + status_code + " status_desc=" + status_desc + " watchdogtimer=" + configMap.get("watchdogtimer") + " configMap: " + configMap.toString());
+
+                                //todo plugins need to list their watchdog peroid
+                                dbe.addNode(region,agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(configMap.get("watchdogtimer")),System.currentTimeMillis(),configparams);
+                            }
+                        }
+
+                        //remove nodes on the pluginRemoveList, they are no longer on the agent
+                        for(String removePlugin : pluginRemoveList) {
+                            dbe.removeNode(region,agent,removePlugin);
+                        }
+                    }
+                }
+
+
+                wasUpdated = true;
+            }
+            else {
+                logger.error("watchdog() nodeID does not exist for region:" + region + " agent:" + agent + " pluginId:" + pluginId);
+                logger.error(de.getMsgType().toString() + " [" + de.getParams().toString() + "]");
+
+            }
+
+        } catch (Exception ex) {
+            logger.error(": watchDogUpdate ERROR : " + ex.toString());
+            ex.printStackTrace();
+        }
+        return wasUpdated;
+    }
+
+    public Map<String,NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
+
+        Map<String,NodeStatusType> nodeStatusMap = null;
+        try {
+            nodeStatusMap = new HashMap<>();
+
+            Map<String,Integer> nodeStatusMapTmp = dbe.getNodeStatusCodeMap(region,agent);
+
+            for (Map.Entry<String, Integer> pair : nodeStatusMapTmp.entrySet()) {
+
+                String node = pair.getKey();
+                int status_code = pair.getValue();
+
+                switch (status_code) {
+                    case 3:  nodeStatusMap.put(node,NodeStatusType.STARTING);
+                        break;
+                    case 7:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 8:  nodeStatusMap.put(node,NodeStatusType.DISABLED);
+                        break;
+                    case 9:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 10:  nodeStatusMap.put(node,NodeStatusType.ACTIVE);
+                        break;
+                    case 40:  nodeStatusMap.put(node,NodeStatusType.STALE);
+                        break;
+                    case 41:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 50:  nodeStatusMap.put(node,NodeStatusType.LOST);
+                        break;
+                    case 80:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 90: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 91: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    case 92: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                    default: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                        break;
+                }
+            }
+
+            List<String> pendingStaleList = dbe.getStaleNodeList(region,agent);
+            for(String node : pendingStaleList) {
+                if(nodeStatusMap.containsKey(node)) {
+                    nodeStatusMap.put(node,NodeStatusType.PENDINGSTALE);
+                }
+            }
+
+        }
+        catch(Exception ex) {
+            //logger.error(ex.getMessage());
+            ex.printStackTrace();
+        }
+        return nodeStatusMap;
+    }
+
+    public int setNodeStatusCode(String regionId, String agentId, String pluginId, int status_code, String status_desc) {
+        return dbe.setNodeStatusCode(regionId,agentId,pluginId,status_code,status_desc);
+    }
+
+    public String getPipelineInfo(String pipeline_action) {
+        String queryReturn = null;
+        try
+        {
+            Map<String,List<Map<String,String>>> queryMap;
+
+            queryMap = new HashMap<>();
+            List<Map<String,String>> pipelineArray = new ArrayList<>();
+            List<String> pipelines = null;
+            if(pipeline_action != null) {
+                pipelines = new ArrayList<>();
+                pipelines.add(pipeline_action);
+            } else {
+                pipelines = dbe.getResourceNodeList();
+            }
+
+            for(String pipelineId :pipelines) {
+                Map<String,String> pipelineMap = dbe.getResourceNodeStatusMap(pipelineId);
+                if(!pipelineMap.isEmpty()) {
+                    pipelineArray.add(pipelineMap);
+                }
+            }
+            queryMap.put("pipelines",pipelineArray);
+
+            queryReturn = gson.toJson(queryMap);
+            //queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress((gson.toJson(queryMap))));
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+        return queryReturn;
+
+    }
+
+    public gPayload createPipelineRecord(String tenant_id, String gPayload) {
+
+        gPayload gpay = null;
+        try {
+
+            gpay = gson.fromJson(gPayload, gPayload.class);
+
+            gpay.pipeline_id = UUID.randomUUID().toString();
+            gpay.status_code = "3";
+            gpay.status_desc = "Record added to DB.";
+
+            dbe.addResource(gpay.pipeline_id,gpay.pipeline_name,Integer.parseInt(tenant_id),3,"Record added to DB.",gson.toJson(gpay));
 
         }
         catch(Exception ex)
         {
-            logger.error("getResourceTotal() " + ex.toString());
+            ex.printStackTrace();
+        }
+        return gpay;
+    }
+
+    public String addINode(String resourceId, String inodeId, int status_code, String status_desc, String configparams) {
+        dbe.addInode(inodeId,resourceId,status_code,status_desc, configparams);
+        return null;
+    }
+
+    public gPayload createPipelineNodes(gPayload gpay) {
+
+        try
+        {
+            //create nodes and links for pipeline records
+            HashMap<String,String> iNodeHm = new HashMap<>();
+            HashMap<String,String> vNodeHm = new HashMap<>();
+
+            for(gNode node : gpay.nodes)
+            {
+                try
+                {
+                    //add resource_id to configs
+                    node.params.put("resource_id",gpay.pipeline_id);
+
+                    String vnodeId = UUID.randomUUID().toString();
+                    String inodeId = UUID.randomUUID().toString();
+
+                    //create clean vnode first
+                    dbe.addVnode(vnodeId,gpay.pipeline_id,inodeId,gson.toJson(node.params));
+                    vNodeHm.put(node.node_id, vnodeId);
+
+                    //create anotated inode next
+                    dbe.addInode(inodeId,gpay.pipeline_id,3,"Added inode to database.",gson.toJson(node.params));
+                    iNodeHm.put(node.node_id, inodeId);
+
+                    node.node_id = inodeId;
+
+                }
+                catch(Exception ex)
+                {
+                    logger.error("createPipelineNodes() Nodes: " + ex.toString());
+                    //todo remove this
+                    StringWriter errors = new StringWriter();
+                    ex.printStackTrace(new PrintWriter(errors));
+                    logger.error(errors.toString());
+                }
+            }
+
+            for(gEdge edge : gpay.edges) {
+                try
+                {
+                    /*
+                    if((edge.node_from != null) && (edge.node_to != null)) {
+                        if ((vNodeHm.containsKey(edge.node_from)) && (vNodeHm.containsKey(edge.node_to))) {
+
+                            //create edge between vnodes
+                            logger.debug("From vID : " + edge.node_from + " TO vID: " + edge.node_to);
+                            String edge_id = createVEdge(vNodeHm.get(edge.node_from), vNodeHm.get(edge.node_to));
+                            edge.edge_id = edge_id;
+
+                            logger.debug("vedgeid: " + edge_id + " from: " + vNodeHm.get(edge.node_from) + " to:" + vNodeHm.get(edge.node_to));
+
+                            //create edge between inodes
+                            String iedge_id = createIEdge(iNodeHm.get(edge.node_from), iNodeHm.get(edge.node_to));
+                            logger.debug("iedgeid: " + iedge_id + " from: " + iNodeHm.get(edge.node_from) + " to:" + iNodeHm.get(edge.node_to));
+
+                            //assign vEdge ID
+                            logger.debug("pre edge.node_from=" + edge.node_from);
+                            logger.debug("pre edge.node_to=" + edge.node_to);
+
+                            edge.edge_id = iedge_id;
+
+                            edge.node_from = iNodeHm.get(edge.node_from);
+                            edge.node_to = iNodeHm.get(edge.node_to);
+
+                            logger.debug("post edge.node_from=" + edge.node_from);
+                            logger.debug("post edge.node_to=" + edge.node_to);
+
+                            //logger.debug("edge.node_from inode: " + eNodeHm.get(edge.node_from));
+                            //logger.debug("edge.node_to inode: " + eNodeHm.get(edge.node_to));
+
+                        }
+
+                    }
+                    */
+                    //iEdge
+                }
+                catch(Exception ex)
+                {
+                    logger.error("createPipelineNodes() Edges: " + ex.toString());
+                    //todo remove this
+                    StringWriter errors = new StringWriter();
+                    ex.printStackTrace(new PrintWriter(errors));
+                    logger.error(errors.toString());
+                }
+            }
+
+
+            //return gpay;
+            gpay.status_code = "3";
+            gpay.status_desc = "Pipeline Nodes Created.";
+            updatePipeline(gpay);
+            //setPipelineStatus(gpay.pipeline_id,"3","Pipeline Nodes Created.");
+            return gpay;
+        }
+        catch(Exception ex)
+        {
+            logger.error("createPipelineNodes(): " + ex.toString());
+            //todo remove this
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
+        }
+        gpay.status_code = "1";
+        gpay.status_desc = "Failed to create Pipeline.";
+        //setPipelineStatus(gpay.pipeline_id,"1", "Failed to create Pipeline.");
+        updatePipeline(gpay);
+        return gpay;
+    }
+
+    public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc) {
+        if(dbe.setResourceNodeStatus(pipelineId, Integer.parseInt(status_code),status_desc) == 1) {
+            return true;
+        } else {
+            return false;
+        }
+
+    }
+
+    public boolean updatePipeline(gPayload gpay) {
+        try
+        {
+
+            String pipelineId = gpay.pipeline_id;
+            String status_code = gpay.status_code;
+            String status_desc = gpay.status_desc;
+            String submission = gson.toJson(gpay);
+            dbe.updateResource(pipelineId,Integer.parseInt(status_code),status_desc,submission);
+            return true;
+        }
+        catch(Exception ex)
+        {
+            logger.error("updatePipeline Error: " + ex.toString());
+        }
+
+        return false;
+    }
+
+    public boolean updateINodeAssignment(String inodeId, int status_code, String status_desc, String regionId, String agentId, String pluginId) {
+        try
+        {
+            dbe.updateINodeAssignment(inodeId,status_code,status_desc,regionId,agentId,pluginId);
+            logger.debug("MAP : " + dbe.getInodeMap(inodeId).toString());
+
+            return true;
+        }
+        catch(Exception ex)
+        {
+            logger.error("updatePipeline Error: " + ex.toString());
+        }
+
+        return false;
+    }
+
+    public String getAgentList(String actionRegion) {
+        String queryReturn = null;
+
+        Map<String,List<Map<String,String>>> queryMap;
+
+        try
+        {
+            queryMap = new HashMap<>();
+            List<Map<String,String>> regionArray = new ArrayList<>();
+
+            List<String> regionList;
+            if(actionRegion != null) {
+                regionList = new ArrayList<>();
+                regionList.add(actionRegion);
+            } else {
+                regionList = dbe.getNodeList(null,null);
+            }
+            for(String region : regionList) {
+
+                List<String> agentList = dbe.getNodeList(region, null);
+
+                if (agentList != null) {
+                    for (String agent : agentList) {
+                        Map<String, String> regionMap = new HashMap<>();
+                        //logger.trace("Agent : " + region);
+                        regionMap.put("name", agent);
+                        regionMap.put("region", region);
+                        regionMap.put("plugins", String.valueOf(dbe.getNodeCount(region, agent)));
+
+                        try {
+
+                            try {
+                                String configParamString  = dbe.getNodeConfigParams(region,agent,null);
+                                Type type = new TypeToken<Map<String, String>>() {
+                                }.getType();
+                                Map<String, String> params = gson.fromJson(configParamString, type);
+                                regionMap.put("location",params.get("location"));
+                                regionMap.put("platform",params.get("platform"));
+                                regionMap.put("environment",params.get("environment"));
+                            } catch(Exception ex) {
+                                regionMap.put("location","unknown");
+                                regionMap.put("platform","unknown");
+                                regionMap.put("environment","unknown");
+                            }
+
+
+                        } catch (Exception ex) {
+                            logger.error("getAgentList() Map " + ex.toString());
+                            StringWriter sw = new StringWriter();
+                            PrintWriter pw = new PrintWriter(sw);
+                            ex.printStackTrace(pw);
+                            logger.error(sw.toString()); //
+                        }
+                        regionArray.add(regionMap);
+                    }
+                }
+                queryMap.put("agents", regionArray);
+            }
+            queryReturn = gson.toJson(queryMap);
+
+        }
+        catch(Exception ex)
+        {
+            logger.error("getAgentList() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             logger.error(sw.toString()); //
         }
 
-        return resourceTotal;
+        return queryReturn;
+    }
+
+    public int getINodeStatus(String inodeId) {
+        return dbe.getINodeStatus(inodeId);
+    }
+
+    public Map<String,List<pNode>> getPluginListRepoSet() {
+
+        AtomicBoolean lockRepoList = new AtomicBoolean();
+
+        Map<String,List<pNode>> pluginRepoMap = null;
+        try
+        {
+            List<String> repoList = getPluginListRepoInventory();
+
+            pluginRepoMap = new HashMap<>();
+
+            for(String repoJSON : repoList) {
+                Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
+                List<Map<String,String>> tmpPluginsList = myRepoMap.get("plugins");
+                List<Map<String,String>> tmpServerList = myRepoMap.get("server");
+
+                for(Map<String,String> plugin : tmpPluginsList) {
+                    String name = plugin.get("pluginname");
+                    String jarfile = plugin.get("jarfile");
+                    String md5 = plugin.get("md5");
+                    String version = plugin.get("version");
+
+                    synchronized (lockRepoList) {
+
+                        if (!pluginRepoMap.containsKey(name)) {
+                            List<pNode> nodeList = new ArrayList<>();
+                            pNode node = new pNode(name, jarfile, md5, version, tmpServerList);
+                            nodeList.add(node);
+                            pluginRepoMap.put(name, nodeList);
+                        } else {
+                            List<pNode> nodeList = new ArrayList<>();
+                            nodeList.addAll(pluginRepoMap.get(name));
+
+                            for (Iterator<pNode> iterator = pluginRepoMap.get(name).iterator(); iterator.hasNext();) {
+                                pNode node = iterator.next();
+                                if (node.isEqual(name, jarfile, md5, version)) {
+                                    nodeList.get(nodeList.indexOf(node)).addRepos(tmpServerList);
+                                } else {
+                                    pNode newnode = new pNode(name, jarfile, md5, version, tmpServerList);
+                                    nodeList.add(newnode);
+                                }
+                            }
+
+                            pluginRepoMap.put(name, nodeList);
+                        }
+
+                    }
+                }
+            }
+        }
+        catch(Exception ex)
+        {
+            logger.error("getPluginListRepoSet() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return pluginRepoMap;
+    }
+
+    public String getPluginListByType(String actionPluginTypeId, String actionPluginTypeValue) {
+        String queryReturn = null;
+
+        Map<String,List<Map<String,String>>> queryMap;
+
+        try
+        {
+            queryMap = new HashMap<>();
+            queryMap.put("plugins", dbe.getPluginListMapByType(actionPluginTypeId,actionPluginTypeValue));
+            queryReturn = gson.toJson(queryMap);
+
+        }
+        catch(Exception ex)
+        {
+            logger.error("getPluginListByType() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+    }
+
+    public List<String> getPluginListRepoInventory() {
+        List<String> repoList = null;
+        try
+        {
+            repoList = new ArrayList<>();
+            String repoPluginsJSON = getPluginListByType("pluginname","io.cresco.repo");
+
+            Map<String,List<Map<String,String>>> myMap = gson.fromJson(repoPluginsJSON, type);
+
+            for(Map<String,String> perfMap : myMap.get("plugins")) {
+
+                String region = perfMap.get("region");
+                String agent = perfMap.get("agent");
+                String pluginID = perfMap.get("pluginid");
+
+                MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC,region,agent,pluginID);
+                request.setParam("action", "repolist");
+
+                MsgEvent response = plugin.sendRPC(request);
+                if(response.getParam("repolist") != null) {
+                    repoList.add(response.getCompressedParam("repolist"));
+                } else {
+                    logger.error("NO RESPONSE FROM REPO LIST");
+                }
+            }
+
+        }
+        catch(Exception ex)
+        {
+            logger.error("getPluginListByType() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return repoList;
     }
 
     public String getRegionList() {
@@ -180,14 +707,14 @@ public class DBInterfaceImpl implements DBInterface {
         {
             queryMap = new HashMap<>();
             List<Map<String,String>> regionArray = new ArrayList<>();
-            List<String> regionList = gdb.getNodeList(null,null,null);
+            List<String> regionList = dbe.getNodeList(null,null);
             //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
             //Map<String,String> rMap = new HashMap<String,String>();
             if(regionList != null) {
                 for (String region : regionList) {
                     Map<String,String> regionMap = new HashMap<>();
                     logger.trace("Region : " + region);
-                    List<String> agentList = gdb.getNodeList(region, null, null);
+                    List<String> agentList = dbe.getNodeList(region, null);
                     regionMap.put("name",region);
                     if(agentList != null) {
                         regionMap.put("agents", String.valueOf(agentList.size()));
@@ -215,71 +742,6 @@ public class DBInterfaceImpl implements DBInterface {
         return queryReturn;
     }
 
-    public void submitDBImport(String exportData) {
-        importQueue.offer(exportData);
-    }
-
-    public String getAgentList(String actionRegion) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-            List<String> regionList;
-            if(actionRegion != null) {
-                regionList = new ArrayList<>();
-                regionList.add(actionRegion);
-            } else {
-                regionList = gdb.getNodeList(null,null,null);
-            }
-            for(String region : regionList) {
-
-                List<String> agentList = gdb.getNodeList(region, null, null);
-                //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
-                //Map<String,String> rMap = new HashMap<String,String>();
-                if (agentList != null) {
-                    for (String agent : agentList) {
-                        Map<String, String> regionMap = new HashMap<>();
-                        logger.trace("Agent : " + region);
-                        List<String> pluginList = gdb.getNodeList(region, agent, null);
-                        regionMap.put("name", agent);
-                        regionMap.put("region", region);
-                        regionMap.put("plugins", String.valueOf(pluginList.size()));
-                        //TODO there must be a better way to do this
-                        try {
-                            String nodeId = gdb.getNodeId(region, agent, null);
-                            Map<String, String> params = gdb.getNodeParams(nodeId);
-                            regionMap.put("location",params.get("location"));
-                            regionMap.put("platform",params.get("platform"));
-                            regionMap.put("environment",params.get("environment"));
-                        } catch (Exception ex) {
-                            //do nothing
-                        }
-                        regionArray.add(regionMap);
-                    }
-                }
-                queryMap.put("agents", regionArray);
-            }
-            //queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            queryReturn = gson.toJson(queryMap);
-
-        }
-        catch(Exception ex)
-        {
-            logger.error("getAgentList() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-    }
-
     public String getPluginListRepo() {
         String returnString = null;
         try
@@ -298,28 +760,6 @@ public class DBInterfaceImpl implements DBInterface {
                 }
             }
 
-            //Test
-            /*
-            Map<String,List<pNode>> testMap = getPluginListRepoSet();
-            for (Map.Entry<String, List<pNode>> entry : testMap.entrySet()) {
-                String key = entry.getKey();
-                List<pNode> value = entry.getValue();
-                logger.error("name: " + key);
-                for(pNode node : value) {
-                    logger.error("\t jarfile: " + node.jarfile);
-                    logger.error("\t md5 hash: " + node.md5);
-                    logger.error("\t version: " +node.version);
-                    logger.error("\t date: " +node.getBuildTime().toString());
-                    for(Map<String,String> server : node.repoServers) {
-                        logger.error("\t\t protocol: " + server.get("protocol"));
-                        logger.error("\t\t ip: " + server.get("ip"));
-                        logger.error("\t\t port: " + server.get("port"));
-                    }
-                }
-
-            }
-            */
-
             myRepoMapReturn.put("plugins",pluginsList);
             returnString = gson.toJson(myRepoMapReturn);
         }
@@ -333,169 +773,6 @@ public class DBInterfaceImpl implements DBInterface {
         }
 
         return returnString;
-    }
-
-    public Map<String,List<pNode>> getPluginListRepoSet() {
-
-        Map<String,List<pNode>> pluginRepoMap = null;
-        try
-        {
-            List<String> repoList = getPluginListRepoInventory();
-
-            pluginRepoMap = new HashMap<>();
-
-            for(String repoJSON : repoList) {
-                Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
-                List<Map<String,String>> tmpPluginsList = myRepoMap.get("plugins");
-                List<Map<String,String>> tmpServerList = myRepoMap.get("server");
-
-                for(Map<String,String> plugin : tmpPluginsList) {
-                    String name = plugin.get("pluginname");
-                    String jarfile = plugin.get("jarfile");
-                    String md5 = plugin.get("md5");
-                    String version = plugin.get("version");
-
-                    if(!pluginRepoMap.containsKey(name)) {
-                        List<pNode> nodeList = new ArrayList<>();
-                        pNode node = new pNode(name,jarfile,md5,version, tmpServerList);
-                        nodeList.add(node);
-                        pluginRepoMap.put(name,nodeList);
-                    } else {
-                        List<pNode> nodeList = pluginRepoMap.get(name);
-                        for(pNode node : nodeList) {
-                            if(node.isEqual(name,jarfile,md5,version)) {
-                                nodeList.get(nodeList.indexOf(node)).addRepos(tmpServerList);
-                            } else {
-                                pNode newnode = new pNode(name,jarfile,md5,version, tmpServerList);
-                                nodeList.add(newnode);
-                            }
-                        }
-                        pluginRepoMap.put(name,nodeList);
-                    }
-                }
-
-
-            }
-        }
-        catch(Exception ex)
-        {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return pluginRepoMap;
-    }
-
-    public List<String> getPluginListRepoInventory() {
-        List<String> repoList = null;
-        try
-        {
-            repoList = new ArrayList<>();
-            String repoPluginsJSON = getPluginListByType("pluginname","io.cresco.repo");
-            Map<String,List<Map<String,String>>> myMap = gson.fromJson(repoPluginsJSON, type);
-
-            for(Map<String,String> perfMap : myMap.get("plugins")) {
-
-                String region = perfMap.get("region");
-                String agent = perfMap.get("agent");
-                String pluginID = perfMap.get("pluginid");
-
-                /*
-                MsgEvent request = new MsgEvent(MsgEvent.Type.EXEC, plugin.getRegion(), plugin.getAgent(),
-                        plugin.getPluginID(), "Plugin List by Repo");
-                request.setParam("src_region", plugin.getRegion());
-                request.setParam("src_agent", plugin.getAgent());
-                request.setParam("src_plugin", plugin.getPluginID());
-                request.setParam("dst_region", region);
-                request.setParam("dst_agent", agent);
-                request.setParam("dst_plugin", perfMap.get("agentcontroller"));
-                request.setParam("action", "repolist");
-                */
-                MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC,region,agent,pluginID);
-                request.setParam("action", "repolist");
-
-                MsgEvent response = plugin.sendRPC(request);
-
-                repoList.add(response.getCompressedParam("repolist"));
-                /*
-                Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(response.getCompressedParam("repolist"), type);
-
-                for(Map<String,String> contactMap : myRepoMap.get("server")) {
-                    logger.error(contactMap.get("ip"));
-                    logger.error(contactMap.get("protocol"));
-                    logger.error(contactMap.get("port"));
-                }
-                */
-                //String resource_node_id = agentcontroller.getGDB().dba.getResourceNodeId("sysinfo_resource");
-                //String inode_node_id = agentcontroller.getGDB().dba.getINodeNodeId("sysinfo_inode");
-                //String plugin_node_id = agentcontroller.getGDB().gdb.getNodeId(region,agent,"agentcontroller/0");
-                //String edge_id = agentcontroller.getGDB().dba.getResourceEdgeId("sysinfo_resource", "sysinfo_inode", region, agent, "agentcontroller/0");
-
-            }
-
-            //queryMap.put("plugins", pluginArray);
-
-            //queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            //queryReturn = gson.toJson(queryMap);
-
-        }
-        catch(Exception ex)
-        {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return repoList;
-    }
-
-    public String getPluginListByType(String actionPluginTypeId, String actionPluginTypeValue) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> pluginArray = new ArrayList<>();
-
-            List<String> pluginList;
-            if((actionPluginTypeId == null) || (actionPluginTypeValue == null)) {
-                pluginList = new ArrayList<>();
-                pluginList.add(actionPluginTypeId);
-            } else {
-                pluginList = gdb.getPNodeFromIndex(actionPluginTypeId,actionPluginTypeValue);
-            }
-            for(String nodeId : pluginList) {
-
-                Map<String,String> pluginConfig = gdb.getNodeParamsNoTx(nodeId);
-
-                if(pluginConfig != null) {
-                    pluginArray.add(pluginConfig);
-                }
-            }
-
-            queryMap.put("plugins", pluginArray);
-
-            //queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            queryReturn = gson.toJson(queryMap);
-
-        }
-        catch(Exception ex)
-        {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
     }
 
     public String getPluginList(String actionRegion, String actionAgent) {
@@ -513,7 +790,7 @@ public class DBInterfaceImpl implements DBInterface {
                 regionList = new ArrayList<>();
                 regionList.add(actionRegion);
             } else {
-                regionList = gdb.getNodeList(null,null,null);
+                regionList = dbe.getNodeList(null,null);
             }
             for(String region : regionList) {
                 List<String> agentList;
@@ -521,14 +798,14 @@ public class DBInterfaceImpl implements DBInterface {
                     agentList = new ArrayList<>();
                     agentList.add(actionAgent);
                 } else {
-                    agentList = gdb.getNodeList(region,null,null);
+                    agentList = dbe.getNodeList(region,null);
                 }
                 //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
                 //Map<String,String> rMap = new HashMap<String,String>();
                 if (agentList != null) {
                     for (String agent : agentList) {
                         logger.trace("Agent : " + region);
-                        List<String> pluginList = gdb.getNodeList(region, agent, null);
+                        List<String> pluginList = dbe.getNodeList(region, agent);
                         for(String plugin : pluginList) {
                             Map<String, String> regionMap = new HashMap<>();
                             regionMap.put("name", plugin);
@@ -560,9 +837,7 @@ public class DBInterfaceImpl implements DBInterface {
         String queryReturn = null;
         try
         {
-            String nodeId = gdb.getNodeId(actionRegion, actionAgent,actionPlugin);
-            Map<String,String> nodeParams = gdb.getNodeParams(nodeId);
-            queryReturn = nodeParams.get("configparams");
+            queryReturn = dbe.getNodeConfigParams(actionRegion,actionAgent,actionPlugin);
         }
         catch(Exception ex)
         {
@@ -576,394 +851,63 @@ public class DBInterfaceImpl implements DBInterface {
         return queryReturn;
     }
 
-    private String getGlobalNetResourceInfo() {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-        List<DiscoveryNode> dsList = null;
-        try
-        {
-            dsList = new ArrayList<>();
-
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-            List<String> netInfoEdgeList = controllerEngine.getGDB().dba.getIsAssignedEdgeIds("netdiscovery_resource", "netdiscovery_inode");
-
-            for(String edgeID : netInfoEdgeList) {
-                Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
-
-                String network_map_json = gdb.stringUncompress(edgeParams.get("network_map"));
-
-
-                Type listType = new TypeToken<ArrayList<DiscoveryNode>>(){}.getType();
-                List<DiscoveryNode> tmpDsList = new Gson().fromJson(network_map_json, listType);
-                dsList.addAll(tmpDsList);
-
-                //MsgEvent me = msgEventFromJson(network_map_json);
-
-
-                //MsgEvent
-                //logger.error(network_map);
-                /*
-                cpu_core_count += Long.parseLong(edgeParams.get("cpu-logical-count"));
-                memoryAvailable += Long.parseLong(edgeParams.get("memory-available"));
-                memoryTotal += Long.parseLong(edgeParams.get("memory-total"));
-                for (String fspair : edgeParams.get("fs-map").split(",")) {
-                    String[] fskey = fspair.split(":");
-                    diskAvailable += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-available"));
-                    diskTotal += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-total"));
-                }
-                */
-            }
-
-            for(DiscoveryNode dn : dsList) {
-                logger.info("src_ip {} src_port {} src_region {} src_agent {}",dn.src_ip, dn.src_port, dn.src_region, dn.src_agent);
-                logger.info("dst_ip {} dst_port {} dst_region {} dst_agent {}",dn.dst_ip, dn.dst_port, dn.dst_region, dn.dst_agent);
-            }
-
-
-            /*
-            Map<String,String> resourceTotal = new HashMap<>();
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
-            regionArray.add(resourceTotal);
-            queryMap.put("globalresourceinfo",regionArray);
-
-            queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            */
-
-        } catch(Exception ex) {
-            logger.error("getGlobalNetResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
+    public int getPipelineStatusCode(String pipelineId) {
+        return dbe.getResourceNodeStatus(pipelineId);
     }
 
-    private String getGlobalResourceInfo() {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-
-        long cpu_core_count = 0;
-        long memoryAvailable = 0;
-        long memoryTotal = 0;
-        long diskAvailable = 0;
-        long diskTotal = 0;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-            List<String> sysInfoEdgeList = controllerEngine.getGDB().dba.getIsAssignedEdgeIds("sysinfo_resource", "sysinfo_inode");
-
-            for(String edgeID : sysInfoEdgeList) {
-                Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
-
-
-                String sysInfoJson= gdb.stringUncompress(edgeParams.get("perf"));
-
-                Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
-                }.getType();
-
-                Map<String,List<Map<String,String>>> myMap = gson.fromJson(sysInfoJson, type);
-
-                cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
-
-                memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
-                memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
-
-                for(Map<String,String> fsMap : myMap.get("fs")) {
-                    diskAvailable += Long.parseLong(fsMap.get("available-space"));
-                    diskTotal += Long.parseLong(fsMap.get("total-space"));
-                }
-
-                /*
-                cpu_core_count += Long.parseLong(edgeParams.get("cpu-logical-count"));
-                memoryAvailable += Long.parseLong(edgeParams.get("memory-available"));
-                memoryTotal += Long.parseLong(edgeParams.get("memory-total"));
-                for (String fspair : edgeParams.get("fs-map").split(",")) {
-                    String[] fskey = fspair.split(":");
-                    diskAvailable += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-available"));
-                    diskTotal += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-total"));
-                }
-                */
-
-            }
-            Map<String,String> resourceTotal = new HashMap<>();
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
-            regionArray.add(resourceTotal);
-            queryMap.put("globalresourceinfo",regionArray);
-
-            queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            //queryReturn = gson.toJson(queryMap);
-
-} catch(Exception ex) {
-            logger.error("getGlobalResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
+    public boolean removeNode(String region, String agent, String plugin) {
+        return dbe.removeNode(region,agent,plugin);
     }
 
-    private String getRegionResourceInfo(String actionRegion) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-
-        long cpu_core_count = 0;
-        long memoryAvailable = 0;
-        long memoryTotal = 0;
-        long diskAvailable = 0;
-        long diskTotal = 0;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-            List<String> sysInfoEdgeList = controllerEngine.getGDB().dba.getIsAssignedEdgeIds("sysinfo_resource", "sysinfo_inode");
-
-            for(String edgeID : sysInfoEdgeList) {
-                Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
-
-                if(edgeParams.get("region").toLowerCase().equals(actionRegion.toLowerCase())) {
-
-                    String sysInfoJson= gdb.stringUncompress(edgeParams.get("perf"));
-
-                    Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
-                    }.getType();
-
-                    Map<String,List<Map<String,String>>> myMap = gson.fromJson(sysInfoJson, type);
-
-                    cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
-
-                    memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
-                    memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
-
-                    for(Map<String,String> fsMap : myMap.get("fs")) {
-                        diskAvailable += Long.parseLong(fsMap.get("available-space"));
-                        diskTotal += Long.parseLong(fsMap.get("total-space"));
-                    }
-                    /*
-                    cpu_core_count += Long.parseLong(edgeParams.get("cpu-logical-count"));
-                    memoryAvailable += Long.parseLong(edgeParams.get("memory-available"));
-                    memoryTotal += Long.parseLong(edgeParams.get("memory-total"));
-                    for (String fspair : edgeParams.get("fs-map").split(",")) {
-                        String[] fskey = fspair.split(":");
-                        diskAvailable += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-available"));
-                        diskTotal += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-total"));
-                    }
-                    */
-                }
-            }
-            Map<String,String> resourceTotal = new HashMap<>();
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
-            regionArray.add(resourceTotal);
-            queryMap.put("regionresourceinfo",regionArray);
-
-            queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            //queryReturn = gson.toJson(queryMap);
-
-        } catch(Exception ex) {
-            logger.error("getRegionResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
+    public boolean removePipeline(String pipelineId) {
+        return dbe.removeResource(pipelineId);
     }
 
-    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
-        String queryReturn = null;
 
-        Map<String,List<Map<String,String>>> queryMap;
+    public boolean updateKPI(String region, String agent, String pluginId, String resource_id, String inode_id, Map<String,String> params) {
+        boolean isUpdated = false;
 
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
+        logger.debug("resource_id:" + resource_id + " inode_id:" + inode_id + " params:" + params.toString());
 
-            List<String> sysInfoEdgeList = controllerEngine.getGDB().dba.getIsAssignedEdgeIds("sysinfo_resource", "sysinfo_inode");
+        try {
 
-            for(String edgeID : sysInfoEdgeList) {
-                Map<String, String> edgeParams = dba.getIsAssignedParams(edgeID);
-
-                if((edgeParams.get("region").toLowerCase().equals(actionRegion.toLowerCase())) && (edgeParams.get("agent").toLowerCase().equals(actionAgent.toLowerCase()))) {
-
-                    Map<String,String> resourceTotal = new HashMap<>();
-
-                    /*
-                    Map<String,String> resourceTotal = new HashMap<>(edgeParams);
-                    resourceTotal.remove("dst_region");
-                    resourceTotal.remove("src_plugin");
-                    resourceTotal.remove("src_region");
-                    resourceTotal.remove("src_agent");
-                    resourceTotal.remove("agentcontroller");
-                    resourceTotal.remove("region");
-                    resourceTotal.remove("agent");
-                    resourceTotal.remove("inode_id");
-                    resourceTotal.remove("resource_id");
-                    resourceTotal.remove("routepath");
-                    */
-                    if(edgeParams.containsKey("perf")) {
-                        resourceTotal.put("perf", gdb.stringUncompress(edgeParams.get("perf")));
-                        regionArray.add(resourceTotal);
-                    }
-
-                }
-            }
-
-            queryMap.put("agentresourceinfo",regionArray);
-
-            queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            //queryReturn = gson.toJson(queryMap);
-
-        } catch(Exception ex) {
-            logger.error("getAgentResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
-    }
-
-    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
-        String returnString = null;
-
-        try{
-
-            List<Map<String,String>> metricList = new ArrayList<>();
-            if((actionRegion != null) && (actionAgent != null) && (actionPluginId != null)) {
-                List<String> edgeList = controllerEngine.getGDB().dba.getIsAttachedEdgeId(actionRegion,actionAgent,actionPluginId);
-                if(edgeList != null) {
-                    for(String edgeId : edgeList) {
-                        Map<String, String> edgeParams = dba.getIsAssignedParams(edgeId);
-                        if(edgeParams != null) {
-                            //String resource_id = edgeParams.get("resource_id");
-                            String inode_id = edgeParams.get("inode_id");
-
-                            if(!inode_id.equals("sysinfo_inode") && !inode_id.equals("netdiscovery_inode")) {
-                                if(edgeParams.containsKey("perf")) {
-                                    Map<String,String> perfMap = new HashMap<>();
-                                    perfMap.put("name",inode_id);
-                                    perfMap.put("metrics", gdb.stringUncompress(edgeParams.get("perf")));
-                                    metricList.add(perfMap);
-                                }
-                            }
-                        }
+            if(params != null) {
+                if(params.get("perf") != null) {
+                    if (!dbe.inodeKPIExist(inode_id)) {
+                        dbe.addInodeKPI(inode_id, params.get("perf"));
+                    } else {
+                        dbe.updateInodeKPI(inode_id, params.get("perf"));
                     }
                 }
             }
-            returnString = gson.toJson(metricList);
-        } catch(Exception ex) {
-            logger.error("getIsAttachedMetrics() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-        return returnString;
-    }
-
-    public String getNetResourceInfo() {
-        String queryReturn = null;
-        try
-        {
-                queryReturn = getGlobalNetResourceInfo();
 
         } catch(Exception ex) {
-            logger.error("getNetResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            ex.printStackTrace();
         }
 
-        return queryReturn;
-
-    }
-
-    public String getResourceInfo(String actionRegion, String actionAgent) {
-        String queryReturn = null;
-        try
-        {
-            if((actionRegion != null) && (actionAgent != null)) {
-                queryReturn = getAgentResourceInfo(actionRegion,actionAgent);
-            } else if (actionRegion != null) {
-                queryReturn = getRegionResourceInfo(actionRegion);
-            } else {
-                queryReturn = getGlobalResourceInfo();
-            }
-
-        } catch(Exception ex) {
-            logger.error("getResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
+        return isUpdated;
     }
 
     public String getGPipeline(String actionPipelineId) {
         String queryReturn = null;
         try
         {
-            gPayload gpay = controllerEngine.getGDB().dba.getPipelineObj(actionPipelineId);
+            gPayload gpay = getPipelineObj(actionPipelineId);
             if(gpay != null) {
-                Map<String, String> pipeStatMap = controllerEngine.getGDB().dba.getPipelineStatus(actionPipelineId);
+                Map<String, String> pipeStatMap = dbe.getResourceNodeStatusMap(actionPipelineId);
                 gpay.status_code = pipeStatMap.get("status_code");
                 gpay.status_desc = pipeStatMap.get("status_desc");
 
                 int nodeSize = gpay.nodes.size();
                 for (int i = 0; i < nodeSize; i++) {
                     gpay.nodes.get(i).params.clear();
-                    //logger.error("vnode=" + gpay.nodes.get(i).node_id);
-                    //String inodeid = agentcontroller.getGDB().dba.getINodefromVNode(gpay.nodes.get(i).node_id);
-                    //logger.error("inode=" + inodeid);
-                    //String status_code = agentcontroller.getGDB().dba.getINodeParam(inodeid,"status_code");
-                    //String status_desc = agentcontroller.getGDB().dba.getINodeParam(inodeid,"status_desc");
-                    //gpay.nodes.get(i).params.put("inode_id",inodeid);
-                    //logger.error("iNODE: " + gpay.nodes.get(i).node_id);
-                    String inodeNodeid = dba.getINodeNodeId(gpay.nodes.get(i).node_id);
-                    Map<String,String> inodeParams = controllerEngine.getGDB().gdb.getNodeParamsNoTx(inodeNodeid);
+
+                    //String inodeNodeid = dbe.getInodeMap(gpay.nodes.get(i).node_id) dba.getINodeNodeId(gpay.nodes.get(i).node_id);
+                    Map<String,String> inodeParams = dbe.getInodeMap(gpay.nodes.get(i).node_id);
 
                     String status_code = inodeParams.get("status_code");
                     String status_desc = inodeParams.get("status_desc");
-                    String params = inodeParams.get("params");
+                    String params = inodeParams.get("configparams");
                     String inode_id = inodeParams.get("inode_id");
                     String resource_id = inodeParams.get("resource_id");
 
@@ -976,17 +920,6 @@ public class DBInterfaceImpl implements DBInterface {
                     gpay.nodes.get(i).params.put("resource_id", resource_id);
                 }
 
-                /*
-                int edgeSize = gpay.edges.size();
-                for (int i = 0; i < nodeSize; i++) {
-                    dba.getIsAssignedParams("df");
-                }
-                */
-                //gdb.getEdgeParamsNoTx()
-
-                //String returnGetGpipeline = gson.toJson(gpay);
-                //String returnGetGpipeline = agentcontroller.getGDB().dba.getPipeline(actionPipelineId);
-                //queryReturn = DatatypeConverter.printBase64Binary(agentcontroller.getGDB().gdb.stringCompress(returnGetGpipeline));
                 queryReturn = gson.toJson(gpay);
             }
 
@@ -1006,10 +939,10 @@ public class DBInterfaceImpl implements DBInterface {
         String queryReturn = null;
         try
         {
-            String returnGetGpipeline = controllerEngine.getGDB().dba.getPipeline(actionPipelineId);
-            if(returnGetGpipeline != null) {
-                queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress(returnGetGpipeline));
-            }
+            String returnGetGpipeline = getPipeline(actionPipelineId);
+            //if(returnGetGpipeline != null) {
+            //    queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress(returnGetGpipeline));
+            //}
 
         } catch(Exception ex) {
             logger.error("getGPipelineExport() " + ex.toString());
@@ -1023,25 +956,20 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
-    public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
-
+    public String getResourceInfo(String actionRegion, String actionAgent) {
         String queryReturn = null;
         try
         {
-            String isAssignedEdgeId = controllerEngine.getGDB().dba.getResourceEdgeId(resourceid, inodeid);
-
-            if(isResourceMetric) {
-                   String resourceMetric = controllerEngine.getGDB().dba.getIsAssignedParam(isAssignedEdgeId,"resource_metric");
-                   if(resourceMetric != null) {
-                       queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress(resourceMetric));
-                   }
+            if((actionRegion != null) && (actionAgent != null)) {
+                queryReturn = getAgentResourceInfo(actionRegion,actionAgent);
+            } else if (actionRegion != null) {
+                queryReturn = getRegionResourceInfo(actionRegion);
             } else {
-                Map<String, String> queryMap = controllerEngine.getGDB().dba.getIsAssignedParams(isAssignedEdgeId);
-                queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress((gson.toJson(queryMap))));
+                queryReturn = getRegionResourceInfo(null);
             }
 
         } catch(Exception ex) {
-            logger.error("getIsAssignedInfo() " + ex.toString());
+            logger.error("getResourceInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -1052,640 +980,260 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
-    public String getPipelineInfo(String pipeline_action) {
+
+    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
         String queryReturn = null;
+
+        Map<String,List<Map<String,String>>> queryMap;
+
         try
         {
-            Map<String,List<Map<String,String>>> queryMap;
+            queryMap = new HashMap<>();
+            List<Map<String,String>> regionArray = new ArrayList<>();
 
-                queryMap = new HashMap<>();
-                List<Map<String,String>> pipelineArray = new ArrayList<>();
-                List<String> pipelines = null;
-                if(pipeline_action != null) {
-                    pipelines = new ArrayList<>();
-                    pipelines.add(pipeline_action);
-                } else {
-                    pipelines = controllerEngine.getGDB().dba.getPipelineIdList();
-                }
+            List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,actionAgent);
+            for(String str : inodeKPIList) {
+                Map<String,String> resourceTotal = new HashMap<>();
+                resourceTotal.put("perf", dbe.uncompressString(str));
+                regionArray.add(resourceTotal);
 
-                for(String pipelineId :pipelines) {
-                    Map<String,String> pipelineMap = controllerEngine.getGDB().dba.getPipelineStatus(pipelineId);
-                    if(!pipelineMap.isEmpty()) {
-                        pipelineArray.add(pipelineMap);
-                    }
-                }
-                queryMap.put("pipelines",pipelineArray);
+            }
 
-                queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress((gson.toJson(queryMap))));
+            queryMap.put("agentresourceinfo",regionArray);
+            queryReturn = gson.toJson(queryMap);
 
-            } catch(Exception ex) {
-            logger.error("getPipelineInfo() " + ex.toString());
+        } catch(Exception ex) {
+            logger.error("getAgentResourceInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             logger.error(sw.toString()); //
         }
 
+        return queryReturn;
+
+    }
+
+
+    private String getRegionResourceInfo(String actionRegion) {
+        String queryReturn = null;
+
+        Map<String,List<Map<String,String>>> queryMap;
+
+
+        long cpu_core_count = 0;
+        long memoryAvailable = 0;
+        long memoryTotal = 0;
+        long diskAvailable = 0;
+        long diskTotal = 0;
+
+        try
+        {
+            queryMap = new HashMap<>();
+            List<Map<String,String>> regionArray = new ArrayList<>();
+
+
+            List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,null);
+            for(String str : inodeKPIList) {
+
+                    String sysInfoJson= dbe.uncompressString(str);
+
+                    Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+                    }.getType();
+
+                    Map<String,List<Map<String,String>>> myMap = gson.fromJson(sysInfoJson, type);
+
+                    cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
+
+                    memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
+                    memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
+
+                    for(Map<String,String> fsMap : myMap.get("fs")) {
+                        diskAvailable += Long.parseLong(fsMap.get("available-space"));
+                        diskTotal += Long.parseLong(fsMap.get("total-space"));
+                    }
+
+            }
+
+            Map<String,String> resourceTotal = new HashMap<>();
+            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
+            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
+            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
+            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
+            resourceTotal.put("disk_total",String.valueOf(diskTotal));
+            regionArray.add(resourceTotal);
+            queryMap.put("regionresourceinfo",regionArray);
+
+            queryReturn = gson.toJson(queryMap);
+
+
+        } catch(Exception ex) {
+            logger.error("getRegionResourceInfo() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+
+    }
+
+
+    //complete
+
+    public void shutdown() {
+        logger.error("shutdown()");
+    }
+
+    public Map<String,String> paramStringToMap(String param) {
+        Map<String,String> params = null;
+        logger.error("Map<String,String> paramStringToMap(String param)");
+        return params;
+    }
+
+    public Map<String,String> getResourceTotal() {
+        Map<String,String> resourceTotal = null;
+        logger.error("Map<String,String> getResourceTotal()");
+        return resourceTotal;
+    }
+
+    public void submitDBImport(String exportData) {
+        logger.error("void submitDBImport(String exportData)");
+    }
+
+    private String getGlobalNetResourceInfo() {
+        String queryReturn = null;
+        logger.error("String getGlobalNetResourceInfo()");
+        return queryReturn;
+
+    }
+
+    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
+        String returnString = null;
+        logger.error("String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId)");
+        return returnString;
+    }
+
+    public String addINodeResource(String resource_id, String inode_id) {
+        logger.error("String addINodeResource(String resource_id, String inode_id)");
+        return null;
+    }
+
+    public String getNetResourceInfo() {
+        String queryReturn = null;
+        logger.error("String getNetResourceInfo()");
+        return queryReturn;
+
+    }
+
+    public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
+
+        String queryReturn = null;
+        logger.error("String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric");
         return queryReturn;
 
     }
 
     public Map<String,String> getResourceTotal2() {
         Map<String,String> resourceTotal = null;
-        long cpu_core_count = 0;
-        long memoryAvailable = 0;
-        long memoryTotal = 0;
-        long diskAvailable = 0;
-        long diskTotal = 0;
-        long region_count = 0;
-        long agent_count = 0;
-        long plugin_count = 0;
-
-        try
-        {
-            /*
-            logger.info("CODY START");
-            List<String> sysInfoEdgeList = gdb.getIsAssignedEdgeIds("sysinfo_resource", "sysinfo_inode");
-            for(String edgeID : sysInfoEdgeList) {
-                logger.info("ID = " + edgeID);
-                //logger.info(gdb.getIsAssignedParam(String edge_id,String param_name)
-                String region = gdb.getIsAssignedParam(edgeID,"region");
-                String agent = gdb.getIsAssignedParam(edgeID,"agent");
-                String pluginID = gdb.getIsAssignedParam(edgeID,"agentcontroller");
-
-                Map<String,String> edgeParams = gdb.getIsAssignedParams(edgeID);
-                for (Map.Entry<String, String> entry : edgeParams.entrySet()) {
-                    String key = entry.getKey();
-                    String value = entry.getValue();
-                    logger.info("key=" + key + " value=" + value);
-                }
-
-                logger.info(region + " " + agent + " " + pluginID);
-            }
-
-            logger.info("CODY END");
-            */
-
-            //public List<String> getIsAssignedEdgeIds(String resource_id, String inode_id)
-
-            resourceTotal = new HashMap<>();
-            List<String> regionList = gdb.getNodeList(null,null,null);
-            //Map<String,Map<String,String>> ahm = new HashMap<String,Map<String,String>>();
-            //Map<String,String> rMap = new HashMap<String,String>();
-            if(regionList != null) {
-                for (String region : regionList) {
-                    region_count++;
-                    logger.trace("Region : " + region);
-                    List<String> agentList = gdb.getNodeList(region, null, null);
-                    if (agentList != null) {
-                        for (String agent : agentList) {
-                            agent_count++;
-                            logger.trace("Agent : " + agent);
-
-                            List<String> pluginList = gdb.getNodeList(region, agent, null);
-                            if (pluginList != null) {
-
-                                boolean isRecorded = false;
-                                for (String pluginId : pluginList) {
-                                    logger.trace("Plugin : " + plugin);
-                                    plugin_count++;
-                                    if (!isRecorded) {
-                                        String pluginConfigparams = gdb.getNodeParam(region, agent, pluginId, "configparams");
-                                        logger.trace("configParams : " + pluginConfigparams);
-                                        if (pluginConfigparams != null) {
-                                            Map<String, String> pMap = paramStringToMap(pluginConfigparams);
-                                            if (pMap.get("pluginname").equals("cresco-sysinfo-agentcontroller")) {
-
-                                                String isAssignedEdgeId = dba.getResourceEdgeId("sysinfo_resource", "sysinfo_inode",region,agent,pluginId);
-                                                Map<String,String> edgeParams = dba.getIsAssignedParams(isAssignedEdgeId);
-                                                cpu_core_count += Long.parseLong(edgeParams.get("cpu-logical-count"));
-                                                memoryAvailable += Long.parseLong(edgeParams.get("memory-available"));
-                                                memoryTotal += Long.parseLong(edgeParams.get("memory-total"));
-                                                for(String fspair : edgeParams.get("fs-map").split(",")) {
-                                                    String[] fskey = fspair.split(":");
-                                                    diskAvailable += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-available"));
-                                                    diskTotal += Long.parseLong(edgeParams.get("fs-" + fskey[0] + "-total"));
-                                                }
-                                                /*
-                                                System.out.println("region=" + region + " agent=" + agent);
-                                                String agent_path = region + "_" + agent;
-                                                String agentConfigparams = gdb.getNodeParam(region, agent, null, "configparams");
-                                                Map<String, String> aMap = paramStringToMap(agentConfigparams);
-                                                //String resourceKey = aMap.get("platform") + "_" + aMap.get("environment") + "_" + aMap.get("location");
-
-                                                for (Map.Entry<String, String> entry : pMap.entrySet()) {
-                                                    String key = entry.getKey();
-                                                    String value = entry.getValue();
-                                                    System.out.println("\t" + key + ":" + value);
-                                                }
-                                                isRecorded = true;
-                                                */
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            logger.trace("Regions :" + region_count);
-            logger.trace("Agents :" + agent_count);
-            logger.trace("Plugins : " + plugin_count);
-            logger.trace("Total CPU core count : " + cpu_core_count);
-            logger.trace("Total Memory Available : " + memoryAvailable);
-            logger.trace("Total Memory Total : " + memoryTotal);
-            logger.trace("Total Disk Available : " + diskAvailable);
-            logger.trace("Total Disk Total : " + diskTotal);
-            resourceTotal.put("regions",String.valueOf(region_count));
-            resourceTotal.put("agents",String.valueOf(agent_count));
-            resourceTotal.put("plugins",String.valueOf(plugin_count));
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
-
-        }
-        catch(Exception ex)
-        {
-            logger.error("getResourceTotal() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
+        logger.error("Map<String,String> getResourceTotal2()");
         return resourceTotal;
-    }
-
-    public Map<String,NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
-
-        Map<String,NodeStatusType> nodeStatusMap = null;
-        try {
-            nodeStatusMap = new HashMap<>();
-            //List<String> queryList = gdb.getNodeIds(region,agent,agentcontroller,false);
-            List<String> queryList = gdb.getEdgeHealthIds(region,agent,plugin,false);
-            //logger.info("getEdgeHealthStatus : Count : " + queryList.size());
-
-            for(String nodeId : queryList) {
-                Map<String,String> params = gdb.getEdgeParamsNoTx(nodeId);
-                long watchdog_rate = 5000L;
-
-                if(params.containsKey("watchdogtimer")) {
-                    watchdog_rate = Long.parseLong(params.get("watchdogtimer"));
-                }
-
-                boolean isPending = false;
-
-                if(params.containsKey("enable_pending")) {
-                    if(Boolean.parseBoolean(params.get("enable_pending"))) {
-                        isPending = true;
-                    }
-                }
-
-                if(isPending) {
-                    nodeStatusMap.put(nodeId, NodeStatusType.PENDING);
-                }
-                else if((params.containsKey("watchdog_ts"))  && (params.containsKey("is_active"))) {
-                    long watchdog_ts = Long.parseLong(params.get("watchdog_ts"));
-                    //long watchdog_rate = Long.parseLong(params.get("watchdogtimer"));
-                    boolean isActive = Boolean.parseBoolean(params.get("is_active"));
-                    if(isActive) {
-                        long watchdog_diff = System.currentTimeMillis() - watchdog_ts;
-                        if (watchdog_diff > (watchdog_rate * 3)) {
-                            //node is stale
-                            nodeStatusMap.put(nodeId, NodeStatusType.STALE);
-                            logger.error(nodeId + " is stale");
-                        } else {
-                            nodeStatusMap.put(nodeId, NodeStatusType.ACTIVE);
-                        }
-                    }
-                    else {
-                        logger.error(nodeId + " is lost");
-                        nodeStatusMap.put(nodeId, NodeStatusType.LOST);
-
-                    }
-                }
-                else {
-                    //Plugins will trigger this problem, need to fix Cresco Library
-                    logger.error(nodeId + " could not find watchdog_ts or watchdog_rate");
-                    nodeStatusMap.put(nodeId, NodeStatusType.ERROR);
-                }
-            }
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
-        return nodeStatusMap;
     }
 
     public Map<String,NodeStatusType> getNodeStatus(String region, String agent, String plugin) {
 
         Map<String,NodeStatusType> nodeStatusMap = null;
-        try {
-            nodeStatusMap = new HashMap<>();
-            List<String> queryList = gdb.getNodeIds(region,agent,plugin,false);
-
-            //region queries will not include plugins, make second request if that is what is needed
-            /*
-            if((region != null) && (agent == null)) {
-
-                for(String agentNodeId : queryList) {
-                    agent = gdb.getNodeParam(agentNodeId,"agent");
-                    nodeStatusMap.putAll(getNodeStatus(region,agent,null));
-                }
-
-            }
-            */
-
-            for(String nodeId : queryList) {
-                Map<String,String> params = gdb.getNodeParamsNoTx(nodeId);
-                long watchdog_rate = 5000L;
-
-                if(params.containsKey("watchdogtimer")) {
-                    watchdog_rate = Long.parseLong(params.get("watchdogtimer"));
-                }
-
-                boolean isPending = false;
-
-                if(params.containsKey("enable_pending")) {
-                    if(Boolean.parseBoolean(params.get("enable_pending"))) {
-                        isPending = true;
-                    }
-                }
-
-                if(isPending) {
-                    nodeStatusMap.put(nodeId, NodeStatusType.PENDING);
-                }
-                else if((params.containsKey("watchdog_ts"))  && (params.containsKey("is_active"))) {
-                    long watchdog_ts = Long.parseLong(params.get("watchdog_ts"));
-                    //long watchdog_rate = Long.parseLong(params.get("watchdogtimer"));
-                    boolean isActive = Boolean.parseBoolean(params.get("is_active"));
-                    if(isActive) {
-                        long watchdog_diff = System.currentTimeMillis() - watchdog_ts;
-                        if (watchdog_diff > (watchdog_rate * 3)) {
-                            //node is stale
-                            nodeStatusMap.put(nodeId, NodeStatusType.STALE);
-                            logger.error(nodeId + " is stale");
-                        } else {
-                            nodeStatusMap.put(nodeId, NodeStatusType.ACTIVE);
-                        }
-                    }
-                    else {
-                        logger.error(nodeId + " is lost");
-                        nodeStatusMap.put(nodeId, NodeStatusType.LOST);
-
-                    }
-                }
-                else {
-                    //Plugins will trigger this problem, need to fix Cresco Library
-                    logger.error(nodeId + " could not find watchdog_ts or watchdog_rate");
-                    nodeStatusMap.put(nodeId,NodeStatusType.ERROR);
-                }
-            }
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
+        logger.error("Map<String,NodeStatusType> getNodeStatus(String region, String agent, String plugin)");
         return nodeStatusMap;
     }
 
-    public Boolean addNode(MsgEvent de) {
-        Boolean wasAdded = false;
-
-        try {
-
-            /*
-            String region = de.getParam("src_region");
-            String agent = de.getParam("src_agent");
-            String agentcontroller = de.getParam("src_plugin");
-            */
-
-
-            String region = de.getParam("region_name");
-            String agent = de.getParam("agent_name");
-            String plugin = de.getParam("plugin_id");
-
-
-
-
-            de.setParam("is_active",Boolean.TRUE.toString());
-            de.setParam("watchdog_ts", String.valueOf(System.currentTimeMillis()));
-
-
-            String nodeId = gdb.getNodeId(region,agent,plugin);
-            if(nodeId == null) {
-                nodeId = gdb.addNode(region, agent,plugin);
-            }
-
-            gdb.setNodeParams(region,agent,plugin, de.getParams());
-
-                logger.debug("Adding Node: " + de.getParams().toString());
-
-                if((region != null) && (agent != null) && (plugin == null)) {
-                    //logger.info("is Agent: Process Plugins");
-                    //add agentcontroller configs for agent
-                    if (de.getParam("pluginconfigs") != null) {
-                        List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
-                                new TypeToken<List<Map<String, String>>>() {
-                                }.getType());
-
-                        for (Map<String, String> configMap : configMapList) {
-                            String pluginId = configMap.get("pluginid");
-                            gdb.addNode(region, agent, pluginId);
-                            gdb.setNodeParams(region, agent, pluginId, configMap);
-                        }
-                    }
-            }
-
-            wasAdded = true;
-
-        } catch (Exception ex) {
-            logger.error("GraphDBUpdater : addNode ERROR : " + ex.toString());
-        }
-        return wasAdded;
-    }
-
-    public Boolean watchDogUpdate(MsgEvent de) {
-        Boolean wasUpdated = false;
-
-        try {
-            /*
-            String region = de.getParam("src_region");
-            String agent = de.getParam("src_agent");
-            String pluginId = de.getParam("src_plugin");
-            */
-            String region = de.getParam("region_name");
-            String agent = de.getParam("agent_name");
-            String pluginId = de.getParam("plugin_id");
-
-            String nodeId = gdb.getNodeId(region,agent,pluginId);
-
-            logger.trace("watchdog() region=" + region + " agent=" + agent + " agentcontroller=" + pluginId);
-
-            if(nodeId != null) {
-                //update watchdog_ts for local db
-
-                String interval = de.getParam("watchdogtimer");
-                if(interval == null) {
-                    interval = "5000";
-                }
-                //setNodeParamsNoTx
-
-                Map<String,String> updateMap = new HashMap<>();
-                updateMap.put("watchdogtimer", interval);
-                updateMap.put("watchdog_ts", String.valueOf(System.currentTimeMillis()));
-                updateMap.put("is_active", Boolean.TRUE.toString());
-                updateMap.put("enable_pending", Boolean.FALSE.toString());
-
-
-                //We no longer use Nodes to store health status, see edgehealth
-                //gdb.setNodeParamsNoTx(region, agent, pluginId, updateMap);
-
-
-                String edgeId = gdb.getEdgeHealthId(region, agent, pluginId);
-
-                if(edgeId != null) {
-
-                    //logger.error("UPDATE EDGE : " + edgeId + " region:" + region + " agent:" + agent + " agentcontroller:" + pluginId);
-                    //logger.error(gdb.getEdgeParamsNoTx(edgeId).toString());
-                    gdb.setEdgeParamsNoTx(edgeId,updateMap);
-                } else {
-                    logger.error("Missing Edge Id");
-                }
-
-
-                if((region != null) && (agent != null) && (pluginId == null)) {
-
-                    //add agentcontroller configs for agent
-                    if (de.getParam("pluginconfigs") != null) {
-
-                        List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
-                                new TypeToken<List<Map<String, String>>>() {
-                                }.getType());
-
-                        //build a list of plugins on record for an agent
-                        List<String> pluginRemoveList = gdb.getNodeList(region,agent,null);
-
-                        for (Map<String, String> configMap : configMapList) {
-                            String subpluginId = configMap.get("pluginid");
-
-                            //remove agentcontroller from remove list of new config exist
-                            pluginRemoveList.remove(subpluginId);
-
-                            if(gdb.getNodeId(region,agent,subpluginId) == null) {
-                                gdb.addNode(region, agent, subpluginId);
-                            }
-                            gdb.setNodeParams(region, agent, subpluginId, configMap);
-
-                            /*
-                            for (Map.Entry<String, String> entry : configMap.entrySet())
-                            {
-                                System.out.println(entry.getKey() + "/" + entry.getValue());
-                                //gdb.addNode(region, agent,agentcontroller);
-                                //gdb.setNodeParams(region,agent,agentcontroller, de.getParams());
-                            }
-                            */
-
-                        }
-
-                        //remove nodes on the pluginRemoveList, they are no longer on the agent
-                        for(String removePlugin : pluginRemoveList) {
-                            if(!gdb.removeNode(region,agent, removePlugin)) {
-                                logger.error("watchDogUpdate Error : Could not remove agentcontroller region:" + region + " agent:" + agent + " agentcontroller:" + removePlugin);
-                            }
-                        }
-                    }
-                }
-
-                //check for config update
-
-
-
-                //gdb.setNodeParam(region, agent, pluginId, "watchdogtimer", interval);
-                //gdb.setNodeParam(region,agent,pluginId, "watchdog_ts", String.valueOf(System.currentTimeMillis()));
-                //gdb.setNodeParam(region,agent,pluginId, "is_active", Boolean.TRUE.toString());
-
-                wasUpdated = true;
-            }
-            else {
-                logger.error("watchdog() nodeID does not exist for region:" + region + " agent:" + agent + " pluginId:" + pluginId);
-                logger.error(de.getMsgType().toString() + " [" + de.getParams().toString() + "]");
-                /*
-                if(gdb.getNodeId(region,agent,null) != null) {
-
-                    MsgEvent le = new MsgEvent(MsgEvent.Type.CONFIG,agentcontroller.getRegion(),null,null,"enabled");
-                    le.setMsgBody("Get Plugin Inventory From Agent");
-                    le.setParam("src_region", agentcontroller.getRegion());
-                    le.setParam("dst_region", region);
-                    le.setParam("dst_agent", agent);
-                    le.setParam("configtype","plugininventory");
-                    le.setParam("agentcontroller",pluginId);
-                    this.agentcontroller.msgIn(le);
-                }
-                */
-
-            }
-
-        } catch (Exception ex) {
-            logger.error("GraphDBUpdater : watchDogUpdate ERROR : " + ex.toString());
-        }
-        return wasUpdated;
-    }
-
-    public Boolean removeNode(MsgEvent de) {
-        Boolean wasRemoved = false;
-
-        try {
-
-            String region = de.getParam("src_region");
-            String agent = de.getParam("src_agent");
-            String plugin = de.getParam("src_plugin");
-
-            String nodeId = gdb.getNodeId(region,agent,plugin);
-            if(nodeId != null) {
-                logger.debug("Removing Node: " + de.getParams().toString());
-                gdb.removeNode(region, agent,plugin);
-                wasRemoved = true;
-            }
-            else {
-                logger.error("removeNode() MsgEvent region: " + region + " agent:" + agent + " agentcontroller:" + plugin + " does not exist!");
-            }
-
-        } catch (Exception ex) {
-            logger.error("GraphDBUpdater : removeNode ERROR : " + ex.toString());
-        }
-        return wasRemoved;
-    }
-
-    public Boolean removeNode(String region, String agent, String plugin) {
-        Boolean wasRemoved = false;
-
-        try {
-
-            String nodeId = gdb.getNodeId(region,agent,plugin);
-            if(nodeId != null) {
-                logger.debug("Removing Node: " + "region: " + region + " agent:" + agent + " agentcontroller:" + plugin);
-                gdb.removeNode(region, agent,plugin);
-                wasRemoved = true;
-            }
-            else {
-                logger.error("RemoveNode() region: " + region + " agent:" + agent + " agentcontroller:" + plugin + " does not exist!");
-            }
-
-        } catch (Exception ex) {
-            logger.error("GraphDBUpdater : removeNode ERROR : " + ex.toString());
-        }
+    public boolean removeNode(MsgEvent de) {
+        boolean wasRemoved = false;
+        logger.error("Boolean removeNode(MsgEvent de)");
         return wasRemoved;
     }
 
     public boolean setEdgeParam(String edgeId, String paramKey, String paramValue) {
-        return gdb.setEdgeParam(edgeId, paramKey, paramValue);
+        logger.error("boolean setEdgeParam(String edgeId, String paramKey, String paramValue)");
+        return false;
     }
 
     public Map<String,String> getEdgeParamsNoTx(String edgeId) {
-        return gdb.getEdgeParamsNoTx(edgeId);
+        logger.error("Map<String,String> getEdgeParamsNoTx(String edgeId)");
+        return null;
     }
 
     public Map<String,String> getNodeParams(String node_id) {
-        return gdb.getNodeParams(node_id);
+        logger.error("Map<String,String> getNodeParams(String node_id)");
+        return null;
     }
 
     public String getINodeParams(String iNode_id) {
-        return dba.getINodeParams(iNode_id);
+        logger.error("String getINodeParams(String iNode_id)");
+        return null;
     }
 
     public String getINodeParam(String inode_id, String param) {
-        return dba.getINodeParam(inode_id, param);
+        logger.error("String getINodeParam(String inode_id, String param)");
+        return null;
     }
 
     public Map<String,String> getpNodeINode(String iNode_id) {
-        return dba.getpNodeINode(iNode_id);
+        logger.error("Map<String,String> getpNodeINode(String iNode_id)");
+        return null;
     }
 
     public List<String> getANodeFromIndex(String indexName, String indexValue) {
-        return gdb.getANodeFromIndex(indexName, indexValue);
+        logger.error("List<String> getANodeFromIndex(String indexName, String indexValue)");
+        return null;
     }
 
     public boolean setINodeParam(String inode_id, String paramKey, String paramValue) {
-        return dba.setINodeParam(inode_id, paramKey, paramValue);
+        logger.error("setINodeParam(String inode_id, String paramKey, String paramValue)");
+        return false;
     }
 
     public String addEdge(String src_region, String src_agent, String src_plugin, String dst_region, String dst_agent, String dst_plugin, String className, Map<String,String> paramMap) {
-        return gdb.addEdge(src_region, src_agent, src_plugin, dst_region, dst_agent, dst_plugin, className, paramMap);
-    }
-
-    public String getPipeline(String pipelineId) {
-        return dba.getPipeline(pipelineId);
-    }
-
-    public gPayload createPipelineRecord(String tenant_id, String gPayload) {
-        return dba.createPipelineRecord(tenant_id, gPayload);
-    }
-
-    public String addINode(String resource_id, String inode_id) {
-        return dba.addINode(resource_id, inode_id);
-    }
-
-    public boolean updateKPI(String region, String agent, String pluginId, String resource_id, String inode_id, Map<String,String> params) {
-        return dba.updateKPI(region, agent, pluginId, resource_id, inode_id, params);
+        logger.error("String addEdge(String src_region, String src_agent, String src_plugin, String dst_region, String dst_agent, String dst_plugin, String className, Map<String,String> paramMap)");
+        return null;
     }
 
     public String getDBExport() {
-        return gdb.getDBExport();
+        logger.error("String getDBExport()");
+        return null;
     }
 
-    public gPayload createPipelineNodes(gPayload gpay) {
-        return dba.createPipelineNodes(gpay);
-    }
-
-    public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc) {
-        return dba.setPipelineStatus(pipelineId, status_code, status_desc);
-    }
-
-    public gPayload getPipelineObj(String pipelineId) {
-        return dba.getPipelineObj(pipelineId);
-    }
-
-    public String addINodeResource(String resource_id, String inode_id) {
-        return dba.addINodeResource(resource_id, inode_id);
-    }
 
     public String getNodeId(String region, String agent, String plugin) {
-        return gdb.getNodeId(region, agent, plugin);
-    }
-
-    public int getPipelineStatusCode(String pipelineId) {
-        return dba.getPipelineStatusCode(pipelineId);
-    }
-
-    public int getINodeStatus(String INodeId) {
-        return dba.getINodeStatus(INodeId);
-    }
-
-    public boolean removePipeline(String pipelineId) {
-        return dba.removePipeline(pipelineId);
+        logger.error("String getNodeId(String region, String agent, String plugin)");
+        return  null;
     }
 
     public List<String> getNodeList(String region, String agent, String plugin) {
-        return gdb.getNodeList(region, agent, plugin);
+        logger.error("List<String> getNodeList(String region, String agent, String plugin)");
+        return null;
     }
 
     public String addIsAttachedEdge(String resource_id, String inode_id, String region, String agent, String plugin) {
-        return dba.addIsAttachedEdge(resource_id, inode_id, region, agent, plugin);
+        logger.error("String addIsAttachedEdge(String resource_id, String inode_id, String region, String agent, String plugin)");
+        return null;
     }
 
     public String getResourceEdgeId(String resource_id, String inode_id) {
-        return dba.getResourceEdgeId(resource_id, inode_id);
-
+        logger.error("String getResourceEdgeId(String resource_id, String inode_id)");
+        return null;
     }
     public String getIsAssignedParam(String edge_id,String param_name) {
-        return dba.getIsAssignedParam(edge_id, param_name);
+        logger.error("String getIsAssignedParam(String edge_id,String param_name)");
+        return null;
     }
 
     public boolean setDBImport(String exportData) {
-        return gdb.setDBImport(exportData);
+        logger.error("boolean setDBImport(String exportData)");
+        return false;
     }
+
+
 
 }

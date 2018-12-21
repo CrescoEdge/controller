@@ -41,8 +41,9 @@ public class PluginNode {
     status_code = 8; //agentcontroller disabled
     status_code = 9; //Plugin Bundle could not be installed or started
     status_code = 10; //started and working
-    status_code = 40; //WATCHDOG check failed with agent
+    status_code = 40; //WATCHDOG check STALE
     status_code = 41; //Missing status parameter
+    status_code = 50; //WATCHDOG check LOST
     status_code = 80; //failed to start
     status_code = 90; //Exception on timeout shutdown
     status_code = 91; //Exception on timeout verification to confirm down

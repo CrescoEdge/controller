@@ -70,8 +70,10 @@ public class PollAddPipeline implements Runnable {
                     me.setCompressedParam("configparams",gson.toJson(gnode.params));
                     //me.setParam("configparams", configparms.toString());
                     logger.debug("Message [" + me.getParams().toString() + "]");
-                    controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_code","4");
-                    controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode resources scheduled.");
+                    controllerEngine.getGDB().setINodeStatusCode(gnode.node_id, 4,"iNode resources scheduled.");
+
+                    //controllerEngine.getGDB().set setINodeParam(gnode.node_id,"status_code","4");
+                    //controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode resources scheduled.");
 
                     controllerEngine.getResourceScheduleQueue().add(me);
 
@@ -87,15 +89,18 @@ public class PollAddPipeline implements Runnable {
 	        	        isScheduling = false;
                     }
 
+
                     for(gNode gnode : checkList) {
-                        int statusCode = Integer.parseInt(controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
-                        logger.debug("PipelineId " + pipelineId + " Status " + statusCode);
+                        int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
+                        //int statusCode = Integer.parseInt(controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_code"));
+                        logger.debug("PipelineId " + pipelineId + " inode: " + gnode.node_id + " Status " + statusCode);
+
                         if (statusCode != 4) {
                             //logger.debug("PollAddPipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code :" + controllerEngine.getGDB().dba.getINodeParam(gnode.node_id, "status_code"));
                             pipelineNodes.remove(gnode);
                             if(statusCode != 10) {
-                                String statusDesc = controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_desc");
-                                logger.error("PipelineId " + pipelineId + " Status Code " + statusCode + " Status Desc " + statusDesc);
+                                //String statusDesc = controllerEngine.getGDB().getINodeParam(gnode.node_id, "status_desc");
+                                //logger.error("PipelineId " + pipelineId + " Status Code " + statusCode + " Status Desc " + statusDesc);
                                 errorList.add(gnode);
                             }
                         }

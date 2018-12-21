@@ -617,18 +617,18 @@ public class PluginAdmin {
 
                     int status_code = pluginNode.getStatus_code();
                     String status_desc = pluginNode.getStatus_desc();
-                    boolean isActive = pluginNode.getActive();
+                    //boolean isActive = pluginNode.getActive();
 
                     Map<String, String> configMap = new HashMap<>();
 
 
                     configMap.put("status_code", String.valueOf(status_code));
-                    configMap.put("status_dest", status_desc);
-                    configMap.put("isactive", String.valueOf(isActive));
+                    configMap.put("status_desc", status_desc);
+                    configMap.put("watchdogtimer", String.valueOf(pluginNode.getWatchdogTimer()));
+                    //configMap.put("isactive", String.valueOf(isActive));
                     configMap.put("pluginid", pluginID);
                     configMap.put("configparams", gson.toJson(pluginNode.exportParamMap()));
                     configMapList.add(configMap);
-
                     //it.remove(); // avoids a ConcurrentModificationException
                 }
             }

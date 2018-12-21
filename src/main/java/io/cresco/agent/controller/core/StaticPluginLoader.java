@@ -1,5 +1,6 @@
 package io.cresco.agent.controller.core;
 
+import com.google.gson.Gson;
 import io.cresco.agent.core.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -7,10 +8,7 @@ import org.osgi.framework.Constants;
 
 import java.io.File;
 import java.net.URL;
-import java.util.Dictionary;
-import java.util.HashMap;
-import java.util.Hashtable;
-import java.util.Map;
+import java.util.*;
 
 public class StaticPluginLoader implements Runnable  {
 
@@ -19,12 +17,15 @@ public class StaticPluginLoader implements Runnable  {
     private CLogger logger;
     private Config config;
     private boolean internalModInit = false;
+    private Gson gson;
 
 
     public StaticPluginLoader(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         logger = plugin.getLogger(this.getClass().getName(), CLogger.Level.Info);
+        gson = new Gson();
+
         try {
 
             File localPluginFile = new File("plugin.ini");
@@ -119,8 +120,6 @@ public class StaticPluginLoader implements Runnable  {
                                 }
                             }
 
-                            //logger.info("Sent Message : " + message + " agent:" + agentcontroller.getAgent());
-                            //Thread.sleep(1000);
                             isStaticInit = true;
                         } else {
                             //why not load this sucker here...
@@ -147,7 +146,7 @@ public class StaticPluginLoader implements Runnable  {
 
                                     }
                                 } else {
-                                    logger.error("org.osgi.service.http.HttpService : Does not exist");
+                                    logger.info("HttpService : Does not exist : Console Disabled.");
                                 }
 
                             }
@@ -155,14 +154,25 @@ public class StaticPluginLoader implements Runnable  {
                         }
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo
-                            //required "org.osgi.service.http.HttpService"
                             if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
                                 logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
+
+                                String inodeId = UUID.randomUUID().toString();
+                                String resourceId = "sysinfo_resource";
 
                                 Map<String, Object> map = new HashMap<>();
                                 map.put("pluginname", "io.cresco.sysinfo");
                                 map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
-                                String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                map.put("inode_id", inodeId);
+                                map.put("resource_id","sysinfo_resource");
+
+                                String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+
+                                //Manually create inode configuration allowing KPI storage
+                                //String inodeId = UUID.randomUUID().toString();
+                               // String inodeId = "sysinfo_inode";
+                                controllerEngine.getGDB().addINode(resourceId,inodeId,10, "iNode added by Controller StaticPlugin Loader.", gson.toJson(map));
+                                controllerEngine.getGDB().updateINodeAssignment(inodeId, 10,"iNode Active." , plugin.getRegion(), plugin.getAgent(), pluginId);
                             }
 
                         }

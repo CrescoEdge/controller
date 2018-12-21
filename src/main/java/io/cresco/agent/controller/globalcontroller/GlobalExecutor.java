@@ -361,8 +361,8 @@ public class GlobalExecutor implements Executor {
             } else if((ce.getParam("action_region") != null) && (ce.getParam("action_agent") == null)) {
                 actionRegionResourceInfo = ce.getParam("action_region");
             }
-            ce.setParam("resourceinfo",controllerEngine.getGDB().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
-            logger.trace("list plugins return : " + ce.getParams().toString());
+            ce.setCompressedParam("resourceinfo",controllerEngine.getGDB().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
+
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -380,7 +380,7 @@ public class GlobalExecutor implements Executor {
                 actionPipeline = ce.getParam("action_pipeline");
             }
 
-            ce.setParam("pipelineinfo",controllerEngine.getGDB().getPipelineInfo(actionPipeline));
+            ce.setCompressedParam("pipelineinfo",controllerEngine.getGDB().getPipelineInfo(actionPipeline));
             logger.trace("list pipeline return : " + ce.getParams().toString());
         }
         catch(Exception ex) {
@@ -445,7 +445,7 @@ public class GlobalExecutor implements Executor {
                 String actionPipelineId = ce.getParam("action_pipelineid");
                 String returnGetGpipeline = controllerEngine.getGDB().getGPipelineExport(actionPipelineId);
                 if (returnGetGpipeline != null) {
-                    ce.setParam("gpipeline", returnGetGpipeline);
+                    ce.setCompressedParam("gpipeline", returnGetGpipeline);
                     ce.setParam("success", Boolean.TRUE.toString());
 
                 } else {
@@ -865,20 +865,6 @@ public class GlobalExecutor implements Executor {
                 String pipelineJSON = ce.getCompressedParam("action_gpipeline");
                 String tenantID = ce.getParam("action_tenantid");
 
-                //pipelineJSON = controllerEngine.getGDB().gdb.stringUncompress(pipelineJSON);
-
-                /*
-                if(ce.getParam("gpipeline_compressed") != null) {
-                    boolean isCompressed = Boolean.parseBoolean(ce.getParam("gpipeline_compressed"));
-                    if(isCompressed) {
-                        pipelineJSON = controllerEngine.getGDB().gdb.stringUncompress(pipelineJSON);
-                    }
-                    logger.debug("Pipeline Compressed " + isCompressed + " " + ce.getParam("gpipeline"));
-                    logger.debug("*" + pipelineJSON + "*");
-
-                }
-                */
-
                 gPayload gpay = controllerEngine.getGDB().createPipelineRecord(tenantID, pipelineJSON);
 
                 //add to scheduling queue
@@ -907,8 +893,7 @@ public class GlobalExecutor implements Executor {
 
                 if(controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id")) == null)
                 {
-                    if(controllerEngine.getGDB().addINode(ce.getParam("resource_id"),ce.getParam("inode_id")) != null)
-                    {
+                    if(controllerEngine.getGDB().addINode(ce.getParam("inode_id"), ce.getParam("resource_id"),0,"iNode Scheduled.",ce.getParam("configparams")) != null) {
                         if((controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_code","0")) &&
                                 (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Scheduled.")) &&
                                 (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"configparams",ce.getParam("configparams"))))
@@ -1009,17 +994,6 @@ public class GlobalExecutor implements Executor {
 
             Map<String,String> params = ce.getParams();
 
-            //clean params for edge
-				/*
-				ce.removeParam("loop");
-				ce.removeParam("isGlobal");
-				ce.removeParam("src_agent");
-				ce.removeParam("src_region");
-				ce.removeParam("src_plugin");
-				ce.removeParam("dst_agent");
-				ce.removeParam("dst_region");
-				ce.removeParam("dst_plugin");
-				*/
 				//forward KPI
             controllerEngine.getKPIProducer().sendMessage(region,agent,pluginid,resource_id,inode_id,params);
                 //record KPI

@@ -124,6 +124,9 @@ public class AppSchedulerEngine implements Runnable {
             logger.debug("checkPipeline started for Pipeline_id:" + gpay.pipeline_id + " Pipeline_name:" + gpay.pipeline_name);
 
             List<String> badINodes = new ArrayList<String>();
+
+            //not needed after db conversion
+            /*
             logger.debug("Checking Pipeline_id:" + gpay.pipeline_id + " Pipeline_name:" + gpay.pipeline_name);
             for (gNode node : gpay.nodes) {
                 String iNode_id = node.node_id;
@@ -132,6 +135,7 @@ public class AppSchedulerEngine implements Runnable {
                 controllerEngine.getGDB().addINodeResource(gpay.pipeline_id, iNode_id);
 
             }
+            */
 
             //Assign location to specific nodes
             Map<String, List<gNode>> schedulemaps = buildNodeMaps(gpay.nodes);
@@ -183,20 +187,6 @@ public class AppSchedulerEngine implements Runnable {
     }
 
 
-
-    public boolean nodeExist(String region, String agent) {
-        boolean nodeExist = false;
-        try {
-            String nodeId = controllerEngine.getGDB().getNodeId(region,agent,null);
-            if(nodeId != null) {
-                nodeExist = true;
-            }
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
-        return nodeExist;
-    }
 
     public boolean locationExist(String location) {
         boolean isLocation = false;
@@ -305,7 +295,7 @@ public class AppSchedulerEngine implements Runnable {
                 logger.trace("node_id=" + node.node_id + " node_name=" + node.node_name + " type" + node.type + " params" + node.params.toString());
 
                 if (node.params.containsKey("location_region") && node.params.containsKey("location_agent")) {
-                    if (nodeExist(node.params.get("location_region"), node.params.get("location_agent"))) {
+                    if (controllerEngine.getGDB().nodeExist(node.params.get("location_region"), node.params.get("location_agent"),null)) {
                         unAssignedNodes.remove(node);
                         assignedNodes.add(node);
                     } else {

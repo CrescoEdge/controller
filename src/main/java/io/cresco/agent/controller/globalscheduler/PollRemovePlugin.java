@@ -7,6 +7,8 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import java.util.Map;
+
 
 public class PollRemovePlugin implements Runnable { 
 
@@ -22,10 +24,6 @@ public class PollRemovePlugin implements Runnable {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PollRemovePlugin.class.getName(),CLogger.Level.Info);
-
-        //logger = new CLogger(PollRemovePlugin.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
-
-		//this.agentcontroller = agentcontroller;
 		this.resource_id = resource_id;
 		this.inode_id = inode_id;
 	}
@@ -34,6 +32,47 @@ public class PollRemovePlugin implements Runnable {
         try {
 
             if(controllerEngine.getGDB().getINodeStatus(inode_id) > 8) {
+
+                Map<String,String> inodeMap = controllerEngine.getGDB().getInodeMap(inode_id);
+                String region = inodeMap.get("region_id");
+                String agent = inodeMap.get("agent_id");
+                String pluginId = inodeMap.get("plugin_id");
+
+                if((region != null) && (agent != null) && (pluginId != null)) {
+
+                    MsgEvent me = removePlugin(region, agent, pluginId);
+                    MsgEvent re = plugin.sendRPC(me);
+
+                    if (re != null) {
+                        int statusCode = Integer.parseInt(re.getParam("status_code"));
+                        if (statusCode == 7) {
+                            logger.debug("REMOVING inode: " + inode_id + " RPC:" + re.getParams().toString());
+                            boolean isRemovedPlugin = controllerEngine.getGDB().removeNode(region,agent,pluginId);
+
+                            if(isRemovedPlugin) {
+                                logger.debug("removed r: " + region + " a:" + agent + " p:" + pluginId + " for inode:" + inode_id);
+                                controllerEngine.getGDB().setINodeStatusCode(inode_id,8,"iNode Disabled.");
+                            } else {
+                                logger.error("pollRemovePlugin : unable to verify iNode deactivation! " + inode_id);
+                                controllerEngine.getGDB().setINodeStatusCode(inode_id,90,"iNode unable to verify iNode deactivation!");
+                            }
+
+                        }
+                    } else {
+                        logger.error("Return remove = null");
+                    }
+                } else {
+                    controllerEngine.getGDB().setINodeStatusCode(inode_id,92,"iNode with no Plugin Assignment!");
+                    logger.error("iNode with no Plugin Assignment for resource_id: " + resource_id + " inode_id:" + inode_id);
+                }
+
+
+
+                //get all inodes
+                //remove inodes
+                //controllerEngine.getGDB().get
+
+                /*
             String edge_id = controllerEngine.getGDB().getResourceEdgeId(resource_id, inode_id);
             if (edge_id != null) {
                 String pnode_node_id = controllerEngine.getGDB().getIsAssignedParam(edge_id, "out");
@@ -96,6 +135,7 @@ public class PollRemovePlugin implements Runnable {
                 }
 
                 }
+                */
             }
         }
 	   catch(Exception ex)
@@ -107,12 +147,7 @@ public class PollRemovePlugin implements Runnable {
 	public MsgEvent removePlugin(String region, String agent, String pluginId)
 	{
 	    MsgEvent me = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG,region,agent);
-	    /*
-		MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG,region,null,null,"remove agentcontroller");
-		me.setParam("src_region", plugin.getRegion());
-		me.setParam("src_agent", plugin.getAgent());
-        me.setParam("src_plugin", plugin.getPluginID());
-        */
+
         me.setParam("dst_region", region);
 		me.setParam("dst_agent", agent);
 		me.setParam("action", "pluginremove");
