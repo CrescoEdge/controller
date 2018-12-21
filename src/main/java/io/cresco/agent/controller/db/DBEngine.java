@@ -2,6 +2,9 @@ package io.cresco.agent.controller.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.utilities.CLogger;
 import org.apache.commons.dbcp2.*;
 import org.apache.commons.pool2.ObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPool;
@@ -21,24 +24,52 @@ import java.util.zip.GZIPOutputStream;
 
 public class DBEngine {
 
-    //private BasicDataSource ds;
     private DataSource ds;
     private Gson gson;
+    private PluginBuilder plugin;
+    private CLogger logger;
+    private ControllerEngine controllerEngine;
 
-    public DBEngine() {
+
+    public DBEngine(ControllerEngine controllerEngine) {
+        this.controllerEngine = controllerEngine;
+        this.plugin = controllerEngine.getPluginBuilder();
+        this.logger = plugin.getLogger(DBEngine.class.getName(),CLogger.Level.Info);
 
         try {
 
             this.gson = new Gson();
 
-            File dbsource = new File("demo");
-            if(dbsource.exists()) {
-                delete(dbsource);
+            String defaultDBName = "cresco-controller";
+            String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
+
+            if(dbName.equals(defaultDBName)) {
+                File dbsource = new File(dbName);
+                if (dbsource.exists()) {
+                    delete(dbsource);
+                }
             }
 
-            Class.forName("org.apache.derby.jdbc.EmbeddedDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
 
-            ds = setupDataSource("jdbc:derby:demo;create=true");
+            String dbUserName = plugin.getConfig().getStringParam("db_username");
+            String dbPassword = plugin.getConfig().getStringParam("db_password");
+
+            Class.forName(dbDriver);
+
+            if((dbUserName != null) && (dbPassword != null)) {
+                ds = setupDataSource(dbConnectionString,dbUserName, dbPassword);
+            } else {
+                ds = setupDataSource(dbConnectionString);
+            }
+
+            //Class.forName("org.apache.derby.jdbc.EmbeddedDriver");
+            //ds = setupDataSource("jdbc:derby:demo;create=true");
+
+            //Class.forName("com.mysql.cj.jdbc.Driver");
+            //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");
+
 
             initDB();
 
@@ -770,7 +801,7 @@ public class DBEngine {
                 "   jarfile varchar(255)," +
                 "   version varchar(255)," +
                 "   md5 varchar(255)," +
-                "   configparams clob," +
+                "   configparams blob," +
                 "   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
                 "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
                 "   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
@@ -789,7 +820,7 @@ public class DBEngine {
                 "   tenant_id int," +
                 "   status_code int," +
                 "   status_desc varchar(255)," +
-                "   submission clob," +
+                "   submission blob," +
                 "   FOREIGN KEY (tenant_id) REFERENCES tenantnode(tenant_id)" +
                 ")";
 
@@ -798,7 +829,7 @@ public class DBEngine {
                 "   vnode_id varchar(42) primary key NOT NULL," +
                 "   resource_id varchar(45) NOT NULL," +
                 "   inode_id varchar(42)," +
-                "   configparams clob," +
+                "   configparams blob," +
                 "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
                 ")";
 
@@ -811,8 +842,8 @@ public class DBEngine {
                 "   plugin_id varchar(43)," +
                 "   status_code int NOT NULL," +
                 "   status_desc varchar(255) NOT NULL," +
-                "   configparams clob NOT NULL," +
-                "   kpiparams clob," +
+                "   configparams blob NOT NULL," +
+                "   kpiparams blob," +
                 "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
                 ")";
 
@@ -820,7 +851,7 @@ public class DBEngine {
                 "(" +
                 //"   inodekpi_id varchar(42) primary key NOT NULL," +
                 "   inode_id varchar(43)," +
-                "   kpiparams clob" +
+                "   kpiparams blob" +
                 //"   FOREIGN KEY (inode_id) REFERENCES inode(inode_id)" +
                 ")";
 

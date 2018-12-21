@@ -36,7 +36,7 @@ public class DBInterfaceImpl implements DBInterface {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
-        this.dbe = new DBEngine();
+        this.dbe = new DBEngine(controllerEngine);
 
         this.importQueue = new LinkedBlockingQueue<>();
         this.gson = new Gson();
