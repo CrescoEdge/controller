@@ -26,7 +26,7 @@ public class DBEngine {
     private PluginBuilder plugin;
     private CLogger logger;
     private ControllerEngine controllerEngine;
-    private String largeFieldType = "clob";
+    private DBType dbType = DBType.EMBEDDED;
 
 
     public DBEngine(ControllerEngine controllerEngine) {
@@ -41,17 +41,20 @@ public class DBEngine {
             String defaultDBName = "cresco-controller";
             String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
 
-            if(dbName.equals(defaultDBName)) {
-                File dbsource = new File(dbName);
-                if (dbsource.exists()) {
-                    delete(dbsource);
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            if(dbDriver.contains("mysql")) {
+                dbType = DBType.MYSQL;
+            }
+
+            if(dbType == DBType.EMBEDDED) {
+                if (dbName.equals(defaultDBName)) {
+                    File dbsource = new File(dbName);
+                    if (dbsource.exists()) {
+                        delete(dbsource);
+                    }
                 }
             }
 
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
-            if(dbDriver.contains("mysql")) {
-                largeFieldType = "blob";
-            }
             String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
@@ -76,7 +79,6 @@ public class DBEngine {
 
             addTenant(0,"default tenant");
             addResource("sysinfo_resource","Performance Metrics",0,0,"added by DBEngine by default", null);
-
 
             //Class.forName("com.mysql.cj.jdbc.Driver");
             //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");
@@ -767,6 +769,13 @@ public class DBEngine {
 
     public void initDB() {
 
+
+        String largeFieldType = "clob";
+
+        if(dbType == DBType.MYSQL) {
+            largeFieldType = "blob";
+        }
+
         String createRNode = "CREATE TABLE rnode" +
                 "(" +
                 "   region_id varchar(43) primary key NOT NULL," +
@@ -857,26 +866,113 @@ public class DBEngine {
                 ")";
 
 
+        if(dbType == DBType.MYSQL) {
+            if (tableExist("inodekpi")) {
+                dropTable("inodekpi");
+            }
+
+            if (tableExist("vnode")) {
+                dropTable("vnode");
+            }
+
+            if (tableExist("inode")) {
+                dropTable("inode");
+            }
+
+            if (tableExist("resourcenode")) {
+                dropTable("resourcenode");
+            }
+
+            if (tableExist("tenantnode")) {
+                dropTable("tenantnode");
+            }
+
+            if (tableExist("pnode")) {
+                dropTable("pnode");
+            }
+
+            if (tableExist("anode")) {
+                dropTable("anode");
+            }
+
+            if (tableExist("rnode")) {
+                dropTable("rnode");
+            }
+        }
+
         try {
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
+
             stmt.executeUpdate(createRNode);
             stmt.executeUpdate(createANode);
             stmt.executeUpdate(createPNode);
-
             stmt.executeUpdate(createTenantNode);
             stmt.executeUpdate(createResourceNode);
             stmt.executeUpdate(createInode);
             stmt.executeUpdate(createVnode);
-
             stmt.executeUpdate(createInodeKPI);
-
 
             stmt.close();
             conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
+    }
+
+    private boolean tableExist(String tableName)  {
+        boolean exist = false;
+
+        Connection conn = null;
+        Statement stmt = null;
+        ResultSet rs = null;
+
+        try {
+
+            String queryString = null;
+
+            queryString = "SELECT COUNT(1) FROM INFORMATION_SCHEMA.TABLES " +
+                    "WHERE TABLE_NAME = N'" + tableName + "'";
+
+            conn = ds.getConnection();
+            stmt = conn.createStatement();
+
+            rs = stmt.executeQuery(queryString);
+            rs.next();
+            exist = rs.getBoolean(1);
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+            //todo likely better way to do this hack to let derby work
+        }
+        catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return exist;
+    }
+
+    private int dropTable(String tableName) {
+        int result = -1;
+        try {
+
+            String stmtString = null;
+
+            stmtString = "DROP TABLE " + tableName;
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            result = stmt.executeUpdate(stmtString);
+
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return result;
     }
 
     public boolean nodeExist(String regionId, String agentId, String pluginId) {
