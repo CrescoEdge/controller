@@ -14,10 +14,7 @@ import javax.xml.bind.DatatypeConverter;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -29,6 +26,7 @@ public class DBEngine {
     private PluginBuilder plugin;
     private CLogger logger;
     private ControllerEngine controllerEngine;
+    private String largeFieldType = "clob";
 
 
     public DBEngine(ControllerEngine controllerEngine) {
@@ -51,6 +49,9 @@ public class DBEngine {
             }
 
             String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            if(dbDriver.contains("mysql")) {
+                largeFieldType = "blob";
+            }
             String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
@@ -801,7 +802,7 @@ public class DBEngine {
                 "   jarfile varchar(255)," +
                 "   version varchar(255)," +
                 "   md5 varchar(255)," +
-                "   configparams blob," +
+                "   configparams " + largeFieldType + "," +
                 "   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
                 "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
                 "   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
@@ -820,7 +821,7 @@ public class DBEngine {
                 "   tenant_id int," +
                 "   status_code int," +
                 "   status_desc varchar(255)," +
-                "   submission blob," +
+                "   submission " + largeFieldType + "," +
                 "   FOREIGN KEY (tenant_id) REFERENCES tenantnode(tenant_id)" +
                 ")";
 
@@ -829,7 +830,7 @@ public class DBEngine {
                 "   vnode_id varchar(42) primary key NOT NULL," +
                 "   resource_id varchar(45) NOT NULL," +
                 "   inode_id varchar(42)," +
-                "   configparams blob," +
+                "   configparams " + largeFieldType + "," +
                 "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
                 ")";
 
@@ -842,8 +843,8 @@ public class DBEngine {
                 "   plugin_id varchar(43)," +
                 "   status_code int NOT NULL," +
                 "   status_desc varchar(255) NOT NULL," +
-                "   configparams blob NOT NULL," +
-                "   kpiparams blob," +
+                "   configparams " + largeFieldType + " NOT NULL," +
+                "   kpiparams " + largeFieldType + "," +
                 "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
                 ")";
 
@@ -851,7 +852,7 @@ public class DBEngine {
                 "(" +
                 //"   inodekpi_id varchar(42) primary key NOT NULL," +
                 "   inode_id varchar(43)," +
-                "   kpiparams blob" +
+                "   kpiparams " + largeFieldType +
                 //"   FOREIGN KEY (inode_id) REFERENCES inode(inode_id)" +
                 ")";
 
@@ -1331,12 +1332,15 @@ public class DBEngine {
     public void addResource(String resourceId, String resourceName, int tenantId, int statusCode, String statusDesc, String submission) {
 
         try {
+
+
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
             String stmtString = null;
 
             stmtString = "insert into resourcenode (resource_id, resource_name, tenant_id, status_code, status_desc, submission) " +
                     "values ('" + resourceId + "','" + resourceName + "'," + tenantId + "," + statusCode + ",'" + statusDesc + "','" + submission + "')";
+
 
             stmt.executeUpdate(stmtString);
             stmt.close();
