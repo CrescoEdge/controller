@@ -41,7 +41,8 @@ public class DBEngine {
             String defaultDBName = "cresco-controller";
             String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
 
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
             if(dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
             }
@@ -55,7 +56,9 @@ public class DBEngine {
                 }
             }
 
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + dbName + ";create=true");
+
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
             String dbPassword = plugin.getConfig().getStringParam("db_password");

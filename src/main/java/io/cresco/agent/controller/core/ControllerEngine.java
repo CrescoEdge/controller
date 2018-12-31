@@ -732,6 +732,7 @@ public class ControllerEngine {
             //removed region consumer, no longer needed things to go agents
 
             this.gdb = new DBInterfaceImpl(this);
+
             logger.debug("RegionalControllerDB Service Started");
 
             //DB manager

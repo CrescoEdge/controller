@@ -361,6 +361,7 @@ public class GlobalExecutor implements Executor {
             } else if((ce.getParam("action_region") != null) && (ce.getParam("action_agent") == null)) {
                 actionRegionResourceInfo = ce.getParam("action_region");
             }
+
             ce.setCompressedParam("resourceinfo",controllerEngine.getGDB().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
 
         }
