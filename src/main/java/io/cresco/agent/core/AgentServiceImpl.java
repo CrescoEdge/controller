@@ -86,7 +86,6 @@ public class AgentServiceImpl implements AgentService {
             }
             */
 
-
             plugin = new PluginBuilder(this, this.getClass().getName(), context, map);
 
             this.pluginAdmin = new PluginAdmin(plugin, agentState,context);
