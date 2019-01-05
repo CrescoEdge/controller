@@ -10,6 +10,7 @@ import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
+import io.cresco.agent.data.DataPlaneService;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.app.gPayload;
 import io.cresco.library.messaging.MsgEvent;
@@ -67,6 +68,7 @@ public class ControllerEngine {
     public String brokerPasswordAgent;
 
     private ActiveAgentConsumer activeAgentConsumer;
+    private DataPlaneService dataPlaneService;
     private ActiveBroker broker;
     private KPIBroker kpiBroker;
     private DBInterfaceImpl gdb;
@@ -203,7 +205,7 @@ public class ControllerEngine {
                 }
             }
 
-            //setup producer and consumers
+            //setup producer, consumers, and data plane
             if(!initIOChannels()) {
                 logger.error("initIOChannels Failed");
                 return false;
@@ -539,10 +541,12 @@ public class ControllerEngine {
                     //consumer agent
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
                     if(isLocalBroker()) {
-                        activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
+                        activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://localhost", brokerUserNameAgent, brokerPasswordAgent);
+                        dataPlaneService = new DataPlaneService(this,"vm://localhost");
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     } else {
                         activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
+                        dataPlaneService = new DataPlaneService(this,"ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }
@@ -1082,6 +1086,8 @@ public class ControllerEngine {
         if (this.gdb != null)
             this.gdb.removeNode(region, agent, pluginID);
     }
+
+    public DataPlaneService getDataPlaneService() { return  dataPlaneService; }
 
     public void setRestartOnShutdown(boolean restartOnShutdown) {
         this.restartOnShutdown = restartOnShutdown;

@@ -6,6 +6,7 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.agent.ControllerState;
+import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -13,6 +14,8 @@ import org.osgi.framework.BundleContext;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.*;
 
+import javax.jms.MessageListener;
+import javax.jms.TextMessage;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -111,6 +114,10 @@ public class AgentServiceImpl implements AgentService {
             //logger.info("Controller Init");
             if(controllerEngine.commInit()) {
                 logger.info("Controller Completed Init");
+
+                //todo Add dataplan stuff here
+                //setDataPlane
+
             } else {
                 logger.error("Controlled Failed Init");
             }
@@ -173,6 +180,16 @@ public class AgentServiceImpl implements AgentService {
 
             ex.printStackTrace();
         }
+    }
+
+    @Override
+    public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
+        return controllerEngine.getDataPlaneService().addMessageListener(topicType,messageListener,selectorString);
+    }
+
+    @Override
+    public boolean sendMessage(TopicType topicType, TextMessage textMessage) {
+        return controllerEngine.getDataPlaneService().sendMessage(topicType,textMessage);
     }
 
 

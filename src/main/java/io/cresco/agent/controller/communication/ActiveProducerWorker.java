@@ -49,6 +49,7 @@ public class ActiveProducerWorker {
 			sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
 			
 			destination = sess.createQueue(TXQueueName);
+
 			producer = sess.createProducer(destination);
 			producer.setTimeToLive(300000L);
 			//producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
@@ -111,7 +112,6 @@ public class ActiveProducerWorker {
 					break;
 			}
 
-			//producer.send(message, DeliveryMode.NON_PERSISTENT, 3, 0);
 
 			producer.send(sess.createTextMessage(gson.toJson(se)), DeliveryMode.NON_PERSISTENT, pri, 0);
 			//producer.send(sess.createTextMessage(gson.toJson(se)));
