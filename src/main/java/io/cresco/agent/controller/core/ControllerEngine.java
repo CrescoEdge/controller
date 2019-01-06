@@ -8,6 +8,7 @@ import io.cresco.agent.controller.db.DBInterfaceImpl;
 import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
+import io.cresco.agent.controller.measurement.PerfControllerMonitor;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.data.DataPlaneServiceImpl;
@@ -68,6 +69,7 @@ public class ControllerEngine {
     public String brokerUserNameAgent;
     public String brokerPasswordAgent;
 
+    private PerfControllerMonitor perfControllerMonitor;
     private ActiveAgentConsumer activeAgentConsumer;
     private DataPlaneService dataPlaneService;
     private ActiveBroker broker;
@@ -229,6 +231,12 @@ public class ControllerEngine {
 
 
             //todo enable metrics
+
+            perfControllerMonitor = new PerfControllerMonitor(this);
+            perfControllerMonitor.setSysInfoListener();
+            //perfControllerMonitor.start();
+            logger.info("Performance Controller monitoring initialized");
+
 
             //populate controller-specific metrics
             //measurementEngine.initControllerMetrics();
@@ -1089,6 +1097,8 @@ public class ControllerEngine {
     }
 
     public DataPlaneService getDataPlaneService() { return  dataPlaneService; }
+
+    public PerfControllerMonitor getPerfControllerMonitor() { return  perfControllerMonitor; }
 
     public void setRestartOnShutdown(boolean restartOnShutdown) {
         this.restartOnShutdown = restartOnShutdown;

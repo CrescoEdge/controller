@@ -1,13 +1,22 @@
 package io.cresco.agent.controller.measurement;
 
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageListener;
+import javax.jms.TextMessage;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.TimeUnit;
 
 public class PerfControllerMonitor {
     private ControllerInfoBuilder builder;
@@ -18,6 +27,8 @@ public class PerfControllerMonitor {
     private PluginBuilder plugin;
     private CLogger logger;
 
+    private Cache<String, String> sysInfoCache;
+
 
 
     public PerfControllerMonitor(ControllerEngine controllerEngine) {
@@ -26,28 +37,60 @@ public class PerfControllerMonitor {
         this.logger = plugin.getLogger(PerfControllerMonitor.class.getName(),CLogger.Level.Info);
         builder = new ControllerInfoBuilder(controllerEngine);
 
+        sysInfoCache = CacheBuilder.newBuilder()
+                .concurrencyLevel(4)
+                .softValues()
+                //.maximumSize(10)
+                .expireAfterWrite(15, TimeUnit.MINUTES)
+                .build();
+
     }
 
     public PerfControllerMonitor start() {
         if (this.running) return this;
         Long interval = plugin.getConfig().getLongParam("perftimer", 5000L);
 
-        /*
-        MsgEvent initial = new MsgEvent(MsgEvent.Type.INFO, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "Performance Monitoring timer set to " + interval + " milliseconds.");
-        initial.setParam("src_region", plugin.getRegion());
-        initial.setParam("src_agent", plugin.getAgent());
-        initial.setParam("src_plugin", plugin.getPluginID());
-        initial.setParam("dst_region", plugin.getRegion());
-        initial.setParam("dst_agent", plugin.getAgent());
-        initial.setParam("dst_plugin", plugin.getPluginID());
-        initial.setParam("is_regional",Boolean.TRUE.toString());
-        initial.setParam("is_global",Boolean.TRUE.toString());
-        plugin.sendMsgEvent(initial);
-        */
-
         timer = new Timer();
         timer.scheduleAtFixedRate(new PerfMonitorTask(plugin), 500L, interval);
         return this;
+
+    }
+
+    public String getSysInfo(String regionId, String agentId) {
+        String response = null;
+        try {
+
+            response = sysInfoCache.getIfPresent(regionId + "." + agentId);
+
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
+        return response;
+    }
+
+    public void setSysInfoListener() {
+
+        MessageListener ml = new MessageListener() {
+            public void onMessage(Message msg) {
+                try {
+
+
+                    if (msg instanceof MapMessage) {
+
+                        MapMessage mapMessage = (MapMessage)msg;
+
+                        String key = mapMessage.getStringProperty("region_id") + "." + mapMessage.getStringProperty("agent_id");
+                        sysInfoCache.put(key,mapMessage.getString("perf"));
+
+                    }
+                } catch(Exception ex) {
+
+                    ex.printStackTrace();
+                }
+            }
+        };
+
+        plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"pluginname = 'io.cresco.sysinfo'");
 
     }
 
@@ -72,17 +115,6 @@ public class PerfControllerMonitor {
         public void run() {
 
             MsgEvent tick = plugin.getKPIMsgEvent();
-            /*
-            MsgEvent tick = new MsgEvent(MsgEvent.Type.KPI, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "Performance Monitoring tick.");
-            tick.setParam("src_region", plugin.getRegion());
-            tick.setParam("src_agent", plugin.getAgent());
-            tick.setParam("src_plugin", plugin.getPluginID());
-            tick.setParam("dst_region", plugin.getRegion());
-            tick.setParam("dst_agent", plugin.getAgent());
-            tick.setParam("dst_plugin", "plugin/0");
-            tick.setParam("is_regional",Boolean.TRUE.toString());
-            tick.setParam("is_global",Boolean.TRUE.toString());
-            */
             tick.setParam("resource_id",plugin.getConfig().getStringParam("resource_id","controllerinfo_resource"));
             tick.setParam("inode_id",plugin.getConfig().getStringParam("inode_id","controllerinfo_inode"));
 

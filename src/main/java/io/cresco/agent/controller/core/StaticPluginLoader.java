@@ -163,8 +163,8 @@ public class StaticPluginLoader implements Runnable  {
                                 Map<String, Object> map = new HashMap<>();
                                 map.put("pluginname", "io.cresco.sysinfo");
                                 map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
-                                map.put("inode_id", inodeId);
-                                map.put("resource_id","sysinfo_resource");
+                                //map.put("inode_id", inodeId);
+                                //map.put("resource_id","sysinfo_resource");
 
                                 String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
 
@@ -172,10 +172,12 @@ public class StaticPluginLoader implements Runnable  {
                                 //String inodeId = UUID.randomUUID().toString();
                                // String inodeId = "sysinfo_inode";
                                 //todo fix this when agents get a DB
+                                /*
                                 if(controllerEngine.cstate.isRegionalController()) {
                                     controllerEngine.getGDB().addINode(resourceId, inodeId, 10, "iNode added by Controller StaticPlugin Loader.", gson.toJson(map));
                                     controllerEngine.getGDB().updateINodeAssignment(inodeId, 10, "iNode Active.", plugin.getRegion(), plugin.getAgent(), pluginId);
                                 }
+                                */
                             }
 
                         }

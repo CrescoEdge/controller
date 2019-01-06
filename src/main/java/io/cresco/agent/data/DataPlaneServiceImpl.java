@@ -198,7 +198,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } catch (Exception ex){
             ex.printStackTrace();
         }
-	    return createMapMessage();
+	    return mapMessage;
     }
 
     public Message createMessage() {

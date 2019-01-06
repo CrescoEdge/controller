@@ -29,6 +29,8 @@ public class DBEngine {
     private DBType dbType = DBType.EMBEDDED;
 
 
+
+
     public DBEngine(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -81,7 +83,7 @@ public class DBEngine {
             initDB();
 
             addTenant(0,"default tenant");
-            addResource("sysinfo_resource","Performance Metrics",0,0,"added by DBEngine by default", null);
+            //addResource("sysinfo_resource","Performance Metrics",0,0,"added by DBEngine by default", null);
 
             //Class.forName("com.mysql.cj.jdbc.Driver");
             //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");

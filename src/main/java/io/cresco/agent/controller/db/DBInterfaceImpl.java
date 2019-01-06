@@ -994,6 +994,17 @@ public class DBInterfaceImpl implements DBInterface {
             queryMap = new HashMap<>();
             List<Map<String,String>> regionArray = new ArrayList<>();
 
+
+
+            Map<String,String> resourceTotal = new HashMap<>();
+            String perfString = controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,actionAgent);
+            if(perfString != null) {
+                resourceTotal.put("perf", perfString);
+            }
+            regionArray.add(resourceTotal);
+
+
+            /*
             List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,actionAgent);
             for(String str : inodeKPIList) {
                 Map<String,String> resourceTotal = new HashMap<>();
@@ -1001,6 +1012,7 @@ public class DBInterfaceImpl implements DBInterface {
                 regionArray.add(resourceTotal);
 
             }
+            */
 
             queryMap.put("agentresourceinfo",regionArray);
             queryReturn = gson.toJson(queryMap);
@@ -1036,24 +1048,27 @@ public class DBInterfaceImpl implements DBInterface {
             List<Map<String,String>> regionArray = new ArrayList<>();
 
 
-            List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,null);
-            for(String str : inodeKPIList) {
+            //List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,null);
+            List<String> agentList = dbe.getNodeList(actionRegion, null);
+            for(String agent : agentList) {
 
-                    String sysInfoJson= dbe.uncompressString(str);
+                    String sysInfoJson= controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,agent);
+                    if(sysInfoJson != null) {
 
-                    Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
-                    }.getType();
+                        Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+                        }.getType();
 
-                    Map<String,List<Map<String,String>>> myMap = gson.fromJson(sysInfoJson, type);
+                        Map<String, List<Map<String, String>>> myMap = gson.fromJson(sysInfoJson, type);
 
-                    cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
+                        cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
 
-                    memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
-                    memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
+                        memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
+                        memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
 
-                    for(Map<String,String> fsMap : myMap.get("fs")) {
-                        diskAvailable += Long.parseLong(fsMap.get("available-space"));
-                        diskTotal += Long.parseLong(fsMap.get("total-space"));
+                        for (Map<String, String> fsMap : myMap.get("fs")) {
+                            diskAvailable += Long.parseLong(fsMap.get("available-space"));
+                            diskTotal += Long.parseLong(fsMap.get("total-space"));
+                        }
                     }
 
             }
