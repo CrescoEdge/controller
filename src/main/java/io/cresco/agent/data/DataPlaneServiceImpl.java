@@ -1,6 +1,7 @@
 package io.cresco.agent.data;
 
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -15,7 +16,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class DataPlaneService {
+public class DataPlaneServiceImpl implements DataPlaneService {
 	private PluginBuilder plugin;
 	private CLogger logger;
 	private ActiveMQConnection conn;
@@ -38,10 +39,10 @@ public class DataPlaneService {
     private AtomicBoolean lockMessage = new AtomicBoolean();
 
 
-	public DataPlaneService(ControllerEngine controllerEngine, String URI) throws JMSException {
+	public DataPlaneServiceImpl(ControllerEngine controllerEngine, String URI) throws JMSException {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
-		this.logger = plugin.getLogger(DataPlaneService.class.getName(),CLogger.Level.Info);
+		this.logger = plugin.getLogger(DataPlaneServiceImpl.class.getName(),CLogger.Level.Info);
 
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
 
@@ -60,7 +61,6 @@ public class DataPlaneService {
         agentTopic = sess.createTopic(getTopicName(TopicType.AGENT));
         regionTopic = sess.createTopic(getTopicName(TopicType.REGION));
         globalTopic = sess.createTopic(getTopicName(TopicType.GLOBAL));
-
 
 	}
 
@@ -107,7 +107,7 @@ public class DataPlaneService {
         return listenerId;
     }
 
-    public boolean sendMessage(TopicType topicType, TextMessage textMessage) {
+    public boolean sendMessage(TopicType topicType, Message message) {
         try {
 
             switch (topicType) {
@@ -115,19 +115,19 @@ public class DataPlaneService {
                     if(agentProducer == null) {
                         agentProducer = getMessageProducer(topicType);
                     }
-                    agentProducer.send(textMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
                     break;
                 case REGION:
                     if(regionProducer == null) {
                         regionProducer = getMessageProducer(topicType);
                     }
-                    regionProducer.send(textMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    regionProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
                     break;
                 case GLOBAL:
                     if(globalProducer == null) {
                         globalProducer = getMessageProducer(topicType);
                     }
-                    globalProducer.send(textMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    globalProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
                     break;
             }
 
@@ -181,4 +181,68 @@ public class DataPlaneService {
         return messageProducer;
     }
 
+    public BytesMessage createBytesMessage() {
+        BytesMessage bytesMessage = null;
+	    try {
+            bytesMessage = sess.createBytesMessage();
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+        return bytesMessage;
+	}
+
+    public MapMessage createMapMessage() {
+        MapMessage mapMessage = null;
+        try {
+            mapMessage = sess.createMapMessage();
+        } catch (Exception ex){
+            ex.printStackTrace();
+        }
+	    return createMapMessage();
+    }
+
+    public Message createMessage() {
+	    Message message = null;
+	    try {
+	        message = sess.createMessage();
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+        return message;
+    }
+
+    public ObjectMessage createObjectMessage() {
+	    ObjectMessage objectMessage = null;
+
+	    try {
+	        objectMessage = sess.createObjectMessage();
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+	    return objectMessage;
+    }
+
+    public StreamMessage createStreamMessage() {
+	    StreamMessage streamMessage = null;
+	    try{
+	        streamMessage = sess.createStreamMessage();
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+        return streamMessage;
+    }
+
+    public TextMessage createTextMessage() {
+	    TextMessage textMessage = null;
+	    try {
+	        textMessage = sess.createTextMessage();
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+        return textMessage;
+    }
+
 }
+
+
+

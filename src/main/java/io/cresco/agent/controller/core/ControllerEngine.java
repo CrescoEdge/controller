@@ -10,9 +10,10 @@ import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
-import io.cresco.agent.data.DataPlaneService;
+import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.app.gPayload;
+import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -542,11 +543,11 @@ public class ControllerEngine {
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
                     if(isLocalBroker()) {
                         activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://localhost", brokerUserNameAgent, brokerPasswordAgent);
-                        dataPlaneService = new DataPlaneService(this,"vm://localhost");
+                        dataPlaneService = new DataPlaneServiceImpl(this,"vm://localhost");
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     } else {
                         activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
-                        dataPlaneService = new DataPlaneService(this,"ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
+                        dataPlaneService = new DataPlaneServiceImpl(this,"ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }

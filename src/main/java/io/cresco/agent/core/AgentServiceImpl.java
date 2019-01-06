@@ -6,7 +6,7 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.agent.ControllerState;
-import io.cresco.library.data.TopicType;
+import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -14,8 +14,6 @@ import org.osgi.framework.BundleContext;
 import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.*;
 
-import javax.jms.MessageListener;
-import javax.jms.TextMessage;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -182,14 +180,10 @@ public class AgentServiceImpl implements AgentService {
     }
 
     @Override
-    public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
-        return controllerEngine.getDataPlaneService().addMessageListener(topicType,messageListener,selectorString);
+    public DataPlaneService getDataPlaneService() {
+        return controllerEngine.getDataPlaneService();
     }
 
-    @Override
-    public boolean sendMessage(TopicType topicType, TextMessage textMessage) {
-        return controllerEngine.getDataPlaneService().sendMessage(topicType,textMessage);
-    }
 
 
 }
