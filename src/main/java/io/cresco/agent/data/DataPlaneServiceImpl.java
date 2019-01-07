@@ -62,8 +62,41 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         regionTopic = sess.createTopic(getTopicName(TopicType.REGION));
         globalTopic = sess.createTopic(getTopicName(TopicType.GLOBAL));
 
-	}
+        //CEP depends on DataPlaneService
+        //cepEngine = new CEPEngine(controllerEngine, plugin);
 
+        //CEPEngineInit cepEngineInit = new CEPEngineInit(controllerEngine, plugin);
+
+
+        String inputStreamName = "input1";
+        String outputStreamName = "output1";
+
+        String inputRecordSchemaString = "{\"type\":\"record\",\"name\":\"Ticker\",\"fields\":[{\"name\":\"source\",\"type\":\"string\"},{\"name\":\"urn\",\"type\":\"string\"},{\"name\":\"metric\",\"type\":\"string\"},{\"name\":\"ts\",\"type\":\"long\"},{\"name\":\"value\",\"type\":\"double\"}]}";
+        //String inputStreamName = "UserStream";
+
+        //String outputStreamName = "BarStream";
+        String outputStreamAttributesString = "source string, avgValue double";
+
+        String queryString = " " +
+                //from TempStream#window.timeBatch(10 min)
+                //"from UserStream#window.time(5 sec) " +
+                "from " + inputStreamName + "#window.timeBatch(5 sec) " +
+                "select source, avg(value) as avgValue " +
+                "  group by source " +
+                "insert into " + outputStreamName + "; ";
+
+        logger.error("PRE CREATE");
+
+
+        //cepEngineInit.createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
+        logger.error("POST CREATE");
+
+        //logger.error("CREATE: " + createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString));
+
+
+
+
+    }
 
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
 	    String listenerId = null;
@@ -240,6 +273,21 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	        ex.printStackTrace();
         }
         return textMessage;
+    }
+
+
+    public String createCEP(String inputRecordSchemaString, String inputStreamName, String outputStreamName, String outputStreamAttributesString,String queryString) {
+	    //return cepEngine.createCEP(inputRecordSchemaString, inputStreamName,outputStreamName,outputStreamAttributesString, queryString);
+        return null;
+	}
+
+    public void input(String cepId, String streamName, String jsonPayload) {
+	    //cepEngine.input(cepId, streamName, jsonPayload);
+    }
+
+    public boolean removeCEP(String cepId) {
+	    //return cepEngine.removeCEP(cepId);
+	    return false;
     }
 
 }

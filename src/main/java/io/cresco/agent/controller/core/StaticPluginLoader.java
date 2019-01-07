@@ -7,6 +7,8 @@ import io.cresco.library.utilities.CLogger;
 import org.osgi.framework.Constants;
 
 import java.io.File;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.URL;
 import java.util.*;
 
@@ -182,13 +184,42 @@ public class StaticPluginLoader implements Runnable  {
 
                         }
 
+                        //todo data plane
+
+                        String inputStreamName = "input1";
+                        String outputStreamName = "output1";
+
+                        String inputRecordSchemaString = "{\"type\":\"record\",\"name\":\"Ticker\",\"fields\":[{\"name\":\"source\",\"type\":\"string\"},{\"name\":\"urn\",\"type\":\"string\"},{\"name\":\"metric\",\"type\":\"string\"},{\"name\":\"ts\",\"type\":\"long\"},{\"name\":\"value\",\"type\":\"double\"}]}";
+                        //String inputStreamName = "UserStream";
+
+                        //String outputStreamName = "BarStream";
+                        String outputStreamAttributesString = "source string, avgValue double";
+
+                        String queryString = " " +
+                                //from TempStream#window.timeBatch(10 min)
+                                //"from UserStream#window.time(5 sec) " +
+                                "from " + inputStreamName + "#window.timeBatch(5 sec) " +
+                                "select source, avg(value) as avgValue " +
+                                "  group by source " +
+                                "insert into " + outputStreamName + "; ";
+
+                        //controllerEngine.getDataPlaneService().createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
+
                     }
                     logger.trace("Status : " + controllerEngine.cstate.getControllerState());
                     Thread.sleep(1000);
                 }
 
             } catch(Exception ex) {
-                ex.printStackTrace();
+
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                ex.printStackTrace(pw);
+                //String sStackTrace = sw.toString(); // stack trace as a string
+                //System.out.println(sStackTrace);
+
+                //ex.printStackTrace();
+                logger.error(sw.toString());
             }
 
     }

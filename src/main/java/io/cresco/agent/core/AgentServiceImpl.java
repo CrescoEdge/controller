@@ -112,8 +112,6 @@ public class AgentServiceImpl implements AgentService {
             if(controllerEngine.commInit()) {
                 logger.info("Controller Completed Init");
 
-                //todo Add dataplan stuff here
-                //setDataPlane
 
             } else {
                 logger.error("Controlled Failed Init");
