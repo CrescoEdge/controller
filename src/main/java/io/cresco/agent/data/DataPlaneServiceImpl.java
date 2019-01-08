@@ -3,6 +3,7 @@ package io.cresco.agent.data;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.data.TopicType;
+import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQConnection;
@@ -10,10 +11,7 @@ import org.apache.activemq.ActiveMQSslConnectionFactory;
 
 import javax.jms.*;
 import java.security.SecureRandom;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DataPlaneServiceImpl implements DataPlaneService {
@@ -275,19 +273,88 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return textMessage;
     }
 
+    private String getCEPPluginId() {
+	    String pluginId = null;
+	    try {
+            List<Map<String, String>> configMapList = controllerEngine.getGDB().getPluginListMapByType("pluginname", "io.cresco.cdp");
+            if(configMapList.size() > 1) {
+                logger.error("CEP Plugin Count (" + configMapList.size() + ") > 1 not allowed");
+            }
+            for (Map<String, String> configMap : configMapList) {
+                if ((configMap.get("region").equals(plugin.getRegion())) && (configMap.get("agent").equals(plugin.getAgent()))) {
+                    pluginId = configMap.get("pluginid");
+                }
+            }
+        } catch (Exception ex) {
+	        logger.error(ex.getMessage());
+        }
+        return  null;
+    }
 
     public String createCEP(String inputRecordSchemaString, String inputStreamName, String outputStreamName, String outputStreamAttributesString,String queryString) {
-	    //return cepEngine.createCEP(inputRecordSchemaString, inputStreamName,outputStreamName,outputStreamAttributesString, queryString);
-        return null;
-	}
+
+        String pluginId = getCEPPluginId();
+        String cepId = null;
+
+        if(pluginId != null) {
+
+            cepId = UUID.randomUUID().toString();
+
+            MsgEvent createQuery = plugin.getPluginMsgEvent(MsgEvent.Type.CONFIG, pluginId);
+            createQuery.setParam("action", "queryadd");
+
+            createQuery.setCompressedParam("input_schema", inputRecordSchemaString);
+            createQuery.setParam("input_stream_name", inputStreamName);
+            createQuery.setParam("output_stream_name", outputStreamName);
+            createQuery.setParam("output_stream_attributes", outputStreamAttributesString);
+            createQuery.setParam("query_id", cepId);
+            createQuery.setParam("query", queryString);
+
+            MsgEvent response = plugin.sendRPC(createQuery);
+
+        }
+
+        return cepId;
+
+    }
 
     public void input(String cepId, String streamName, String jsonPayload) {
-	    //cepEngine.input(cepId, streamName, jsonPayload);
+
+	    String pluginId = getCEPPluginId();
+
+        if(pluginId != null) {
+
+            MsgEvent inputMsg = plugin.getPluginMsgEvent(MsgEvent.Type.EXEC, pluginId);
+            inputMsg.setParam("action", "queryinput");
+            inputMsg.setParam("query_id", cepId);
+            inputMsg.setParam("input_stream_name", streamName);
+            inputMsg.setCompressedParam("input_stream_payload", jsonPayload);
+
+            plugin.msgOut(inputMsg);
+
+        }
     }
 
     public boolean removeCEP(String cepId) {
-	    //return cepEngine.removeCEP(cepId);
-	    return false;
+
+	    boolean isRemoved = false;
+
+        String pluginId = getCEPPluginId();
+
+        if(pluginId != null) {
+            MsgEvent deleteQuery = plugin.getPluginMsgEvent(MsgEvent.Type.CONFIG, pluginId);
+            deleteQuery.setParam("action", "querydel");
+            deleteQuery.setParam("query_id", cepId);
+
+            MsgEvent response = plugin.sendRPC(deleteQuery);
+
+            if (response != null) {
+                if (response.getParam("iscleared") != null) {
+
+                }
+            }
+        }
+        return isRemoved;
     }
 
 }

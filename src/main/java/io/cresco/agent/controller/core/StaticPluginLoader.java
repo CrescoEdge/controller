@@ -154,56 +154,36 @@ public class StaticPluginLoader implements Runnable  {
                             }
                             isStaticInit = true;
                         }
+
+                        if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.cdp")) {
+                            //load cep plugin
+                            if (plugin.getConfig().getBooleanParam("enable_cep", true)) {
+                                logger.info("Starting CDP : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
+
+                                Map<String, Object> map = new HashMap<>();
+                                map.put("pluginname", "io.cresco.cdp");
+                                map.put("jarfile", "cdp-1.0-SNAPSHOT.jar");
+
+                                String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+
+
+                            }
+                        }
+
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo
                             if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
                                 logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
 
-                                String inodeId = UUID.randomUUID().toString();
-                                String resourceId = "sysinfo_resource";
-
                                 Map<String, Object> map = new HashMap<>();
                                 map.put("pluginname", "io.cresco.sysinfo");
                                 map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
-                                //map.put("inode_id", inodeId);
-                                //map.put("resource_id","sysinfo_resource");
 
                                 String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
 
-                                //Manually create inode configuration allowing KPI storage
-                                //String inodeId = UUID.randomUUID().toString();
-                               // String inodeId = "sysinfo_inode";
-                                //todo fix this when agents get a DB
-                                /*
-                                if(controllerEngine.cstate.isRegionalController()) {
-                                    controllerEngine.getGDB().addINode(resourceId, inodeId, 10, "iNode added by Controller StaticPlugin Loader.", gson.toJson(map));
-                                    controllerEngine.getGDB().updateINodeAssignment(inodeId, 10, "iNode Active.", plugin.getRegion(), plugin.getAgent(), pluginId);
-                                }
-                                */
                             }
 
                         }
-
-                        //todo data plane
-
-                        String inputStreamName = "input1";
-                        String outputStreamName = "output1";
-
-                        String inputRecordSchemaString = "{\"type\":\"record\",\"name\":\"Ticker\",\"fields\":[{\"name\":\"source\",\"type\":\"string\"},{\"name\":\"urn\",\"type\":\"string\"},{\"name\":\"metric\",\"type\":\"string\"},{\"name\":\"ts\",\"type\":\"long\"},{\"name\":\"value\",\"type\":\"double\"}]}";
-                        //String inputStreamName = "UserStream";
-
-                        //String outputStreamName = "BarStream";
-                        String outputStreamAttributesString = "source string, avgValue double";
-
-                        String queryString = " " +
-                                //from TempStream#window.timeBatch(10 min)
-                                //"from UserStream#window.time(5 sec) " +
-                                "from " + inputStreamName + "#window.timeBatch(5 sec) " +
-                                "select source, avg(value) as avgValue " +
-                                "  group by source " +
-                                "insert into " + outputStreamName + "; ";
-
-                        //controllerEngine.getDataPlaneService().createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
 
                     }
                     logger.trace("Status : " + controllerEngine.cstate.getControllerState());

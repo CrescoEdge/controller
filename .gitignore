@@ -1,3 +1,6 @@
 .idea/
 target/
 src/main/resources/*
+dbuild.sh
+pbuild.sh
+src/test/

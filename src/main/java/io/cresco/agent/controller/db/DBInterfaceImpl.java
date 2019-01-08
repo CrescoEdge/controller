@@ -639,6 +639,26 @@ public class DBInterfaceImpl implements DBInterface {
         return pluginRepoMap;
     }
 
+    public List<Map<String,String>> getPluginListMapByType(String actionPluginTypeId, String actionPluginTypeValue) {
+        List<Map<String,String>> configMapList = null;
+
+        try
+        {
+            configMapList = dbe.getPluginListMapByType(actionPluginTypeId,actionPluginTypeValue);
+
+        }
+        catch(Exception ex)
+        {
+            logger.error("getPluginListByType() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return  configMapList;
+    }
+
     public String getPluginListByType(String actionPluginTypeId, String actionPluginTypeValue) {
         String queryReturn = null;
 
