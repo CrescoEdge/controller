@@ -161,8 +161,8 @@ public class StaticPluginLoader implements Runnable  {
                                 logger.info("Starting CDP : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
 
                                 Map<String, Object> map = new HashMap<>();
-                                map.put("pluginname", "io.cresco.cdp");
-                                map.put("jarfile", "cdp-1.0-SNAPSHOT.jar");
+                                map.put("pluginname", "io.cresco.cep");
+                                map.put("jarfile", "cep-1.0-SNAPSHOT.jar");
 
                                 String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
 
