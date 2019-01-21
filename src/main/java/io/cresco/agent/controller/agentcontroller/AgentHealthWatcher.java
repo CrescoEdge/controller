@@ -88,26 +88,38 @@ public class AgentHealthWatcher {
               enableMsg.setParam("environment", environment);
 
 
-              String location = System.getenv("CRESCO_LOCATION");
+              //String location = System.getenv("CRESCO_LOCATION");
+              String location = plugin.getConfig().getStringParam("location");
               if(location == null) {
-                  location = plugin.getConfig().getStringParam("general", "location");
 
-                  if(location == null) {
                       try {
                           location = InetAddress.getLocalHost().getHostName();
-                      } catch(Exception ex) {
-                          try {
-                              String osType = System.getProperty("os.name").toLowerCase();
-                              if(osType.equals("windows")) {
-                                  location = System.getenv("COMPUTERNAME");
-                              } else if(osType.equals("linux")) {
-                                  location = System.getenv("HOSTNAME");
-                              }
-                          } catch(Exception exx) {
-                              //do nothing
+                          if(location != null) {
+                              logger.info("Location set: " + location);
                           }
+                      } catch(Exception ex) {
+                          logger.error("getLocalHost() Failed : " + ex.getMessage());
                       }
+
+                if(location == null) {
+                  try {
+
+                      String osType = System.getProperty("os.name").toLowerCase();
+                      if(osType.equals("windows")) {
+                          location = System.getenv("COMPUTERNAME");
+                      } else if(osType.equals("linux")) {
+                          location = System.getenv("HOSTNAME");
+                      }
+
+                      if(location != null) {
+                          logger.info("Location set env: " + location);
+                      }
+
+                  } catch(Exception exx) {
+                      //do nothing
+                      logger.error("Get System Env Failed : " + exx.getMessage());
                   }
+                      }
               }
               if(location == null) {
                   location = "unknown";
