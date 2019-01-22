@@ -540,6 +540,10 @@ public class DBInterfaceImpl implements DBInterface {
                                 regionMap.put("platform",params.get("platform"));
                                 regionMap.put("environment",params.get("environment"));
                             } catch(Exception ex) {
+                                logger.error(ex.getMessage());
+                                StringWriter errors = new StringWriter();
+                                ex.printStackTrace(new PrintWriter(errors));
+                                logger.error(errors.toString());
                                 regionMap.put("location","unknown");
                                 regionMap.put("platform","unknown");
                                 regionMap.put("environment","unknown");

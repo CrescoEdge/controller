@@ -299,7 +299,6 @@ public class DBEngine {
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
 
-
             ResultSet rs = stmt.executeQuery(queryString);
 
             rs.next();
@@ -311,6 +310,10 @@ public class DBEngine {
 
         } catch(Exception ex) {
             ex.printStackTrace();
+            logger.error(ex.getMessage());
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
         }
         return configParams;
     }
@@ -429,6 +432,7 @@ public class DBEngine {
     public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try {
+
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
             String stmtString = null;
@@ -529,7 +533,12 @@ public class DBEngine {
             conn.close();
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            //ex.printStackTrace();
+            logger.error("inodeKPIExist()");
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
+
         }
         return exist;
     }

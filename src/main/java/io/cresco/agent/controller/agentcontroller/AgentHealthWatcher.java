@@ -1,6 +1,7 @@
 package io.cresco.agent.controller.agentcontroller;
 
 
+import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -24,6 +25,7 @@ public class AgentHealthWatcher {
 	  private ControllerEngine controllerEngine;
 	  private PluginBuilder plugin;
 	  private CLogger logger;
+	  private Gson gson;
 
 	  public AgentHealthWatcher(ControllerEngine controllerEngine) {
 	  	this.controllerEngine = controllerEngine;
@@ -32,6 +34,8 @@ public class AgentHealthWatcher {
 
 		  startTS = System.currentTimeMillis();
 		  timer = new Timer();
+
+		  gson = new Gson();
 
 		  watchDogTimerString = plugin.getConfig().getStringParam("watchdogtimer","5000");
 
@@ -62,8 +66,11 @@ public class AgentHealthWatcher {
               enableMsg.setParam("desc","to-rc-agent");
 
               jsonExport = controllerEngine.getPluginAdmin().getPluginExport();
-
               enableMsg.setCompressedParam("pluginconfigs",jsonExport);
+
+
+              Map<String,String> configParams = new HashMap<>();
+
 
               String platform = System.getenv("CRESCO_PLATFORM");
               if(platform == null) {
@@ -72,7 +79,9 @@ public class AgentHealthWatcher {
                       platform = "unknown";
                   }
               }
-              enableMsg.setParam("platform", platform);
+
+              configParams.put("platform", platform);
+              //enableMsg.setParam("platform", platform);
 
               String environment = System.getenv("CRESCO_ENVIRONMENT");
               if(environment == null) {
@@ -85,8 +94,8 @@ public class AgentHealthWatcher {
                       }
                   }
               }
-              enableMsg.setParam("environment", environment);
-
+              //enableMsg.setParam("environment", environment);
+              configParams.put("environment", environment);
 
               //String location = System.getenv("CRESCO_LOCATION");
               String location = plugin.getConfig().getStringParam("location");
@@ -124,9 +133,10 @@ public class AgentHealthWatcher {
               if(location == null) {
                   location = "unknown";
               }
+              //enableMsg.setParam("location", location);
+              configParams.put("location", location);
 
-              enableMsg.setParam("location", location);
-
+              enableMsg.setParam("configparams",gson.toJson(configParams));
 
               MsgEvent re = plugin.sendRPC(enableMsg);
               if(re != null) {
