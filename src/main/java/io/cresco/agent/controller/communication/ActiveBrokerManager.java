@@ -57,16 +57,21 @@ public class ActiveBrokerManager implements Runnable  {
 
 				if(cb != null) {
 
+					logger.error("cb != null");
+
 					String agentIP = cb.getParam("dst_ip");
-					if(!controllerEngine.isLocal(agentIP)) { //ignore local responses
+					if((!controllerEngine.isLocal(agentIP)) || (agentIP.equals("127.0.0.1")) || (agentIP.equals("localhost"))) { //ignore local responses
+
+						logger.error("! local ip");
 
 						boolean addBroker = false;
 						String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");
-						logger.trace("Trying to connect to: " + agentPath);
+						logger.info("Trying to connect to: " + agentPath);
 						//logger.trace(getClass().getName() + ">>> canidate boker :" + agentPath + " canidate ip:" + agentIP) ;
 	 		      
 						BrokeredAgent ba = null;
 						if(controllerEngine.getBrokeredAgents().containsKey(agentPath)) {
+							logger.error("brokered agents contains key for " + agentPath);
 							ba = controllerEngine.getBrokeredAgents().get(agentPath);
 							//add ip to possible list
 							if(!ba.addressMap.containsKey(agentIP)) {
@@ -81,6 +86,8 @@ public class ActiveBrokerManager implements Runnable  {
 							}
 							logger.trace("BA EXIST ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
 						} else {
+
+							logger.error("brokered agents does not contains key for " + agentPath);
 						    //This might not work everwhere
                             String cbrokerAddress = null;
                             String cbrokerValidatedAuthenication = null;

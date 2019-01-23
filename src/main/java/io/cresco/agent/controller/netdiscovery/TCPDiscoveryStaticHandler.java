@@ -135,7 +135,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     }
 
     private synchronized void processIncoming(String json, String remoteAddress) {
-        logger.trace(json);
+        logger.info(json);
         try {
             MsgEvent me = gson.fromJson(json, MsgEvent.class);
             if (me != null) {
@@ -144,23 +144,23 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                     String[] remoteScope = remoteAddress.split("%");
                     remoteAddress = remoteScope[0];
                 }
-                logger.trace("Processing packet for {} {}_{}", remoteAddress, me.getParam("src_region"), me.getParam("src_agent"));
+                logger.info("Processing packet for {} {}_{}", remoteAddress, me.getParam("src_region"), me.getParam("src_agent"));
                 me.setParam("dst_ip", remoteAddress);
                 me.setParam("dst_region", me.getParam("src_region"));
                 me.setParam("dst_agent", me.getParam("src_agent"));
                 me.setParam("validated_authenication",ValidatedAuthenication(me));
                 discoveredList.add(me);
                 if(me.getParam("public_cert") != null) {
-                    logger.trace("public_cert Exists");
+                    logger.info("public_cert Exists");
                     String remoteAgentPath = me.getParam("src_region") + "_" + me.getParam("src_agent");
                     if(setCertTrust(remoteAgentPath,me.getParam("public_cert"))) {
-                        logger.trace("Added Static discovered host to discoveredList.");
-                        logger.trace("discoveredList contains " + discoveredList.size() + " items.");
+                        logger.info("Added Static discovered host to discoveredList.");
+                        logger.info("discoveredList contains " + discoveredList.size() + " items.");
                     } else {
-                        logger.trace("Could not set Trust");
+                        logger.info("Could not set Trust");
                     }
                 } else {
-                    logger.trace("processIncoming() : no cert found");
+                    logger.info("processIncoming() : no cert found");
                 }
                 //sme.setParam("public_cert", agentcontroller.getCertificateManager().getJsonFromCerts(agentcontroller.getCertificateManager().getPublicCertificate()));
 

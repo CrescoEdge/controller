@@ -299,11 +299,17 @@ public class ActiveBroker {
 	public NetworkConnector AddNetworkConnector(String URI, String brokerUserName, String brokerPassword, String agentPath) {
 		NetworkConnector bridge = null;
 		try {
-			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
-			logger.info("Added Network Connector to Broker URI: static:ssl://" + URI + ":" + discoveryPort);
+
+
+//
+			//int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
+
+			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
+			logger.info("Added Network Connector to Broker URI: static:ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
 			logger.trace("URI: static:ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
 			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
-			bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort));
+			bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
+
 
 			bridge.setUserName(brokerUserName);
             bridge.setPassword(brokerPassword);

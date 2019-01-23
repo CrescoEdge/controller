@@ -349,6 +349,7 @@ public class ControllerEngine {
 
                             //TODO SET AGENT INFORMATOIN HERE
                             this.cstate.setAgentSuccess(cRegion,cAgent,"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
+
                             isInit = true;
                             logger.info("Broker IP: " + cbrokerAddress);
                             logger.info("Region: " + cstate.getRegion());
@@ -559,6 +560,8 @@ public class ControllerEngine {
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }
+
+
 
                     while (!this.ConsumerThreadActive) {
                         Thread.sleep(1000);

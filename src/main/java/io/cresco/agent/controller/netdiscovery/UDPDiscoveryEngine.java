@@ -458,6 +458,7 @@ public class UDPDiscoveryEngine implements Runnable {
                         //return message exist, if cert exist add it and include ours
                         if(rme.getParam("public_cert") != null) {
                             String remoteAgentPath = me.getParam("dst_region") + "-global";
+                            //String remoteAgentPath = plugin.getRegion() + "_" + me.getParam("dst_agent");
                             String localCertString = configureCertTrust(remoteAgentPath,rme.getParam("public_cert"));
                             if(localCertString != null) {
                                 me.setParam("public_cert",localCertString);
@@ -495,6 +496,7 @@ public class UDPDiscoveryEngine implements Runnable {
                         //return message exist, if cert exist add it and include ours
                         if(rme.getParam("public_cert") != null) {
                             String remoteAgentPath = me.getParam("dst_region");
+                            //String remoteAgentPath = plugin.getRegion() + "_" + me.getParam("dst_agent");
                             String localCertString = configureCertTrust(remoteAgentPath,rme.getParam("public_cert"));
                             if(localCertString != null) {
                                 me.setParam("public_cert",localCertString);

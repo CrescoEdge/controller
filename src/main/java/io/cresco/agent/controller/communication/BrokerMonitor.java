@@ -17,6 +17,7 @@ class BrokerMonitor implements Runnable {
 	private CLogger logger;
 	private String agentPath;
 	private NetworkConnector bridge;
+
 	public boolean MonitorActive;
 
 	public BrokerMonitor(ControllerEngine controllerEngine, String agentPath) {

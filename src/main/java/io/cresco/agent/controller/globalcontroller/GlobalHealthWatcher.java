@@ -235,6 +235,8 @@ public class GlobalHealthWatcher implements Runnable {
                         controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
                         logger.info("Static Global Controller Static Host: " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
                         global_host_map.put(global_controller_host, controllerEngine.cstate.getGlobalControllerPath());
+
+
                         //register with global controller
                         //sendGlobalWatchDogRegister();
                     } else {
@@ -330,13 +332,16 @@ public class GlobalHealthWatcher implements Runnable {
     }
 
     private String[] connectToGlobal(List<MsgEvent> discoveryList) {
+
+        logger.error("connecToGlobal()");
+
         String[] globalController = null;
         MsgEvent cme = null;
         int cme_count = 0;
 
 	    try {
 	        for(MsgEvent ime : discoveryList) {
-	            logger.trace("Global Discovery Response : " + ime.getParams().toString());
+	            logger.info("Global Discovery Response : " + ime.getParams().toString());
 	            //determine least loaded
 	            String ime_count_string = ime.getParam("agent_count");
 	            if(ime_count_string != null) {
@@ -356,24 +361,32 @@ public class GlobalHealthWatcher implements Runnable {
             }
             //if we have a canadate, check to see if we are already connected a regions
             if(cme != null) {
+                logger.error("cme != null 0");
 	            if((cme.getParam("dst_region") != null) && (cme.getParam("dst_agent")) !=null) {
+                    logger.error("cme != null 1");
                     String cGlobalPath = cme.getParam("dst_region") + "_" + (cme.getParam("dst_agent"));
                     if(!controllerEngine.isReachableAgent(cGlobalPath)) {
+                        logger.error("cme NOT REACHABLE");
                         controllerEngine.getIncomingCanidateBrokers().add(cme);
+                        logger.error("cme submitted canidate broker");
                         //while
                         int timeout = 0;
                         while((!controllerEngine.isReachableAgent(cGlobalPath)) && (timeout < 10)) {
-                            logger.trace("Trying to connect to Global Controller : " + cGlobalPath);
+                            logger.info("Trying to connect to Global Controller : " + cGlobalPath);
                             timeout++;
                             Thread.sleep(1000);
                         }
                         if(controllerEngine.isReachableAgent(cGlobalPath)) {
+                            logger.error("rearchable 0");
                             globalController = new String[2];
                             globalController[0] = cme.getParam("dst_region");
                             globalController[1] = cme.getParam("dst_agent");
+                        } else {
+                            logger.error("still not reachable");
                         }
                     }
                     else {
+                        logger.error("reachable 1");
                         globalController = new String[2];
                         globalController[0] = cme.getParam("dst_region");
                         globalController[1] = cme.getParam("dst_agent");
@@ -501,6 +514,7 @@ public class GlobalHealthWatcher implements Runnable {
                     logger.info("Static Region Connection to Global Controller : " + plugin.getConfig().getStringParam("global_controller_host",null) + " failed! - Restarting Global Discovery");
                 } else {
                     //agentcontroller.getIncomingCanidateBrokers().add(discoveryList.get(0)); //perhaps better way to do this
+                    //controllerEngine.getIncomingCanidateBrokers().add(discoveryList.get(0)); //perhaps better way to do this
                     logger.info("Global Controller Found: Region: " + discoveryList.get(0).getParam("src_region") + " agent:" + discoveryList.get(0).getParam("src_agent"));
                 }
         }
