@@ -233,7 +233,7 @@ public class ControllerEngine {
             //todo enable metrics
 
             perfControllerMonitor = new PerfControllerMonitor(this);
-            perfControllerMonitor.setSysInfoListener();
+            perfControllerMonitor.setKpiListener();
             //perfControllerMonitor.start();
             logger.info("Performance Controller monitoring initialized");
 

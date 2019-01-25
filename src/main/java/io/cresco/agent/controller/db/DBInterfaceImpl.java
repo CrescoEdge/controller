@@ -925,6 +925,60 @@ public class DBInterfaceImpl implements DBInterface {
                 gpay.status_code = pipeStatMap.get("status_code");
                 gpay.status_desc = pipeStatMap.get("status_desc");
 
+                List<gNode> nodes = new ArrayList<>();
+                nodes.addAll(gpay.nodes);
+                gpay.nodes.clear();
+
+                for(gNode node : nodes) {
+                    Map<String,String> inodeParams = dbe.getInodeMap(node.node_id);
+
+                    //String status_code = String.valueOf(dbe.getINodeStatus(node.node_id));
+
+                    //String regionId = inodeParams.get("region_id");
+                    //String agentId = inodeParams.get("agent_id");
+                    //String pluginId = inodeParams.get("plugin_id");
+
+                    node.params.put("region_id",inodeParams.get("region_id"));
+                    node.params.put("agent_id",inodeParams.get("agent_id"));
+                    node.params.put("plugin_id",inodeParams.get("plugin_id"));
+
+                    node.params.put("status_code",inodeParams.get("status_code"));
+                    node.params.put("status_desc",inodeParams.get("status_desc"));
+
+
+/*
+                    inodeMap.put("inode_id", rs.getString("inode_id"));
+                    inodeMap.put("resource_id", rs.getString("resource_id"));
+
+
+                    inodeMap.put("region_id", rs.getString("region_id"));
+                    inodeMap.put("agent_id", rs.getString("agent_id"));
+                    inodeMap.put("plugin_id", rs.getString("plugin_id"));
+
+                    inodeMap.put("status_code", rs.getString("status_code"));
+                    inodeMap.put("status_desc", rs.getString("status_desc"));
+
+                    */
+                    //String status_code = inodeParams.get("status_code");
+                    /*
+                    String status_desc = inodeParams.get("status_desc");
+                    String params = inodeParams.get("configparams");
+                    String inode_id = inodeParams.get("inode_id");
+                    String resource_id = inodeParams.get("resource_id");
+
+                    node.params.put("status_code", status_code);
+                    node.params.put("status_desc", status_desc);
+                    node.params.put("params", params);
+                    node.params.put("inode_id", inode_id);
+                    node.params.put("resource_id", resource_id);
+                    */
+
+                    gpay.nodes.add(node);
+
+                }
+
+
+                /*
                 int nodeSize = gpay.nodes.size();
                 for (int i = 0; i < nodeSize; i++) {
                     gpay.nodes.get(i).params.clear();
@@ -945,7 +999,13 @@ public class DBInterfaceImpl implements DBInterface {
                     gpay.nodes.get(i).params.put("params", params);
                     gpay.nodes.get(i).params.put("inode_id", inode_id);
                     gpay.nodes.get(i).params.put("resource_id", resource_id);
+
                 }
+                */
+
+
+
+                logger.error("json: " + gson.toJson(gpay));
 
                 queryReturn = gson.toJson(gpay);
             }
@@ -1121,6 +1181,32 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
+    public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
+
+        String queryReturn = null;
+        try
+        {
+
+            logger.error("inode: " + inodeid);
+            Map<String,String> inodeMap = getInodeMap(inodeid);
+
+            String kpiString = controllerEngine.getPerfControllerMonitor().getKPIInfo(inodeMap.get("region_id"),inodeMap.get("agent_id"),inodeMap.get("plugin_id"));
+
+            logger.error("KPI STRING: " + kpiString);
+
+
+        } catch(Exception ex) {
+            logger.error("getIsAssignedInfo() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+
+    }
+
 
     //complete
 
@@ -1165,14 +1251,6 @@ public class DBInterfaceImpl implements DBInterface {
     public String getNetResourceInfo() {
         String queryReturn = null;
         logger.error("String getNetResourceInfo()");
-        return queryReturn;
-
-    }
-
-    public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
-
-        String queryReturn = null;
-        logger.error("String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric");
         return queryReturn;
 
     }

@@ -40,26 +40,27 @@ public class DBEngine {
 
             this.gson = new Gson();
 
-            String defaultDBName = "cresco-controller";
+            String defaultDBName = "cresco-controller-db";
             String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
 
-            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
             if(dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
             }
 
             if(dbType == DBType.EMBEDDED) {
                 if (dbName.equals(defaultDBName)) {
-                    File dbsource = new File(dbName);
+                    File dbsource = new File("database");
                     if (dbsource.exists()) {
                         delete(dbsource);
                     }
+                    dbsource.mkdir();
                 }
             }
 
-            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
 
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
@@ -673,6 +674,8 @@ public class DBEngine {
 
     public Map<String,String> getInodeMap(String inode_id) {
         Map<String,String> inodeMap = new HashMap<>();
+        Connection conn = null;
+        Statement stmt = null;
         try
         {
 
@@ -680,15 +683,27 @@ public class DBEngine {
 
             queryString = "SELECT region_id, agent_id, plugin_id FROM inode WHERE inode_id='" + inode_id + "'";
 
-            Connection conn = ds.getConnection();
-            Statement stmt = conn.createStatement();
+            conn = ds.getConnection();
+            stmt = conn.createStatement();
 
             ResultSet rs = stmt.executeQuery(queryString);
-            rs.next();
 
-            inodeMap.put("region_id",rs.getString("region_id"));
-            inodeMap.put("agent_id",rs.getString("agent_id"));
-            inodeMap.put("plugin_id",rs.getString("plugin_id"));
+            if (rs.next()) {
+                inodeMap.put("inode_id", rs.getString("inode_id"));
+                inodeMap.put("resource_id", rs.getString("resource_id"));
+
+
+                inodeMap.put("region_id", rs.getString("region_id"));
+                inodeMap.put("agent_id", rs.getString("agent_id"));
+                inodeMap.put("plugin_id", rs.getString("plugin_id"));
+
+                inodeMap.put("status_code", rs.getString("status_code"));
+                inodeMap.put("status_desc", rs.getString("status_desc"));
+
+                inodeMap.put("params", rs.getString("params"));
+
+
+            }
 
             rs.close();
             stmt.close();
