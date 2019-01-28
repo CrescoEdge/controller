@@ -402,10 +402,12 @@ public class GlobalExecutor implements Executor {
                 actionResourceId = ce.getParam("action_resourceid");
             }
 
-            ce.setParam("isassignmentinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,false));
-            ce.setParam("isassignmentresourceinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,true));
+            logger.error(ce.getParams().toString());
 
-            logger.trace("get isassigned params : " + ce.getParams().toString());
+            ce.setCompressedParam("isassignmentinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,false));
+            ce.setCompressedParam("isassignmentresourceinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,true));
+
+            logger.error("get isassigned params : " + ce.getParams().toString());
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());

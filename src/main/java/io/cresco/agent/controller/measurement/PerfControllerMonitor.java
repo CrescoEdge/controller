@@ -5,15 +5,12 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.data.TopicType;
-import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import javax.jms.MapMessage;
 import javax.jms.Message;
 import javax.jms.MessageListener;
-import javax.jms.TextMessage;
-import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -96,6 +93,9 @@ public class PerfControllerMonitor {
         try {
 
             response = kpiCache.getIfPresent(regionId + "." + agentId + "." + pluginId);
+            //response = kpiCache.getIfPresent(regionId + "." + agentId);
+
+
 
         } catch (Exception ex) {
             logger.error(ex.getMessage());
@@ -119,13 +119,19 @@ public class PerfControllerMonitor {
                             String messageType = mapMessage.getStringProperty("pluginname");
                             if(messageType.equals("io.cresco.sysinfo")) {
                                 sysInfoCache.put(key, mapMessage.getString("perf"));
+                                logger.error("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
 
-                            } else if(mapMessage.getStringProperty("plugin_id") != null) {
+                            } else {
+
+                                if(mapMessage.getStringProperty("plugin_id") != null) {
+                                    key = key + "." + mapMessage.getStringProperty("plugin_id");
+                                }
                                 //add plugin Id
-                                kpiCache.put(key + "." + mapMessage.getStringProperty("plugin_id"), mapMessage.getString("perf"));
+                                kpiCache.put(key, mapMessage.getString("perf"));
                                 kpiCacheType.put(key, messageType);
+                                logger.error("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
                             }
-                            logger.error("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
+
                         }
 
                     }

@@ -945,6 +945,12 @@ public class DBInterfaceImpl implements DBInterface {
                     node.params.put("status_code",inodeParams.get("status_code"));
                     node.params.put("status_desc",inodeParams.get("status_desc"));
 
+                    node.params.put("inode_id",inodeParams.get("inode_id"));
+                    node.params.put("resource_id",inodeParams.get("resource_id"));
+
+
+
+                    //logger.error("MAP: " + inodeParams.toString());
 
 /*
                     inodeMap.put("inode_id", rs.getString("inode_id"));
@@ -1005,7 +1011,7 @@ public class DBInterfaceImpl implements DBInterface {
 
 
 
-                logger.error("json: " + gson.toJson(gpay));
+                //logger.error("json: " + gson.toJson(gpay));
 
                 queryReturn = gson.toJson(gpay);
             }
@@ -1181,18 +1187,21 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
+    /*
     public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
 
         String queryReturn = null;
         try
         {
 
-            logger.error("inode: " + inodeid);
             Map<String,String> inodeMap = getInodeMap(inodeid);
 
-            String kpiString = controllerEngine.getPerfControllerMonitor().getKPIInfo(inodeMap.get("region_id"),inodeMap.get("agent_id"),inodeMap.get("plugin_id"));
+            //logger.error("inode: " + inodeid + " region_id:" + inodeMap.get("region_id") + " agent_id:" + inodeMap.get("agent_id") + " plugin_id:" + inodeMap.get("plugin_id"));
 
-            logger.error("KPI STRING: " + kpiString);
+
+            queryReturn = controllerEngine.getPerfControllerMonitor().getKPIInfo(inodeMap.get("region_id"),inodeMap.get("agent_id"),inodeMap.get("plugin_id"));
+
+            //logger.error("KPI STRING: " + kpiString);
 
 
         } catch(Exception ex) {
@@ -1206,9 +1215,23 @@ public class DBInterfaceImpl implements DBInterface {
         return queryReturn;
 
     }
+    */
+
+    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
+        String returnString = null;
+        returnString = controllerEngine.getPerfControllerMonitor().getKPIInfo(actionRegion,actionAgent,actionPluginId);
+        logger.debug("String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) " + returnString);
+
+        return returnString;
+    }
 
 
     //complete
+
+    public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
+        logger.error("inode: " + inodeid + " resouce_id:" + resourceid);
+        return null;
+    }
 
     public void shutdown() {
         logger.error("shutdown()");
@@ -1235,12 +1258,6 @@ public class DBInterfaceImpl implements DBInterface {
         logger.error("String getGlobalNetResourceInfo()");
         return queryReturn;
 
-    }
-
-    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
-        String returnString = null;
-        logger.error("String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId)");
-        return returnString;
     }
 
     public String addINodeResource(String resource_id, String inode_id) {

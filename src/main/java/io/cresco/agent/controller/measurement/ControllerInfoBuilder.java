@@ -32,8 +32,15 @@ class ControllerInfoBuilder {
 
             Map<String,List<Map<String,String>>> info = new HashMap<>();
             info.put("controller", controllerEngine.getMeasurementEngine().getMetricGroupList("controller"));
-            returnStr = gson.toJson(info);
-            //logger.info(returnStr);
+
+            Map<String,String> metricsMap = new HashMap<>();
+            metricsMap.put("name","controller_group");
+            metricsMap.put("metrics",gson.toJson(info));
+
+            List<Map<String,String>> metricsList = new ArrayList<>();
+            metricsList.add(metricsMap);
+
+            returnStr = gson.toJson(metricsList);
 
         } catch(Exception ex) {
             logger.error(ex.getMessage());

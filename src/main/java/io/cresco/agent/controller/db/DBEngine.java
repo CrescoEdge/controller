@@ -43,8 +43,8 @@ public class DBEngine {
             String defaultDBName = "cresco-controller-db";
             String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
 
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
-            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
+            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
             if(dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
             }
@@ -59,8 +59,8 @@ public class DBEngine {
                 }
             }
 
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
-            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
+            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
 
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
@@ -681,7 +681,7 @@ public class DBEngine {
 
             String queryString = null;
 
-            queryString = "SELECT region_id, agent_id, plugin_id FROM inode WHERE inode_id='" + inode_id + "'";
+            queryString = "SELECT * FROM inode WHERE inode_id='" + inode_id + "'";
 
             conn = ds.getConnection();
             stmt = conn.createStatement();
@@ -700,8 +700,7 @@ public class DBEngine {
                 inodeMap.put("status_code", rs.getString("status_code"));
                 inodeMap.put("status_desc", rs.getString("status_desc"));
 
-                inodeMap.put("params", rs.getString("params"));
-
+                inodeMap.put("params", rs.getString("configparams"));
 
             }
 
