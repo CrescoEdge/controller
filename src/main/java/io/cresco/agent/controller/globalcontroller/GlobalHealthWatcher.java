@@ -3,13 +3,12 @@ package io.cresco.agent.controller.globalcontroller;
 
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.db.NodeStatusType;
-import io.cresco.agent.controller.globalscheduler.AppSchedulerEngine;
-import io.cresco.agent.controller.globalscheduler.ResourceSchedulerEngine;
+import io.cresco.agent.controller.globalscheduler.AppScheduler;
+import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
 import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv4;
 import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv6;
 import io.cresco.agent.controller.netdiscovery.DiscoveryType;
 import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
-import io.cresco.library.app.gPayload;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -43,7 +42,7 @@ public class GlobalHealthWatcher implements Runnable {
         gCheckInterval = plugin.getConfig().getLongParam("watchdogtimer",5000L);
         SchedulerActive = false;
         AppSchedulerActive = false;
-        controllerEngine.setResourceScheduleQueue(new LinkedBlockingQueue<MsgEvent>());
+        //controllerEngine.setResourceScheduleQueue(new LinkedBlockingQueue<MsgEvent>());
     }
 
 	public void shutdown() {
@@ -101,7 +100,6 @@ public class GlobalHealthWatcher implements Runnable {
             logger.trace("Initial gCheck");
 
                 gCheck(); //do initial check
-
 
                 controllerEngine.setGlobalControllerManagerActive(true);
 
@@ -247,10 +245,16 @@ public class GlobalHealthWatcher implements Runnable {
             else if(this.controllerEngine.cstate.isGlobalController()) {
                 //Do nothing if already controller, will reinit on regional restart
                 logger.trace("Starting Local Global Controller Check");
-                if(controllerEngine.getAppScheduleQueue() == null) {
-                    controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
+
+                //if(controllerEngine.getAppScheduleQueue() == null) {
+                //    controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
+                    //startGlobalSchedulers();
+                //}
+                if(controllerEngine.getAppScheduler() == null) {
                     startGlobalSchedulers();
                 }
+
+
             }
             else {
                 logger.trace("Starting Dynamic Global Controller Check");
@@ -291,7 +295,7 @@ public class GlobalHealthWatcher implements Runnable {
                         //start global stuff
                         //create globalscheduler queue
                         //agentcontroller.setResourceScheduleQueue(new LinkedBlockingQueue<MsgEvent>());
-                        controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
+                        //controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
                         startGlobalSchedulers();
                         //end global start
                         this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");
@@ -314,6 +318,37 @@ public class GlobalHealthWatcher implements Runnable {
         boolean isStarted = false;
         try {
             //Start Global Controller Services
+            logger.info("Initialized Global Application Scheduling");
+
+            ResourceScheduler resourceScheduler = new ResourceScheduler(controllerEngine,this);
+            controllerEngine.setResourceScheduler(resourceScheduler);
+
+            AppScheduler appScheduler = new AppScheduler(controllerEngine,this);
+            controllerEngine.setAppScheduler(appScheduler);
+
+            /*
+            ResourceSchedulerEngine se = new ResourceSchedulerEngine(controllerEngine,this);
+            Thread schedulerEngineThread = new Thread(se);
+            schedulerEngineThread.start();
+
+            AppSchedulerEngine ae = new AppSchedulerEngine(controllerEngine,this);
+            Thread appSchedulerEngineThread = new Thread(ae);
+            appSchedulerEngineThread.start();
+            */
+
+            isStarted = true;
+        }
+        catch (Exception ex) {
+            logger.error("startGlobalSchedulers() " + ex.getMessage());
+        }
+        return isStarted;
+    }
+
+    /*
+    private Boolean startGlobalSchedulers() {
+        boolean isStarted = false;
+        try {
+            //Start Global Controller Services
             logger.info("Initialized");
             ResourceSchedulerEngine se = new ResourceSchedulerEngine(controllerEngine,this);
             Thread schedulerEngineThread = new Thread(se);
@@ -330,6 +365,7 @@ public class GlobalHealthWatcher implements Runnable {
         }
         return isStarted;
     }
+    */
 
     private String[] connectToGlobal(List<MsgEvent> discoveryList) {
 

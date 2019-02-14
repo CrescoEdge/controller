@@ -871,7 +871,7 @@ public class GlobalExecutor implements Executor {
                 gPayload gpay = controllerEngine.getGDB().createPipelineRecord(tenantID, pipelineJSON);
 
                 //add to scheduling queue
-                controllerEngine.getAppScheduleQueue().add(gpay);
+                controllerEngine.getAppScheduler().incomingMessage(gpay);
 
                 //String returnGpipeline = controllerEngine.getGDB().dba.JsonFromgPayLoad(gpay);
                 //remove for the sake of network traffic

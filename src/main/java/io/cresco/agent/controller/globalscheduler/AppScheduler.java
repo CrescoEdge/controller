@@ -20,7 +20,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 
-public class AppSchedulerEngine implements Runnable {
+public class AppScheduler implements IncomingApp {
 
     private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
@@ -29,92 +29,71 @@ public class AppSchedulerEngine implements Runnable {
     private ExecutorService addPipelineExecutor;
     private Gson gson;
 
-    public AppSchedulerEngine(ControllerEngine controllerEngine, GlobalHealthWatcher ghw) {
+    public AppScheduler(ControllerEngine controllerEngine, GlobalHealthWatcher ghw) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
-        this.logger = plugin.getLogger(AppSchedulerEngine.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(AppScheduler.class.getName(),CLogger.Level.Info);
 
-        //this.logger = new CLogger(AppSchedulerEngine.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Debug);
-		//this.agentcontroller = agentcontroller;
-		this.ghw = ghw;
-        addPipelineExecutor = Executors.newFixedThreadPool(100);
+        this.ghw = ghw;
+        //addPipelineExecutor = Executors.newFixedThreadPool(100);
+        addPipelineExecutor = Executors.newCachedThreadPool();
         gson = new Gson();
 	}
 
-    public void run() {
+    @Override
+    public void incomingMessage(gPayload gpay) {
+
         try
         {
-            ghw.AppSchedulerActive = true;
-            while (ghw.AppSchedulerActive)
-            {
-                try
-                {
-                    gPayload gpay = controllerEngine.getAppScheduleQueue().poll();
+            if(gpay != null) {
 
+                logger.debug("gPayload.added");
 
-                    if(gpay != null) {
+                gPayload createdPipeline = controllerEngine.getGDB().createPipelineNodes(gpay);
 
-                        logger.debug("gPayload.added");
+                if(createdPipeline.status_code.equals("3")) {
+                    logger.debug("Created Pipeline Records: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
+                    //start creating real objects
 
-                        gPayload createdPipeline = controllerEngine.getGDB().createPipelineNodes(gpay);
+                    int pipelineStatus = schedulePipeline(gpay.pipeline_id);
 
-                        if(createdPipeline.status_code.equals("3")) {
-                            logger.debug("Created Pipeline Records: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
-                            //start creating real objects
+                    switch (pipelineStatus) {
 
-                            int pipelineStatus = schedulePipeline(gpay.pipeline_id);
+                        //all metrics
+                        case 1: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"40","Failed to schedule pipeline resources exception.");
+                            break;
+                        case 4: //all is good!
+                            break;
+                        //controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"4","Pipeline resources scheduled.");
+                        //moved into schedulePipeline to prevent race condition
+                        case 60: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"60","Failed to schedule pipeline node resources.");
+                            break;
+                        case 61: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"61","Failed to schedule pipeline edge resources.");
+                            break;
 
-                            switch (pipelineStatus) {
-
-
-                                //all metrics
-                                case 1: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"40","Failed to schedule pipeline resources exception.");
-                                    break;
-                                case 4: //all is good!
-                                    break;
-                                        //controllerEngine.getGDB().dba.setPipelineStatus(gpay.pipeline_id,"4","Pipeline resources scheduled.");
-                                        //moved into schedulePipeline to prevent race condition
-                                case 60: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"60","Failed to schedule pipeline node resources.");
-                                    break;
-                                case 61: controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id,"61","Failed to schedule pipeline edge resources.");
-                                    break;
-
-                                default:
-                                    logger.error("Pipeline Scheduling Failed: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
-                                    break;
-                            }
-
-                        }
-                        else
-                        {
-                            logger.error("Pipeline Creation Failed: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
-
-                        }
-
+                        default:
+                            logger.error("Pipeline Scheduling Failed: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
+                            break;
                     }
-                    else
-                    {
-                        Thread.sleep(1000);
-                    }
+
                 }
-                catch(Exception ex)
+                else
                 {
-                    logger.error("AppSchedulerEngine gPayloadQueue Error: " + ex.toString());
-                    StringWriter sw = new StringWriter();
-                    PrintWriter pw = new PrintWriter(sw);
-                    ex.printStackTrace(pw);
-                    logger.error(sw.toString()); // stack trace as a string
+                    logger.error("Pipeline Creation Failed: " + gpay.pipeline_name + " id=" + gpay.pipeline_id);
                 }
             }
+
         }
         catch(Exception ex)
         {
-            logger.error("AppSchedulerEngine Error: " + ex.toString());
+            logger.error("AppSchedulerEngine gPayloadQueue Error: " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             logger.error(sw.toString()); // stack trace as a string
         }
+
+
     }
 
     public int schedulePipeline(String pipeline_id) {

@@ -75,7 +75,8 @@ public class PollAddPipeline implements Runnable {
                     //controllerEngine.getGDB().set setINodeParam(gnode.node_id,"status_code","4");
                     //controllerEngine.getGDB().setINodeParam(gnode.node_id,"status_desc","iNode resources scheduled.");
 
-                    controllerEngine.getResourceScheduleQueue().add(me);
+                    //controllerEngine.getResourceScheduleQueue().add(me);
+                    controllerEngine.getResourceScheduler().incomingMessage(me);
 
                 }
 
