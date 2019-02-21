@@ -7,13 +7,14 @@ import io.cresco.agent.controller.communication.*;
 import io.cresco.agent.controller.db.DBInterfaceImpl;
 import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
+import io.cresco.agent.controller.globalscheduler.AppScheduler;
+import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
 import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.measurement.PerfControllerMonitor;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.library.agent.ControllerState;
-import io.cresco.library.app.gPayload;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -47,8 +48,8 @@ public class ControllerEngine {
     private ConcurrentHashMap<String, BrokeredAgent> brokeredAgents;
     private BlockingQueue<MsgEvent> incomingCanidateBrokers;
     private BlockingQueue<MsgEvent> outgoingMessages;
-    private BlockingQueue<MsgEvent> resourceScheduleQueue;
-    private BlockingQueue<gPayload> appScheduleQueue;
+    //private BlockingQueue<MsgEvent> resourceScheduleQueue;
+    //private BlockingQueue<gPayload> appScheduleQueue;
     private Map<String, Long> discoveryMap;
 
 
@@ -84,6 +85,9 @@ public class ControllerEngine {
     private AgentExecutor executor;
     private MeasurementEngine measurementEngine;
     private MsgRouter msgRouter;
+
+    private AppScheduler appScheduler;
+    private ResourceScheduler resourceScheduler;
 
     private Thread activeBrokerManagerThread;
     private Thread globalControllerManagerThread;
@@ -1030,12 +1034,31 @@ public class ControllerEngine {
         return errors.toString();
     }
 
+    public AppScheduler getAppScheduler() {
+        return appScheduler;
+    }
+
+    public void setAppScheduler(AppScheduler appScheduler) {
+        this.appScheduler = appScheduler;
+    }
+
+    public ResourceScheduler getResourceScheduler() {
+        return resourceScheduler;
+    }
+
+    public void setResourceScheduler(ResourceScheduler resourceScheduler) {
+        this.resourceScheduler = resourceScheduler;
+    }
+
+
+    /*
     public BlockingQueue<gPayload> getAppScheduleQueue() {
         return appScheduleQueue;
     }
     public void setAppScheduleQueue(BlockingQueue<gPayload> appScheduleQueue) {
         this.appScheduleQueue = appScheduleQueue;
     }
+    */
 
     public DBInterfaceImpl getGDB() {
         return gdb;
@@ -1053,12 +1076,14 @@ public class ControllerEngine {
         this.DBManagerActive = DBManagerActive;
     }
 
+    /*
     public BlockingQueue<MsgEvent> getResourceScheduleQueue() {
         return resourceScheduleQueue;
     }
     public void setResourceScheduleQueue(BlockingQueue<MsgEvent> appScheduleQueue) {
         this.resourceScheduleQueue = appScheduleQueue;
     }
+    */
 
     public boolean isGlobalControllerManagerActive() {
         return GlobalControllerManagerActive;

@@ -315,18 +315,24 @@ public class MeasurementEngine {
         }
     }
 
+
     public void initGlobalMetrics() {
+
+        /*
         if(controllerEngine.getResourceScheduleQueue() != null) {
             Gauge.builder("incoming.resource.queue", controllerEngine.getResourceScheduleQueue(), BlockingQueue::size)
                     .description("The number of queued incoming resources to be scheduled.")
                     .register(crescoMeterRegistry);
         }
 
+
         if(controllerEngine.getAppScheduleQueue() != null) {
             Gauge.builder("incoming.application.queue", controllerEngine.getAppScheduleQueue(), BlockingQueue::size)
                     .description("The number of queued incoming applications to be scheduled.")
                     .register(crescoMeterRegistry);
         }
+        */
+
     }
 
 

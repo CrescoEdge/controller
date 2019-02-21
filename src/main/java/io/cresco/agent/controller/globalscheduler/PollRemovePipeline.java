@@ -56,7 +56,8 @@ public class PollRemovePipeline implements Runnable {
 
 						        controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,9,"iNode Pipeline Scheduled for Removal");
 
-                                controllerEngine.getResourceScheduleQueue().add(me);
+                                //controllerEngine.getResourceScheduleQueue().add(me);
+                                controllerEngine.getResourceScheduler().incomingMessage(me);
                             }
                             else if(statusCode > 19) {
                                 controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,8,"iNode Disabled");
