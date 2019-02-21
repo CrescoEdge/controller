@@ -149,11 +149,11 @@ public class ActiveBroker {
 
 				if (plugin.isIPv6())
 					//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("ssl://[::]:"+ discoveryPort));
+					connector.setUri(new URI("nio+ssl://[::]:"+ discoveryPort));
 
 				else
 					//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort));
+					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ discoveryPort));
 
 
                 /*
@@ -306,9 +306,9 @@ public class ActiveBroker {
 
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 			logger.info("Added Network Connector to Broker URI: static:ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
-			logger.trace("URI: static:ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
+			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
 			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
-			bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
+			bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
 
 
 			bridge.setUserName(brokerUserName);

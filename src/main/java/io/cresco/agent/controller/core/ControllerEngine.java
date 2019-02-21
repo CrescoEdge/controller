@@ -568,8 +568,8 @@ public class ControllerEngine {
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     } else {
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
-                        activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
-                        dataPlaneService = new DataPlaneServiceImpl(this,"ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
+                        activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
+                        dataPlaneService = new DataPlaneServiceImpl(this,"nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }
@@ -602,7 +602,7 @@ public class ControllerEngine {
             } else {
                 //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                 //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
-                this.activeClient.initActiveAgentProducer("ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
+                this.activeClient.initActiveAgentProducer("nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
             }
             logger.debug("Agent ProducerThread Started..");
             isInit = true;
