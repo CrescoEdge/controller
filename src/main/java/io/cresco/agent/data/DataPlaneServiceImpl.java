@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class DataPlaneServiceImpl implements DataPlaneService {
 	private PluginBuilder plugin;
 	private CLogger logger;
-	private ActiveMQConnection conn;
-	private ActiveMQSslConnectionFactory connf;
+	//private ActiveMQConnection conn;
+	//private ActiveMQSslConnectionFactory connf;
 	private ControllerEngine controllerEngine;
     private Session sess;
     private Destination agentTopic;
@@ -44,6 +44,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
 
+		/*
 		connf = new ActiveMQSslConnectionFactory(URI);
 
 		//Don't serialize VM connections
@@ -54,8 +55,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 		connf.setKeyAndTrustManagers(controllerEngine.getCertificateManager().getKeyManagers(),controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 		conn = (ActiveMQConnection) connf.createConnection();
 		conn.start();
+		*/
 
-        sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        sess = controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+        //sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
         agentTopic = sess.createTopic(getTopicName(TopicType.AGENT));
         regionTopic = sess.createTopic(getTopicName(TopicType.REGION));
         globalTopic = sess.createTopic(getTopicName(TopicType.GLOBAL));
@@ -83,11 +86,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 "  group by source " +
                 "insert into " + outputStreamName + "; ";
 
-        logger.error("PRE CREATE");
 
 
         //cepEngineInit.createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
-        logger.error("POST CREATE");
 
         //logger.error("CREATE: " + createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString));
 

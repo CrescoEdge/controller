@@ -70,13 +70,13 @@ public class ControllerEngine {
     public String brokerPasswordAgent;
 
     private PerfControllerMonitor perfControllerMonitor;
-    private ActiveAgentConsumer activeAgentConsumer;
+    private ActiveClient activeClient;
     private DataPlaneService dataPlaneService;
     private ActiveBroker broker;
     private KPIBroker kpiBroker;
     private DBInterfaceImpl gdb;
     private KPIProducer kpip;
-    private ActiveProducer ap;
+    //private ActiveProducer ap;
     private AgentHealthWatcher agentHealthWatcher;
     private RegionHealthWatcher regionHealthWatcher;
     private ExecutorService msgInProcessQueue;
@@ -101,7 +101,8 @@ public class ControllerEngine {
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
         this.pluginAdmin = pluginAdmin;
-        this.measurementEngine = new MeasurementEngine(this);
+
+        this.activeClient = new ActiveClient(this);
 
         //this.msgInProcessQueue = Executors.newFixedThreadPool(100);
         this.msgInProcessQueue = Executors.newCachedThreadPool();
@@ -232,10 +233,16 @@ public class ControllerEngine {
 
             //todo enable metrics
 
-            perfControllerMonitor = new PerfControllerMonitor(this);
-            perfControllerMonitor.setKpiListener();
-            //perfControllerMonitor.start();
-            logger.info("Performance Controller monitoring initialized");
+            if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
+                //enable measurements
+                this.measurementEngine = new MeasurementEngine(this);
+                logger.info("MeasurementEngine initialized");
+
+                //send measurement info out
+                perfControllerMonitor = new PerfControllerMonitor(this);
+                perfControllerMonitor.setKpiListener();
+                logger.info("Performance Controller monitoring initialized");
+            }
 
 
             //populate controller-specific metrics
@@ -551,21 +558,23 @@ public class ControllerEngine {
                     //consumer agent
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
                     if(isLocalBroker()) {
-                        activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://localhost", brokerUserNameAgent, brokerPasswordAgent);
+                        //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://localhost", brokerUserNameAgent, brokerPasswordAgent);
+                        activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "vm://localhost");
                         dataPlaneService = new DataPlaneServiceImpl(this,"vm://localhost");
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     } else {
-                        activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
+                        //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
+                        activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         dataPlaneService = new DataPlaneServiceImpl(this,"ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                         //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }
 
-
-
                     while (!this.ConsumerThreadActive) {
                         Thread.sleep(1000);
                     }
+
+
                     consumerAgentConnected = true;
                     logger.debug("Agent ConsumerThread Started..");
                 } catch (JMSException jmx) {
@@ -584,10 +593,12 @@ public class ControllerEngine {
             }
             int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
             if(isLocalBroker()) {
-                this.ap = new ActiveProducer(this, "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
+                //this.ap = new ActiveProducer(this, "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
+                this.activeClient.initActiveAgentProducer("vm://" + this.brokerAddressAgent + ":" + discoveryPort);
             } else {
                 //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
-                this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
+                //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
+                this.activeClient.initActiveAgentProducer("ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
             }
             logger.debug("Agent ProducerThread Started..");
             isInit = true;
@@ -675,6 +686,12 @@ public class ControllerEngine {
             String kpiProtocol = plugin.getConfig().getStringParam("kpiprotocol","tcp");
             //init KPIBroker
             this.kpiBroker = new KPIBroker(this, kpiProtocol, kpiPort,cstate.getAgentPath() + "_KPI",brokerUserNameAgent,brokerPasswordAgent);
+            //create bridge
+            //todo create bridge
+            //BridgeAgentKPI bridgeAgentKPI = new BridgeAgentKPI(plugin.getAgentService().getAgentState().getRegion() + "_" + plugin.getAgentService().getAgentState().getAgent());
+
+            //BridgeAgentKPI(String localport, String remotePort, String brokerName)
+
             //init KPIProducer
             this.kpip = new KPIProducer(this, "KPI", kpiProtocol + "://" + this.brokerAddressAgent + ":" + kpiPort, "bname", "bpass");
 
@@ -1043,37 +1060,11 @@ public class ControllerEngine {
         this.resourceScheduleQueue = appScheduleQueue;
     }
 
-    public boolean hasActiveProducter() {
-        boolean hasAP = false;
-        try {
-            if(ap != null) {
-                hasAP = true;
-            }
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
-        return hasAP;
-    }
-
     public boolean isGlobalControllerManagerActive() {
         return GlobalControllerManagerActive;
     }
     public void setGlobalControllerManagerActive(boolean activeBrokerManagerActive) {
         GlobalControllerManagerActive = activeBrokerManagerActive;
-    }
-
-    public void sendAPMessage(MsgEvent msg) {
-        if ((this.ap == null) && (!cstate.getRegion().equals("init"))) {
-            logger.error("AP is null");
-            logger.error("Message: " + msg.getParams());
-            return;
-        }
-        else if(this.ap == null) {
-            logger.trace("AP is null");
-            return;
-        }
-        this.ap.sendMessage(msg);
     }
 
     public Map<String, Long> getDiscoveryMap() {
@@ -1084,7 +1075,7 @@ public class ControllerEngine {
         return DiscoveryActive;
     }
 
-    public ActiveProducer getActiveProducer() { return ap; }
+    public ActiveClient getActiveClient() { return activeClient; }
 
     public Thread getActiveBrokerManagerThread() {
         return activeBrokerManagerThread;
@@ -1150,18 +1141,13 @@ public class ControllerEngine {
                 logger.info("Agent HealthWatcher shutting down");
             }
 
+            if(this.activeClient != null) {
+                this.activeClient.shutdown();
+            }
+
             if(this.measurementEngine != null) {
                 this.measurementEngine.shutdown();
             }
-
-            if (this.ap != null) {
-                logger.trace("Producer shutting down");
-                this.ap.shutdown();
-                this.ap = null;
-                logger.info("Producer shutting down");
-            }
-
-            this.ConsumerThreadActive = false;
 
             this.ActiveBrokerManagerActive = false;
 

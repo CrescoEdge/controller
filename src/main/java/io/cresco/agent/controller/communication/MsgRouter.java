@@ -34,7 +34,7 @@ public class MsgRouter {
 
         //set remote regional controller address
         rm.setForwardDst(controllerEngine.cstate.getRegionalRegion(),controllerEngine.cstate.getRegionalAgent(),null);
-        controllerEngine.getActiveProducer().sendMessage(rm);
+        controllerEngine.getActiveClient().sendMessage(rm);
         /*
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
@@ -50,7 +50,7 @@ public class MsgRouter {
     }
 
     private void forwardToLocalRegion(MsgEvent rm) {
-        controllerEngine.getActiveProducer().sendMessage(rm);
+        controllerEngine.getActiveClient().sendMessage(rm);
         /*
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
@@ -68,7 +68,7 @@ public class MsgRouter {
 
     private void forwardToRemoteRegion(MsgEvent rm) {
 
-        controllerEngine.getActiveProducer().sendMessage(rm);
+        controllerEngine.getActiveClient().sendMessage(rm);
         /*
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
@@ -474,7 +474,9 @@ public class MsgRouter {
         }
         finally
         {
-            controllerEngine.getMeasurementEngine().updateTimer("message.transaction.time", messageTimeStamp);
+            if(controllerEngine.getMeasurementEngine() != null) {
+                controllerEngine.getMeasurementEngine().updateTimer("message.transaction.time", messageTimeStamp);
+            }
         }
 
     }

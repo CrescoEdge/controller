@@ -93,7 +93,7 @@ public class GlobalHealthWatcher implements Runnable {
 	public void run() {
 		try {
 
-            while(!controllerEngine.hasActiveProducter()) {
+            while(!controllerEngine.getActiveClient().hasActiveProducer()) {
                 logger.trace("GlobalHealthWatcher waiting on Active Producer.");
                 Thread.sleep(2500);
             }

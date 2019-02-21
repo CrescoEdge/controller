@@ -7,6 +7,8 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
 
 import java.security.cert.Certificate;
 
@@ -21,7 +23,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     private CLogger logger;
     private DiscoveryCrypto discoveryCrypto;
     private Gson gson;
-    private int state = 0;
+
 
     public TCPDiscoveryEngineHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -34,28 +36,43 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         // Echo back the received object to the client.
+        //System.out.println("channelRead Thread" + Thread.currentThread() + " 0");
 
-        try {
+        //try {
 
             MsgEvent me = gson.fromJson((String)msg, MsgEvent.class);
                 MsgEvent rme = processMessage(me);
                 ctx.write(gson.toJson(rme));
-        } catch(Exception ex) {
-            logger.error("channelRead" + ex.getMessage());
-            ctx.close();
-        }
-
+        //} catch(Exception ex) {
+        //    logger.error("channelRead" + ex.getMessage());
+        //    ctx.close();
+        //}
+        //System.out.println("channelRead Thread" + Thread.currentThread() + " 1");
     }
 
     @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        ctx.close();
+    }
+
+
+    @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
+        //System.out.println("channelReadComplete Thread" + Thread.currentThread() + " 0");
         ctx.flush();
+        //System.out.println("channelReadComplete Thread" + Thread.currentThread() + " 0.0");
+        //ctx.fireChannelInactive();
+        //System.out.println("channelReadComplete Thread" + Thread.currentThread() + " 0.1");
+        //ctx.close();
+        //System.out.println("channelReadComplete Thread" + Thread.currentThread() + " 1");
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        System.out.println("exeception Thread" + Thread.currentThread() + " 0");
         cause.printStackTrace();
         ctx.close();
+        System.out.println("exeception Thread" + Thread.currentThread() + " 1");
     }
 
     private MsgEvent processMessage(MsgEvent rme) {

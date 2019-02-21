@@ -18,8 +18,6 @@ public class ActiveProducerWorker {
 	private String producerWorkerName;
 	private CLogger logger;
 	private Session sess;
-	private ActiveMQConnection conn;
-	private ActiveMQSslConnectionFactory connf;
 
 	private MessageProducer producer;
 	private Gson gson;
@@ -27,32 +25,26 @@ public class ActiveProducerWorker {
 	private String queueName;
 	private Destination destination;
 	
-	public ActiveProducerWorker(ControllerEngine controllerEngine, String TXQueueName, String URI, String brokerUserNameAgent, String brokerPasswordAgent)  {
+	public ActiveProducerWorker(ControllerEngine controllerEngine, String TXQueueName, String URI)  {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveProducerWorker.class.getName(),CLogger.Level.Info);
 
-		//this.logger = new CLogger(ActiveProducerWorker.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
 		this.producerWorkerName = UUID.randomUUID().toString();
 		try {
 			queueName = TXQueueName;
 			gson = new Gson();
-			//conn = (ActiveMQConnection)new ActiveMQConnectionFactory(brokerUserNameAgent, brokerPasswordAgent, URI).createConnection();
-			connf = new ActiveMQSslConnectionFactory(URI);
-			//Don't serialize VM connections
-			if(URI.startsWith("vm://")) {
-				connf.setObjectMessageSerializationDefered(true);
-			}
-			connf.setKeyAndTrustManagers(controllerEngine.getCertificateManager().getKeyManagers(),controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
-			conn = (ActiveMQConnection) connf.createConnection();
-			conn.start();
-			sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
-			
+
+			//sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
+			sess = controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+
+			//logger.error("New session created URI: [" + URI + "] QueueName [" + TXQueueName + "]");
+
+
 			destination = sess.createQueue(TXQueueName);
 
 			producer = sess.createProducer(destination);
 			producer.setTimeToLive(300000L);
-			//producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
 			producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
 
 
@@ -68,8 +60,6 @@ public class ActiveProducerWorker {
 		try {
 			producer.close();
 			sess.close();
-			conn.cleanup();
-			conn.close();
 			logger.debug("Producer Worker [{}] has shutdown", queueName);
 			isShutdown = true;
 		} catch (JMSException jmse) {

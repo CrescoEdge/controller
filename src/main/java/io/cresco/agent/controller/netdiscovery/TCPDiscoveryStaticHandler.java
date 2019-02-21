@@ -65,6 +65,15 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     public void channelReadComplete(ChannelHandlerContext ctx) {
         ctx.flush();
         ctx.close();
+        //ctx.fireChannelInactive();
+    }
+
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        //ctx.close();
+        //System.out.println("channelInactive Thread" + Thread.currentThread() + " 0");
+        //ctx.close();
+        //System.out.println("channelInactive Thread" + Thread.currentThread() + " 1");
     }
 
     @Override
@@ -97,8 +106,6 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
             //set crypto message for discovery
             sme.setParam("discovery_validator",generateValidateMessage(sme));
-
-
 
         } catch (Exception ex) {
             logger.error("TCPDiscoveryStatic discover Error: " + ex.getMessage());
@@ -135,7 +142,6 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     }
 
     private synchronized void processIncoming(String json, String remoteAddress) {
-        logger.info(json);
         try {
             MsgEvent me = gson.fromJson(json, MsgEvent.class);
             if (me != null) {

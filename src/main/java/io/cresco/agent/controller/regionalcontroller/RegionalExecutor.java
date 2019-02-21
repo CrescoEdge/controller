@@ -130,7 +130,7 @@ public class RegionalExecutor implements Executor {
                 //ge.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());
                 //ge.setParam("dst_plugin",controllerEngine.cstate.getControllerId());
                 //ge.setParam("globalcmd", Boolean.TRUE.toString());
-                controllerEngine.sendAPMessage(incoming);
+                controllerEngine.getActiveClient().sendAPMessage(incoming);
             }
         }
         catch (Exception ex) {

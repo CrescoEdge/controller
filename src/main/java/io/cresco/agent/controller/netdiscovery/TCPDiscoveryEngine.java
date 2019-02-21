@@ -4,6 +4,7 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
@@ -18,6 +19,7 @@ import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
+import io.netty.handler.timeout.IdleStateHandler;
 
 
 public class TCPDiscoveryEngine implements Runnable {
@@ -55,9 +57,8 @@ public class TCPDiscoveryEngine implements Runnable {
                 sslCtx = null;
             }
 
-            bossGroup = new NioEventLoopGroup();
+            bossGroup = new NioEventLoopGroup(1);
             workerGroup = new NioEventLoopGroup();
-
 
             ServerBootstrap b = new ServerBootstrap();
 
@@ -71,6 +72,7 @@ public class TCPDiscoveryEngine implements Runnable {
                             if (sslCtx != null) {
                                 p.addLast(sslCtx.newHandler(ch.alloc()));
                             }
+                            p.addLast(new IdleStateHandler(30,30,30));
                             p.addLast(
                                     new ObjectEncoder(),
                                     new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
@@ -81,7 +83,12 @@ public class TCPDiscoveryEngine implements Runnable {
             controllerEngine.setTCPDiscoveryActive(true);
 
             // Bind and start to accept incoming connections.
-            b.bind(discoveryPort).sync().channel().closeFuture().sync();
+            //b.bind(discoveryPort).sync().channel().closeFuture().sync();
+            ChannelFuture cf = b.bind(discoveryPort).sync();
+
+            cf.channel().closeFuture().sync();
+
+
         } catch(Exception ex) {
             logger.error(ex.getMessage());
         } finally {

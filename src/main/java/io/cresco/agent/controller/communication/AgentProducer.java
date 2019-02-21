@@ -6,25 +6,24 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-public class ActiveProducer {
+public class AgentProducer {
     private Map<String, ActiveProducerWorker> producerWorkers;
 
     private Map<String, Long> producerWorkersInProcess;
+    private AtomicBoolean lockWIP = new AtomicBoolean();
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
     private String URI;
     private Timer timer;
-    private String brokerUserNameAgent;
-    private String brokerPasswordAgent;
 
     private class ClearProducerTask extends TimerTask {
         public void run() {
@@ -44,16 +43,16 @@ public class ActiveProducer {
         }
     }
 
-    public ActiveProducer(ControllerEngine controllerEngine, String URI, String brokerUserNameAgent, String brokerPasswordAgent) {
+    public AgentProducer(ControllerEngine controllerEngine, String URI) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
-        this.logger = plugin.getLogger(ActiveProducer.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(AgentProducer.class.getName(),CLogger.Level.Info);
 
-        this.brokerUserNameAgent = brokerUserNameAgent;
-        this.brokerPasswordAgent = brokerPasswordAgent;
+
         try {
             producerWorkers = new ConcurrentHashMap<>();
-            producerWorkersInProcess = new HashMap<>();
+            //producerWorkersInProcess = new HashMap<>();
+            producerWorkersInProcess = Collections.synchronizedMap(new HashMap<>());
 
             this.URI = URI;
             timer = new Timer();
@@ -105,29 +104,31 @@ public class ActiveProducer {
 
                 if (controllerEngine.isReachableAgent(dstPath)) {
                     boolean isInProcess;
-                    synchronized (producerWorkersInProcess) {
+
+                    synchronized (lockWIP) {
                         isInProcess = producerWorkersInProcess.containsKey(dstPath);
                     }
                     if (isInProcess) {
                         while (isInProcess) {
                             logger.debug("ActiveProducerWorker waiting for " + dstPath);
-                            synchronized (producerWorkersInProcess) {
+                            synchronized (lockWIP) {
                                 isInProcess = producerWorkersInProcess.containsKey(dstPath);
                             }
                             if (!isInProcess)
                                 apw = producerWorkers.get(dstPath);
                         }
                     } else {
-                        synchronized (producerWorkersInProcess) {
+                        synchronized (lockWIP) {
                             producerWorkersInProcess.put(dstPath, System.currentTimeMillis());
                         }
                         if (!producerWorkers.containsKey(dstPath)) {
-                            apw = new ActiveProducerWorker(controllerEngine, dstPath, URI, brokerUserNameAgent, brokerPasswordAgent);
+                            //check for connection first, and if not found create one
+                            apw = new ActiveProducerWorker(controllerEngine, dstPath, URI);
                             if (apw.isActive) {
                                 producerWorkers.put(dstPath, apw);
                             }
                         }
-                        synchronized (producerWorkersInProcess) {
+                        synchronized (lockWIP) {
                             producerWorkersInProcess.remove(dstPath); //remove from that
                         }
                     }
@@ -145,6 +146,11 @@ public class ActiveProducer {
             }
         } catch (Exception ex) {
             logger.error("ActiveProducer : sendMessage Error " + ex.toString());
+
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
+
         }
         return isSent;
     }
