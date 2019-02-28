@@ -117,6 +117,12 @@ public class ActiveBroker {
 				broker.setPopulateJMSXUserID(true);
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
 
+				/*
+				By default, ActiveMQ uses a dedicated thread per destination. If there are large numbers of Destinations there will be a large number of threads and
+				their associated memory resource usage. ActiveMQ can be configured to use a thread pool through the use of the system property
+				 */
+				//Performance greatly suffered under load
+				//broker.setDedicatedTaskRunner(true);
 
 				LoggingBrokerPlugin lbp = new LoggingBrokerPlugin();
 				lbp.setLogAll(false);
