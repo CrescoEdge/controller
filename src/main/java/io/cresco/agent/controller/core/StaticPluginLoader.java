@@ -151,6 +151,16 @@ public class StaticPluginLoader implements Runnable  {
                                     logger.info("HttpService : Does not exist : Console Disabled.");
                                 }
 
+                            } else {
+
+                                //load repo if requested
+                                if(plugin.getConfig().getBooleanParam("enable_repo",false)) {
+                                    Map<String, Object> map = new HashMap<>();
+                                    map.put("pluginname", "io.cresco.repo");
+                                    map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                }
+
                             }
                             isStaticInit = true;
                         }

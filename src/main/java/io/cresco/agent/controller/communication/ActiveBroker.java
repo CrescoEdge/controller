@@ -62,6 +62,7 @@ public class ActiveBroker {
 				PolicyEntry entry = new PolicyEntry();
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
+		        //entry.setOptimizedDispatch(true);
 
 				ManagementContext mc = new ManagementContext();
 				mc.setSuppressMBean("endpoint=dynamicProducer,endpoint=Consumer");
