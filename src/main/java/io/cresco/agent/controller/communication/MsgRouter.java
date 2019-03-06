@@ -133,6 +133,12 @@ public class MsgRouter {
                         forwardToLocalAgent(rm);
                         break;
 
+                    case 511:
+                        logger.debug("remote plugin sending message to local plugin 511");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalPlugin(rm);
+                        break;
+
                     case 655:
                         logger.debug("Local agent sending message to remote global agent 655");
                         logger.trace(rm.getParams().toString());
@@ -280,6 +286,12 @@ public class MsgRouter {
 
                     case 12767:
                         logger.debug("remote agent sending message to local plugin 12767");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalPlugin(rm);
+                        break;
+
+                    case 12799:
+                        logger.debug("remote agent sending message to local plugin 12799");
                         logger.trace(rm.getParams().toString());
                         forwardToLocalPlugin(rm);
                         break;
