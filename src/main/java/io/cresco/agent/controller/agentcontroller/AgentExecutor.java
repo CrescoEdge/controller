@@ -111,7 +111,14 @@ public class AgentExecutor implements Executor {
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
 
+            logger.error("incoming message: [" + ce.getParams() + "]");
+
+            logger.error("incoming hm: [" + hm + "]");
+
+
             boolean jarIsLocal = pluginIsLocal(hm);
+
+            logger.error("jarIsLocal: " + jarIsLocal);
 
             if(!jarIsLocal) {
                 //try to download node
@@ -121,7 +128,12 @@ public class AgentExecutor implements Executor {
 
             if(jarIsLocal) {
 
+                //replace remote jarfilename with local
+                hm.put("jarfile",getCachedJarPath(hm));
+
                 String jarFileName = getRepoCacheDir() + "/" + hm.get("jarfile");
+
+                logger.error("jarIslocal:: " + jarFileName);
 
                 Map<String,Object> map = new HashMap<>();
 
@@ -351,7 +363,8 @@ public class AgentExecutor implements Executor {
 
                         } else {
                             if (pluginName.equals(pluginNameLocal)) {
-                                isLocal = true;
+                                //isLocal = true;
+                                logger.error("Plugin Version Mismatch");
                             }
                         }
                     }
@@ -360,6 +373,45 @@ public class AgentExecutor implements Executor {
 
         return isLocal;
     }
+
+    private String getCachedJarPath(Map<String,String> hm) throws IOException {
+
+
+        String jarFilePath = null;
+
+        String pluginName = hm.get("pluginname");
+        String version = hm.get("version");
+
+        File repoCacheDir = getRepoCacheDir();
+        if (repoCacheDir != null) {
+
+            List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
+            if (pluginList != null) {
+                for (Map<String, String> params : pluginList) {
+                    String pluginNameLocal = params.get("pluginname");
+                    String versionLocal = params.get("version");
+
+                    if ((pluginName != null) && (version != null)) {
+
+                        if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
+                            //pluginMap.put("jarfile", jarFileName);
+                            //pluginMap.put("md5", pluginMD5);
+                            jarFilePath = params.get("jarfile");
+                        }
+
+                    } else {
+                        if (pluginName.equals(pluginNameLocal)) {
+                            //jarFilePath = params.get("jarfile");
+                            logger.error("Plugin Version Mismatch");
+                        }
+                    }
+                }
+            }
+        }
+
+        return jarFilePath;
+    }
+
 
     private File getRepoCacheDir() {
         File repoDir = null;
@@ -384,6 +436,7 @@ public class AgentExecutor implements Executor {
         boolean isFound = false;
         try {
 
+            logger.error("REQUESTING JAR : " + node.name);
             String pluginName = node.name;
             String pluginMD5 = node.md5;
             String jarFile = node.jarfile;
@@ -401,7 +454,11 @@ public class AgentExecutor implements Executor {
                     request.setParam("action_jarfile",jarFile);
 
                     MsgEvent retMsg = plugin.sendRPC(request);
+
                     String jarFileSavePath = getRepoCacheDir().getAbsolutePath() + "/" + jarFile;
+
+                    logger.error("SAVE FILE : " + jarFileSavePath);
+
                     Path path = Paths.get(jarFileSavePath);
                     Files.write(path, retMsg.getDataParam("jardata"));
                     File jarFileSaved = new File(jarFileSavePath);
@@ -409,6 +466,7 @@ public class AgentExecutor implements Executor {
                         String md5 = plugin.getJarMD5(jarFileSavePath);
                         if(pluginMD5.equals(md5)) {
                             isFound = true;
+                            logger.error("SAVE FILE : " + jarFileSavePath + " isFound" + isFound);
                         }
                     }
                 }

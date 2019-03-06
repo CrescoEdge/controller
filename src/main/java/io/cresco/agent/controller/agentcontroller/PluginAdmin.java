@@ -445,7 +445,7 @@ public class PluginAdmin {
                     //String pluginID = controllerEngine.getPluginAdmin().addConfig(pluginName,jarFile, map);
                     //controllerEngine.getPluginAdmin().startPlugin(pluginID);
                 } else {
-                    System.out.println("Can't add " + pluginName + " no bundle " + jarFile);
+                    logger.error("Can't add " + pluginName + " no bundle " + jarFile);
                 }
 
             } catch (Exception ex) {

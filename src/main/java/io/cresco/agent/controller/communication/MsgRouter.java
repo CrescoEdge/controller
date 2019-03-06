@@ -441,6 +441,12 @@ public class MsgRouter {
                         forwardToRemoteRegion(rm);
                         break;
 
+                    case 29407:
+                        logger.debug("Local agent sending message to remote agent 29407");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalRegion(rm);
+                        break;
+
                     case 29647:
                         logger.debug("Local or remote agent sending message to local regional controller 29647");
                         logger.trace(rm.getParams().toString());
