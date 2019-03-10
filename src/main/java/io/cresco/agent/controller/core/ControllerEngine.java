@@ -55,7 +55,7 @@ public class ControllerEngine {
 
     public AtomicInteger responds = new AtomicInteger(0);
 
-    private boolean ConsumerThreadActive = false;
+    private boolean ConsumerActive = false;
     private boolean ActiveBrokerManagerActive = false;
     private boolean clientDiscoveryActiveIPv4 = false;
     private boolean clientDiscoveryActiveIPv6 = false;
@@ -293,25 +293,26 @@ public class ControllerEngine {
         //continue regional discovery until regional controller is found
         List<MsgEvent> discoveryList = null;
         boolean isInit = false;
-        try {
-            discoveryList = new ArrayList<>();
+            try {
+                discoveryList = new ArrayList<>();
 
-            if (plugin.isIPv6()) {
-                DiscoveryClientIPv6 dc = new DiscoveryClientIPv6(this);
-                logger.debug("Broker Search (IPv6)...");
-                discoveryList.addAll(dc.getDiscoveryResponse(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_ipv6_agent_timeout", 2000)));
-                logger.debug("IPv6 Broker count = {}" + discoveryList.size());
-            }
-            DiscoveryClientIPv4 dc = new DiscoveryClientIPv4(this);
-            logger.debug("Broker Search (IPv4)...");
-            discoveryList.addAll(dc.getDiscoveryResponse(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 2000)));
-            logger.debug("Broker count = {}" + discoveryList.size());
-            if(discoveryList.isEmpty()) {
+                if (plugin.isIPv6()) {
+                    DiscoveryClientIPv6 dc = new DiscoveryClientIPv6(this);
+                    logger.debug("Broker Search (IPv6)...");
+                    discoveryList.addAll(dc.getDiscoveryResponse(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_ipv6_agent_timeout", 2000)));
+                    logger.debug("IPv6 Broker count = {}" + discoveryList.size());
+                }
+                DiscoveryClientIPv4 dc = new DiscoveryClientIPv4(this);
+                logger.debug("Broker Search (IPv4)...");
+                discoveryList.addAll(dc.getDiscoveryResponse(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 2000)));
+                logger.debug("Broker count = {}" + discoveryList.size());
+                if (discoveryList.isEmpty()) {
+                    discoveryList = null;
+                }
+            } catch (Exception ex) {
+                logger.error("initAgentDiscovery() Error " + ex.getMessage());
                 discoveryList = null;
             }
-        } catch (Exception ex) {
-            logger.error("initAgentDiscovery() Error " + ex.getMessage());
-        }
 
         return discoveryList;
     }
@@ -470,25 +471,27 @@ public class ControllerEngine {
         //connect to a specific regional controller
         List<MsgEvent> discoveryList = null;
         boolean isInit = false;
-        try {
-            discoveryList = new ArrayList<>();
-            logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host"));
 
-            //UDPDiscoveryStatic ds = new UDPDiscoveryStatic(this);
-            TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
+            try {
+                discoveryList = new ArrayList<>();
+                logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host"));
 
-            discoveryList.addAll(ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), plugin.getConfig().getStringParam("regional_controller_host")));
+                TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
 
-            logger.debug("Static Agent Connection count = {}" + discoveryList.size());
-            if(discoveryList.size() == 0) {
-                logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
-            }
-            if(discoveryList.isEmpty()) {
+                discoveryList.addAll(ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host")));
+
+                logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+                if (discoveryList.size() == 0) {
+                    logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
+                    discoveryList = null;
+                }
+                if (discoveryList.isEmpty()) {
+                    discoveryList = null;
+                }
+            } catch (Exception ex) {
+                logger.error("initAgentStatic() Error " + ex.getMessage());
                 discoveryList = null;
             }
-        } catch (Exception ex) {
-            logger.error("initAgentStatic() Error " + ex.getMessage());
-        }
 
         return discoveryList;
     }
@@ -514,6 +517,7 @@ public class ControllerEngine {
             }
         } catch (Exception ex) {
             logger.error("initRegionDiscovery() Error " + ex.getMessage());
+            discoveryList = null;
         }
         return discoveryList;
     }
@@ -562,22 +566,17 @@ public class ControllerEngine {
                     //consumer agent
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
                     if(isLocalBroker()) {
-                        //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://localhost", brokerUserNameAgent, brokerPasswordAgent);
                         activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "vm://localhost");
                         dataPlaneService = new DataPlaneServiceImpl(this,"vm://localhost");
-                        //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     } else {
-                        //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
                         activeClient.initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
                         dataPlaneService = new DataPlaneServiceImpl(this,"nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
-                        //activeAgentConsumer = new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
-                        //this.consumerAgentThread = new Thread(new ActiveAgentConsumer(this, cstate.getAgentPath(), "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent));
                     }
 
-                    while (!this.ConsumerThreadActive) {
+                    while (!activeClient.isFaultURIActive()) {
+                        logger.info("Waiting on Agent Consumer Startup.");
                         Thread.sleep(1000);
                     }
-
 
                     consumerAgentConnected = true;
                     logger.debug("Agent ConsumerThread Started..");
@@ -824,12 +823,15 @@ public class ControllerEngine {
     }
 
     public PluginBuilder getPluginBuilder() {return  plugin; }
-    public void setConsumerThreadActive(boolean consumerThreadActive) {
-        ConsumerThreadActive = consumerThreadActive;
+
+    /*
+    public void setConsumerActive(boolean consumerActive) {
+        ConsumerActive = consumerActive;
     }
-    public boolean isConsumerThreadActive() {
-        return ConsumerThreadActive;
+    public boolean isConsumerActive() {
+        return ConsumerActive;
     }
+    */
 
     public ConcurrentHashMap<String, BrokeredAgent> getBrokeredAgents() {
         return brokeredAgents;
@@ -1132,10 +1134,17 @@ public class ControllerEngine {
 
             this.DiscoveryActive = false;
 
+            if(this.perfControllerMonitor != null) {
+                this.perfControllerMonitor.stop();
+            }
+
+            if(this.measurementEngine != null) {
+                this.measurementEngine.shutdown();
+            }
+
             if(!stopNetDiscoveryEngine()) {
                 logger.error("Failed to stop Network Discovery Engine");
             }
-
 
             this.GlobalControllerManagerActive = false;
             if (this.globalControllerManagerThread!= null) {
@@ -1170,9 +1179,6 @@ public class ControllerEngine {
                 this.activeClient.shutdown();
             }
 
-            if(this.measurementEngine != null) {
-                this.measurementEngine.shutdown();
-            }
 
             this.ActiveBrokerManagerActive = false;
 

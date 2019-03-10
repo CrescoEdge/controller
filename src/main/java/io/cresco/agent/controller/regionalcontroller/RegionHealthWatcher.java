@@ -122,7 +122,7 @@ public class RegionHealthWatcher {
         public void run() {
             boolean isHealthy = true;
             try {
-                if (!controllerEngine.isConsumerThreadActive()) {
+                if (!controllerEngine.getActiveClient().isFaultURIActive()) {
                     isHealthy = false;
                     logger.info("Agent Consumer shutdown detected");
                 }
@@ -141,10 +141,10 @@ public class RegionHealthWatcher {
                         isHealthy = false;
                         logger.info("Broker shutdown detected");
                     }
-
                 }
 
                 if (!isHealthy) {
+                    controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
                     controllerEngine.removeGDBNode(plugin.getRegion(), plugin.getAgent(), null); //remove self from DB
                     logger.info("System has become unhealthy, rebooting services");
                     controllerEngine.setRestartOnShutdown(true);

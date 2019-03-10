@@ -54,6 +54,7 @@ public class CertificateManager {
             keyStore = KeyStore.getInstance("jks");
             keyStore.load(null, null);
 
+
             trustStore = KeyStore.getInstance("jks");
             trustStore.load(null, null);
 

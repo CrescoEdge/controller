@@ -6,6 +6,7 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQConnection;
+import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.ActiveMQSslConnectionFactory;
 
 import javax.jms.*;
@@ -15,7 +16,7 @@ public class AgentConsumer {
 	private PluginBuilder plugin;
 	private CLogger logger;
 	private Queue RXqueue;
-	private Session sess;
+	private ActiveMQSession sess;
 	private ControllerEngine controllerEngine;
 
 	public AgentConsumer(ControllerEngine controllerEngine, String RXQueueName, String URI) throws JMSException {
@@ -28,13 +29,14 @@ public class AgentConsumer {
 
 
 		//sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
-		sess = controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+
+		sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI,false, Session.AUTO_ACKNOWLEDGE);
 
 		RXqueue = sess.createQueue(RXQueueName);
 		MessageConsumer consumer = sess.createConsumer(RXqueue);
 
 		Gson gson = new Gson();
-		controllerEngine.setConsumerThreadActive(true);
+		//controllerEngine.setConsumerThreadActive(true);
 
 		consumer.setMessageListener(new MessageListener() {
 			public void onMessage(Message msg) {

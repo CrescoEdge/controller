@@ -7,6 +7,7 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.activemq.BlobMessage;
 
 import javax.jms.MapMessage;
 import javax.jms.Message;
@@ -108,6 +109,7 @@ public class PerfControllerMonitor {
         MessageListener ml = new MessageListener() {
             public void onMessage(Message msg) {
                 try {
+
 
 
                     if (msg instanceof MapMessage) {
@@ -215,8 +217,7 @@ public class PerfControllerMonitor {
                 mapMessage.setStringProperty("agent_id", plugin.getAgent());
 
                 controllerEngine.getDataPlaneService().sendMessage(TopicType.AGENT, mapMessage);
-
-
+                
             } catch(Exception ex) {
                 logger.error("PerfMonitorTask() " + ex.getMessage());
             }

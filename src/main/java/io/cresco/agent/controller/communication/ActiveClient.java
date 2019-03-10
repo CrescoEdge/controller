@@ -6,8 +6,10 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQConnection;
+import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.ActiveMQSslConnectionFactory;
 
+import javax.jms.Session;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.security.SecureRandom;
@@ -31,6 +33,7 @@ public class ActiveClient {
     private AgentConsumer agentConsumer;
     private AgentProducer agentProducer;
 
+    private String faultTriggerURI;
 
     public ActiveClient(ControllerEngine controllerEngine){
         this.controllerEngine = controllerEngine;
@@ -40,7 +43,45 @@ public class ActiveClient {
         connectionMap = Collections.synchronizedMap(new HashMap<>());
     }
 
-    public ActiveMQConnection getConnection(String URI) {
+
+    private void setFaultTriggerURI(String faultTriggerURI) {
+        this.faultTriggerURI = faultTriggerURI;
+    }
+
+    private String getFaultTriggerURI() {
+        return faultTriggerURI;
+    }
+
+    public boolean isFaultURIActive() {
+        boolean isActive = false;
+        try {
+            if(faultTriggerURI != null) {
+                synchronized (lockConnectionMap) {
+                    if(connectionMap.containsKey(faultTriggerURI)) {
+                        isActive = connectionMap.get(faultTriggerURI).isStarted();
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
+        return isActive;
+    }
+
+    public ActiveMQSession createSession(String URI, boolean transacted, int acknowledgeMode) {
+        ActiveMQSession activeMQSession = null;
+        try {
+
+            activeMQSession = (ActiveMQSession)getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
+        return activeMQSession;
+    }
+
+    private ActiveMQConnection getConnection(String URI) {
         ActiveMQConnection activeMQConnection = null;
 
         try {
@@ -52,11 +93,14 @@ public class ActiveClient {
                 }
             }
 
+            ActiveMQSslConnectionFactory activeMQSslConnectionFactory = null;
 
             if(!hasConnection) {
 
                 boolean hasFactory = false;
                 //check if existing factory exist
+
+
                 synchronized (lockFactoryMap) {
                     if (connectionFactoryMap.containsKey(URI)) {
                         hasFactory = true;
@@ -64,7 +108,6 @@ public class ActiveClient {
                 }
 
                 //if no factory exist create it
-                ActiveMQSslConnectionFactory activeMQSslConnectionFactory = null;
                 if (!hasFactory) {
                     activeMQSslConnectionFactory = initConnectionFactory(URI);
                     logger.error("Factory Created for URI: [" + URI + "]");
@@ -93,9 +136,36 @@ public class ActiveClient {
                 }
 
             } else {
+
                 synchronized (lockConnectionMap) {
                     activeMQConnection = connectionMap.get(URI);
+                 }
+
+                /*
+                boolean isActive = false;
+                synchronized (lockConnectionMap) {
+                    activeMQConnection = connectionMap.get(URI);
+                    if(activeMQConnection.isStarted()) {
+                       isActive = true;
+                    }
                 }
+
+                if(!isActive) {
+                    logger.error("Connection Failed for URI: [" + URI + "]");
+
+                    activeMQConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
+                    logger.error("Connection Created for URI: [" + URI + "]");
+
+
+                    activeMQConnection.start();
+                    while(!activeMQConnection.isStarted()) {
+                        logger.info("Waiting on connection to URI: [" + URI + "] to start." );
+                        Thread.sleep(1000);
+                    }
+
+                }
+                */
+
             }
 
 
@@ -146,6 +216,7 @@ public class ActiveClient {
 
             this.agentConsumer = new AgentConsumer(controllerEngine, RXQueueName, URI);
             isInit = true;
+            setFaultTriggerURI(URI);
 
         } catch(Exception ex) {
          logger.error("initAgentConsumer() " + ex.getMessage());
@@ -207,6 +278,28 @@ public class ActiveClient {
             this.agentProducer = null;
             logger.info("Producer shutting down");
         }
+
+        try {
+            synchronized (lockConnectionMap) {
+                for (Map.Entry<String, ActiveMQConnection> entry : connectionMap.entrySet()) {
+                    ActiveMQConnection value = entry.getValue();
+                    value.close();
+                }
+                connectionMap.clear();
+            }
+
+            synchronized (lockFactoryMap) {
+                //for (Map.Entry<String, ActiveMQSslConnectionFactory> entry : connectionFactoryMap.entrySet()) {
+                //    ActiveMQSslConnectionFactory value = entry.getValue();
+                //}
+                connectionFactoryMap.clear();
+            }
+
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
 
     }
 

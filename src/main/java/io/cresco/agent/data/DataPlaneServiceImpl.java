@@ -6,21 +6,23 @@ import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.activemq.ActiveMQConnection;
-import org.apache.activemq.ActiveMQSslConnectionFactory;
+import org.apache.activemq.ActiveMQSession;
+import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
-import java.security.SecureRandom;
+import java.io.File;
+import java.io.InputStream;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DataPlaneServiceImpl implements DataPlaneService {
 	private PluginBuilder plugin;
 	private CLogger logger;
-	//private ActiveMQConnection conn;
-	//private ActiveMQSslConnectionFactory connf;
 	private ControllerEngine controllerEngine;
-    private Session sess;
+
+    private ActiveMQSession activeMQSession;
+
     private Destination agentTopic;
     private Destination regionTopic;
     private Destination globalTopic;
@@ -36,6 +38,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private Map<String,MessageConsumer> messageConsumerMap;
     private AtomicBoolean lockMessage = new AtomicBoolean();
 
+    private String URI;
 
 	public DataPlaneServiceImpl(ControllerEngine controllerEngine, String URI) throws JMSException {
 		this.controllerEngine = controllerEngine;
@@ -44,29 +47,14 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
 
-		/*
-		connf = new ActiveMQSslConnectionFactory(URI);
+		this.URI = URI;
 
-		//Don't serialize VM connections
-		if(URI.startsWith("vm://")) {
-			connf.setObjectMessageSerializationDefered(true);
-		}
+        //sess = (ActiveMQSession)controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
 
-		connf.setKeyAndTrustManagers(controllerEngine.getCertificateManager().getKeyManagers(),controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
-		conn = (ActiveMQConnection) connf.createConnection();
-		conn.start();
-		*/
-
-        sess = controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
         //sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
-        agentTopic = sess.createTopic(getTopicName(TopicType.AGENT));
-        regionTopic = sess.createTopic(getTopicName(TopicType.REGION));
-        globalTopic = sess.createTopic(getTopicName(TopicType.GLOBAL));
-
-        //CEP depends on DataPlaneService
-        //cepEngine = new CEPEngine(controllerEngine, plugin);
-
-        //CEPEngineInit cepEngineInit = new CEPEngineInit(controllerEngine, plugin);
+        agentTopic = getSession().createTopic(getTopicName(TopicType.AGENT));
+        regionTopic = getSession().createTopic(getTopicName(TopicType.REGION));
+        globalTopic = getSession().createTopic(getTopicName(TopicType.GLOBAL));
 
 
         String inputStreamName = "input1";
@@ -97,6 +85,30 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    private ActiveMQSession getSession() {
+	    try {
+
+            while(!controllerEngine.cstate.isActive()) {
+                Thread.sleep(1000);
+            }
+
+	        if(activeMQSession == null) {
+                activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+            }
+
+                
+            if(activeMQSession.isClosed()) {
+                activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+            }
+            
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+
+
+	    return activeMQSession;
+    }
+
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
 	    String listenerId = null;
         try {
@@ -106,23 +118,23 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             switch (topicType) {
                 case AGENT:
                     if(selectorString == null) {
-                        consumer = sess.createConsumer(agentTopic);
+                        consumer = getSession().createConsumer(agentTopic);
                     } else {
-                        consumer = sess.createConsumer(agentTopic, selectorString);
+                        consumer = getSession().createConsumer(agentTopic, selectorString);
                     }
                     break;
                 case REGION:
                     if(selectorString == null) {
-                        consumer = sess.createConsumer(regionTopic);
+                        consumer = getSession().createConsumer(regionTopic);
                     } else {
-                        consumer = sess.createConsumer(regionTopic, selectorString);
+                        consumer = getSession().createConsumer(regionTopic, selectorString);
                     }
                     break;
                 case GLOBAL:
                     if(selectorString == null) {
-                        consumer = sess.createConsumer(globalTopic);
+                        consumer = getSession().createConsumer(globalTopic);
                     } else {
-                        consumer = sess.createConsumer(globalTopic, selectorString);
+                        consumer = getSession().createConsumer(globalTopic, selectorString);
                     }
                     break;
             }
@@ -142,12 +154,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public boolean sendMessage(TopicType topicType, Message message) {
         try {
 
+            while(!controllerEngine.cstate.isActive()) {
+                Thread.sleep(1000);
+            }
+
             switch (topicType) {
                 case AGENT:
                     if(agentProducer == null) {
                         agentProducer = getMessageProducer(topicType);
                     }
                     agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+
                     break;
                 case REGION:
                     if(regionProducer == null) {
@@ -166,6 +183,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             return true;
         } catch (JMSException jmse) {
             jmse.printStackTrace();
+            return false;
+        }
+        catch (Exception ex) {
+            logger.error(ex.getMessage());
             return false;
         }
     }
@@ -190,16 +211,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private MessageProducer getMessageProducer(TopicType topicType) {
 
         MessageProducer messageProducer = null;
+
+
         try {
             switch (topicType) {
                 case AGENT:
-                    messageProducer = sess.createProducer(agentTopic);
+                    messageProducer = getSession().createProducer(agentTopic);
                     break;
                 case REGION:
-                   messageProducer = sess.createProducer(regionTopic);
+                   messageProducer = getSession().createProducer(regionTopic);
                      break;
                 case GLOBAL:
-                    messageProducer = sess.createProducer(globalTopic);
+                    messageProducer = getSession().createProducer(globalTopic);
                     break;
             }
 
@@ -216,7 +239,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public BytesMessage createBytesMessage() {
         BytesMessage bytesMessage = null;
 	    try {
-            bytesMessage = sess.createBytesMessage();
+            bytesMessage = getSession().createBytesMessage();
+
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
@@ -226,7 +250,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public MapMessage createMapMessage() {
         MapMessage mapMessage = null;
         try {
-            mapMessage = sess.createMapMessage();
+            mapMessage = getSession().createMapMessage();
+
         } catch (Exception ex){
             ex.printStackTrace();
         }
@@ -236,7 +261,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public Message createMessage() {
 	    Message message = null;
 	    try {
-	        message = sess.createMessage();
+
+            message = getSession().createMessage();
+
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
@@ -247,17 +274,57 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	    ObjectMessage objectMessage = null;
 
 	    try {
-	        objectMessage = sess.createObjectMessage();
+            objectMessage = getSession().createObjectMessage();
+
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
 	    return objectMessage;
     }
 
+    //blobs are not part of JMX, they are part of ActiveMQ, which is not in the core lib
+    //for now we must use i/o streams
+
+    public BlobMessage createBlobMessage(URL url) {
+	    BlobMessage blobMessage = null;
+	    try {
+	        blobMessage = getSession().createBlobMessage(url);
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+	    return blobMessage;
+    }
+
+    public BlobMessage createBlobMessage(File file) {
+        BlobMessage blobMessage = null;
+        try {
+            blobMessage = getSession().createBlobMessage(file);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return blobMessage;
+    }
+
+    public BlobMessage createBlobMessage(InputStream inputStream) {
+        BlobMessage blobMessage = null;
+        try {
+            blobMessage = getSession().createBlobMessage(inputStream);
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return blobMessage;
+
+    }
+
+
     public StreamMessage createStreamMessage() {
 	    StreamMessage streamMessage = null;
 	    try{
-	        streamMessage = sess.createStreamMessage();
+
+
+            streamMessage = getSession().createStreamMessage();
+
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
@@ -267,7 +334,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public TextMessage createTextMessage() {
 	    TextMessage textMessage = null;
 	    try {
-	        textMessage = sess.createTextMessage();
+
+            textMessage = getSession().createTextMessage();
+
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }

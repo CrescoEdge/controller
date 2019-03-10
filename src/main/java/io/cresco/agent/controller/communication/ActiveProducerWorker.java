@@ -6,6 +6,7 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQConnection;
+import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.ActiveMQSslConnectionFactory;
 
 import javax.jms.*;
@@ -17,7 +18,7 @@ public class ActiveProducerWorker {
 	private PluginBuilder plugin;
 	private String producerWorkerName;
 	private CLogger logger;
-	private Session sess;
+	private ActiveMQSession sess;
 
 	private MessageProducer producer;
 	private Gson gson;
@@ -36,7 +37,7 @@ public class ActiveProducerWorker {
 			gson = new Gson();
 
 			//sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
-			sess = controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+			sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 
 			//logger.error("New session created URI: [" + URI + "] QueueName [" + TXQueueName + "]");
 
@@ -102,13 +103,15 @@ public class ActiveProducerWorker {
 					break;
 			}
 
-
-			producer.send(sess.createTextMessage(gson.toJson(se)), DeliveryMode.NON_PERSISTENT, pri, 0);
+			//if(controllerEngine.cstate.isActive()) {
+				producer.send(sess.createTextMessage(gson.toJson(se)), DeliveryMode.NON_PERSISTENT, pri, 0);
+			//}
 			//producer.send(sess.createTextMessage(gson.toJson(se)));
 			logger.trace("sendMessage to : {} : from : {}", queueName, producerWorkerName);
 			return true;
 		} catch (JMSException jmse) {
 			logger.error("sendMessage: jmse {} : {}", se.getParams(), jmse.getMessage());
+			//trigger comminit()
 			return false;
 		}
 	}
