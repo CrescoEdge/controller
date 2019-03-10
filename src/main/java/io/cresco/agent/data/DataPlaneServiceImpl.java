@@ -88,9 +88,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private ActiveMQSession getSession() {
 	    try {
 
-            while(!controllerEngine.cstate.isActive()) {
-                Thread.sleep(1000);
-            }
+            //while(!controllerEngine.cstate.isActive()) {
+            //    Thread.sleep(1000);
+            //}
 
 	        if(activeMQSession == null) {
                 activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
