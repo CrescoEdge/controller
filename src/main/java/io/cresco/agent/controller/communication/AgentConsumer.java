@@ -10,6 +10,7 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.ActiveMQSslConnectionFactory;
+import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
 import java.security.SecureRandom;
@@ -109,6 +110,8 @@ public class AgentConsumer {
 							logger.error("non-MsgEvent message found!");
 						}
 
+					} else if (msg instanceof BlobMessage) {
+						logger.error("Blob message recieved!");
 					} else {
 						logger.error("non-Text message recieved!");
 					}

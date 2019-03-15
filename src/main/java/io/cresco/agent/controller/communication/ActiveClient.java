@@ -84,6 +84,8 @@ public class ActiveClient {
     private ActiveMQConnection getConnection(String URI) {
         ActiveMQConnection activeMQConnection = null;
 
+
+
         try {
 
             boolean hasConnection = false;
@@ -125,6 +127,7 @@ public class ActiveClient {
                 logger.error("Connection Created for URI: [" + URI + "]");
 
 
+
                 activeMQConnection.start();
                 while(!activeMQConnection.isStarted()) {
                     logger.info("Waiting on connection to URI: [" + URI + "] to start." );
@@ -133,6 +136,7 @@ public class ActiveClient {
 
                 synchronized (lockConnectionMap) {
                     connectionMap.put(URI,activeMQConnection);
+
                 }
 
             } else {

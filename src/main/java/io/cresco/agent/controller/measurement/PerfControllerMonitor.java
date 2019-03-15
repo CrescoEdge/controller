@@ -9,9 +9,11 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.BlobMessage;
 
-import javax.jms.MapMessage;
-import javax.jms.Message;
-import javax.jms.MessageListener;
+import javax.jms.*;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -106,6 +108,9 @@ public class PerfControllerMonitor {
 
     public void setKpiListener() {
 
+        //logger.info("SET KPI LISTENER");
+        //setTestListener();
+
         MessageListener ml = new MessageListener() {
             public void onMessage(Message msg) {
                 try {
@@ -148,6 +153,44 @@ public class PerfControllerMonitor {
         plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
 
     }
+
+    /*
+    public void setTestListener() {
+        logger.info("SET TEST LISTENER");
+
+        MessageListener ml = new MessageListener() {
+            public void onMessage(Message msg) {
+                try {
+
+                    if (msg instanceof BlobMessage) {
+
+                        BlobMessage blobMessage = (BlobMessage)msg;
+                        InputStream inputStream = blobMessage.getInputStream();
+
+                        BufferedInputStream bis = new BufferedInputStream(inputStream);
+                        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                        int result = bis.read();
+                        while(result != -1) {
+                            buf.write((byte) result);
+                            result = bis.read();
+                        }
+
+                        String returnString = buf.toString("UTF-8");
+                        logger.info("WHHHHOO : " + returnString);
+
+                    }
+                } catch(Exception ex) {
+
+                    ex.printStackTrace();
+                }
+            }
+        };
+
+        //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
+        plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"");
+
+    }
+    */
 
     /*
     public void setSysInfoListener() {
@@ -217,7 +260,22 @@ public class PerfControllerMonitor {
                 mapMessage.setStringProperty("agent_id", plugin.getAgent());
 
                 controllerEngine.getDataPlaneService().sendMessage(TopicType.AGENT, mapMessage);
-                
+
+//                InputStream targetStream = new ByteArrayInputStream("test message".getBytes());
+
+//                BlobMessage tmessage = controllerEngine.getDataPlaneService().createBlobMessage(targetStream);
+//                controllerEngine.getDataPlaneService().sendMessage(TopicType.AGENT, tmessage);
+
+                //tmessage.setObjectProperty("data_stream",targetStream);
+                //tmessage.setObject((Object)targetStream);
+
+                //controllerEngine.getDataPlaneService().sendMessage(TopicType.AGENT, tmessage);
+                //BlobMessage message = sess.createBlobMessage(targetStream);
+                //producer.send(message, DeliveryMode.NON_PERSISTENT, pri, 0);
+
+
+
+
             } catch(Exception ex) {
                 logger.error("PerfMonitorTask() " + ex.getMessage());
             }

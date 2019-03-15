@@ -64,8 +64,8 @@ public class ActiveBroker {
 		        entry.setInactiveTimeoutBeforeGC(15000);
 		        //entry.setOptimizedDispatch(true);
 
-				ManagementContext mc = new ManagementContext();
-				mc.setSuppressMBean("endpoint=dynamicProducer,endpoint=Consumer");
+				//ManagementContext mc = new ManagementContext();
+				//mc.setSuppressMBean("endpoint=dynamicProducer,endpoint=Consumer");
 
 		        /*
 
@@ -113,7 +113,7 @@ public class ActiveBroker {
 				broker.setBrokerName(brokerName);
 				broker.setSchedulePeriodForDestinationPurge(2500);
 				broker.setDestinationPolicy(map);
-				broker.setManagementContext(mc);
+				//broker.setManagementContext(mc);
 				broker.setSslContext(sslContextBroker);
 				broker.setPopulateJMSXUserID(true);
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
@@ -151,6 +151,7 @@ public class ActiveBroker {
 				//<amq:transportConnector uri="ssl://localhost:61616" />
 
 				connector = new TransportConnector();
+
 
 
 

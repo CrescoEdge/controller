@@ -188,8 +188,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     if(agentProducer == null) {
                         agentProducer = getMessageProducer(topicType);
                     }
-                    agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
-
+                    //if has header, send blob
+                    Object inputObject = message.getObjectProperty("data_stream");
+                    if(inputObject != null) {
+                        InputStream inputStream = (InputStream) inputObject;
+                        BlobMessage blobMessage = getSession().createBlobMessage(inputStream);
+                        agentProducer.send(blobMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    } else {
+                        agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    }
                     break;
                 case REGION:
                     if(regionProducer == null) {
