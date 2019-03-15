@@ -3,7 +3,10 @@ package io.cresco.agent.controller.communication;
 import io.cresco.library.data.FileObject;
 import io.cresco.library.messaging.MsgEvent;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +24,29 @@ public class FileObjectGroupReceiver {
         fileCompleteList = new ArrayList<>();
     }
 
+    public List<String> getFileList(Path journalPath) {
+        List<String> fileList = null;
+        try {
+
+            fileList = new ArrayList<>();
+
+            for (Map.Entry<String, FileObject> entry : fileObjectMap.entrySet()) {
+                String key = entry.getKey();
+                FileObject value = entry.getValue();
+                Path filePath = Paths.get(journalPath.toAbsolutePath().toString() + "/" + key + "/" + value.getFileName());
+                fileList.add(filePath.toAbsolutePath().toString());
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return fileList;
+    }
+
+    public MsgEvent getMsgEvent() {
+        return me;
+    }
+
     public boolean setDestFilePart(String dataName, String filePartName, String filePartMD5Hash) {
         boolean isSetPart = false;
         if(fileObjectMap.containsKey(dataName)) {
@@ -34,15 +60,15 @@ public class FileObjectGroupReceiver {
         try {
             if(fileObjectMap.containsKey(dataName)) {
                 isComplete = fileObjectMap.get(dataName).isFilePartComplete();
-                //add to file complete list
-                if(isComplete) {
-                    fileCompleteList.add(dataName);
-                }
             }
         } catch (Exception ex) {
             ex.printStackTrace();
         }
         return isComplete;
+    }
+
+    public void setFileComplete(String dataName) {
+        fileCompleteList.add(dataName);
     }
 
     public List<String> getOrderedPartList(String dataName) {
@@ -83,22 +109,15 @@ public class FileObjectGroupReceiver {
         return fileHash;
     }
 
-    /*
+
     public boolean isFileGroupComplete() {
         boolean isComplete = false;
         try {
             if(fileObjectMap.size() == fileCompleteList.size()) {
 
                 boolean isFault = false;
-                for (Map.Entry<String, String> entry : filePartMapSource.entrySet()) {
-                    String filePartSourceName = entry.getKey();
-                    String filePartSourceMD5Hash = entry.getValue();
-
-                    if(filePartMapDest.containsKey(filePartSourceName)) {
-                        if(!filePartMapDest.get(filePartSourceName).equals(filePartSourceMD5Hash)) {
-                            isFault = true;
-                        }
-                    } else {
+                for (String key : fileObjectMap.keySet()) {
+                    if(!fileCompleteList.contains(key)) {
                         isFault = true;
                     }
                 }
@@ -107,15 +126,13 @@ public class FileObjectGroupReceiver {
                     isComplete = true;
                 }
 
-                for (String key : fileObjectMap.keySet()) {
-                    if(f)
-                }
+
             }
         } catch (Exception ex) {
             ex.printStackTrace();
         }
         return isComplete;
     }
-    */
+
 
 }

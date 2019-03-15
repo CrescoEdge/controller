@@ -143,7 +143,12 @@ public class AgentConsumer {
 
 						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)) {
 
-							if((dstRegion.equals(plugin.getRegion())) && (dstAgent.equals(plugin.getRegion()))) {
+							logger.info("MSG REGION: " + dstRegion + " MSG AGENT: " + dstAgent);
+
+							logger.info("REGION: " + plugin.getRegion() + " AGENT: " + plugin.getAgent());
+
+
+							if((dstRegion.equals(plugin.getRegion())) && (dstAgent.equals(plugin.getAgent()))) {
 
 								boolean groupExist = false;
 								synchronized (lockGroupMap) {
@@ -209,6 +214,36 @@ public class AgentConsumer {
 
 											if(combinedFileHash.equals(localCombinedFileHash)) {
 												System.out.println("WE HAVE A FILE!!! " + localCombinedFilePath);
+
+												MsgEvent me = null;
+												boolean isGroupComplete = false;
+												List<String> newFilePaths = null;
+												synchronized (lockGroupMap) {
+													fileGroupMap.get(filegroup).setFileComplete(dataName);
+													isGroupComplete = fileGroupMap.get(filegroup).isFileGroupComplete();
+													if(isGroupComplete) {
+														me = fileGroupMap.get(filegroup).getMsgEvent();
+														newFilePaths = fileGroupMap.get(filegroup).getFileList(controllerEngine.getDataPlaneService().getJournalPath());
+													}
+												}
+
+												if(isGroupComplete) {
+													//do something with the group
+													logger.info("GROUP COMPLETE!!");
+													//rebuild files on original MsgEvent
+													//List<String> msgEventFileList = new ArrayList<>();
+													//msgEventFileList.addAll(me.getFileList());
+													me.clearFileList();
+													for(String newfilePath : newFilePaths) {
+														me.addFile(newfilePath);
+													}
+
+													//save message for cache removal of files
+													fileMsgEventCache.put(filegroup,me);
+													//send final message
+													controllerEngine.msgInThreaded(me);
+
+												}
 
 											}
 
