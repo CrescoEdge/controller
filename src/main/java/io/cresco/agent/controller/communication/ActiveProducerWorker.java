@@ -2,15 +2,19 @@ package io.cresco.agent.controller.communication;
 
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.data.FileObject;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQSession;
-import org.apache.activemq.ActiveMQSslConnectionFactory;
 
 import javax.jms.*;
-import java.security.SecureRandom;
+import java.io.File;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
 import java.util.UUID;
 
 public class ActiveProducerWorker {
@@ -103,8 +107,61 @@ public class ActiveProducerWorker {
 					break;
 			}
 
-			//if(controllerEngine.cstate.isActive()) {
-				producer.send(sess.createTextMessage(gson.toJson(se)), DeliveryMode.NON_PERSISTENT, pri, 0);
+
+			if(se.hasFiles()) {
+
+				Thread thread = new Thread(){
+
+					public void run(){
+						try {
+							TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+
+							//break apart the files and create manafest
+							List<FileObject> fileObjectList = controllerEngine.getDataPlaneService().createFileObjects(se.getFileList());
+							textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
+
+							//send initial message to register the transfer
+							producer.send(textMessage, DeliveryMode.NON_PERSISTENT, 10, 0);
+
+							for(FileObject fileObject : fileObjectList) {
+								for (String parList : fileObject.getOrderedPartList()) {
+
+									BytesMessage bytesMessage = sess.createBytesMessage();
+									bytesMessage.setStringProperty("datapart", parList);
+									bytesMessage.setStringProperty("dataname", fileObject.getDataName());
+
+									String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("journal").toAbsolutePath().toString());
+									Path journalPath = Paths.get(journalDirPath);
+									Files.createDirectories(journalPath);
+
+									File filePart = new File(journalPath.toAbsolutePath().toString(), parList);
+
+									System.out.println("READING FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList);
+
+									byte[] fileContent = Files.readAllBytes(filePart.toPath());
+									bytesMessage.writeBytes(fileContent);
+									producer.send(bytesMessage);
+									filePart.delete();
+
+								}
+							}
+
+
+						} catch (Exception ex) {
+							logger.error("ERROR SENDING FILE MESSAGE");
+							ex.printStackTrace();
+						}
+					}
+				};
+
+				thread.start();
+
+
+			} else {
+				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
+			}
+
 			//}
 			//producer.send(sess.createTextMessage(gson.toJson(se)));
 			logger.trace("sendMessage to : {} : from : {}", queueName, producerWorkerName);
@@ -115,4 +172,7 @@ public class ActiveProducerWorker {
 			return false;
 		}
 	}
+
+
+
 }

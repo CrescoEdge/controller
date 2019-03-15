@@ -1,7 +1,10 @@
 package io.cresco.agent.data;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.data.DataPlaneService;
+import io.cresco.library.data.FileObject;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -10,9 +13,14 @@ import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
-import java.io.File;
-import java.io.InputStream;
+import java.io.*;
+import java.lang.reflect.Type;
 import java.net.URL;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -40,6 +48,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     private String URI;
 
+    private Path journalPath;
+
+    private Type typeOfListFileObject;
+    private Gson gson;
+
 	public DataPlaneServiceImpl(ControllerEngine controllerEngine, String URI) throws JMSException {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
@@ -48,6 +61,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
 
 		this.URI = URI;
+        typeOfListFileObject = new TypeToken<List<FileObject>>() { }.getType();
+
+        gson = new Gson();
+
 
         //sess = (ActiveMQSession)controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
 
@@ -74,6 +91,14 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 "  group by source " +
                 "insert into " + outputStreamName + "; ";
 
+
+        try {
+            String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("journal").toAbsolutePath().toString());
+            journalPath = Paths.get(journalDirPath);
+            Files.createDirectories(journalPath);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
 
 
         //cepEngineInit.createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
@@ -425,6 +450,177 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         }
         return isRemoved;
+    }
+
+    public Path getJournalPath() {
+	    return journalPath;
+	}
+
+    public List<FileObject> createFileObjects(List<String> fileList) {
+        List<FileObject> fileObjects = null;
+        try {
+
+            fileObjects = new ArrayList<>();
+
+            for(String filePath : fileList) {
+                fileObjects.add(createFileObject(filePath));
+            }
+
+        }catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return fileObjects;
+    }
+
+    public FileObject createFileObject(String fileName) {
+        FileObject fileObject = null;
+        try {
+
+            File inFile = new File(fileName);
+            if(inFile.exists()) {
+                String dataName = UUID.randomUUID().toString();
+                String fileMD5Hash = getMD5(fileName);
+
+                Map<String, String> dataMap = splitFile(dataName, fileName);
+                fileObject = new FileObject(inFile.getName(),fileMD5Hash,dataMap,dataName);
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return fileObject;
+    }
+
+    public Map<String,String> splitFile(String dataName, String fileName)  {
+
+        Map<String,String> filePartNames = null;
+        try {
+
+            File f = new File(fileName);
+
+            //try-with-resources to ensure closing stream
+            FileInputStream fis = new FileInputStream(f);
+
+            filePartNames = streamToSplitFile(dataName, fis);
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return filePartNames;
+    }
+
+    public Map<String,String> streamToSplitFile(String dataName, InputStream is)  {
+
+        Map<String,String> filePartNames = null;
+        try {
+
+
+            filePartNames = new HashMap<>();
+
+            int partCounter = 0;//I like to name parts from 001, 002, 003, ...
+            //you can change it to 0 if you want 000, 001, ...
+
+            int sizeOfFiles = 1024 * 1024 * 5;// 1MB
+            byte[] buffer = new byte[sizeOfFiles];
+
+
+            //String fileName = UUID.randomUUID().toString();
+
+            //try-with-resources to ensure closing stream
+            try (BufferedInputStream bis = new BufferedInputStream(is)) {
+
+                int bytesAmount = 0;
+                while ((bytesAmount = bis.read(buffer)) > 0) {
+                    //write each chunk of data into separate file with different number in name
+                    //String filePartName = String.format("%s.%03d", fileName, partCounter++);
+
+                    String filePartName = dataName + "." + partCounter;
+                    //MessageDigest m= MessageDigest.getInstance("MD5");
+                    //m.update(buffer);
+                    //String md5Hash = new BigInteger(1,m.digest()).toString(16);
+
+                    partCounter++;
+
+                    File newFile = new File(journalPath.toAbsolutePath().toString(), filePartName);
+                    try (FileOutputStream out = new FileOutputStream(newFile)) {
+                        out.write(buffer, 0, bytesAmount);
+                    }
+
+                    String md5Hash = getMD5(newFile.getAbsolutePath());
+                    filePartNames.put(filePartName, md5Hash);
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return filePartNames;
+    }
+
+    public String getMD5(String filePath) {
+        String hashString = null;
+        try {
+            //Get file input stream for reading the file content
+            FileInputStream fis = new FileInputStream(filePath);
+
+            MessageDigest digest = MessageDigest.getInstance("MD5");
+
+            //Create byte array to read data in chunks
+            byte[] byteArray = new byte[1024];
+            int bytesCount = 0;
+
+            //Read file data and update in message digest
+            while ((bytesCount = fis.read(byteArray)) != -1) {
+                digest.update(byteArray, 0, bytesCount);
+            }
+            ;
+
+            //close the stream; We don't need it now.
+            fis.close();
+
+            //Get the hash's bytes
+            byte[] bytes = digest.digest();
+
+            //This bytes[] has bytes in decimal format;
+            //Convert it to hexadecimal format
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < bytes.length; i++) {
+                sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
+            }
+
+            hashString = sb.toString();
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        //return complete hash
+        return hashString;
+    }
+
+    public void mergeFiles(List<File> files, File into, boolean deleteParts) {
+
+        try {
+
+            try (FileOutputStream fos = new FileOutputStream(into);
+                 BufferedOutputStream mergingStream = new BufferedOutputStream(fos)) {
+                for (File f : files) {
+                    Files.copy(f.toPath(), mergingStream);
+                    if (deleteParts) {
+                        f.delete();
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    public List<FileObject> getFileObjectsFromString(String fileObjectsString){
+
+        return gson.fromJson(fileObjectsString,typeOfListFileObject);
+    }
+
+    public String generateFileObjectsString(List<FileObject> fileObjects){
+	    return gson.toJson(fileObjects);
     }
 
 }
