@@ -238,7 +238,7 @@ public class ActiveBroker {
 		}
 		return isHealthy;
 	}
-	
+
 	public void stopBroker() {
 		try {
 			ServiceStopper stopper = new ServiceStopper();
@@ -258,7 +258,7 @@ public class ActiveBroker {
 		} catch (Exception e) {
 			logger.error("stopBroker {}", e.getMessage());
 		}
-		
+
 	}
 
 	public boolean removeNetworkConnector(NetworkConnector bridge) {
@@ -274,8 +274,8 @@ public class ActiveBroker {
 		catch(Exception ex) {
 			logger.error("removeNetworkConnector {}", ex.getMessage());
 		}
-		return isRemoved; 
-		
+		return isRemoved;
+
 	}
 
     public NetworkConnector AddNetworkConnectorURI(String URI, String brokerUserName, String brokerPassword) {
@@ -330,7 +330,7 @@ public class ActiveBroker {
 		}
 		return bridge;
 	}
-	
+
 	public void AddTransportConnector(String URI) {
 		try {
 			TransportConnector connector = new TransportConnector();
@@ -342,7 +342,7 @@ public class ActiveBroker {
 			logger.error("AddTransportConnector {}", ex.getMessage());
 		}
 	}
-	
+
 	public boolean portAvailable(int port) {
 		if (port < 0 || port > 65535) {
 			throw new IllegalArgumentException("Invalid start port: " + port);

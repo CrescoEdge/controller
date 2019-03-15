@@ -66,9 +66,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         gson = new Gson();
 
 
-        //sess = (ActiveMQSession)controllerEngine.getActiveClient().getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
-
-        //sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
         agentTopic = getSession().createTopic(getTopicName(TopicType.AGENT));
         regionTopic = getSession().createTopic(getTopicName(TopicType.REGION));
         globalTopic = getSession().createTopic(getTopicName(TopicType.GLOBAL));
@@ -78,9 +75,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         String outputStreamName = "output1";
 
         String inputRecordSchemaString = "{\"type\":\"record\",\"name\":\"Ticker\",\"fields\":[{\"name\":\"source\",\"type\":\"string\"},{\"name\":\"urn\",\"type\":\"string\"},{\"name\":\"metric\",\"type\":\"string\"},{\"name\":\"ts\",\"type\":\"long\"},{\"name\":\"value\",\"type\":\"double\"}]}";
-        //String inputStreamName = "UserStream";
 
-        //String outputStreamName = "BarStream";
         String outputStreamAttributesString = "source string, avgValue double";
 
         String queryString = " " +
@@ -95,18 +90,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         try {
             String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("journal").toAbsolutePath().toString());
             journalPath = Paths.get(journalDirPath);
+            //remove old files if they exist from the journal
+            if(journalPath.toFile().exists()) {
+                Files.walk(journalPath)
+                        .sorted(Comparator.reverseOrder())
+                        .map(Path::toFile)
+                        .peek(System.out::println)
+                        .forEach(File::delete);
+            }
             Files.createDirectories(journalPath);
         } catch (Exception ex) {
             ex.printStackTrace();
         }
-
-
-        //cepEngineInit.createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString);
-
-        //logger.error("CREATE: " + createCEP(inputRecordSchemaString,inputStreamName,outputStreamName,outputStreamAttributesString,queryString));
-
-
-
 
     }
 
@@ -548,7 +543,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
                     partCounter++;
 
-                    File newFile = new File(journalPath.toAbsolutePath().toString(), filePartName);
+                    Path filePath = Paths.get(journalPath.toAbsolutePath().toString() + "/" + dataName);
+                    Files.createDirectories(filePath);
+
+                    File newFile = new File(filePath.toAbsolutePath().toString(), filePartName);
                     try (FileOutputStream out = new FileOutputStream(newFile)) {
                         out.write(buffer, 0, bytesAmount);
                     }
@@ -562,6 +560,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
         return filePartNames;
     }
+
 
     public String getMD5(String filePath) {
         String hashString = null;

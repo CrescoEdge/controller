@@ -2,18 +2,19 @@ package io.cresco.agent.controller.communication;
 
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.data.FileObject;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQSession;
-import org.apache.activemq.ActiveMQSslConnectionFactory;
-import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.security.SecureRandom;
+import java.io.File;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
 import java.util.UUID;
 
 public class ActiveProducerWorker {
@@ -28,7 +29,7 @@ public class ActiveProducerWorker {
 	public boolean isActive;
 	private String queueName;
 	private Destination destination;
-	
+
 	public ActiveProducerWorker(ControllerEngine controllerEngine, String TXQueueName, String URI)  {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
@@ -39,11 +40,7 @@ public class ActiveProducerWorker {
 			queueName = TXQueueName;
 			gson = new Gson();
 
-			//sess = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
 			sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-
-			//logger.error("New session created URI: [" + URI + "] QueueName [" + TXQueueName + "]");
-
 
 			destination = sess.createQueue(TXQueueName);
 
@@ -58,7 +55,7 @@ public class ActiveProducerWorker {
 			logger.error("Constructor {}", e.getMessage());
 		}
 	}
-//BDB\em{?}
+	//BDB\em{?}
 	public boolean shutdown() {
 		boolean isShutdown = false;
 		try {
@@ -106,15 +103,77 @@ public class ActiveProducerWorker {
 					break;
 			}
 
-			//if(controllerEngine.cstate.isActive()) {
-			//InputStream targetStream = new ByteArrayInputStream(gson.toJson(se).getBytes());
-			//BlobMessage message = sess.createBlobMessage(targetStream);
-			//producer.send(message, DeliveryMode.NON_PERSISTENT, pri, 0);
 
-				producer.send(sess.createTextMessage(gson.toJson(se)), DeliveryMode.NON_PERSISTENT, pri, 0);
+
+			if(se.hasFiles()) {
+
+				Thread thread = new Thread(){
+
+					public void run(){
+						try {
+							TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+
+							String fileGroup = UUID.randomUUID().toString();
+
+							//break apart the files and create manafest
+							List<FileObject> fileObjectList = controllerEngine.getDataPlaneService().createFileObjects(se.getFileList());
+							textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
+							textMessage.setStringProperty("filegroup",fileGroup);
+
+							//send initial message to register the transfer
+							producer.send(textMessage, DeliveryMode.NON_PERSISTENT, 10, 0);
+
+							for(FileObject fileObject : fileObjectList) {
+
+								Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath().toString() + "/" + fileObject.getDataName());
+
+								for (String parList : fileObject.getOrderedPartList()) {
+
+									BytesMessage bytesMessage = sess.createBytesMessage();
+									bytesMessage.setStringProperty("datapart", parList);
+									bytesMessage.setStringProperty("dataname", fileObject.getDataName());
+									bytesMessage.setStringProperty("filegroup", fileGroup);
+									bytesMessage.setStringProperty("dst_region", se.getDstRegion());
+									bytesMessage.setStringProperty("dst_agent", se.getDstAgent());
+
+									String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("journal").toAbsolutePath().toString());
+									Path journalPath = Paths.get(journalDirPath);
+									Files.createDirectories(journalPath);
+
+
+									File filePart = new File(filePath.toAbsolutePath().toString(), parList);
+
+									System.out.println("READING FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList);
+
+									byte[] fileContent = Files.readAllBytes(filePart.toPath());
+									bytesMessage.writeBytes(fileContent);
+									//give lowest priority to file transfers
+									producer.send(bytesMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+									filePart.delete();
+								}
+								//remove temp folder
+								filePath.toFile().delete();
+							}
+
+
+						} catch (Exception ex) {
+							logger.error("ERROR SENDING FILE MESSAGE");
+							ex.printStackTrace();
+						}
+					}
+				};
+
+				thread.start();
+
+
+			} else {
+				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
+			}
+
 			//}
 			//producer.send(sess.createTextMessage(gson.toJson(se)));
-			logger.info("sendMessage to : {} : from : {}", queueName, producerWorkerName);
+			logger.trace("sendMessage to : {} : from : {}", queueName, producerWorkerName);
 			return true;
 		} catch (JMSException jmse) {
 			logger.error("sendMessage: jmse {} : {}", se.getParams(), jmse.getMessage());
@@ -122,4 +181,7 @@ public class ActiveProducerWorker {
 			return false;
 		}
 	}
+
+
+
 }

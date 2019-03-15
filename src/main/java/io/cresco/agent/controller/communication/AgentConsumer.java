@@ -13,10 +13,16 @@ import org.apache.activemq.ActiveMQSslConnectionFactory;
 import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
+import javax.jms.Queue;
+import java.io.File;
+import java.lang.reflect.Type;
+import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -26,8 +32,11 @@ public class AgentConsumer {
 	private Queue RXqueue;
 	private ActiveMQSession sess;
 	private ControllerEngine controllerEngine;
-	private AtomicBoolean lockFileMap = new AtomicBoolean();
-	private Map<String, FileObject> fileObjectMap;
+
+	private Gson gson;
+
+	private AtomicBoolean lockGroupMap = new AtomicBoolean();
+	private Map<String, FileObjectGroupReceiver> fileGroupMap;
 
 	private Cache<String, MsgEvent> fileMsgEventCache;
 
@@ -36,7 +45,10 @@ public class AgentConsumer {
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(AgentConsumer.class.getName(),CLogger.Level.Info);
 
-		this.fileObjectMap = Collections.synchronizedMap(new HashMap<>());
+		this.gson = new Gson();
+
+		this.fileGroupMap = Collections.synchronizedMap(new HashMap<>());
+
 
 		//use expiring cache to trigger cleanup of files and messages
 		RemovalListener<String, MsgEvent> listener;
@@ -77,14 +89,25 @@ public class AgentConsumer {
 
 					if (msg instanceof TextMessage) {
 
-						//TextMessage textMessage = (TextMessage) msg;
-						MsgEvent me = gson.fromJson(((TextMessage) msg).getText(),MsgEvent.class);
+						String filegroup = msg.getStringProperty("filegroup");
+						String fileobjectString = msg.getStringProperty("fileobjects");
+						String msgEventString = ((TextMessage) msg).getText();
+
+						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 						if(me != null) {
 							logger.debug("Message: {}", me.getParams().toString());
 
-							//check if message needs to be held for files and registered
-
-
+							//check if message is for this agent
+							//check if message has file payload and needs to be registered
+							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstRegion().equals(plugin.getRegion()))) {
+								if(registerIncomingFiles(msgEventString, fileobjectString, filegroup)) {
+									System.out.println("NEW FILE PAYLOAD REGISTERED");
+								} else {
+									System.out.println("COULD NOT REGISTER NEW FILE PAYLOAD");
+								}
+								//don't forward message until files have arrived
+								return;
+							}
 
 
 							//start RPC checks
@@ -110,6 +133,101 @@ public class AgentConsumer {
 							logger.error("non-MsgEvent message found!");
 						}
 
+					} else if( msg instanceof BytesMessage) {
+
+						String filegroup = msg.getStringProperty("filegroup");
+						String dstRegion = msg.getStringProperty("dst_region");
+						String dstAgent = msg.getStringProperty("dst_agent");
+						String dataName = msg.getStringProperty("dataname");
+						String dataPart = msg.getStringProperty("datapart");
+
+						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)) {
+
+							if((dstRegion.equals(plugin.getRegion())) && (dstAgent.equals(plugin.getRegion()))) {
+
+								boolean groupExist = false;
+								synchronized (lockGroupMap) {
+									if(fileGroupMap.containsKey(filegroup)) {
+										groupExist = true;
+									}
+								}
+
+								if(groupExist) {
+
+
+									Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath().toString() + "/" + dataName);
+									Files.createDirectories(filePath);
+
+									File filePart = new File(filePath.toAbsolutePath().toString(), dataPart);
+
+									byte[] data = new byte[(int) ((BytesMessage) msg).getBodyLength()];
+									((BytesMessage) msg).readBytes(data);
+
+									Files.write(filePart.toPath(), data);
+
+									String filePartMD5Hash = controllerEngine.getDataPlaneService().getMD5(filePart.getAbsolutePath());
+
+									System.out.println("INCOMING HASH: " + filePartMD5Hash);
+
+									boolean isPartComplete = false;
+
+									List<String> orderedFilePartNameList = null;
+									String combinedFileName = null;
+									String combinedFileHash = null;
+
+									synchronized (lockGroupMap) {
+										fileGroupMap.get(filegroup).setDestFilePart(dataName, dataPart, filePartMD5Hash);
+										//check if file is complete
+										isPartComplete = fileGroupMap.get(filegroup).isFilePartComplete(dataName);
+										if(isPartComplete) {
+											orderedFilePartNameList = fileGroupMap.get(filegroup).getOrderedPartList(dataName);
+											combinedFileName = fileGroupMap.get(filegroup).getFileName(dataName);
+											combinedFileHash = fileGroupMap.get(filegroup).getFileMD5Hash(dataName);
+										}
+									}
+
+									if(isPartComplete) {
+										List<File> orderedFilePartList = new ArrayList<>();
+										File combinedFile = new File(filePath.toAbsolutePath().toString(), combinedFileName);
+
+										for(String filePartName : orderedFilePartNameList) {
+											File partFile = new File(filePath.toAbsolutePath().toString(), filePartName);
+											if(partFile.exists()) {
+												System.out.println("File Part : " + partFile.getName());
+												orderedFilePartList.add(partFile);
+											} else {
+												System.out.println("File Part : " + partFile.getName() + " DOES NOT EXIST");
+											}
+										}
+
+										controllerEngine.getDataPlaneService().mergeFiles(orderedFilePartList, combinedFile, true);
+										if(combinedFile.exists()) {
+
+											String localCombinedFilePath = combinedFile.getAbsolutePath();
+											String localCombinedFileHash = controllerEngine.getDataPlaneService().getMD5(localCombinedFilePath);
+											System.out.println("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
+
+											if(combinedFileHash.equals(localCombinedFileHash)) {
+												System.out.println("WE HAVE A FILE!!! " + localCombinedFilePath);
+
+											}
+
+										} else {
+											System.out.println("ERROR COMBINING FILE : " + combinedFileHash);
+										}
+
+									}
+
+
+
+								}
+
+
+							} else {
+								logger.error("MUST CREATE METHOD TO FORWARD DATA MESSAGES");
+							}
+						}
+
 					} else if (msg instanceof BlobMessage) {
 						logger.error("Blob message recieved!");
 					} else {
@@ -123,6 +241,34 @@ public class AgentConsumer {
 		});
 
 
+	}
+
+	private boolean registerIncomingFiles(String msgEventString, String fileobjectString, String fileGroup) {
+		boolean isRegistered = false;
+		try {
+
+			MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
+
+			List<FileObject> fileObjects = controllerEngine.getDataPlaneService().getFileObjectsFromString(fileobjectString);
+			Map<String,FileObject> fileObjectMap = new HashMap<>();
+
+			for(FileObject fileObject : fileObjects) {
+				fileObjectMap.put(fileObject.getDataName(), fileObject);
+			}
+
+			FileObjectGroupReceiver fileObjectGroupReceiver = new FileObjectGroupReceiver(me,fileObjectMap,fileGroup);
+
+			synchronized (lockGroupMap) {
+				fileGroupMap.put(fileGroup,fileObjectGroupReceiver);
+			}
+			isRegistered = true;
+
+
+		} catch (Exception ex) {
+			ex.printStackTrace();
+			logger.error("Failure to Register File Message");
+		}
+		return isRegistered;
 	}
 
 }
