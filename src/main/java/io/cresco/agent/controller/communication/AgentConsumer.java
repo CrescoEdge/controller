@@ -238,11 +238,16 @@ public class AgentConsumer {
 														me.addFile(newfilePath);
 													}
 
-													//save message for cache removal of files
-													fileMsgEventCache.put(filegroup,me);
-													//send final message
-													controllerEngine.msgInThreaded(me);
-
+													if(me == null) {
+														logger.error("groupcomplete: " + isGroupComplete + " message null");
+													} else {
+														logger.error("message != null " + me.getParams().toString());
+														//save message for cache removal of files
+														fileMsgEventCache.put(filegroup, me);
+														logger.error("SENDING MESSAGE NOW");
+														//send final message
+														controllerEngine.msgInThreaded(me);
+													}
 												}
 
 											}
