@@ -27,17 +27,21 @@ public class ActiveProducerWorker {
 	private MessageProducer producer;
 	private Gson gson;
 	public boolean isActive;
-	private String queueName;
+	private String TXQueueName;
 	private Destination destination;
+
+	private String URI;
+
 
 	public ActiveProducerWorker(ControllerEngine controllerEngine, String TXQueueName, String URI)  {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveProducerWorker.class.getName(),CLogger.Level.Info);
 
+		this.URI = URI;
 		this.producerWorkerName = UUID.randomUUID().toString();
 		try {
-			queueName = TXQueueName;
+			this.TXQueueName = TXQueueName;
 			gson = new Gson();
 
 			sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
@@ -50,7 +54,7 @@ public class ActiveProducerWorker {
 
 
 			isActive = true;
-			logger.debug("Initialized", queueName);
+			logger.debug("Initialized", TXQueueName);
 		} catch (Exception e) {
 			logger.error("Constructor {}", e.getMessage());
 		}
@@ -61,7 +65,7 @@ public class ActiveProducerWorker {
 		try {
 			producer.close();
 			sess.close();
-			logger.debug("Producer Worker [{}] has shutdown", queueName);
+			logger.debug("Producer Worker [{}] has shutdown", TXQueueName);
 			isShutdown = true;
 		} catch (JMSException jmse) {
 			logger.error(jmse.getMessage());
@@ -110,8 +114,14 @@ public class ActiveProducerWorker {
 				Thread thread = new Thread(){
 
 					public void run(){
+						ActiveMQSession dataSess = null;
+						MessageProducer dataProducer = null;
+
 						try {
-							TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+
+							dataSess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+
+							TextMessage textMessage = dataSess.createTextMessage(gson.toJson(se));
 
 							String fileGroup = UUID.randomUUID().toString();
 
@@ -121,7 +131,13 @@ public class ActiveProducerWorker {
 							textMessage.setStringProperty("filegroup",fileGroup);
 
 							//send initial message to register the transfer
-							producer.send(textMessage, DeliveryMode.NON_PERSISTENT, 10, 0);
+							//create new producer and make sure it does not timeout
+							Destination dataDestination = dataSess.createQueue(TXQueueName);
+							dataProducer = dataSess.createProducer(dataDestination);
+							dataProducer.setTimeToLive(300000L);
+							dataProducer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+
+							dataProducer.send(textMessage, DeliveryMode.NON_PERSISTENT, 10, 0);
 
 							for(FileObject fileObject : fileObjectList) {
 
@@ -129,7 +145,7 @@ public class ActiveProducerWorker {
 
 								for (String parList : fileObject.getOrderedPartList()) {
 
-									BytesMessage bytesMessage = sess.createBytesMessage();
+									BytesMessage bytesMessage = dataSess.createBytesMessage();
 									bytesMessage.setStringProperty("datapart", parList);
 									bytesMessage.setStringProperty("dataname", fileObject.getDataName());
 									bytesMessage.setStringProperty("filegroup", fileGroup);
@@ -148,7 +164,7 @@ public class ActiveProducerWorker {
 									byte[] fileContent = Files.readAllBytes(filePart.toPath());
 									bytesMessage.writeBytes(fileContent);
 									//give lowest priority to file transfers
-									producer.send(bytesMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+									dataProducer.send(bytesMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
 									filePart.delete();
 								}
 								//remove temp folder
@@ -159,6 +175,18 @@ public class ActiveProducerWorker {
 						} catch (Exception ex) {
 							logger.error("ERROR SENDING FILE MESSAGE");
 							ex.printStackTrace();
+						} finally{
+							try {
+								if (dataProducer != null) {
+									dataProducer.close();
+								}
+								if(dataSess != null) {
+									dataSess.close();
+								}
+							}catch (Exception ex) {
+								logger.error("Can't Close data producer");
+								ex.printStackTrace();
+							}
 						}
 					}
 				};
@@ -173,7 +201,7 @@ public class ActiveProducerWorker {
 
 			//}
 			//producer.send(sess.createTextMessage(gson.toJson(se)));
-			logger.trace("sendMessage to : {} : from : {}", queueName, producerWorkerName);
+			logger.trace("sendMessage to : {} : from : {}", TXQueueName, producerWorkerName);
 			return true;
 		} catch (JMSException jmse) {
 			logger.error("sendMessage: jmse {} : {}", se.getParams(), jmse.getMessage());
