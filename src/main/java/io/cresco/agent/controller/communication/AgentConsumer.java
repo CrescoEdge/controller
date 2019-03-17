@@ -101,9 +101,9 @@ public class AgentConsumer {
 							//check if message has file payload and needs to be registered
 							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstRegion().equals(plugin.getRegion()))) {
 								if(registerIncomingFiles(msgEventString, fileobjectString, filegroup)) {
-									System.out.println("NEW FILE PAYLOAD REGISTERED");
+									//System.out.println("NEW FILE PAYLOAD REGISTERED");
 								} else {
-									System.out.println("COULD NOT REGISTER NEW FILE PAYLOAD");
+									//System.out.println("COULD NOT REGISTER NEW FILE PAYLOAD");
 								}
 								//don't forward message until files have arrived
 								return;
@@ -143,9 +143,9 @@ public class AgentConsumer {
 
 						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)) {
 
-							logger.info("MSG REGION: " + dstRegion + " MSG AGENT: " + dstAgent);
+							//logger.info("MSG REGION: " + dstRegion + " MSG AGENT: " + dstAgent);
 
-							logger.info("REGION: " + plugin.getRegion() + " AGENT: " + plugin.getAgent());
+							//logger.info("REGION: " + plugin.getRegion() + " AGENT: " + plugin.getAgent());
 
 
 							if((dstRegion.equals(plugin.getRegion())) && (dstAgent.equals(plugin.getAgent()))) {
@@ -172,7 +172,7 @@ public class AgentConsumer {
 
 									String filePartMD5Hash = controllerEngine.getDataPlaneService().getMD5(filePart.getAbsolutePath());
 
-									System.out.println("INCOMING HASH: " + filePartMD5Hash);
+									//System.out.println("INCOMING HASH: " + filePartMD5Hash);
 
 									boolean isPartComplete = false;
 
@@ -198,10 +198,10 @@ public class AgentConsumer {
 										for(String filePartName : orderedFilePartNameList) {
 											File partFile = new File(filePath.toAbsolutePath().toString(), filePartName);
 											if(partFile.exists()) {
-												System.out.println("File Part : " + partFile.getName());
+												//System.out.println("File Part : " + partFile.getName());
 												orderedFilePartList.add(partFile);
 											} else {
-												System.out.println("File Part : " + partFile.getName() + " DOES NOT EXIST");
+												//System.out.println("File Part : " + partFile.getName() + " DOES NOT EXIST");
 											}
 										}
 
@@ -210,10 +210,10 @@ public class AgentConsumer {
 
 											String localCombinedFilePath = combinedFile.getAbsolutePath();
 											String localCombinedFileHash = controllerEngine.getDataPlaneService().getMD5(localCombinedFilePath);
-											System.out.println("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
+											//System.out.println("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
 
 											if(combinedFileHash.equals(localCombinedFileHash)) {
-												System.out.println("WE HAVE A FILE!!! " + localCombinedFilePath);
+												//System.out.println("WE HAVE A FILE!!! " + localCombinedFilePath);
 
 												MsgEvent me = null;
 												boolean isGroupComplete = false;
@@ -229,7 +229,7 @@ public class AgentConsumer {
 
 												if(isGroupComplete) {
 													//do something with the group
-													logger.info("GROUP COMPLETE!!");
+													//logger.info("GROUP COMPLETE!!");
 													//rebuild files on original MsgEvent
 													//List<String> msgEventFileList = new ArrayList<>();
 													//msgEventFileList.addAll(me.getFileList());
@@ -241,10 +241,10 @@ public class AgentConsumer {
 													if(me == null) {
 														logger.error("groupcomplete: " + isGroupComplete + " message null");
 													} else {
-														logger.error("message != null " + me.getParams().toString());
+														//logger.error("message != null " + me.getParams().toString());
 														//save message for cache removal of files
 														fileMsgEventCache.put(filegroup, me);
-														logger.error("SENDING MESSAGE NOW");
+														//logger.error("SENDING MESSAGE NOW");
 														//send final message
 														controllerEngine.msgInThreaded(me);
 													}
@@ -253,7 +253,8 @@ public class AgentConsumer {
 											}
 
 										} else {
-											System.out.println("ERROR COMBINING FILE : " + combinedFileHash);
+											logger.error("ERROR COMBINING FILE : " + combinedFileHash);
+											//System.out.println("ERROR COMBINING FILE : " + combinedFileHash);
 										}
 
 									}

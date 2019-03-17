@@ -126,7 +126,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 									dataProducer = dataSess.createProducer(dataDestination);
 									dataProducer.setTimeToLive(0);
-									dataProducer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+									dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 
 
 									BytesMessage bytesMessage = dataSess.createBytesMessage();
@@ -145,35 +145,35 @@ public class ActiveProducerWorkerData implements Runnable {
 
 									File filePart = new File(filePath.toAbsolutePath().toString(), parList);
 
-									System.out.println("READING FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList);
+									//System.out.println("READING FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList);
 
 									byte[] fileContent = Files.readAllBytes(filePart.toPath());
 
-									System.out.println("READ FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList + " bytes:" + fileContent.length);
+									//System.out.println("READ FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList + " bytes:" + fileContent.length);
 
-									System.out.println("READING FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList);
+									//System.out.println("READING FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList);
 
 									bytesMessage.writeBytes(fileContent);
 
-									System.out.println("READ FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList + " Message Body Length:" + fileContent);
+									//System.out.println("READ FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList + " Message Body Length:" + fileContent);
 
-									System.out.println("MESSAGE ID: " + bytesMessage.getStringProperty("JMSMessageID"));
+									//System.out.println("MESSAGE ID: " + bytesMessage.getStringProperty("JMSMessageID"));
 
 
 									//give lowest priority to file transfers
 									//todo fix this dirty hack
 									try {
-										System.out.println("SESSION LAST DELIVERED 0" + dataSess.getLastDeliveredSequenceId());
-										System.out.println("SESSION NEXT DELEVERY ID 0" + dataSess.getNextDeliveryId());
+										//System.out.println("SESSION LAST DELIVERED 0" + dataSess.getLastDeliveredSequenceId());
+										//System.out.println("SESSION NEXT DELEVERY ID 0" + dataSess.getNextDeliveryId());
 
-										System.out.println("SENDING MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
+										//System.out.println("SENDING MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
 										dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
 
-										System.out.println("SENT MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
+										//System.out.println("SENT MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
 
 
-										System.out.println("SESSION LAST DELIVERED 1" + dataSess.getLastDeliveredSequenceId());
-										System.out.println("SESSION NEXT DELEVERY ID 1" + dataSess.getNextDeliveryId());
+										//System.out.println("SESSION LAST DELIVERED 1" + dataSess.getLastDeliveredSequenceId());
+										//System.out.println("SESSION NEXT DELEVERY ID 1" + dataSess.getNextDeliveryId());
 
 
 
@@ -192,27 +192,26 @@ public class ActiveProducerWorkerData implements Runnable {
 											dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 											dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
 										} catch (Exception ex) {
-											logger.error("WHY IS THIS HAPPENING 0");
+											logger.error("Rebuilding Session Error " + ex.getMessage());
 											ex.printStackTrace();
 										}
 									} catch (Exception ex) {
-										logger.error("WHY IS THIS HAPPENING 1");
+										logger.error("General send failure : " + ex.getMessage());
 										ex.printStackTrace();
 									} finally {
 										if(dataProducer != null) {
 											dataProducer.close();
 										}
 									}
-									//filePart.delete();
-
+									filePart.delete();
 								}
 								//remove temp folder
-								//filePath.toFile().delete();
+								filePath.toFile().delete();
 							}
 
 
 						} catch (JMSException jmse) {
-							logger.error("sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage());
+							logger.error("run() sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage());
 							StringWriter errors = new StringWriter();
 							jmse.printStackTrace(new PrintWriter(errors));
 							logger.error(errors.toString());
@@ -236,7 +235,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 
 		} catch (Exception ex) {
-			logger.error("sendMessage: " +  ex.getMessage());
+			logger.error("run(): " +  ex.getMessage());
 			StringWriter errors = new StringWriter();
 			ex.printStackTrace(new PrintWriter(errors));
 			logger.error(errors.toString());
