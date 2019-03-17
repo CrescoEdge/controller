@@ -111,14 +111,14 @@ public class AgentExecutor implements Executor {
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
 
-            logger.error("incoming message: [" + ce.getParams() + "]");
+            //logger.error("incoming message: [" + ce.getParams() + "]");
 
-            logger.error("incoming hm: [" + hm + "]");
+            //logger.error("incoming hm: [" + hm + "]");
 
 
             boolean jarIsLocal = pluginIsLocal(hm);
 
-            logger.error("jarIsLocal: " + jarIsLocal);
+            //logger.error("jarIsLocal: " + jarIsLocal);
 
             if(!jarIsLocal) {
                 //try to download node
@@ -133,7 +133,7 @@ public class AgentExecutor implements Executor {
 
                 String jarFileName = getRepoCacheDir() + "/" + hm.get("jarfile");
 
-                logger.error("jarIslocal:: " + jarFileName);
+                //logger.error("jarIslocal:: " + jarFileName);
 
                 Map<String,Object> map = new HashMap<>();
 

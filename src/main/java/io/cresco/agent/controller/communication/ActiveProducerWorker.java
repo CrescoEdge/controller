@@ -19,7 +19,7 @@ public class ActiveProducerWorker {
 	private CLogger logger;
 	private ActiveMQSession sess;
 
-	//private MessageProducer producer;
+	private MessageProducer producer;
 	private Gson gson;
 	public boolean isActive;
 	private String TXQueueName;
@@ -43,11 +43,11 @@ public class ActiveProducerWorker {
 
 			destination = sess.createQueue(TXQueueName);
 
-			/*
+
 			producer = sess.createProducer(destination);
 			producer.setTimeToLive(300000L);
 			producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-			*/
+
 
 			isActive = true;
 			logger.debug("Initialized", TXQueueName);
@@ -82,7 +82,7 @@ public class ActiveProducerWorker {
 
 	public boolean sendMessage(MsgEvent se) {
 		boolean isSent = false;
-		MessageProducer producer = null;
+		//MessageProducer producer = null;
 		try {
 			int pri = 0;
 
@@ -113,10 +113,11 @@ public class ActiveProducerWorker {
 					break;
 			}
 
+			/*
 				producer = sess.createProducer(destination);
 				producer.setTimeToLive(300000L);
 				producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-
+*/
 				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
 				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
 				isSent = true;
@@ -138,6 +139,7 @@ public class ActiveProducerWorker {
 			logger.error(errors.toString());
 			//trigger comminit()
 		} finally {
+			/*
 			if(producer != null) {
 				try {
 					producer.close();
@@ -145,6 +147,7 @@ public class ActiveProducerWorker {
 					ex.printStackTrace();
 				}
 			}
+			*/
 		}
 
 		return isSent;
