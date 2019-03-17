@@ -129,7 +129,15 @@ public class AgentProducer {
             }
             if (apw != null) {
                 apw.isActive = true;
-                apw.sendMessage(sm);
+
+                //Messages with file data must be addressed seperatly.
+                if(sm.hasFiles()) {
+                    //if message contains files spawn new thread
+                    new Thread(new ActiveProducerWorkerData(controllerEngine,apw.getTXQueueName(),apw.getURI(),sm)).start();
+
+                } else {
+                    apw.sendMessage(sm);
+                }
                 isSent = true;
             } else {
                 logger.error("apw [" + apw.toString() + "] is null");

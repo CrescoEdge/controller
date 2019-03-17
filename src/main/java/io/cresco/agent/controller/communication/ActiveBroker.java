@@ -109,7 +109,7 @@ public class ActiveBroker {
 
 				broker = new SslBrokerService();
 				broker.setUseShutdownHook(true);
-				broker.setPersistent(false);
+				broker.setPersistent(true);
 				broker.setBrokerName(brokerName);
 				broker.setSchedulePeriodForDestinationPurge(2500);
 				broker.setDestinationPolicy(map);

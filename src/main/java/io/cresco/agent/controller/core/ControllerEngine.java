@@ -335,6 +335,12 @@ public class ControllerEngine {
                     TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
                     List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host"), true);
 
+                    while(certDiscovery.isEmpty()) {
+                        Thread.sleep(1000);
+                        logger.error("Retry Cert Discovery Host: " + plugin.getConfig().getStringParam("regional_controller_host"));
+                        certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host"), true);
+                    }
+
                     String cbrokerAddress = certDiscovery.get(0).getParam("dst_ip");
                     String cbrokerValidatedAuthenication = certDiscovery.get(0).getParam("validated_authenication");
                     String cRegion = certDiscovery.get(0).getParam("dst_region");
