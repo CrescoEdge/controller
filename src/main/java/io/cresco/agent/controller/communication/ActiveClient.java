@@ -112,7 +112,7 @@ public class ActiveClient {
                 //if no factory exist create it
                 if (!hasFactory) {
                     activeMQSslConnectionFactory = initConnectionFactory(URI);
-                    logger.error("Factory Created for URI: [" + URI + "]");
+                    logger.debug("Factory Created for URI: [" + URI + "]");
 
                     synchronized (lockFactoryMap) {
                         connectionFactoryMap.put(URI, activeMQSslConnectionFactory);
@@ -124,7 +124,7 @@ public class ActiveClient {
                 }
 
                 activeMQConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
-                logger.error("Connection Created for URI: [" + URI + "]");
+                logger.debug("Connection Created for URI: [" + URI + "]");
 
 
 
