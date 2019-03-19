@@ -143,15 +143,15 @@ public class ControllerEngine {
             this.outgoingMessages = new LinkedBlockingQueue<>();
             this.brokerAddressAgent = null;
 
-
             DiscoveryClientIPv4 dcv4 = new DiscoveryClientIPv4(this);
             DiscoveryClientIPv6 dcv6 = new DiscoveryClientIPv6(this);
 
             List<MsgEvent> discoveryList = null;
 
-
             if(plugin.getConfig().getBooleanParam("is_agent",false)) {
+
                 if(plugin.getConfig().getStringParam("regional_controller_host") == null) {
+
                     discoveryList = initAgentDiscovery();
                     while(discoveryList == null) {
                         discoveryList = initAgentDiscovery();
@@ -291,6 +291,7 @@ public class ControllerEngine {
 
     private  List<MsgEvent> initAgentDiscovery() {
         //continue regional discovery until regional controller is found
+        logger.info("Starting Dynamic Agent Discovery...");
         List<MsgEvent> discoveryList = null;
         boolean isInit = false;
             try {
