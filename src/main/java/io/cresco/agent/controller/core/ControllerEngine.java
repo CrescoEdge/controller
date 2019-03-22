@@ -1306,7 +1306,16 @@ public class ControllerEngine {
 
     public void msgIn(MsgEvent msg) {
 
+        try {
+            while (!getActiveClient().isFaultURIActive()) {
+                Thread.sleep(1000);
+            }
             msgRouter.route(msg);
+        } catch (Exception ex) {
+        logger.error(ex.getMessage());
+        }
+
+
     }
 
     public void msgInThreaded(MsgEvent msg) {
