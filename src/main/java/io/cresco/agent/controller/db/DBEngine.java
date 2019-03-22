@@ -1356,7 +1356,7 @@ public class DBEngine {
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
-                queryString = "SELECT region_id, status_code FROM anode ";
+                queryString = "SELECT region_id, status_code FROM rnode ";
             }
 
             Connection conn = ds.getConnection();
