@@ -111,16 +111,28 @@ public class ControllerEngine {
         //this.msgInProcessQueue = Executors.newFixedThreadPool(100);
         this.msgInProcessQueue = Executors.newCachedThreadPool();
         //this.msgInProcessQueue = Executors.newSingleThreadExecutor();
-        /*
-        logger.info("Controller Init");
-        if(commInit()) {
-            logger.info("Controller Completed Init");
-        }
-        */
-        //new thread required to allow AgentServiceImpl to finish & become service
+
+        //will wait until active then load plugins
         StaticPluginLoader staticPluginLoader = new StaticPluginLoader(this);
         new Thread(staticPluginLoader).start();
 
+    }
+
+    //setup persistance and populate config
+    public Boolean preInit() {
+        boolean isPreInit = false;
+        try {
+            
+            //establish backend database
+            //removed region consumer, no longer needed things to go agents
+            this.gdb = new DBInterfaceImpl(this);
+            logger.debug("RegionalControllerDB Service Started");
+            isPreInit = true;
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+            ex.printStackTrace();
+        }
+        return isPreInit;
     }
 
     //primary init
@@ -772,13 +784,7 @@ public class ControllerEngine {
                 this.brokerAddressAgent = "localhost";
             }
 
-            //removed region consumer, no longer needed things to go agents
-
-            this.gdb = new DBInterfaceImpl(this);
-
-            logger.debug("RegionalControllerDB Service Started");
-
-            //DB manager
+            //DB manager only used for regional and global
             logger.debug("Starting DB Manager");
             logger.debug("Starting Broker Manager");
             this.DBManagerThread = new Thread(new DBManager(this, this.gdb.importQueue));
@@ -822,8 +828,6 @@ public class ControllerEngine {
         return isInit;
     }
 
-
-
     //helper functions
     public CertificateManager getCertificateManager() {
         return certificateManager;
@@ -858,15 +862,12 @@ public class ControllerEngine {
     public void setIncomingCanidateBrokers(BlockingQueue<MsgEvent> incomingCanidateBrokers) {
         this.incomingCanidateBrokers = incomingCanidateBrokers;
     }
-
     public ActiveBroker getBroker() {
         return broker;
     }
     public void setBroker(ActiveBroker broker) {
         this.broker = broker;
     }
-
-
     public boolean isLocal(String checkAddress) {
         boolean isLocal = false;
         if (checkAddress.contains("%")) {
@@ -903,7 +904,6 @@ public class ControllerEngine {
         }
         return localAddressList;
     }
-
     public boolean isIPv6() {
         boolean isIPv6 = false;
         try {
@@ -933,7 +933,6 @@ public class ControllerEngine {
         }
         return isIPv6;
     }
-
     public boolean isReachableAgent(String remoteAgentPath) {
         boolean isReachableAgent = false;
         if (this.cstate.isRegionalController()) {
@@ -988,21 +987,18 @@ public class ControllerEngine {
         }
         return isReachableAgent;
     }
-
     public boolean isClientDiscoveryActiveIPv4() {
         return clientDiscoveryActiveIPv4;
     }
     public void setClientDiscoveryActiveIPv4(boolean clientDiscoveryActiveIPv4) {
         this.clientDiscoveryActiveIPv4 = clientDiscoveryActiveIPv4;
     }
-
     public boolean isClientDiscoveryActiveIPv6() {
         return clientDiscoveryActiveIPv6;
     }
     public void setClientDiscoveryActiveIPv6(boolean clientDiscoveryActiveIPv6) {
         this.clientDiscoveryActiveIPv6 = clientDiscoveryActiveIPv6;
     }
-
     public List<String> reachableAgents() {
         List<String> rAgents = null;
         try {
@@ -1028,37 +1024,29 @@ public class ControllerEngine {
     public void setTCPDiscoveryActive(boolean discoveryActive) {
         TCPDiscoveryActive = discoveryActive;
     }
-
     public boolean isTCPDiscoveryActive() {
         return TCPDiscoveryActive;
     }
-
     public void setUDPDiscoveryActive(boolean discoveryActive) {
         UDPDiscoveryActive = discoveryActive;
     }
-
     public String getStringFromError(Exception ex) {
         StringWriter errors = new StringWriter();
         ex.printStackTrace(new PrintWriter(errors));
         return errors.toString();
     }
-
     public AppScheduler getAppScheduler() {
         return appScheduler;
     }
-
     public void setAppScheduler(AppScheduler appScheduler) {
         this.appScheduler = appScheduler;
     }
-
     public ResourceScheduler getResourceScheduler() {
         return resourceScheduler;
     }
-
     public void setResourceScheduler(ResourceScheduler resourceScheduler) {
         this.resourceScheduler = resourceScheduler;
     }
-
 
     /*
     public BlockingQueue<gPayload> getAppScheduleQueue() {

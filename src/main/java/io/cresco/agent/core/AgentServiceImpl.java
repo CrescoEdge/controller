@@ -17,6 +17,7 @@ import org.osgi.service.component.annotations.*;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 
 
 @Component(
@@ -33,6 +34,10 @@ public class AgentServiceImpl implements AgentService {
     private PluginBuilder plugin;
     private PluginAdmin pluginAdmin;
     private CLogger logger;
+
+    //this needs to be pulled from Config
+    private String ENV_PREFIX = "CRESCO_";
+
 
     public AgentServiceImpl() {
 
@@ -75,14 +80,28 @@ public class AgentServiceImpl implements AgentService {
                 configMsg = "Property > Env > " + configFile;
             }
 
-
-
-            /*
-            String env = System.getProperty(param);
-            if(env == null) {
-                env = System.getenv(ENV_PREFIX + param);
+            //take all the system env varables with CRESCO and put them into the config
+            Map<String,String> envMap = System.getenv();
+            for (Map.Entry<String, String> entry : envMap.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if(key.contains(ENV_PREFIX)) {
+                    key = key.replace(ENV_PREFIX, "").toLowerCase().trim();
+                    map.put(key,value);
+                }
             }
-            */
+
+            //take all input property names and add to the config
+            Properties properties = System.getProperties();
+            for(String propertyNames : properties.stringPropertyNames()) {
+                map.put(propertyNames,properties.getProperty(propertyNames));
+            }
+
+            for (Map.Entry<String, Object> entry : map.entrySet()) {
+                String key = entry.getKey();
+                Object value = entry.getValue();
+                System.out.println(key + ":" + value);
+            }
 
             plugin = new PluginBuilder(this, this.getClass().getName(), context, map);
 
@@ -107,11 +126,16 @@ public class AgentServiceImpl implements AgentService {
 
             controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin);
 
+            //preinit setup persistant data store
+            if(controllerEngine.preInit()) {
+                logger.info("Controller Completed Pre-Init");
+            } else {
+                logger.error("Controlled Failed Pre-Init : Exiting");
+            }
 
             //logger.info("Controller Init");
             if(controllerEngine.commInit()) {
                 logger.info("Controller Completed Init");
-
 
             } else {
                 logger.error("Controlled Failed Init");
