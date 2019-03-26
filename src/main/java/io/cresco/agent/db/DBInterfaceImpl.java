@@ -72,6 +72,60 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.nodeExist(region,agent,plugin);
     }
 
+    public boolean addPNode(String region, String agent, String plugin, String watchDogTimerString, String configParamsString, String pluginConfigsString) {
+        boolean wasAdded = false;
+
+        try {
+
+
+            //Is Agent
+            if((region != null) && (agent != null) && (plugin != null)) {
+
+                if(!dbe.nodeExist(region,agent,null)) {
+                    //fixme take into account current state
+                    //add region, this will need to be more complex in future
+                    dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(watchDogTimerString),System.currentTimeMillis(),configParamsString);
+                } else {
+                    dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(watchDogTimerString),System.currentTimeMillis(),configParamsString);
+                }
+
+                if (pluginConfigsString != null) {
+                    List<Map<String, String>> configMapList = new Gson().fromJson(pluginConfigsString,
+                            new TypeToken<List<Map<String, String>>>() {
+                            }.getType());
+
+                    //Add Plugin Information
+                    for (Map<String, String> configMap : configMapList) {
+                        String pluginId = configMap.get("pluginid");
+                        String status_code = configMap.get("status_code");
+                        String status_desc = configMap.get("status_desc");
+                        String configparams = configMap.get("configparams");
+
+                        logger.debug("Adding Sub-Node: " + configMap.toString());
+
+                        if(!nodeExist(region,agent,pluginId)) {
+                            //todo plugins need to list their watchdog peroid
+                            dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchDogTimerString), System.currentTimeMillis(), configparams);
+                        } else {
+                            dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchDogTimerString), System.currentTimeMillis(), configparams);
+                        }
+                    }
+                }
+            }
+
+            wasAdded = true;
+
+        } catch (Exception ex) {
+            System.out.println("GraphDBUpdater : addNode ERROR : " + ex.toString());
+        }
+
+        return wasAdded;
+    }
+
+    public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+        dbe.addNode(region,agent,plugin, status_code,status_desc,watchdog_period,watchdog_ts,configparams);
+    }
+
     public boolean addNode(MsgEvent de) {
         boolean wasAdded = false;
 

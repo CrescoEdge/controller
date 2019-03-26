@@ -135,14 +135,14 @@ public class AgentServiceImpl implements AgentService {
 
             controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin, gdb);
 
-            //preinit setup persistant data store
+            //core init needs to go here
             if(controllerEngine.coreInit()) {
                 logger.info("Controller Completed Core-Init");
             } else {
                 logger.error("Controlled Failed Core-Init : Exiting");
             }
 
-            //logger.info("Controller Init");
+            //setup role init
             if(controllerEngine.commInit()) {
                 logger.info("Controller Completed Init");
 
@@ -174,6 +174,10 @@ public class AgentServiceImpl implements AgentService {
 
         if(controllerEngine != null) {
             controllerEngine.closeCommunications();
+        }
+
+        if(gdb != null) {
+            gdb.shutdown();
         }
 
     }

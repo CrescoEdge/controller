@@ -31,6 +31,7 @@ public class PluginAdmin {
     private Gson gson;
 
     private DBInterfaceImpl gdb;
+    private PluginBuilder plugin;
 
     private int PLUGINLIMIT = 900;
     private int TRYCOUNT = 30;
@@ -59,8 +60,8 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(PluginBuilder pluginBuilder, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
-
+    public PluginAdmin(PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
+        this.plugin = plugin;
         this.gdb = gdb;
         this.gson = new Gson();
         this.configMap = Collections.synchronizedMap(new HashMap<>());
@@ -69,7 +70,7 @@ public class PluginAdmin {
 
         this.context = context;
         this.agentState = agentState;
-        logger = pluginBuilder.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
+        logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
 
 
         ServiceReference configurationAdminReference = null;
@@ -415,9 +416,9 @@ public class PluginAdmin {
                                 }.getType();
                                 List<gEdge> edgeList = gson.fromJson(edges, type);
 
-                                pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map, edgeList);
+                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, pluginName, jarFile, map, edgeList);
                             } else {
-                                pluginNode = new PluginNode(bundleID, pluginID, pluginName, jarFile, map);
+                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, pluginName, jarFile, map);
                             }
 
                             synchronized (lockPlugin) {

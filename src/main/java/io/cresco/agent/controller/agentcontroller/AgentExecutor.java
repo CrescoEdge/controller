@@ -463,7 +463,7 @@ public class AgentExecutor implements Executor {
                     Files.write(path, retMsg.getDataParam("jardata"));
                     File jarFileSaved = new File(jarFileSavePath);
                     if(jarFileSaved.isFile()) {
-                        String md5 = plugin.getJarMD5(jarFileSavePath);
+                        String md5 = plugin.getMD5(jarFileSavePath);
                         if(pluginMD5.equals(md5)) {
                             isFound = true;
                             logger.error("SAVE FILE : " + jarFileSavePath + " isFound" + isFound);

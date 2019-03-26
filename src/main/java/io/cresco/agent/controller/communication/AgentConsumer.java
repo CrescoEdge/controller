@@ -170,7 +170,7 @@ public class AgentConsumer {
 
 									Files.write(filePart.toPath(), data);
 
-									String filePartMD5Hash = controllerEngine.getDataPlaneService().getMD5(filePart.getAbsolutePath());
+									String filePartMD5Hash = plugin.getMD5(filePart.getAbsolutePath());
 
 									//System.out.println("INCOMING HASH: " + filePartMD5Hash);
 
@@ -209,7 +209,7 @@ public class AgentConsumer {
 										if(combinedFile.exists()) {
 
 											String localCombinedFilePath = combinedFile.getAbsolutePath();
-											String localCombinedFileHash = controllerEngine.getDataPlaneService().getMD5(localCombinedFilePath);
+											String localCombinedFileHash = plugin.getMD5(localCombinedFilePath);
 											//System.out.println("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
 
 											if(combinedFileHash.equals(localCombinedFileHash)) {

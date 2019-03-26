@@ -21,6 +21,7 @@ public interface DBInterface {
     public String getPluginList(String actionRegion, String actionAgent);
     public String getPluginInfo(String actionRegion, String actionAgent, String actionPlugin);
     //public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId);
+    public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams);
     public String getNetResourceInfo();
     //public String getResourceInfo(String actionRegion, String actionAgent);
     public String getGPipeline(String actionPipelineId);

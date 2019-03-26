@@ -1,7 +1,9 @@
 package io.cresco.agent.controller.agentcontroller;
 
 
+import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.app.gEdge;
+import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
 
 import java.io.File;
@@ -14,9 +16,14 @@ import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
 
 public class PluginNode {
+
+    private DBInterfaceImpl gdb;
+    private PluginBuilder plugin;
+
     //private Logger logger =
     private String pluginID;
     private String jarPath;
+    private String MD5;
     private String pluginName;
     private String name;
     private String version;
@@ -68,8 +75,9 @@ public class PluginNode {
         return strValue;
     }
 
-    public PluginNode(long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
-
+    public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
+        this.plugin = plugin;
+        this.gdb = gdb;
         this.bundleID = bundleID;
         this.pluginID = pluginID;
         this.jarPath = jarPath;
@@ -90,10 +98,17 @@ public class PluginNode {
         version = mainAttributess.getValue("Bundle-Version");
 
         //setPluginConfigValues(configMap);
+        //gdb.addNode()
+        System.out.println("NAME: " + name);
+        System.out.println("VERSION: " + version);
+        System.out.println("JAR PATH: " + jarPath);
+        System.out.println("MD5: " + plugin.getMD5(jarPath));
+
 
     }
-    public PluginNode(long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
-
+    public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
+        this.plugin = plugin;
+        this.gdb = gdb;
         this.bundleID = bundleID;
         this.pluginID = pluginID;
         this.jarPath = jarPath;
@@ -214,6 +229,7 @@ public class PluginNode {
     public boolean getActive() {
         return active;
     }
+
 
     @Override
     public String toString() {
