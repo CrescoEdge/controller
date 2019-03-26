@@ -1,4 +1,4 @@
-package io.cresco.agent.controller.db;
+package io.cresco.agent.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -14,7 +14,10 @@ import javax.xml.bind.DatatypeConverter;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -25,15 +28,11 @@ public class DBEngine {
     private Gson gson;
     private PluginBuilder plugin;
     private CLogger logger;
-    private ControllerEngine controllerEngine;
     private DBType dbType = DBType.EMBEDDED;
 
 
-
-
-    public DBEngine(ControllerEngine controllerEngine) {
-        this.controllerEngine = controllerEngine;
-        this.plugin = controllerEngine.getPluginBuilder();
+    public DBEngine(PluginBuilder plugin) {
+        this.plugin = plugin;
         this.logger = plugin.getLogger(DBEngine.class.getName(),CLogger.Level.Info);
 
         try {
@@ -43,8 +42,8 @@ public class DBEngine {
             String defaultDBName = "cresco-controller-db";
             String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
 
-            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
             if(dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
             }
@@ -54,13 +53,14 @@ public class DBEngine {
                     File dbsource = new File("database");
                     if (dbsource.exists()) {
                         delete(dbsource);
+                    } else {
+                        dbsource.mkdir();
                     }
-                    dbsource.mkdir();
                 }
             }
 
-            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
 
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
@@ -275,6 +275,58 @@ public class DBEngine {
         return queryReturn;
     }
 
+    public int getPNodePersistenceCode(String region, String agent, String plugin) {
+        int status_code = -1;
+        try {
+
+            String queryString = null;
+
+            queryString = "SELECT persistence_code FROM pnode" +
+                    "WHERE region_id='" + region + "' AND agent_id='" + agent + "' AND plugin_id='" + plugin + "'";
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            rs.next();
+            status_code = rs.getInt(1);
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return status_code;
+    }
+
+    public int setPNodePersistenceCode(String region, String agent, String plugin, int persistence_code) {
+        int queryReturn = -1;
+        try {
+
+            String queryString = null;
+
+
+            queryString = "UPDATE pnode SET persistence_code=" + persistence_code + "' " +
+                    "WHERE region_id='" + region + "' AND agent_id='" + agent + "' AND plugin_id='" + plugin + "'";
+
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            queryReturn = stmt.executeUpdate(queryString);
+
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return queryReturn;
+    }
+
     public String getNodeConfigParams(String regionId, String agentId, String pluginId) {
         String configParams = null;
         try {
@@ -372,8 +424,8 @@ public class DBEngine {
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-           rs.next();
-           submission = rs.getString(1);
+            rs.next();
+            submission = rs.getString(1);
 
 
             rs.close();
@@ -516,9 +568,9 @@ public class DBEngine {
             String queryString = null;
 
 
-                //region
-                queryString = "SELECT COUNT(1) " + "FROM inodekpi " +
-                        "WHERE inode_id = '" + inodeId + "'";
+            //region
+            queryString = "SELECT COUNT(1) " + "FROM inodekpi " +
+                    "WHERE inode_id = '" + inodeId + "'";
 
 
             Connection conn = ds.getConnection();
@@ -726,14 +778,14 @@ public class DBEngine {
 
             if((regionId != null) && (agentId != null)) {
                 //agent
-            queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
-                    "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
-                    "WHERE (region_id = '" + regionId + "' AND agent_id = '" + agentId + "')";
+                queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
+                        "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
+                        "WHERE (region_id = '" + regionId + "' AND agent_id = '" + agentId + "')";
             } else if((regionId != null) && (agentId == null)) {
                 //region
-            queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
-                    "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
-                    "WHERE (region_id = '" + regionId + "')";
+                queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
+                        "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
+                        "WHERE (region_id = '" + regionId + "')";
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
@@ -841,6 +893,7 @@ public class DBEngine {
                 "   version varchar(255)," +
                 "   md5 varchar(255)," +
                 "   configparams " + largeFieldType + "," +
+                "   persistence_code int DEFAULT 0," +
                 "   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
                 "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
                 "   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
@@ -1051,8 +1104,8 @@ public class DBEngine {
             String queryString = null;
             //DELETE FROM table_name WHERE condition;
 
-                queryString = "DELETE FROM inode " +
-                        "WHERE inode_id = '" + inodeId + "'";
+            queryString = "DELETE FROM inode " +
+                    "WHERE inode_id = '" + inodeId + "'";
 
 
             if(stmt.executeUpdate(queryString) == 1) {
@@ -1538,11 +1591,11 @@ public class DBEngine {
     }
 
 
-        public static DataSource setupDataSource(String connectURI) {
-            return setupDataSource(connectURI,null,null);
-        }
+    public static DataSource setupDataSource(String connectURI) {
+        return setupDataSource(connectURI,null,null);
+    }
 
-        public static DataSource setupDataSource(String connectURI, String login, String password) {
+    public static DataSource setupDataSource(String connectURI, String login, String password) {
         //
         // First, we'll create a ConnectionFactory that the
         // pool will use to create Connections.
@@ -1550,13 +1603,13 @@ public class DBEngine {
         // using the connect string passed in the command line
         // arguments.
         //
-            ConnectionFactory connectionFactory = null;
-            if((login == null) && (password == null)) {
-                connectionFactory = new DriverManagerConnectionFactory(connectURI, null);
-            } else {
-                connectionFactory = new DriverManagerConnectionFactory(connectURI,
-                                login, password);
-            }
+        ConnectionFactory connectionFactory = null;
+        if((login == null) && (password == null)) {
+            connectionFactory = new DriverManagerConnectionFactory(connectURI, null);
+        } else {
+            connectionFactory = new DriverManagerConnectionFactory(connectURI,
+                    login, password);
+        }
 
         //
         // Next we'll create the PoolableConnectionFactory, which wraps

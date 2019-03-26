@@ -1,4 +1,4 @@
-package io.cresco.agent.controller.db;
+package io.cresco.agent.db;
 
 import io.cresco.library.app.gPayload;
 import io.cresco.library.app.pNode;
@@ -20,9 +20,9 @@ public interface DBInterface {
     public String getPluginListByType(String actionPluginTypeId, String actionPluginTypeValue);
     public String getPluginList(String actionRegion, String actionAgent);
     public String getPluginInfo(String actionRegion, String actionAgent, String actionPlugin);
-    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId);
+    //public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId);
     public String getNetResourceInfo();
-    public String getResourceInfo(String actionRegion, String actionAgent);
+    //public String getResourceInfo(String actionRegion, String actionAgent);
     public String getGPipeline(String actionPipelineId);
     public String getGPipelineExport(String actionPipelineId);
     public String getIsAssignedInfo(String resourceid, String inodeid, boolean isResourceMetric);
@@ -48,7 +48,7 @@ public interface DBInterface {
     public int getPipelineStatusCode(String pipelineId);
     public int getINodeStatus(String INodeId);
     public boolean removePipeline(String pipelineId);
-    public List<String> getNodeList(String region, String agent, String plugin);
+    public List<String> getNodeList(String region, String agent);
     public boolean setDBImport(String exportData);
 
     public Map<String, NodeStatusType> getNodeStatus(String region, String agent, String plugin);

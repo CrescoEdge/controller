@@ -4,7 +4,6 @@ import io.cresco.agent.controller.agentcontroller.AgentExecutor;
 import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.communication.*;
-import io.cresco.agent.controller.db.DBInterfaceImpl;
 import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
@@ -14,6 +13,7 @@ import io.cresco.agent.controller.measurement.PerfControllerMonitor;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.data.DataPlaneServiceImpl;
+import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
@@ -96,7 +96,7 @@ public class ControllerEngine {
     private Thread DBManagerThread;
 
 
-    public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin){
+    public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
 
         this.plugin = pluginBuilder;
         this.cstate = controllerState;
@@ -105,6 +105,7 @@ public class ControllerEngine {
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
         this.pluginAdmin = pluginAdmin;
+        this.gdb = gdb;
 
         this.activeClient = new ActiveClient(this);
 
@@ -119,20 +120,19 @@ public class ControllerEngine {
     }
 
     //setup persistance and populate config
-    public Boolean preInit() {
-        boolean isPreInit = false;
+    public Boolean coreInit() {
+        boolean isCoreInit = false;
         try {
-            
             //establish backend database
             //removed region consumer, no longer needed things to go agents
-            this.gdb = new DBInterfaceImpl(this);
-            logger.debug("RegionalControllerDB Service Started");
-            isPreInit = true;
+            //this.gdb = new DBInterfaceImpl(this);
+            //logger.debug("DB Service Started");
+            isCoreInit = true;
         } catch (Exception ex) {
             logger.error(ex.getMessage());
             ex.printStackTrace();
         }
-        return isPreInit;
+        return isCoreInit;
     }
 
     //primary init

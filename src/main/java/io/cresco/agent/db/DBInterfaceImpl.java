@@ -1,4 +1,4 @@
-package io.cresco.agent.controller.db;
+package io.cresco.agent.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -23,7 +23,6 @@ public class DBInterfaceImpl implements DBInterface {
 
     private PluginBuilder plugin;
     private CLogger logger;
-    private ControllerEngine controllerEngine;
     private DBEngine dbe;
 
     private Gson gson;
@@ -32,11 +31,10 @@ public class DBInterfaceImpl implements DBInterface {
     public BlockingQueue<String> importQueue;
 
 
-    public DBInterfaceImpl(ControllerEngine controllerEngine) {
-        this.controllerEngine = controllerEngine;
-        this.plugin = controllerEngine.getPluginBuilder();
+    public DBInterfaceImpl(PluginBuilder plugin) {
+        this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
-        this.dbe = new DBEngine(controllerEngine);
+        this.dbe = new DBEngine(plugin);
 
         this.importQueue = new LinkedBlockingQueue<>();
         this.gson = new Gson();
@@ -222,9 +220,9 @@ public class DBInterfaceImpl implements DBInterface {
         return wasUpdated;
     }
 
-    public Map<String,NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
+    public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
 
-        Map<String,NodeStatusType> nodeStatusMap = null;
+        Map<String, NodeStatusType> nodeStatusMap = null;
         try {
             nodeStatusMap = new HashMap<>();
 
@@ -236,31 +234,31 @@ public class DBInterfaceImpl implements DBInterface {
                 int status_code = pair.getValue();
 
                 switch (status_code) {
-                    case 3:  nodeStatusMap.put(node,NodeStatusType.STARTING);
+                    case 3:  nodeStatusMap.put(node, NodeStatusType.STARTING);
                         break;
-                    case 7:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 7:  nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 8:  nodeStatusMap.put(node,NodeStatusType.DISABLED);
+                    case 8:  nodeStatusMap.put(node, NodeStatusType.DISABLED);
                         break;
-                    case 9:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 9:  nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 10:  nodeStatusMap.put(node,NodeStatusType.ACTIVE);
+                    case 10:  nodeStatusMap.put(node, NodeStatusType.ACTIVE);
                         break;
-                    case 40:  nodeStatusMap.put(node,NodeStatusType.STALE);
+                    case 40:  nodeStatusMap.put(node, NodeStatusType.STALE);
                         break;
-                    case 41:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 41:  nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 50:  nodeStatusMap.put(node,NodeStatusType.LOST);
+                    case 50:  nodeStatusMap.put(node, NodeStatusType.LOST);
                         break;
-                    case 80:  nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 80:  nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 90: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 90: nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 91: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 91: nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    case 92: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    case 92: nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
-                    default: nodeStatusMap.put(node,NodeStatusType.ERROR);
+                    default: nodeStatusMap.put(node, NodeStatusType.ERROR);
                         break;
                 }
             }
@@ -268,7 +266,7 @@ public class DBInterfaceImpl implements DBInterface {
             List<String> pendingStaleList = dbe.getStaleNodeList(region,agent);
             for(String node : pendingStaleList) {
                 if(nodeStatusMap.containsKey(node)) {
-                    nodeStatusMap.put(node,NodeStatusType.PENDINGSTALE);
+                    nodeStatusMap.put(node, NodeStatusType.PENDINGSTALE);
                 }
             }
 
@@ -579,6 +577,12 @@ public class DBInterfaceImpl implements DBInterface {
 
     public int getINodeStatus(String inodeId) {
         return dbe.getINodeStatus(inodeId);
+    }
+
+    public int getPNodePersistenceCode(String region, String agent, String plugin) { return dbe.getPNodePersistenceCode(region,agent,plugin); }
+
+    public int setPNodePersistenceCode(String region, String agent, String plugin, int persistence_code) {
+        return dbe.setPNodePersistenceCode(region,agent,plugin,persistence_code);
     }
 
     public Map<String,List<pNode>> getPluginListRepoSet() {
@@ -1049,143 +1053,12 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
-    public String getResourceInfo(String actionRegion, String actionAgent) {
-        String queryReturn = null;
-        try
-        {
-            if((actionRegion != null) && (actionAgent != null)) {
-                queryReturn = getAgentResourceInfo(actionRegion,actionAgent);
-            } else if (actionRegion != null) {
-                queryReturn = getRegionResourceInfo(actionRegion);
-            } else {
-                queryReturn = getRegionResourceInfo(null);
-            }
-
-        } catch(Exception ex) {
-            logger.error("getResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
+    public List<String> getNodeList(String region, String agent) {
+        //logger.error("List<String> getNodeList(String region, String agent, String plugin)");
+        return dbe.getNodeList(region,agent);
     }
 
 
-    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-
-
-            Map<String,String> resourceTotal = new HashMap<>();
-            String perfString = controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,actionAgent);
-            if(perfString != null) {
-                resourceTotal.put("perf", perfString);
-            }
-            regionArray.add(resourceTotal);
-
-
-            /*
-            List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,actionAgent);
-            for(String str : inodeKPIList) {
-                Map<String,String> resourceTotal = new HashMap<>();
-                resourceTotal.put("perf", dbe.uncompressString(str));
-                regionArray.add(resourceTotal);
-
-            }
-            */
-
-            queryMap.put("agentresourceinfo",regionArray);
-            queryReturn = gson.toJson(queryMap);
-
-        } catch(Exception ex) {
-            logger.error("getAgentResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
-    }
-
-
-    private String getRegionResourceInfo(String actionRegion) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
-
-
-        long cpu_core_count = 0;
-        long memoryAvailable = 0;
-        long memoryTotal = 0;
-        long diskAvailable = 0;
-        long diskTotal = 0;
-
-        try
-        {
-            queryMap = new HashMap<>();
-            List<Map<String,String>> regionArray = new ArrayList<>();
-
-
-            //List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,null);
-            List<String> agentList = dbe.getNodeList(actionRegion, null);
-            for(String agent : agentList) {
-
-                    String sysInfoJson= controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,agent);
-                    if(sysInfoJson != null) {
-
-                        Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
-                        }.getType();
-
-                        Map<String, List<Map<String, String>>> myMap = gson.fromJson(sysInfoJson, type);
-
-                        cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
-
-                        memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
-                        memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
-
-                        for (Map<String, String> fsMap : myMap.get("fs")) {
-                            diskAvailable += Long.parseLong(fsMap.get("available-space"));
-                            diskTotal += Long.parseLong(fsMap.get("total-space"));
-                        }
-                    }
-
-            }
-
-            Map<String,String> resourceTotal = new HashMap<>();
-            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
-            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
-            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
-            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
-            resourceTotal.put("disk_total",String.valueOf(diskTotal));
-            regionArray.add(resourceTotal);
-            queryMap.put("regionresourceinfo",regionArray);
-
-            queryReturn = gson.toJson(queryMap);
-
-
-        } catch(Exception ex) {
-            logger.error("getRegionResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return queryReturn;
-
-    }
 
     /*
     public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
@@ -1217,13 +1090,6 @@ public class DBInterfaceImpl implements DBInterface {
     }
     */
 
-    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
-        String returnString = null;
-        returnString = controllerEngine.getPerfControllerMonitor().getKPIInfo(actionRegion,actionAgent,actionPluginId);
-        logger.debug("String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) " + returnString);
-
-        return returnString;
-    }
 
 
     //complete
@@ -1278,9 +1144,9 @@ public class DBInterfaceImpl implements DBInterface {
         return resourceTotal;
     }
 
-    public Map<String,NodeStatusType> getNodeStatus(String region, String agent, String plugin) {
+    public Map<String, NodeStatusType> getNodeStatus(String region, String agent, String plugin) {
 
-        Map<String,NodeStatusType> nodeStatusMap = null;
+        Map<String, NodeStatusType> nodeStatusMap = null;
         logger.error("Map<String,NodeStatusType> getNodeStatus(String region, String agent, String plugin)");
         return nodeStatusMap;
     }
@@ -1345,11 +1211,6 @@ public class DBInterfaceImpl implements DBInterface {
     public String getNodeId(String region, String agent, String plugin) {
         logger.error("String getNodeId(String region, String agent, String plugin)");
         return  null;
-    }
-
-    public List<String> getNodeList(String region, String agent, String plugin) {
-        logger.error("List<String> getNodeList(String region, String agent, String plugin)");
-        return null;
     }
 
     public String addIsAttachedEdge(String resource_id, String inode_id, String region, String agent, String plugin) {

@@ -2,6 +2,8 @@ package io.cresco.agent.controller.agentcontroller;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import io.cresco.agent.db.DBInterface;
+import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.messaging.MsgEvent;
@@ -27,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class PluginAdmin {
 
     private Gson gson;
+
+    private DBInterfaceImpl gdb;
 
     private int PLUGINLIMIT = 900;
     private int TRYCOUNT = 30;
@@ -55,8 +59,9 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(PluginBuilder pluginBuilder, AgentState agentState, BundleContext context) {
+    public PluginAdmin(PluginBuilder pluginBuilder, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
 
+        this.gdb = gdb;
         this.gson = new Gson();
         this.configMap = Collections.synchronizedMap(new HashMap<>());
         this.pluginMap = Collections.synchronizedMap(new HashMap<>());
@@ -426,8 +431,7 @@ public class PluginAdmin {
                             }
 
 
-
-                                if (startPlugin(pluginID)) {
+                            if (startPlugin(pluginID)) {
                                 returnPluginID = pluginID;
                             } else {
                                 System.out.println("Could not start agentcontroller " + pluginID + " pluginName " + pluginName + " no bundle " + jarFile);
@@ -474,12 +478,13 @@ public class PluginAdmin {
 
 
                 boolean isEmpty = false;
-                int id = 0;
+                //int id = 0;
+                String pluginId = UUID.randomUUID().toString();
                 while (!isEmpty) {
 
                     synchronized (lockConfig) {
-                        if (!configMap.containsKey("plugin/" + id)) {
-                            pluginID = "plugin/" + id;
+                        if (!configMap.containsKey(pluginID)) {
+                            pluginID = pluginId;
                             Configuration configuration = confAdmin.createFactoryConfiguration(pluginName + ".Plugin", null);
 
                             Dictionary properties = new Hashtable();
@@ -493,7 +498,8 @@ public class PluginAdmin {
                             isEmpty = true;
                         }
                     }
-                    id++;
+                    pluginId = UUID.randomUUID().toString();
+                    //id++;
                 }
 
 

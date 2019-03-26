@@ -3,19 +3,17 @@ package io.cresco.agent.controller.measurement;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
-import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.io.*;
+import java.lang.reflect.Type;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class PerfControllerMonitor {
@@ -32,13 +30,15 @@ public class PerfControllerMonitor {
     private Cache<String, String> kpiCacheType;
 
 
-
+    private Gson gson;
 
     public PerfControllerMonitor(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PerfControllerMonitor.class.getName(),CLogger.Level.Info);
         builder = new ControllerInfoBuilder(controllerEngine);
+
+        gson = new Gson();
 
         sysInfoCache = CacheBuilder.newBuilder()
                 .concurrencyLevel(4)
@@ -67,6 +67,151 @@ public class PerfControllerMonitor {
         timer.scheduleAtFixedRate(new PerfMonitorTask(plugin), 500L, interval);
 
 
+    }
+
+    public String getResourceInfo(String actionRegion, String actionAgent) {
+        String queryReturn = null;
+        try
+        {
+            if((actionRegion != null) && (actionAgent != null)) {
+                queryReturn = getAgentResourceInfo(actionRegion,actionAgent);
+            } else if (actionRegion != null) {
+                queryReturn = getRegionResourceInfo(actionRegion);
+            } else {
+                queryReturn = getRegionResourceInfo(null);
+            }
+
+        } catch(Exception ex) {
+            logger.error("getResourceInfo() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+
+    }
+
+    private String getRegionResourceInfo(String actionRegion) {
+        String queryReturn = null;
+
+        Map<String,List<Map<String,String>>> queryMap;
+
+
+        long cpu_core_count = 0;
+        long memoryAvailable = 0;
+        long memoryTotal = 0;
+        long diskAvailable = 0;
+        long diskTotal = 0;
+
+        try
+        {
+            queryMap = new HashMap<>();
+            List<Map<String,String>> regionArray = new ArrayList<>();
+
+
+            //List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,null);
+            List<String> agentList = controllerEngine.getGDB().getNodeList(actionRegion, null);
+            for(String agent : agentList) {
+
+                String sysInfoJson= controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,agent);
+                if(sysInfoJson != null) {
+
+                    Type type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+                    }.getType();
+
+                    Map<String, List<Map<String, String>>> myMap = gson.fromJson(sysInfoJson, type);
+
+                    cpu_core_count += Long.parseLong(myMap.get("cpu").get(0).get("cpu-logical-count"));
+
+                    memoryAvailable += Long.parseLong(myMap.get("mem").get(0).get("memory-available"));
+                    memoryTotal += Long.parseLong(myMap.get("mem").get(0).get("memory-total"));
+
+                    for (Map<String, String> fsMap : myMap.get("fs")) {
+                        diskAvailable += Long.parseLong(fsMap.get("available-space"));
+                        diskTotal += Long.parseLong(fsMap.get("total-space"));
+                    }
+                }
+
+            }
+
+            Map<String,String> resourceTotal = new HashMap<>();
+            resourceTotal.put("cpu_core_count",String.valueOf(cpu_core_count));
+            resourceTotal.put("mem_available",String.valueOf(memoryAvailable));
+            resourceTotal.put("mem_total",String.valueOf(memoryTotal));
+            resourceTotal.put("disk_available",String.valueOf(diskAvailable));
+            resourceTotal.put("disk_total",String.valueOf(diskTotal));
+            regionArray.add(resourceTotal);
+            queryMap.put("regionresourceinfo",regionArray);
+
+            queryReturn = gson.toJson(queryMap);
+
+
+        } catch(Exception ex) {
+            logger.error("getRegionResourceInfo() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+
+    }
+
+    private String getAgentResourceInfo(String actionRegion, String actionAgent) {
+        String queryReturn = null;
+
+        Map<String, List<Map<String,String>>> queryMap;
+
+        try
+        {
+            queryMap = new HashMap<>();
+            List<Map<String,String>> regionArray = new ArrayList<>();
+
+
+
+            Map<String,String> resourceTotal = new HashMap<>();
+            String perfString = controllerEngine.getPerfControllerMonitor().getSysInfo(actionRegion,actionAgent);
+            if(perfString != null) {
+                resourceTotal.put("perf", perfString);
+            }
+            regionArray.add(resourceTotal);
+
+
+            /*
+            List<String> inodeKPIList = dbe.getINodeKPIList(actionRegion,actionAgent);
+            for(String str : inodeKPIList) {
+                Map<String,String> resourceTotal = new HashMap<>();
+                resourceTotal.put("perf", dbe.uncompressString(str));
+                regionArray.add(resourceTotal);
+
+            }
+            */
+
+            queryMap.put("agentresourceinfo",regionArray);
+            queryReturn = gson.toJson(queryMap);
+
+        } catch(Exception ex) {
+            logger.error("getAgentResourceInfo() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
+        }
+
+        return queryReturn;
+
+    }
+
+
+    public String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) {
+        String returnString = null;
+        returnString = getKPIInfo(actionRegion,actionAgent,actionPluginId);
+        logger.debug("String getIsAttachedMetrics(String actionRegion, String actionAgent, String actionPluginId) " + returnString);
+
+        return returnString;
     }
 
     public PerfControllerMonitor start() {

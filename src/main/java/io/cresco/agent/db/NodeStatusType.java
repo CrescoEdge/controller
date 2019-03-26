@@ -1,4 +1,4 @@
-package io.cresco.agent.controller.db;
+package io.cresco.agent.db;
 
 public enum NodeStatusType {
 	STARTING,ACTIVE,STOPPPING,PENDINGSTALE,STALE,FAILED,PENDINGLOST,LOST,ERROR, DISABLED

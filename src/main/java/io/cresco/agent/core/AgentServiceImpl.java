@@ -3,6 +3,7 @@ package io.cresco.agent.core;
 
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.agent.ControllerState;
@@ -33,6 +34,7 @@ public class AgentServiceImpl implements AgentService {
     private AgentState agentState;
     private PluginBuilder plugin;
     private PluginAdmin pluginAdmin;
+    private DBInterfaceImpl gdb;
     private CLogger logger;
 
     //this needs to be pulled from Config
@@ -80,6 +82,7 @@ public class AgentServiceImpl implements AgentService {
                 configMsg = "Property > Env > " + configFile;
             }
 
+            /*
             //take all the system env varables with CRESCO and put them into the config
             Map<String,String> envMap = System.getenv();
             for (Map.Entry<String, String> entry : envMap.entrySet()) {
@@ -102,10 +105,16 @@ public class AgentServiceImpl implements AgentService {
                 Object value = entry.getValue();
                 System.out.println(key + ":" + value);
             }
+            */
 
+            //create plugin
             plugin = new PluginBuilder(this, this.getClass().getName(), context, map);
 
-            this.pluginAdmin = new PluginAdmin(plugin, agentState,context);
+            //create database
+            gdb = new DBInterfaceImpl(plugin);
+
+            //create admin
+            pluginAdmin = new PluginAdmin(plugin, agentState, gdb, context);
 
             logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
             pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
@@ -124,13 +133,13 @@ public class AgentServiceImpl implements AgentService {
 
             logger.info("Controller Starting Init");
 
-            controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin);
+            controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin, gdb);
 
             //preinit setup persistant data store
-            if(controllerEngine.preInit()) {
-                logger.info("Controller Completed Pre-Init");
+            if(controllerEngine.coreInit()) {
+                logger.info("Controller Completed Core-Init");
             } else {
-                logger.error("Controlled Failed Pre-Init : Exiting");
+                logger.error("Controlled Failed Core-Init : Exiting");
             }
 
             //logger.info("Controller Init");

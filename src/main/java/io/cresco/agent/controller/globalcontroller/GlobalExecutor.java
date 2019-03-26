@@ -315,7 +315,7 @@ public class GlobalExecutor implements Executor {
 
     private MsgEvent pluginKPI(MsgEvent ce) {
         try {
-            ce.setCompressedParam("pluginkpi", controllerEngine.getGDB().getIsAttachedMetrics(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin")));
+            ce.setCompressedParam("pluginkpi", controllerEngine.getPerfControllerMonitor().getIsAttachedMetrics(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin")));
             logger.trace("plugins KPI return : " + ce.getParams().toString());
         }
         catch(Exception ex) {
@@ -362,7 +362,7 @@ public class GlobalExecutor implements Executor {
                 actionRegionResourceInfo = ce.getParam("action_region");
             }
 
-            ce.setCompressedParam("resourceinfo",controllerEngine.getGDB().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
+            ce.setCompressedParam("resourceinfo",controllerEngine.getPerfControllerMonitor().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
 
         }
         catch(Exception ex) {

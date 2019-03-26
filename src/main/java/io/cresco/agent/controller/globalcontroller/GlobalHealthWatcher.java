@@ -2,13 +2,13 @@ package io.cresco.agent.controller.globalcontroller;
 
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.db.NodeStatusType;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
 import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv4;
 import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv6;
 import io.cresco.agent.controller.netdiscovery.DiscoveryType;
 import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
+import io.cresco.agent.db.NodeStatusType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;

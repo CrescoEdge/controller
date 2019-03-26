@@ -312,16 +312,16 @@ public class ResourceScheduler implements IncomingResource {
 		String agent_path = null;
 		try
 		{
-			List<String> regionList = controllerEngine.getGDB().getNodeList(null,null,null);
+			List<String> regionList = controllerEngine.getGDB().getNodeList(null,null);
 			//logger.debug("Region Count: " + regionList.size());
 			for(String region : regionList)
 			{
-				List<String> agentList = controllerEngine.getGDB().getNodeList(region,null,null);
+				List<String> agentList = controllerEngine.getGDB().getNodeList(region,null);
 				//logger.debug("Agent Count: " + agentList.size());
 				
 				for(String agent: agentList)
 				{
-					List<String> pluginList = controllerEngine.getGDB().getNodeList(region,agent,null);
+					List<String> pluginList = controllerEngine.getGDB().getNodeList(region,agent);
 					int pluginCount = 0;
 					if(pluginList != null)
 					{
