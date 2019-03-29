@@ -2,7 +2,6 @@ package io.cresco.agent.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.app.gNode;
 import io.cresco.library.app.gPayload;
@@ -31,16 +30,21 @@ public class DBInterfaceImpl implements DBInterface {
     public BlockingQueue<String> importQueue;
 
 
-    public DBInterfaceImpl(PluginBuilder plugin) {
+    public DBInterfaceImpl(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
-        this.dbe = new DBEngine(plugin);
+        this.dbe = dbe;
+        //this.dbe = new DBEngine(plugin);
 
         this.importQueue = new LinkedBlockingQueue<>();
         this.gson = new Gson();
         this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
 
+    }
+
+    public String getAgentId() {
+        return dbe.getAgentId();
     }
 
     public Map<String,String> getInodeMap(String inodeId) {
@@ -72,61 +76,17 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.nodeExist(region,agent,plugin);
     }
 
-    public boolean addPNode(String region, String agent, String plugin, String watchDogTimerString, String configParamsString, String pluginConfigsString) {
-        boolean wasAdded = false;
-
-        try {
-
-
-            //Is Agent
-            if((region != null) && (agent != null) && (plugin != null)) {
-
-                if(!dbe.nodeExist(region,agent,null)) {
-                    //fixme take into account current state
-                    //add region, this will need to be more complex in future
-                    dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(watchDogTimerString),System.currentTimeMillis(),configParamsString);
-                } else {
-                    dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(watchDogTimerString),System.currentTimeMillis(),configParamsString);
-                }
-
-                if (pluginConfigsString != null) {
-                    List<Map<String, String>> configMapList = new Gson().fromJson(pluginConfigsString,
-                            new TypeToken<List<Map<String, String>>>() {
-                            }.getType());
-
-                    //Add Plugin Information
-                    for (Map<String, String> configMap : configMapList) {
-                        String pluginId = configMap.get("pluginid");
-                        String status_code = configMap.get("status_code");
-                        String status_desc = configMap.get("status_desc");
-                        String configparams = configMap.get("configparams");
-
-                        logger.debug("Adding Sub-Node: " + configMap.toString());
-
-                        if(!nodeExist(region,agent,pluginId)) {
-                            //todo plugins need to list their watchdog peroid
-                            dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchDogTimerString), System.currentTimeMillis(), configparams);
-                        } else {
-                            dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchDogTimerString), System.currentTimeMillis(), configparams);
-                        }
-                    }
-                }
-            }
-
-            wasAdded = true;
-
-        } catch (Exception ex) {
-            System.out.println("GraphDBUpdater : addNode ERROR : " + ex.toString());
-        }
-
-        return wasAdded;
+    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams) {
+        dbe.addPNode(agent,plugin,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams);
     }
 
+    /*
     public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
         dbe.addNode(region,agent,plugin, status_code,status_desc,watchdog_period,watchdog_ts,configparams);
     }
+    */
 
-    public boolean addNode(MsgEvent de) {
+    public boolean addNodeFromUpdate(MsgEvent de) {
         boolean wasAdded = false;
 
         try {
@@ -184,11 +144,14 @@ public class DBInterfaceImpl implements DBInterface {
                         }
                     }
                 }
+
+                throw new NullPointerException("demo");
             }
 
             wasAdded = true;
 
         } catch (Exception ex) {
+            ex.printStackTrace();
             System.out.println("GraphDBUpdater : addNode ERROR : " + ex.toString());
         }
 
@@ -203,7 +166,6 @@ public class DBInterfaceImpl implements DBInterface {
         boolean wasUpdated = false;
 
         try {
-
 
             //logger.error("src_region:" + de.getSrcRegion() + " src_agent:" + de.getSrcAgent() + " src_plugin:" + de.getSrcPlugin());
             //logger.error(de.getParams().toString());
@@ -247,7 +209,7 @@ public class DBInterfaceImpl implements DBInterface {
                                 logger.debug("subpluginId:" + subpluginId + " status_code=" + status_code + " status_desc=" + status_desc + " watchdogtimer=" + configMap.get("watchdogtimer") + " configMap: " + configMap.toString());
 
                                 //todo plugins need to list their watchdog peroid
-                                dbe.addNode(region,agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(configMap.get("watchdogtimer")),System.currentTimeMillis(),configparams);
+                                //dbe.addNode(region,agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(configMap.get("watchdogtimer")),System.currentTimeMillis(),configparams);
                             }
                         }
 

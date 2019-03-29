@@ -51,106 +51,110 @@ public class AgentHealthWatcher {
       public boolean enable(boolean register) {
 	      boolean isRegistered = false;
 
-	      try {
+          if((!controllerEngine.cstate.isRegionalController()) || (!controllerEngine.cstate.isGlobalController()) ) {
+              try {
 
-	          while(!plugin.isActive()) {
-	              Thread.sleep(1000);
-              }
-
-              MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
-              enableMsg.setParam("action", "agent_enable");
-              enableMsg.setParam("watchdogtimer",watchDogTimerString);
-              enableMsg.setParam("req-seq", UUID.randomUUID().toString());
-              enableMsg.setParam("region_name",plugin.getRegion());
-              enableMsg.setParam("agent_name",plugin.getAgent());
-              enableMsg.setParam("desc","to-rc-agent");
-
-              jsonExport = controllerEngine.getPluginAdmin().getPluginExport();
-              enableMsg.setCompressedParam("pluginconfigs",jsonExport);
-
-
-              Map<String,String> configParams = new HashMap<>();
-
-
-              String platform = System.getenv("CRESCO_PLATFORM");
-              if(platform == null) {
-                  platform = plugin.getConfig().getStringParam("general", "platform");
-                  if(platform == null) {
-                      platform = "unknown";
+                  while (!plugin.isActive()) {
+                      Thread.sleep(1000);
                   }
-              }
 
-              configParams.put("platform", platform);
-              //enableMsg.setParam("platform", platform);
+                  MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+                  enableMsg.setParam("action", "agent_enable");
+                  enableMsg.setParam("watchdogtimer", watchDogTimerString);
+                  enableMsg.setParam("req-seq", UUID.randomUUID().toString());
+                  enableMsg.setParam("region_name", plugin.getRegion());
+                  enableMsg.setParam("agent_name", plugin.getAgent());
+                  enableMsg.setParam("desc", "to-rc-agent");
 
-              String environment = System.getenv("CRESCO_ENVIRONMENT");
-              if(environment == null) {
-                  environment = plugin.getConfig().getStringParam("general", "environment");
-                  if(environment == null) {
-                      try {
-                          environment = System.getProperty("os.name");
-                      } catch (Exception ex) {
-                          environment = "unknown";
+                  jsonExport = controllerEngine.getPluginAdmin().getPluginExport();
+                  enableMsg.setCompressedParam("pluginconfigs", jsonExport);
+
+
+                  Map<String, String> configParams = new HashMap<>();
+
+
+                  String platform = System.getenv("CRESCO_PLATFORM");
+                  if (platform == null) {
+                      platform = plugin.getConfig().getStringParam("general", "platform");
+                      if (platform == null) {
+                          platform = "unknown";
                       }
                   }
-              }
-              //enableMsg.setParam("environment", environment);
-              configParams.put("environment", environment);
 
-              //String location = System.getenv("CRESCO_LOCATION");
-              String location = plugin.getConfig().getStringParam("location");
-              if(location == null) {
+                  configParams.put("platform", platform);
+                  //enableMsg.setParam("platform", platform);
+
+                  String environment = System.getenv("CRESCO_ENVIRONMENT");
+                  if (environment == null) {
+                      environment = plugin.getConfig().getStringParam("general", "environment");
+                      if (environment == null) {
+                          try {
+                              environment = System.getProperty("os.name");
+                          } catch (Exception ex) {
+                              environment = "unknown";
+                          }
+                      }
+                  }
+                  //enableMsg.setParam("environment", environment);
+                  configParams.put("environment", environment);
+
+                  //String location = System.getenv("CRESCO_LOCATION");
+                  String location = plugin.getConfig().getStringParam("location");
+                  if (location == null) {
 
                       try {
                           location = InetAddress.getLocalHost().getHostName();
-                          if(location != null) {
+                          if (location != null) {
                               logger.info("Location set: " + location);
                           }
-                      } catch(Exception ex) {
+                      } catch (Exception ex) {
                           logger.error("getLocalHost() Failed : " + ex.getMessage());
                       }
 
-                if(location == null) {
-                  try {
+                      if (location == null) {
+                          try {
 
-                      String osType = System.getProperty("os.name").toLowerCase();
-                      if(osType.equals("windows")) {
-                          location = System.getenv("COMPUTERNAME");
-                      } else if(osType.equals("linux")) {
-                          location = System.getenv("HOSTNAME");
+                              String osType = System.getProperty("os.name").toLowerCase();
+                              if (osType.equals("windows")) {
+                                  location = System.getenv("COMPUTERNAME");
+                              } else if (osType.equals("linux")) {
+                                  location = System.getenv("HOSTNAME");
+                              }
+
+                              if (location != null) {
+                                  logger.info("Location set env: " + location);
+                              }
+
+                          } catch (Exception exx) {
+                              //do nothing
+                              logger.error("Get System Env Failed : " + exx.getMessage());
+                          }
                       }
-
-                      if(location != null) {
-                          logger.info("Location set env: " + location);
-                      }
-
-                  } catch(Exception exx) {
-                      //do nothing
-                      logger.error("Get System Env Failed : " + exx.getMessage());
                   }
-                      }
-              }
-              if(location == null) {
-                  location = "unknown";
-              }
-              //enableMsg.setParam("location", location);
-              configParams.put("location", location);
+                  if (location == null) {
+                      location = "unknown";
+                  }
+                  //enableMsg.setParam("location", location);
+                  configParams.put("location", location);
 
-              enableMsg.setParam("configparams",gson.toJson(configParams));
+                  enableMsg.setParam("configparams", gson.toJson(configParams));
 
-              MsgEvent re = plugin.sendRPC(enableMsg);
-              if(re != null) {
-                  logger.info("AgentHealthWatcher Started.");
-                  isRegistered = true;
-              } else {
-                  logger.error("Could not confirm AgentHealthWatcher Reg!");
+                  MsgEvent re = plugin.sendRPC(enableMsg);
+                  if (re != null) {
+                      logger.info("AgentHealthWatcher Started.");
+                      isRegistered = true;
+                  } else {
+                      logger.error("Could not confirm AgentHealthWatcher Reg!");
+                  }
+
+              } catch (Exception ex) {
+                  logger.error("Enable Failed !" + ex.getMessage());
               }
 
-          } catch(Exception ex) {
-	          logger.error("Enable Failed !" + ex.getMessage());
+              return isRegistered;
+          } else {
+              return true;
           }
-
-	      return isRegistered;
       }
 
       public void shutdown(boolean unregister) {
@@ -171,25 +175,31 @@ public class AgentHealthWatcher {
       }
 
       public void sendUpdate() {
-          long runTime = System.currentTimeMillis() - startTS;
-          wdMap.put("runtime", String.valueOf(runTime));
-          wdMap.put("timestamp", String.valueOf(System.currentTimeMillis()));
 
-          MsgEvent le = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.WATCHDOG);
+          if((!controllerEngine.cstate.isRegionalController()) || (!controllerEngine.cstate.isGlobalController()) ) {
+              long runTime = System.currentTimeMillis() - startTS;
+              wdMap.put("runtime", String.valueOf(runTime));
+              wdMap.put("timestamp", String.valueOf(System.currentTimeMillis()));
 
-          le.setParam("desc","to-rc-agent");
-          le.setParam("region_name",plugin.getRegion());
-          le.setParam("agent_name",plugin.getAgent());
+              MsgEvent le = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.WATCHDOG);
+
+              le.setParam("desc", "to-rc-agent");
+              le.setParam("region_name", plugin.getRegion());
+              le.setParam("agent_name", plugin.getAgent());
 
 
-          String tmpJsonExport = controllerEngine.getPluginAdmin().getPluginExport();
-          if(!jsonExport.equals(tmpJsonExport)) {
+              String tmpJsonExport = controllerEngine.getPluginAdmin().getPluginExport();
+              if (!jsonExport.equals(tmpJsonExport)) {
 
-              jsonExport = tmpJsonExport;
-              le.setCompressedParam("pluginconfigs", jsonExport);
+                  jsonExport = tmpJsonExport;
+                  le.setCompressedParam("pluginconfigs", jsonExport);
+              }
+
+              plugin.msgOut(le);
+          } else {
+              //need to update timer in DB
+
           }
-
-          plugin.msgOut(le);
       }
 
 	class WatchDogTask extends TimerTask 

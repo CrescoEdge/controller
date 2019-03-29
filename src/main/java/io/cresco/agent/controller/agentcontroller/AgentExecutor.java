@@ -436,7 +436,7 @@ public class AgentExecutor implements Executor {
         boolean isFound = false;
         try {
 
-            logger.error("REQUESTING JAR : " + node.name);
+            logger.debug("REQUESTING JAR : " + node.name);
             String pluginName = node.name;
             String pluginMD5 = node.md5;
             String jarFile = node.jarfile;
@@ -457,7 +457,7 @@ public class AgentExecutor implements Executor {
 
                     String jarFileSavePath = getRepoCacheDir().getAbsolutePath() + "/" + jarFile;
 
-                    logger.error("SAVE FILE : " + jarFileSavePath);
+                    logger.debug("SAVE FILE : " + jarFileSavePath);
 
                     Path path = Paths.get(jarFileSavePath);
                     Files.write(path, retMsg.getDataParam("jardata"));
@@ -466,7 +466,7 @@ public class AgentExecutor implements Executor {
                         String md5 = plugin.getMD5(jarFileSavePath);
                         if(pluginMD5.equals(md5)) {
                             isFound = true;
-                            logger.error("SAVE FILE : " + jarFileSavePath + " isFound" + isFound);
+                            logger.debug("SAVE FILE : " + jarFileSavePath + " isFound" + isFound);
                         }
                     }
                 }

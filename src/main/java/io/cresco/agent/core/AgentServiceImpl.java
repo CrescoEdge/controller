@@ -3,6 +3,8 @@ package io.cresco.agent.core;
 
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.db.ControllerStatePersistanceImp;
+import io.cresco.agent.db.DBEngine;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
@@ -16,6 +18,7 @@ import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.*;
 
 import java.io.File;
+import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -34,6 +37,7 @@ public class AgentServiceImpl implements AgentService {
     private AgentState agentState;
     private PluginBuilder plugin;
     private PluginAdmin pluginAdmin;
+    private DBEngine dbe;
     private DBInterfaceImpl gdb;
     private CLogger logger;
 
@@ -46,41 +50,132 @@ public class AgentServiceImpl implements AgentService {
 
     }
 
+    private Map<String,Object> initAgentConfigMap() {
+        Map<String, Object> configParams = null;
+        try {
+
+            configParams = new HashMap<>();
+
+            String agentConfig = System.getProperty("agentConfig");
+
+            if (agentConfig == null) {
+                agentConfig = "conf/agent.ini";
+            }
+
+            File configFile = new File(agentConfig);
+            Config config = null;
+            if (configFile.isFile()) {
+
+                //Agent Config
+                config = new Config(configFile.getAbsolutePath());
+                configParams = config.getConfigMap();
+
+            }
+
+            /*
+            String configMsg = "Property > Env";
+
+            if (config == null) {
+                configParams = new HashMap<>();
+            } else {
+                configMsg = "Property > Env > " + configFile;
+            }
+            */
+
+
+            String platform = System.getenv("CRESCO_PLATFORM");
+            if (platform == null) {
+
+                if(config != null) {
+                    platform = config.getStringParams("general", "platform");
+                }
+
+                if (platform == null) {
+                    platform = "unknown";
+                }
+            }
+
+            configParams.put("platform", platform);
+            //enableMsg.setParam("platform", platform);
+
+            String environment = System.getenv("CRESCO_ENVIRONMENT");
+            if (environment == null) {
+
+                if(config != null) {
+                    environment = config.getStringParams("general", "environment");
+                }
+
+                if (environment == null) {
+                    try {
+                        environment = System.getProperty("os.name");
+                    } catch (Exception ex) {
+                        environment = "unknown";
+                    }
+                }
+            }
+            //enableMsg.setParam("environment", environment);
+            configParams.put("environment", environment);
+
+            String location = System.getenv("CRESCO_LOCATION");
+            if(location == null) {
+
+                if(config != null) {
+                    location = config.getStringParams("general", "location");
+                }
+            }
+            if (location == null) {
+
+                try {
+                    location = InetAddress.getLocalHost().getHostName();
+                    if (location != null) {
+                        //logger.info("Location set: " + location);
+                    }
+                } catch (Exception ex) {
+                    //logger.error("getLocalHost() Failed : " + ex.getMessage());
+                }
+
+                if (location == null) {
+                    try {
+
+                        String osType = System.getProperty("os.name").toLowerCase();
+                        if (osType.equals("windows")) {
+                            location = System.getenv("COMPUTERNAME");
+                        } else if (osType.equals("linux")) {
+                            location = System.getenv("HOSTNAME");
+                        }
+
+                        if (location != null) {
+                            //logger.info("Location set env: " + location);
+                        }
+
+                    } catch (Exception exx) {
+                        //do nothing
+                        //logger.error("Get System Env Failed : " + exx.getMessage());
+                    }
+                }
+            }
+            if (location == null) {
+                location = "unknown";
+            }
+            //enableMsg.setParam("location", location);
+            configParams.put("location", location);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            System.exit(0);
+        }
+        return configParams;
+    }
+
     @Activate
     void activate(BundleContext context) {
 
 
-            this.controllerState = new ControllerState();
-            this.agentState = new AgentState(controllerState);
-
 
         try {
 
-            String agentConfig = System.getProperty("agentConfig");
 
-            if(agentConfig == null) {
-                agentConfig = "conf/agent.ini";
-            }
+            Map<String,Object> configParams = initAgentConfigMap();
 
-            Map<String,Object> map = null;
-
-            File configFile  = new File(agentConfig);
-            Config config = null;
-            if(configFile.isFile()) {
-
-                //Agent Config
-                config = new Config(configFile.getAbsolutePath());
-                map = config.getConfigMap();
-
-            }
-
-            String configMsg = "Property > Env";
-
-            if(config == null) {
-                map = new HashMap<>();
-            } else {
-                configMsg = "Property > Env > " + configFile;
-            }
 
             /*
             //take all the system env varables with CRESCO and put them into the config
@@ -108,10 +203,22 @@ public class AgentServiceImpl implements AgentService {
             */
 
             //create plugin
-            plugin = new PluginBuilder(this, this.getClass().getName(), context, map);
+            plugin = new PluginBuilder(this, this.getClass().getName(), context, configParams);
 
-            //create database
-            gdb = new DBInterfaceImpl(plugin);
+
+            dbe = new DBEngine(plugin);
+
+            //create controller database implementation
+            gdb = new DBInterfaceImpl(plugin, dbe);
+
+            //create controller state persistance
+            ControllerStatePersistanceImp controllerStatePersistanceImp = new ControllerStatePersistanceImp(plugin,dbe);
+
+            //control state
+            this.controllerState = new ControllerState(controllerStatePersistanceImp);
+
+            //agent state
+            this.agentState = new AgentState(controllerState);
 
             //create admin
             pluginAdmin = new PluginAdmin(plugin, agentState, gdb, context);
@@ -127,7 +234,7 @@ public class AgentServiceImpl implements AgentService {
             logger.info("   /  /____   /  /  |  |   /  /____   _____/  /  /  /____   /  /__/  /");
             logger.info("  /_______/  /__/   |__|  /_______/  /_______/  /_______/  /________/");
             logger.info("");
-            logger.info("      Configuration Source : {}", configMsg);
+            //logger.info("      Configuration Source : {}", configMsg);
             //logger.info("      Plugin Configuration File: {}", config.getPluginConfigFile());
             logger.info("");
 
@@ -175,6 +282,7 @@ public class AgentServiceImpl implements AgentService {
         if(controllerEngine != null) {
             controllerEngine.closeCommunications();
         }
+
 
         if(gdb != null) {
             gdb.shutdown();

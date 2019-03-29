@@ -123,6 +123,30 @@ public class ControllerEngine {
     public Boolean coreInit() {
         boolean isCoreInit = false;
         try {
+            //set agent name
+
+            boolean setAgentId = true;
+            String tmpAgent = plugin.getConfig().getStringParam("agentname");
+            if(tmpAgent == null) {
+                tmpAgent = gdb.getAgentId();
+                if(tmpAgent == null) {
+                    tmpAgent = "agent-" + java.util.UUID.randomUUID().toString();
+                } else {
+                    setAgentId = false;
+                }
+            }
+
+            cstate.setStandaloneInit(tmpAgent,"Core Init");
+
+            /*
+            if(setAgentId) {
+                // addANode(agent,status_code,status_desc,watchdog_period,watchdog_ts,configparams);
+                gdb.addANode(tmpAgent,0,"Core Init",0,0,null);
+                gdb.setAgentId(tmpAgent);
+            }
+            */
+
+
             //establish backend database
             //removed region consumer, no longer needed things to go agents
             //this.gdb = new DBInterfaceImpl(this);
@@ -339,8 +363,10 @@ public class ControllerEngine {
                 while(!isInit) {
 
                     String tmpRegion = discoveryList.get(0).getParam("dst_region");
-                    String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
-                    cstate.setAgentInit(tmpRegion,tmpAgent,"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
+                    //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
+
+                    //Agent Name now set on core init
+                    cstate.setAgentInit(tmpRegion,cstate.getAgent(),"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
                     //this.agent = agentcontroller.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
                     //this.agentpath = tmpRegion + "_" + this.agent;
                     certificateManager = new CertificateManager(this, cstate.getAgentPath());
@@ -416,8 +442,9 @@ public class ControllerEngine {
 
                     if ((pcbrokerAddress != null) && (pcbrokerValidatedAuthenication != null)) {
 
-                        String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
-                        cstate.setAgentInit(pcRegion,tmpAgent,"initAgent() : Dynamic Discovery");
+                        //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
+                        //agent name now set on core init
+                        cstate.setAgentInit(pcRegion,cstate.getAgent(),"initAgent() : Dynamic Discovery");
 
                         certificateManager = new CertificateManager(this, cstate.getAgentPath());
 
@@ -450,13 +477,14 @@ public class ControllerEngine {
                                 cbrokerAddress = "[" + cbrokerAddress + "]";
                             }
 
-                            tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
+                            //tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
 
                             this.brokerAddressAgent = cbrokerAddress;
 
                             logger.info("Assigned regionid=" + cstate.getRegion());
                             logger.debug("AgentPath=" + cstate.getAgentPath());
-                            this.cstate.setAgentSuccess(cRegion, tmpAgent, "initAgent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
+                            //agent name not set on core init
+                            this.cstate.setAgentSuccess(cRegion, cstate.getAgent(), "initAgent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
                             isInit = true;
                         }
                     }
@@ -744,8 +772,8 @@ public class ControllerEngine {
         boolean isInit = false;
         try {
             String tmpRegion = plugin.getConfig().getStringParam("regionname", "region-" + java.util.UUID.randomUUID().toString());
-            String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
-            cstate.setRegionInit(tmpRegion,tmpAgent,"initRegion() TS :" + System.currentTimeMillis());
+            //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
+            cstate.setRegionInit(tmpRegion,cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
             logger.debug("Generated regionid=" + cstate.getRegion());
 
             certificateManager = new CertificateManager(this,cstate.getAgentPath());

@@ -2,9 +2,7 @@ package io.cresco.agent.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
-import io.cresco.library.utilities.CLogger;
 import org.apache.commons.dbcp2.*;
 import org.apache.commons.pool2.ObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPool;
@@ -14,10 +12,7 @@ import javax.xml.bind.DatatypeConverter;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -26,40 +21,39 @@ public class DBEngine {
 
     private DataSource ds;
     private Gson gson;
-    private PluginBuilder plugin;
-    private CLogger logger;
     private DBType dbType = DBType.EMBEDDED;
 
+    private List<String> tablesNames;
 
     public DBEngine(PluginBuilder plugin) {
-        this.plugin = plugin;
-        this.logger = plugin.getLogger(DBEngine.class.getName(),CLogger.Level.Info);
 
         try {
+
+            tablesNames = new ArrayList<>();
+            tablesNames.add("inodekpi");
+            tablesNames.add("vnode");
+            tablesNames.add("inode");
+            tablesNames.add("resourcenode");
+            tablesNames.add("tenantnode");
+            tablesNames.add("pluginof");
+            tablesNames.add("pnode");
+            tablesNames.add("agentof");
+            tablesNames.add("anode");
+            tablesNames.add("rnode");
 
             this.gson = new Gson();
 
             String defaultDBName = "cresco-controller-db";
-            String dbName  = plugin.getConfig().getStringParam("db_name",defaultDBName);
+            String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
 
-            String dbDriver = plugin.getConfig().getStringParam("db_driver","org.apache.derby.jdbc.EmbeddedDriver");
+            String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");
             //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
-            if(dbDriver.contains("mysql")) {
+            if (dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
             }
 
-            if(dbType == DBType.EMBEDDED) {
-                if (dbName.equals(defaultDBName)) {
-                    File dbsource = new File("database");
-                    if (dbsource.exists()) {
-                        delete(dbsource);
-                    } else {
-                        dbsource.mkdir();
-                    }
-                }
-            }
 
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:derby:" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc", "jdbc:derby:" + dbName + ";create=true");
             //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
 
 
@@ -68,8 +62,8 @@ public class DBEngine {
 
             Class.forName(dbDriver);
 
-            if((dbUserName != null) && (dbPassword != null)) {
-                ds = setupDataSource(dbConnectionString,dbUserName, dbPassword);
+            if ((dbUserName != null) && (dbPassword != null)) {
+                ds = setupDataSource(dbConnectionString, dbUserName, dbPassword);
             } else {
                 ds = setupDataSource(dbConnectionString);
             }
@@ -80,10 +74,32 @@ public class DBEngine {
             //Class.forName("com.mysql.cj.jdbc.Driver");
             //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");
 
+            if (dbType == DBType.EMBEDDED) {
+                if (dbName.equals(defaultDBName)) {
+                    File dbsource = new File(defaultDBName);
+                    if (dbsource.exists()) {
+                        //delete(dbsource);
+                    } else {
+                        //dbsource.mkdir();
+                        initDB();
 
-            initDB();
+                        addTenant(0, "default tenant");
+                    }
+                }
+            }
 
-            addTenant(0,"default tenant");
+            /*
+            if (!checkSchema()) {
+
+
+                initDB();
+
+            addTenant(0, "default tenant");
+            }
+            */
+
+            //do something here to clean up schema
+
             //addResource("sysinfo_resource","Performance Metrics",0,0,"added by DBEngine by default", null);
 
             //Class.forName("com.mysql.cj.jdbc.Driver");
@@ -101,7 +117,34 @@ public class DBEngine {
         }
     }
 
+    public boolean checkSchema() {
+        boolean isOk = true;
+        try {
+            List<String> existingTables = new ArrayList<>();
 
+            Connection conn = ds.getConnection();
+            DatabaseMetaData md = conn.getMetaData();
+
+            ResultSet rs = md.getTables(null, null, "%", null);
+            while (rs.next()) {
+                existingTables.add(rs.getString(3).toLowerCase());
+                System.out.println(rs.getString(3));
+            }
+
+            rs.close();
+            conn.close();
+
+            for(String table : tablesNames) {
+                if (!existingTables.contains(table)) {
+                    System.out.println("TABLE DOES NOT EXIST: " + table);
+                    return false;
+                }
+            }
+        } catch (Exception ex) {
+            System.out.println("Schema is invalid");
+        }
+        return isOk;
+    }
 
     public void updateNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
@@ -151,6 +194,83 @@ public class DBEngine {
                         ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
                         "WHERE region_id='" + region + "'";
             }
+
+            stmt.executeUpdate(stmtString);
+            stmt.close();
+            conn.close();
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    String createCState = "CREATE TABLE cstate" +
+            "(" +
+            "   config_ts bigint unique NOT NULL," +
+            "   current_mode varchar(43) NOT NULL," +
+            "   current_desc varchar(255)," +
+            "   global_region varchar(43)," +
+            "   global_agent varchar(43)," +
+            "   regional_region varchar(43)," +
+            "   regional_agent varchar(43)," +
+            "   local_region varchar(43)," +
+            "   local_agent varchar(43)," +
+            ")";
+
+    public void addCStateEvent(long config_ts, String current_mode, String current_desc, String global_region, String global_agent, String regional_region, String regional_agent, String local_region, String local_agent) {
+
+        try {
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+            String stmtString = null;
+
+            stmtString = "INSERT INTO cstate values (" + config_ts + ",'" + current_mode + "','" + current_desc + "','" + global_region + "','" + global_agent + "','" + regional_region + "','" + regional_agent + "','" + local_region + "','" + local_agent + "')";
+
+            stmt.executeUpdate(stmtString);
+            stmt.close();
+            conn.close();
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void updateRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+
+        try {
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+            String stmtString = null;
+
+
+            stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                    ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                    "WHERE region_id='" + region + "'";
+
+
+
+            stmt.executeUpdate(stmtString);
+            stmt.close();
+            conn.close();
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void updateANode(String agent, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+
+        try {
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+            String stmtString = null;
+
+
+                stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                        "WHERE agent_id='" + agent + "'";
+
+
 
             stmt.executeUpdate(stmtString);
             stmt.close();
@@ -224,6 +344,59 @@ public class DBEngine {
         }
         return inodeResourceList;
     }
+
+    public String getAgentId() {
+        String agentId = null;
+        try {
+
+            String queryString = null;
+
+            queryString = "SELECT agent_id FROM aconfig";
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            if(rs.next()) {
+                agentId = rs.getString(1);
+            }
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return agentId;
+    }
+
+    public boolean setAgentId(String agentId) {
+        boolean isSet = false;
+        try {
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+            String delString = "DELETE FROM aconfig";
+            String insertString = "INSERT INTO aconfig values('" + agentId + "')";
+
+            int count = 0;
+            count += stmt.executeUpdate(delString);
+            count += stmt.executeUpdate(insertString);
+
+            if(count == 2) {
+                isSet = true;
+            }
+
+
+            stmt.close();
+            conn.close();
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return isSet;
+    }
+
 
     public int getINodeStatus(String inodeId) {
         int status_code = -1;
@@ -335,18 +508,30 @@ public class DBEngine {
 
             if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
-                queryString = "SELECT configparams " + "FROM pnode " +
-                        "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "' and plugin_id = '" + pluginId + "'";
+                queryString = "SELECT P.configparams FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND P.PLUGIN_ID = '" + pluginId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
-                queryString = "SELECT configparams " + "FROM anode " +
-                        "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "'";
+                queryString = "SELECT A.configparams FROM ANODE A, RNODE R, AGENTOF O " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND R.REGION_ID = O.REGION_ID " +
+                        "AND O.AGENT_ID = A.AGENT_ID ";
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
                 queryString = "SELECT configparams " + "FROM rnode " +
                         "WHERE region_id = '" + regionId + "'";
             }
+
+            //System.out.println("QUERY: [" + queryString + "]");
 
 
             Connection conn = ds.getConnection();
@@ -363,10 +548,10 @@ public class DBEngine {
 
         } catch(Exception ex) {
             ex.printStackTrace();
-            logger.error(ex.getMessage());
+            System.out.println(ex.getMessage());
             StringWriter errors = new StringWriter();
             ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
+            System.out.println(errors.toString());
         }
         return configParams;
     }
@@ -379,19 +564,28 @@ public class DBEngine {
 
             if((regionId != null) && (agentId != null)) {
                 //agent
-                queryString = "SELECT count(plugin_id) FROM pnode "
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "'";
+
+                queryString = "SELECT count(P.PLUGIN_ID) FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
-                queryString = "SELECT count(agent_id) FROM anode "
-                        + " WHERE region_id='" + regionId + "'";
+
+                queryString = "SELECT count(A.agent_id) FROM ANODE A, RNODE R, AGENTOF O "
+                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID ";
 
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
-                queryString = "SELECT count(region_id) FROM anode ";
+                queryString = "SELECT count(region_id) FROM rnode ";
             }
+
 
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
@@ -482,6 +676,158 @@ public class DBEngine {
         return queryReturn;
     }
 
+    public void addRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+
+        try {
+            Connection conn = ds.getConnection();
+            try
+            {
+                conn.setAutoCommit(false);
+
+                Statement stmt = conn.createStatement();
+
+                String insertRNodeString = "insert into rnode (region_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
+                        "values ('" + region + "'," + status_code + ",'" + status_desc + "'," +
+                        watchdog_period + "," + watchdog_ts + ",'" +
+                        configparams + "')";
+
+                stmt.executeUpdate(insertRNodeString);
+
+                stmt.close();
+
+                conn.commit();
+            }
+            catch(Exception e)
+            {
+                conn.rollback();
+                e.printStackTrace();
+            }
+            finally
+            {
+                conn.close();
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void addANode(String agent, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+
+        try {
+            Connection conn = ds.getConnection();
+            try
+            {
+                conn.setAutoCommit(false);
+
+                Statement stmt = conn.createStatement();
+
+                String insertANodeString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
+                        "values ('" + agent + "'," + status_code + ",'" + status_desc + "'," +
+                        watchdog_period + "," + watchdog_ts + ",'" +
+                        configparams + "')";
+
+                stmt.executeUpdate(insertANodeString);
+
+                stmt.close();
+
+                conn.commit();
+            }
+            catch(Exception e)
+            {
+                conn.rollback();
+                e.printStackTrace();
+            }
+            finally
+            {
+                conn.close();
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void assoicateANodetoRNode(String region, String agent) {
+        try {
+            Connection conn = ds.getConnection();
+            try
+            {
+
+                Statement stmt = conn.createStatement();
+
+                String insertANodeToRNode = "insert into agentof (region_id, agent_id) " +
+                        "values ('" + region + "','" + agent + "')";
+
+                stmt.executeUpdate(insertANodeToRNode);
+                stmt.close();
+
+            }
+            catch(Exception e)
+            {
+                conn.rollback();
+                e.printStackTrace();
+            }
+            finally
+            {
+                conn.close();
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams) {
+
+
+        try {
+            Connection conn = ds.getConnection();
+            try
+            {
+                conn.setAutoCommit(false);
+
+                Statement stmt = conn.createStatement();
+
+                String insertPNodeString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams) " +
+                        "values ('" + plugin + "'," + status_code + ",'" + status_desc + "'," +
+                        watchdog_period + "," + watchdog_ts + ",'" +
+                        pluginname + "','" + jarfile + "','" + version + "','" + md5 + "','" +
+                        configparams + "')";
+
+                String insertPNodeToANode = "insert into pluginof (agent_id, plugin_id) " +
+                        "values ('" + agent + "','" + plugin + "')";
+
+                stmt.executeUpdate(insertPNodeString);
+                //force update of pnode, so the next command does not fail.
+                conn.commit();
+
+                stmt.executeUpdate(insertPNodeToANode);
+
+
+                stmt.close();
+
+                conn.commit();
+            }
+            catch(Exception e)
+            {
+                conn.rollback();
+                e.printStackTrace();
+            }
+            finally
+            {
+                conn.close();
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
     public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try {
@@ -517,14 +863,14 @@ public class DBEngine {
 
                 }
 
-                stmtString = "insert into pnode (region_id,agent_id,plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams) " +
-                        "values ('" + region + "','" + agent + "','" + plugin + "'," + status_code + ",'" + status_desc + "'," +
+                stmtString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams) " +
+                        "values ('" + plugin + "'," + status_code + ",'" + status_desc + "'," +
                         watchdog_period + "," + watchdog_ts + ",'" +
                         pluginname + "','" + jarfile + "','" + version + "','" + md5 + "','" +
                         configparams + "')";
             } else if((region != null) && (agent != null) && (plugin == null)) {
-                stmtString = "insert into anode (region_id,agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
-                        "values ('" + region + "','" + agent + "'," + status_code + ",'" + status_desc + "'," + watchdog_period + "," + watchdog_ts + ",'" + configparams + "')";
+                stmtString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
+                        "values ('" + agent + "'," + status_code + ",'" + status_desc + "'," + watchdog_period + "," + watchdog_ts + ",'" + configparams + "')";
             } else if((region != null) && (agent == null) && (plugin == null)) {
                 stmtString= "insert into rnode (region_id,status_code,status_desc,watchdog_period, watchdog_ts,configparams) " +
                         "values ('" + region + "'," + status_code + ",'" + status_desc + "'," + watchdog_period + "," + watchdog_ts + ",'" + configparams + "')";
@@ -587,10 +933,10 @@ public class DBEngine {
 
         } catch(Exception ex) {
             //ex.printStackTrace();
-            logger.error("inodeKPIExist()");
+            System.out.println("inodeKPIExist()");
             StringWriter errors = new StringWriter();
             ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
+            System.out.println(errors.toString());
 
         }
         return exist;
@@ -848,7 +1194,7 @@ public class DBEngine {
         return statusMap;
     }
 
-    public void initDB() {
+    public void initDBOld() {
 
 
         String largeFieldType = "clob";
@@ -1002,6 +1348,226 @@ public class DBEngine {
         }
     }
 
+    public void initDB() {
+
+//ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent
+
+        String largeFieldType = "clob";
+
+        if(dbType == DBType.MYSQL) {
+            largeFieldType = "blob";
+        }
+
+        String createCState = "CREATE TABLE cstate" +
+                "(" +
+                "   config_ts bigint unique NOT NULL," +
+                "   current_mode varchar(43) NOT NULL," +
+                "   current_desc varchar(255)," +
+                "   global_region varchar(43)," +
+                "   global_agent varchar(43)," +
+                "   regional_region varchar(43)," +
+                "   regional_agent varchar(43)," +
+                "   local_region varchar(43)," +
+                "   local_agent varchar(43)" +
+                ")";
+
+        String createRNode = "CREATE TABLE rnode" +
+                "(" +
+                "   region_id varchar(43) primary key NOT NULL," +
+                "   status_code int," +
+                "   status_desc varchar(255)," +
+                "   watchdog_period int," +
+                "   watchdog_ts bigint," +
+                "   configparams varchar(255)" +
+                ")";
+
+        String createANode = "CREATE TABLE anode" +
+                "(" +
+                //"   region_id varchar(43) NOT NULL," +
+                "   agent_id varchar(42) primary key NOT NULL," +
+                "   status_code int," +
+                "   status_desc varchar(255)," +
+                "   watchdog_period int," +
+                "   watchdog_ts bigint," +
+                "   configparams varchar(255)" +
+                //"   FOREIGN KEY (region_id) REFERENCES rnode(region_id) " +
+                ")";
+
+        String createAgentConfig = "CREATE TABLE aconfig" +
+                "(" +
+                "   agent_id varchar(42) primary key NOT NULL," +
+                "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id) " +
+                ")";
+
+
+        String createAgentOf = "CREATE TABLE agentof" +
+                "(" +
+                "   region_id varchar(43) NOT NULL," +
+                "   agent_id varchar(42) NOT NULL," +
+                "   FOREIGN KEY (region_id) REFERENCES rnode(region_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id) ON DELETE CASCADE" +
+                ")";
+
+        String createPNode = "CREATE TABLE pnode" +
+                "(" +
+                //"   region_id varchar(43) NOT NULL," +
+                //"   agent_id varchar(42) NOT NULL," +
+                "   plugin_id varchar(43) primary key NOT NULL," +
+                "   status_code int," +
+                "   status_desc varchar(255)," +
+                "   watchdog_period int," +
+                "   watchdog_ts bigint," +
+                "   pluginname varchar(255)," +
+                "   jarfile varchar(255)," +
+                "   version varchar(255)," +
+                "   md5 varchar(255)," +
+                "   configparams " + largeFieldType + "," +
+                "   persistence_code int DEFAULT 0" +
+                //"   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
+                //"   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
+                //"   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
+                ")";
+
+        String createPluginOf = "CREATE TABLE pluginof" +
+                "(" +
+                "   agent_id varchar(42) NOT NULL," +
+                "   plugin_id varchar(43) NOT NULL," +
+                "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (plugin_id) REFERENCES pnode(plugin_id) ON DELETE CASCADE " +
+                ")";
+
+        String createTenantNode = "CREATE TABLE tenantnode" +
+                "(" +
+                "   tenant_id int primary key NOT NULL," +
+                "   tenantname varchar(255)" +
+                ")";
+
+        String createResourceNode = "CREATE TABLE resourcenode" +
+                "(" +
+                "   resource_id varchar(45) primary key NOT NULL," +
+                "   resource_name varchar(255)," +
+                "   tenant_id int," +
+                "   status_code int," +
+                "   status_desc varchar(255)," +
+                "   submission " + largeFieldType + "," +
+                "   FOREIGN KEY (tenant_id) REFERENCES tenantnode(tenant_id)" +
+                ")";
+
+        String createVnode = "CREATE TABLE vnode" +
+                "(" +
+                "   vnode_id varchar(42) primary key NOT NULL," +
+                "   resource_id varchar(45) NOT NULL," +
+                "   inode_id varchar(42)," +
+                "   configparams " + largeFieldType + "," +
+                "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
+                ")";
+
+        String createInode = "CREATE TABLE inode" +
+                "(" +
+                "   inode_id varchar(42) primary key NOT NULL," +
+                "   resource_id varchar(45) NOT NULL," +
+                "   region_id varchar(43)," +
+                "   agent_id varchar(42)," +
+                "   plugin_id varchar(43)," +
+                "   status_code int NOT NULL," +
+                "   status_desc varchar(255) NOT NULL," +
+                "   configparams " + largeFieldType + " NOT NULL," +
+                "   kpiparams " + largeFieldType + "," +
+                "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
+                ")";
+
+        String createInodeKPI = "CREATE TABLE inodekpi" +
+                "(" +
+                //"   inodekpi_id varchar(42) primary key NOT NULL," +
+                "   inode_id varchar(43)," +
+                "   kpiparams " + largeFieldType +
+                //"   FOREIGN KEY (inode_id) REFERENCES inode(inode_id)" +
+                ")";
+
+        /*
+        for(String table : tablesNames) {
+                dropTable(table);
+
+        }
+        */
+
+
+        if(dbType == DBType.MYSQL) {
+            if (tableExist("inodekpi")) {
+                dropTable("inodekpi");
+            }
+
+            if (tableExist("vnode")) {
+                dropTable("vnode");
+            }
+
+            if (tableExist("inode")) {
+                dropTable("inode");
+            }
+
+            if (tableExist("resourcenode")) {
+                dropTable("resourcenode");
+            }
+
+            if (tableExist("tenantnode")) {
+                dropTable("tenantnode");
+            }
+
+            if (tableExist("pluginof")) {
+                dropTable("pluginof");
+            }
+
+            if (tableExist("pnode")) {
+                dropTable("pnode");
+            }
+
+            if(tableExist("aconfig")) {
+                dropTable("aconfig");
+            }
+
+            if(tableExist("agentof")) {
+                dropTable("agentof");
+            }
+
+            if (tableExist("anode")) {
+                dropTable("anode");
+            }
+
+            if (tableExist("rnode")) {
+                dropTable("rnode");
+            }
+
+            if (tableExist("cstate")) {
+                dropTable("cstate");
+            }
+        }
+
+
+        try {
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            stmt.executeUpdate(createCState);
+            stmt.executeUpdate(createRNode);
+            stmt.executeUpdate(createANode);
+            stmt.executeUpdate(createAgentConfig);
+            stmt.executeUpdate(createAgentOf);
+            stmt.executeUpdate(createPNode);
+            stmt.executeUpdate(createPluginOf);
+            stmt.executeUpdate(createTenantNode);
+            stmt.executeUpdate(createResourceNode);
+            stmt.executeUpdate(createInode);
+            stmt.executeUpdate(createVnode);
+            stmt.executeUpdate(createInodeKPI);
+
+            stmt.close();
+            conn.close();
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+
     private boolean tableExist(String tableName)  {
         boolean exist = false;
 
@@ -1028,6 +1594,11 @@ public class DBEngine {
             conn.close();
 
             //todo likely better way to do this hack to let derby work
+        }
+        catch (SQLException sqle) {
+            //eat SQL exception, if tables does not exist this will throw
+            System.out.println("SQL EXCEPTIO : "  + sqle.getMessage());
+            sqle.printStackTrace();
         }
         catch(Exception ex) {
             ex.printStackTrace();
@@ -1057,6 +1628,60 @@ public class DBEngine {
         return result;
     }
 
+    public boolean nodeExist(String regionId, String agentId, String pluginId) {
+        boolean exist = false;
+        try {
+
+
+            String queryString = null;
+
+            if((regionId == null) && (agentId == null) && (pluginId != null)) {
+                //plugin
+                queryString = "SELECT COUNT(1) " + "FROM pnode " +
+                        "WHERE plugin_id = '" + pluginId + "'";
+
+            } if((regionId != null) && (agentId != null) && (pluginId != null)) {
+                //plugin
+                queryString = "SELECT COUNT(1) " + "FROM pnode " +
+                        "WHERE plugin_id = '" + pluginId + "'";
+
+            } else if((regionId == null) && (agentId != null) && (pluginId == null)) {
+                //agent
+                queryString = "SELECT COUNT(1) " + "FROM anode " +
+                        "WHERE agent_id = '" + agentId + "'";
+
+            }else if((regionId != null) && (agentId != null) && (pluginId == null)) {
+                //agent
+                queryString = "SELECT COUNT(1) " + "FROM anode " +
+                        "WHERE agent_id = '" + agentId + "'";
+
+            } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
+                //region
+                queryString = "SELECT COUNT(1) " + "FROM rnode " +
+                        "WHERE region_id = '" + regionId + "'";
+            }
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            if(rs.next()) {
+                exist = rs.getBoolean(1);
+            }
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return exist;
+    }
+
+
+/*
     public boolean nodeExist(String regionId, String agentId, String pluginId) {
         boolean exist = false;
         try {
@@ -1095,6 +1720,8 @@ public class DBEngine {
         }
         return exist;
     }
+
+    */
 
     public boolean removeINode(String inodeId) {
         boolean isRemoved = false;
@@ -1184,6 +1811,10 @@ public class DBEngine {
 
 
     public boolean removeNode(String regionId, String agentId, String pluginId) {
+
+        //System.out.println(regionId + " " + agentId + " " + pluginId);
+
+
         boolean isRemoved = false;
         try {
             Connection conn = ds.getConnection();
@@ -1194,10 +1825,37 @@ public class DBEngine {
                 //plugin
                 queryString = "DELETE FROM pnode " +
                         "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "' and plugin_id = '" + pluginId + "'";
-            } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
+
+                queryString = "DELETE FROM PNODE WHERE PLUGIN_ID IN ( " +
+                        "SELECT P.PLUGIN_ID " +
+                        "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID = '" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND P.PLUGIN_ID = '" + pluginId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID)";
+
+            } else if((regionId == null) && (agentId == null) && (pluginId != null)) {
+                //plugin
+                queryString = "DELETE FROM pnode " +
+                        "WHERE plugin_id = '" + pluginId + "'";
+
+            } else if((regionId == null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "DELETE FROM anode " +
                         "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "'";
+
+            } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
+                //agent
+                queryString = "DELETE FROM ANODE WHERE AGENT_ID IN ( " +
+                        "SELECT A.AGENT_ID " +
+                        "FROM ANODE A, RNODE R, AGENTOF AO " +
+                        "WHERE R.REGION_ID = '" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID)";
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
@@ -1205,7 +1863,10 @@ public class DBEngine {
                         "WHERE region_id = '" + regionId + "'";
             }
 
+            //System.out.println("QUERY: " + queryString);
+
             int result = stmt.executeUpdate(queryString);
+
 
             //System.out.println("RESULT : " + result);
             if(result < 2) {
@@ -1257,6 +1918,62 @@ public class DBEngine {
     }
 
     public List<String> getNodeList(String regionId, String agentId) {
+
+
+
+        List<String> nodeList = null;
+        try {
+
+
+            nodeList = new ArrayList<>();
+            String queryString = null;
+
+            if((regionId != null) && (agentId != null)) {
+                //agent
+
+                queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+
+            } else if((regionId != null) && (agentId == null)) {
+                //region
+                queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
+                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID ";
+
+            }
+            else if((regionId == null) && (agentId == null)) {
+                //global
+                queryString = "SELECT region_id FROM rnode ";
+            }
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            while (rs.next()) {
+                String node = rs.getString(1);
+                if(!nodeList.contains(node)) {
+                    nodeList.add(node);
+                }
+            }
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return nodeList;
+    }
+
+    /*
+    public List<String> getNodeList(String regionId, String agentId) {
         List<String> nodeList = null;
         try {
 
@@ -1300,6 +2017,7 @@ public class DBEngine {
         }
         return nodeList;
     }
+    */
 
     /*
     public List<String> getPNodeListByType(String regionId, String agentId) {
@@ -1356,9 +2074,16 @@ public class DBEngine {
             String queryString = null;
 
             //plugin
-            queryString = "SELECT region_id, agent_id, plugin_id, configparams " + "FROM pnode " +
-                    "WHERE " + actionPluginTypeId + " = '" + actionPluginTypeValue + "'";
+            //queryString = "SELECT region_id, agent_id, plugin_id, configparams " + "FROM pnode " +
+            //        "WHERE " + actionPluginTypeId + " = '" + actionPluginTypeValue + "'";
 
+            queryString = "SELECT R.REGION_ID, A.AGENT_ID, P.PLUGIN_ID, P.CONFIGPARAMS " +
+                    "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                    "WHERE P." + actionPluginTypeId + " = '" + actionPluginTypeValue + "' " +
+                    "AND R.REGION_ID = AO.REGION_ID " +
+                    "AND AO.AGENT_ID = A.AGENT_ID " +
+                    "AND A.AGENT_ID = PO.AGENT_ID " +
+                    "AND PO.PLUGIN_ID = P.PLUGIN_ID";
 
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
@@ -1389,7 +2114,10 @@ public class DBEngine {
         }
         return configMapList;
     }
+
     public Map<String,Integer> getNodeStatusCodeMap(String regionId, String agentId) {
+
+
         Map<String,Integer> nodeMap = null;
         try {
 
@@ -1398,13 +2126,19 @@ public class DBEngine {
 
             if((regionId != null) && (agentId != null)) {
                 //agent
-                queryString = "SELECT plugin_id, status_code FROM pnode "
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "'";
+
+                queryString = "SELECT P.PLUGIN_ID, P.status_code FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO" +
+                        "WHERE R.REGION_ID ='" + regionId + "'" +
+                        "AND A.AGENT_ID = '" + agentId + "'" +
+                        "AND R.REGION_ID = AO.REGION_ID" +
+                        "AND AO.AGENT_ID = A.AGENT_ID" +
+                        "AND A.AGENT_ID = PO.AGENT_ID";
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
-                queryString = "SELECT agent_id, status_code FROM anode "
-                        + " WHERE region_id='" + regionId + "'";
+
+                queryString = "SELECT A.agent_id, A.status_code FROM ANODE A, RNODE R, AGENTOF O "
+                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID";
 
             }
             else if((regionId == null) && (agentId == null)) {
@@ -1435,6 +2169,9 @@ public class DBEngine {
     }
 
     public List<String> getStaleNodeList(String regionId, String agentId) {
+
+
+
         List<String> nodeList = null;
         try {
 
@@ -1444,18 +2181,25 @@ public class DBEngine {
 
             if((regionId != null) && (agentId != null)) {
                 //agent
-                queryString = "SELECT plugin_id FROM pnode "
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "' and status_code=10 and ((" + System.currentTimeMillis() + " - watchdog_ts) > (watchdog_period * 3))";
+
+                queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO" +
+                        "WHERE R.REGION_ID ='" + regionId + "'" +
+                        "AND A.AGENT_ID = '" + agentId + "'" +
+                        "AND R.REGION_ID = AO.REGION_ID" +
+                        "AND AO.AGENT_ID = A.AGENT_ID" +
+                        "AND A.AGENT_ID = PO.AGENT_ID" +
+                        "AND P.status_code=10 and ((" + System.currentTimeMillis() + " - P.watchdog_ts) > (P.watchdog_period * 3))";
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
-                queryString = "SELECT agent_id FROM anode "
-                        + " WHERE region_id='" + regionId + "' and status_code=10 and ((" + System.currentTimeMillis()  + " - watchdog_ts) > (watchdog_period * 3))";
+                queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
+                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
+                        + "AND A.status_code=10 and ((" + System.currentTimeMillis() + " - A.watchdog_ts) > (A.watchdog_period * 3))";
 
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
-                queryString = "SELECT region_id FROM anode "
+                queryString = "SELECT region_id FROM rnode "
                         + "WHERE status_code=10 and ((" + System.currentTimeMillis() + " - watchdog_ts) > (watchdog_period * 3))";
             }
 
@@ -1482,6 +2226,9 @@ public class DBEngine {
     }
 
     public int setNodeStatusCode(String regionId, String agentId, String pluginId, int status_code, String status_desc) {
+
+
+
         int queryReturn = -1;
         try {
 
@@ -1491,12 +2238,12 @@ public class DBEngine {
                 //plugin
 
                 queryString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "' and plugin_id='" + pluginId + "'";
+                        + " WHERE plugin_id='" + pluginId + "'";
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "'";
+                        + " WHERE agent_id='" + agentId + "'";
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region

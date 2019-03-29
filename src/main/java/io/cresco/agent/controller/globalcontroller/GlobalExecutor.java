@@ -677,7 +677,9 @@ public class GlobalExecutor implements Executor {
         try {
             logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
             logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
-            controllerEngine.getGDB().addNode(ce);
+            controllerEngine.getGDB().addNodeFromUpdate(ce);
+
+            logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
 
             //TODO Hack to create region health edge
             Map<String,String> paramMap = new HashMap<>();

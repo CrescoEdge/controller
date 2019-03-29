@@ -1,6 +1,7 @@
 package io.cresco.agent.controller.agentcontroller;
 
 
+import com.google.gson.Gson;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.plugin.PluginBuilder;
@@ -19,6 +20,7 @@ public class PluginNode {
 
     private DBInterfaceImpl gdb;
     private PluginBuilder plugin;
+    private Gson gson;
 
     //private Logger logger =
     private String pluginID;
@@ -31,7 +33,7 @@ public class PluginNode {
     private int status_code = 3;
     private String status_desc = "Plugin Configuration Created";
     private long watchdog_ts = 0;
-    private long watchdogtimer = 0;
+    private int watchdog_period = 0;
     private long runtime = 0;
     private long bundleID;
 
@@ -75,40 +77,11 @@ public class PluginNode {
         return strValue;
     }
 
-    public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap) throws IOException {
-        this.plugin = plugin;
-        this.gdb = gdb;
-        this.bundleID = bundleID;
-        this.pluginID = pluginID;
-        this.jarPath = jarPath;
-        this.configMap = configMap;
-        this.edgeList = new ArrayList<>();
 
-        URL url = getClass().getClassLoader().getResource(jarPath);
-        Manifest manifest = null;
-        if(url != null) {
-            manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(jarPath)).getManifest();
-        } else {
-            //url = new File(jarPath).toURI().toURL();
-            manifest = new JarInputStream(new FileInputStream(new File(this.jarPath))).getManifest();
-        }
-
-        Attributes mainAttributess = manifest.getMainAttributes();
-        name = mainAttributess.getValue("Bundle-SymbolicName");
-        version = mainAttributess.getValue("Bundle-Version");
-
-        //setPluginConfigValues(configMap);
-        //gdb.addNode()
-        System.out.println("NAME: " + name);
-        System.out.println("VERSION: " + version);
-        System.out.println("JAR PATH: " + jarPath);
-        System.out.println("MD5: " + plugin.getMD5(jarPath));
-
-
-    }
     public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
         this.plugin = plugin;
         this.gdb = gdb;
+        this.gson = new Gson();
         this.bundleID = bundleID;
         this.pluginID = pluginID;
         this.jarPath = jarPath;
@@ -119,16 +92,30 @@ public class PluginNode {
         Manifest manifest = null;
         if(url != null) {
             manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(jarPath)).getManifest();
+            MD5 = plugin.getMD5(getClass().getClassLoader().getResourceAsStream(url.getPath()));
+
         } else {
             //url = new File(jarPath).toURI().toURL();
             manifest = new JarInputStream(new FileInputStream(new File(this.jarPath))).getManifest();
+            MD5 = plugin.getMD5(jarPath);
+
         }
 
         Attributes mainAttributess = manifest.getMainAttributes();
         name = mainAttributess.getValue("Bundle-SymbolicName");
         version = mainAttributess.getValue("Bundle-Version");
 
-        //setPluginConfigValues(configMap);
+
+        //System.out.println("NAME: " + name);
+        //System.out.println("VERSION: " + version);
+        //System.out.println("JAR PATH: " + jarPath);
+        //System.out.println("MD5: " + MD5);
+
+        //public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
+        //
+        //create DB entry for plugin
+        gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts, pluginName,jarPath,version,MD5, gson.toJson(configMap));
+
     }
 
     public long getBundleID() {
@@ -168,7 +155,7 @@ public class PluginNode {
     }
 
     public long getWatchdogTimer() {
-        return watchdogtimer;
+        return watchdog_period;
     }
 
     public void setWatchDogTS(long watchdog_ts) {
@@ -180,7 +167,7 @@ public class PluginNode {
     }
 
     public void setWatchDogTimer(long watchdogtimer) {
-        this.watchdogtimer = watchdogtimer;
+        this.watchdog_period = watchdog_period;
     }
 
     public long getRuntime() {
@@ -193,12 +180,11 @@ public class PluginNode {
 
     public int getStatus_code() {return status_code;}
 
-    public void setStatus_code(int status_code) {
+    public void setStatus(int status_code, String status_desc) {
         this.status_code = status_code;
-    }
-
-    public void setStatus_desc(String status_desc) {
         this.status_desc = status_desc;
+        //update code
+        gdb.setNodeStatusCode(plugin.getRegion(),plugin.getAgent(),pluginID,status_code,status_desc);
     }
 
     public String getStatus_desc() {return this.status_desc;}

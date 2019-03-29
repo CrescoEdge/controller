@@ -38,8 +38,11 @@ public class RegionalExecutor implements Executor {
                 case "agent_enable":
                     logger.debug("CONFIG : AGENT ADD: " + incoming.printHeader());
 
-                    if(controllerEngine.getGDB().addNode(incoming)) {
+                    if(controllerEngine.getGDB().addNodeFromUpdate(incoming)) {
                         incoming.setParam("success",Boolean.TRUE.toString());
+
+                        logger.error("CODY INCOMING AGENT ADD REGION*: " +incoming.getParams());
+
                     } else {
                         incoming.setParam("success",Boolean.FALSE.toString());
                     }

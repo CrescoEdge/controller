@@ -389,14 +389,26 @@ public class PluginAdmin {
     }
 
     public String addPlugin(String pluginName, String jarFile, Map<String,Object> map) {
-        return addPlugin(pluginName, jarFile, map, null);
+        return addPlugin(null, pluginName, jarFile, map, null);
+    }
+
+    public String addPlugin(String pluginId, String pluginName, String jarFile, Map<String,Object> map) {
+        return addPlugin(pluginId, pluginName, jarFile, map, null);
     }
 
     public String addPlugin(String pluginName, String jarFile, Map<String,Object> map, String edges) {
+        return addPlugin(null, pluginName, jarFile, map, edges);
+    }
+
+    public String addPlugin(String pluginID, String pluginName, String jarFile, Map<String,Object> map, String edges) {
 
         String returnPluginID = null;
         if(pluginCount() < PLUGINLIMIT) {
             try {
+
+                if(pluginID == null) {
+                    pluginID = "plugin-" + UUID.randomUUID().toString();
+                }
 
                 long bundleID = addBundle(jarFile);
                 if (bundleID != -1) {
@@ -405,7 +417,8 @@ public class PluginAdmin {
                         map.put("edges",edges);
                     }
 
-                    String pluginID = addConfig(pluginName, map);
+                    //String pluginID = addConfig(pluginName, map);
+                    addConfig(pluginID,pluginName, map);
 
                     if (startBundle(bundleID)) {
                         if (pluginID != null) {
@@ -418,7 +431,7 @@ public class PluginAdmin {
 
                                 pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, pluginName, jarFile, map, edgeList);
                             } else {
-                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, pluginName, jarFile, map);
+                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, pluginName, jarFile, map, null);
                             }
 
                             synchronized (lockPlugin) {
@@ -472,7 +485,7 @@ public class PluginAdmin {
 
     }
 
-    public String addConfig(String pluginName, Map<String,Object> map) {
+    public String addConfig(String pluginId, String pluginName, Map<String,Object> map) {
 
         String pluginID = null;
         try {
@@ -480,7 +493,7 @@ public class PluginAdmin {
 
                 boolean isEmpty = false;
                 //int id = 0;
-                String pluginId = UUID.randomUUID().toString();
+                //String pluginId = UUID.randomUUID().toString();
                 while (!isEmpty) {
 
                     synchronized (lockConfig) {
@@ -559,8 +572,7 @@ public class PluginAdmin {
                             synchronized (lockPlugin) {
                                 if (pluginMap.containsKey(pluginID)) {
                                     pluginMap.get(pluginID).setPluginService((PluginService) context.getService(sr));
-                                    pluginMap.get(pluginID).setStatus_code(statusCode);
-                                    pluginMap.get(pluginID).setStatus_desc(statusDesc);
+                                    pluginMap.get(pluginID).setStatus(statusCode, statusDesc);
                                 } else {
                                     System.out.println("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " elements " + pluginMap.hashCode() + " thread:" + Thread.currentThread().getName());
                                 }
@@ -574,7 +586,7 @@ public class PluginAdmin {
                 Thread.sleep(1000);
             }
             if(servRefs == null) {
-                System.out.println("COULD NOT START PLUGIN COULD NOT GET SERVICE");
+                logger.error("startPlugin : COULD NOT START PLUGIN COULD NOT GET SERVICE");
             }
         } catch (Exception ex) {
             ex.printStackTrace();
