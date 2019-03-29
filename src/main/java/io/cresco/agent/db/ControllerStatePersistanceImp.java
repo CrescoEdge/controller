@@ -105,7 +105,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     }
 
     public Map<String,String> getStateMap() {
-        return dbe.getCSTATE(null);
+
+        Map<String,String> stateMap = dbe.getCSTATE(null);
+        if(stateMap.containsKey("local_agent")) {
+            stateMap.put("configparams", dbe.getNodeConfigParams(null,stateMap.get("local_agent"), null));
+        }
+        return stateMap;
     }
 
 
