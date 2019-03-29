@@ -1809,6 +1809,55 @@ public class DBEngine {
         return isRemoved;
     }
 
+    public Map<String,String> getCSTATE(String config_ts) {
+        Map<String,String> cstateMap = null;
+        try {
+
+            String queryString = null;
+
+            if(config_ts != null) {
+                queryString = "SELECT CONFIG_TS, CURRENT_MODE, CURRENT_DESC, GLOBAL_REGION, " +
+                        "GLOBAL_AGENT, REGIONAL_REGION, REGIONAL_AGENT, LOCAL_REGION, LOCAL_AGENT " +
+                        "FROM CSTATE WHERE CONFIG_TS = " + config_ts;
+
+            } else {
+                queryString = "SELECT CONFIG_TS, CURRENT_MODE, CURRENT_DESC, GLOBAL_REGION, " +
+                        "GLOBAL_AGENT, REGIONAL_REGION, REGIONAL_AGENT, LOCAL_REGION, LOCAL_AGENT " +
+                        "FROM CSTATE WHERE (CONFIG_TS) IN " +
+                        "( SELECT MAX(CONFIG_TS) " +
+                        "  FROM CSTATE )";
+            }
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+
+            if (rs.next()) {
+                cstateMap = new HashMap<>();
+                cstateMap.put("config_ts",rs.getString(1));
+                cstateMap.put("current_mode",rs.getString(2));
+                cstateMap.put("current_desc",rs.getString(3));
+                cstateMap.put("global_region",rs.getString(4));
+                cstateMap.put("global_agent",rs.getString(5));
+                cstateMap.put("regional_region",rs.getString(6));
+                cstateMap.put("regional_agent",rs.getString(7));
+                cstateMap.put("local_region",rs.getString(8));
+                cstateMap.put("local_agent",rs.getString(9));
+            }
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return cstateMap;
+    }
+
 
     public boolean removeNode(String regionId, String agentId, String pluginId) {
 
@@ -1918,8 +1967,6 @@ public class DBEngine {
     }
 
     public List<String> getNodeList(String regionId, String agentId) {
-
-
 
         List<String> nodeList = null;
         try {

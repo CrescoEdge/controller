@@ -105,7 +105,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     }
 
     public Map<String,String> getStateMap() {
-        return new HashMap<>();
+        return dbe.getCSTATE(null);
     }
 
 
