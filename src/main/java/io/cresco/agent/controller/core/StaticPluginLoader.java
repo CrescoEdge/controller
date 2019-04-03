@@ -113,7 +113,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if(jarFile == null) {
                                             logger.error("pluginPath = null");
                                         } else {
-                                            String pluginID = controllerEngine.getPluginAdmin().addPlugin(pluginName, jarFile, map);
+                                            String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                             logger.info("STATIC LOADED : pluginID: " + pluginID + " pluginName: " + pluginName + " jarName: " + jarFile);
                                         }
                                     } else {
@@ -137,7 +137,7 @@ public class StaticPluginLoader implements Runnable  {
                                     Map<String, Object> map = new HashMap<>();
                                     map.put("pluginname", "io.cresco.repo");
                                     map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
                                 //load global
 
@@ -147,7 +147,7 @@ public class StaticPluginLoader implements Runnable  {
                                         Map<String, Object> map = new HashMap<>();
                                         map.put("pluginname", "io.cresco.dashboard");
                                         map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
-                                        String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                        String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
 
                                     }
                                 } else {
@@ -161,7 +161,7 @@ public class StaticPluginLoader implements Runnable  {
                                     Map<String, Object> map = new HashMap<>();
                                     map.put("pluginname", "io.cresco.repo");
                                     map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
 
                             }
@@ -177,7 +177,7 @@ public class StaticPluginLoader implements Runnable  {
                                 map.put("pluginname", "io.cresco.cep");
                                 map.put("jarfile", "cep-1.0-SNAPSHOT.jar");
 
-                                String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
 
 
                             }
@@ -192,7 +192,7 @@ public class StaticPluginLoader implements Runnable  {
                                 map.put("pluginname", "io.cresco.sysinfo");
                                 map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
 
-                                String pluginId = controllerEngine.getPluginAdmin().addPlugin((String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
 
                             }
 
@@ -212,7 +212,7 @@ public class StaticPluginLoader implements Runnable  {
                                             String configParams = controllerEngine.getGDB().getPluginInfo(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId);
                                             if (configParams != null) {
                                                 Map<String, Object> map = gson.fromJson(configParams, hashMaptype);
-                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(pluginId, (String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(pluginId, map);
                                             }
                                         }
                                     }

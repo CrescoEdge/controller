@@ -79,13 +79,13 @@ public class PluginNode {
     }
 
 
-    public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, String pluginName, String jarPath, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
+    public PluginNode(PluginBuilder plugin, DBInterfaceImpl gdb, long bundleID, String pluginID, Map<String,Object> configMap, List<gEdge> edgeList) throws IOException {
         this.plugin = plugin;
         this.gdb = gdb;
         this.gson = new Gson();
         this.bundleID = bundleID;
         this.pluginID = pluginID;
-        this.jarPath = jarPath;
+        this.jarPath = (String)configMap.get("jarfile");
         this.configMap = configMap;
         this.edgeList = edgeList;
 

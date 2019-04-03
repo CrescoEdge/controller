@@ -44,11 +44,11 @@ public class AgentExecutor implements Executor {
         switch (incoming.getParam("action")) {
 
             case "enable":
-                enablePlugin(incoming);
+                //enablePlugin(incoming);
                 break;
 
             case "disable":
-                disablePlugin(incoming);
+                //disablePlugin(incoming);
                 break;
             case "pluginadd":
                 return pluginAdd(incoming);
@@ -103,7 +103,66 @@ public class AgentExecutor implements Executor {
         return null;
     }
 
+    private MsgEvent pluginAdd(MsgEvent ce) {
 
+        try {
+
+            Type type = new TypeToken<Map<String, String>>(){}.getType();
+            Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
+
+            //todo persistance should be set by the application not here
+            hm.put("persistence_code","10");
+
+            Map<String,Object> map = new HashMap<>();
+
+            for (Map.Entry<String, String> entry : hm.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                map.put(key,value);
+            }
+
+            String pluginId = null;
+
+            if(ce.getParam("edges") != null) {
+                pluginId = controllerEngine.getPluginAdmin().addPlugin(map, ce.getCompressedParam("edges"));
+            } else {
+                pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
+            }
+
+            if(pluginId != null) {
+
+                Map<String, String> statusMap = controllerEngine.getPluginAdmin().getPluginStatus(pluginId);
+                ce.setParam("status_code", statusMap.get("status_code"));
+                ce.setParam("status_desc", statusMap.get("status_desc"));
+                ce.setParam("pluginid", pluginId);
+
+            } else {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "Plugin Bundle could not be installed or started!");
+            }
+
+            return ce;
+
+
+        } catch(Exception ex) {
+
+            logger.error("pluginadd Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+
+        }
+
+        return null;
+    }
+
+    /*
     private MsgEvent pluginAdd(MsgEvent ce) {
 
         try {
@@ -119,24 +178,21 @@ public class AgentExecutor implements Executor {
             hm.put("persistence_code","10");
 
 
-            boolean jarIsLocal = pluginIsLocal(hm);
+            boolean jarIsLocal = controllerEngine.getPluginAdmin().pluginIsLocal(hm);
 
             //logger.error("jarIsLocal: " + jarIsLocal);
 
             if(!jarIsLocal) {
                 //try to download node
                 pNode node = gson.fromJson(ce.getCompressedParam("pnode"), pNode.class);
-                jarIsLocal = getPlugin(node);
+                jarIsLocal = controllerEngine.getPluginAdmin().getPlugin(node);
             }
 
             if(jarIsLocal) {
 
                 //replace remote jarfilename with local
-                hm.put("jarfile",getCachedJarPath(hm));
+                hm.put("jarfile",controllerEngine.getPluginAdmin().getCachedJarPath(hm));
 
-                //String jarFileName = getRepoCacheDir() + "/" + hm.get("jarfile");
-
-                //logger.error("jarIslocal:: " + jarFileName);
 
                 Map<String,Object> map = new HashMap<>();
 
@@ -167,41 +223,6 @@ public class AgentExecutor implements Executor {
                 }
 
             }
-            /*
-            pluginname=io.cresco.sysinfo,
-            jarfile=sysinfo-1.0-SNAPSHOT.jar,
-            version=1.0.0.SNAPSHOT-2018-07-17T191142Z,
-            md5=1048b9ab4f05ed8180b4c6d2b46cda22,
-             */
-            //addPlugin(String pluginName, String jarFile, Map<String,Object> map)
-
-            //controllerEngine.getPluginAdmin().addPlugin(node.name,)
-            /*
-            if(pluginIsLocal(hm)) {
-
-                String plugin = pluginsconfig.addPlugin(hm);
-                boolean isEnabled = AgentEngine.enablePlugin(plugin, false);
-                ce.setParam("plugin", plugin);
-                if (!isEnabled) {
-                    ce.setMsgBody("Failed to Add Plugin:" + plugin);
-                    ce.setParam("status_code", "9");
-                    ce.setParam("status_desc", "Plugin Could Not Be Added");
-                    pluginsconfig.removePlugin(plugin);
-                } else {
-                    ce.setMsgBody("Added Plugin:" + plugin);
-                    ce.setParam("status_code", "10");
-                    ce.setParam("status_desc", "Plugin Added");
-                    ce.setParam("region", AgentEngine.region);
-                    ce.setParam("agent", AgentEngine.agent);
-                    hm = pluginsconfig.getPluginConfigMap(plugin);
-                    ce.setCompressedParam("configparams", gson.toJson(hm));
-                }
-            } else {
-                logger.error("pluginadd Error: Unable to download plugin");
-                ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "Plugin Not Found and Could Not Be Downloaded");
-            }
-            */
 
             return ce;
 
@@ -223,9 +244,8 @@ public class AgentExecutor implements Executor {
 
         return null;
     }
-
-
-    MsgEvent pluginRemove(MsgEvent ce) {
+    */
+    private MsgEvent pluginRemove(MsgEvent ce) {
 
         try {
             String plugin = ce.getParam("pluginid");
@@ -249,239 +269,6 @@ public class AgentExecutor implements Executor {
         }
         return ce;
     }
-
-    private void enablePlugin(MsgEvent ce) {
-
-        //todo fix enable
-        /*
-        String pluginEnable = ce.getParam("action_plugin");
-
-        AgentEngine.pluginMap.get(src_plugin).setStatus_code(10);
-
-        if(ce.getParam("watchdogtimer") == null) {
-            ce.setParam("watchdogtimer","5000");
-        }
-
-        AgentEngine.pluginMap.get(src_plugin).setWatchDogTimer(Long.parseLong(ce.getParam("watchdogtimer")));
-        AgentEngine.pluginMap.get(src_plugin).setWatchDogTS(System.currentTimeMillis());
-
-        logger.debug("Plugin {} status {}",src_plugin, AgentEngine.pluginMap.get(src_plugin).getStatus_code());
-        */
-    }
-
-    private void disablePlugin(MsgEvent ce) {
-
-        //todo fix disable
-        /*
-        String src_agent = ce.getParam("src_agent");
-        String src_region = ce.getParam("src_region");
-        String src_plugin = ce.getParam("src_plugin");
-        if(src_agent.equals(AgentEngine.agent) && src_region.equals(AgentEngine.region)) {
-            //status = 10, plugin enabled
-            AgentEngine.pluginMap.get(src_plugin).setStatus_code(8);
-            logger.debug("Plugin {} status {}",src_plugin, AgentEngine.pluginMap.get(src_plugin).getStatus_code());
-        } else {
-            logger.error("Can't enable plugin: {} for remote host: {} {} on {} {}",src_plugin, src_region, src_agent, AgentEngine.region, AgentEngine.agent);
-        }
-        */
-    }
-
-    private String getPluginJarPath(Map<String,String> hm) {
-        String jarFilePath = null;
-
-        try {
-            boolean isLocal = false;
-            String pluginName = hm.get("pluginname");
-            String version = hm.get("version");
-
-            File repoCacheDir = getRepoCacheDir();
-            if (repoCacheDir != null) {
-
-                /*
-                pluginMap.put("pluginname",pluginName);
-                            pluginMap.put("jarfile",jarFileName);
-                            pluginMap.put("md5",pluginMD5);
-                            pluginMap.put("version",pluginVersion);
-
-                 */
-
-                List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
-                if (pluginList != null) {
-                    for (Map<String, String> params : pluginList) {
-                        String pluginNameLocal = params.get("pluginname");
-                        String versionLocal = params.get("version");
-
-                        if ((pluginName != null) && (version != null)) {
-
-                            if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
-
-                            }
-
-                        } else {
-                            if (pluginName.equals(pluginNameLocal)) {
-                                isLocal = true;
-                            }
-                        }
-                    }
-
-                    if(isLocal) {
-                        String tmpFilePath = repoCacheDir.getAbsolutePath() + "/" + hm.get("jarfile");
-                        File checkFile = new File(tmpFilePath);
-                        if(checkFile.isFile()) {
-                            jarFilePath = tmpFilePath;
-                        }
-                    }
-                }
-            }
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-
-        return jarFilePath;
-    }
-
-    private boolean pluginIsLocal(Map<String,String> hm) throws IOException {
-
-        boolean isLocal = false;
-
-            String jarFilePath = null;
-
-            String pluginName = hm.get("pluginname");
-            String version = hm.get("version");
-
-            File repoCacheDir = getRepoCacheDir();
-            if (repoCacheDir != null) {
-
-                List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
-                if (pluginList != null) {
-                    for (Map<String, String> params : pluginList) {
-                        String pluginNameLocal = params.get("pluginname");
-                        String versionLocal = params.get("version");
-
-                        if ((pluginName != null) && (version != null)) {
-
-                            if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
-                                isLocal = true;
-                            }
-
-                        } else {
-                            if (pluginName.equals(pluginNameLocal)) {
-                                //isLocal = true;
-                                logger.error("Plugin Version Mismatch");
-                            }
-                        }
-                    }
-                }
-            }
-
-        return isLocal;
-    }
-
-    private String getCachedJarPath(Map<String,String> hm) throws IOException {
-
-
-        String jarFilePath = null;
-
-        String pluginName = hm.get("pluginname");
-        String version = hm.get("version");
-
-        File repoCacheDir = getRepoCacheDir();
-        if (repoCacheDir != null) {
-
-            List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.getAbsolutePath());
-            if (pluginList != null) {
-                for (Map<String, String> params : pluginList) {
-                    String pluginNameLocal = params.get("pluginname");
-                    String versionLocal = params.get("version");
-
-                    if ((pluginName != null) && (version != null)) {
-
-                        if ((pluginName.equals(pluginNameLocal)) && (version.equals(versionLocal))) {
-                            //pluginMap.put("jarfile", jarFileName);
-                            //pluginMap.put("md5", pluginMD5);
-                            jarFilePath = params.get("jarfile");
-                        }
-
-                    } else {
-                        if (pluginName.equals(pluginNameLocal)) {
-                            //jarFilePath = params.get("jarfile");
-                            logger.error("Plugin Version Mismatch");
-                        }
-                    }
-                }
-            }
-        }
-
-        return jarFilePath;
-    }
-
-
-    private File getRepoCacheDir() {
-        File repoDir = null;
-        try {
-
-            String repoDirString =  plugin.getConfig().getStringParam("repo_cache_dir","repo-cache");
-
-            File tmpRepo = new File(repoDirString);
-            if(tmpRepo.isDirectory()) {
-                repoDir = tmpRepo;
-            } else {
-                tmpRepo.mkdir();
-            }
-
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-        return repoDir;
-    }
-
-    private boolean getPlugin(pNode node) {
-        boolean isFound = false;
-        try {
-
-            logger.debug("REQUESTING JAR : " + node.name);
-            String pluginName = node.name;
-            String pluginMD5 = node.md5;
-            String jarFile = node.jarfile;
-
-                for(Map<String,String> repoMap : node.repoServers) {
-
-                    String region = repoMap.get("region");
-                    String agent = repoMap.get("agent");
-                    String pluginID = repoMap.get("pluginid");
-
-                    MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC,region,agent,pluginID);
-                    request.setParam("action","getjar");
-                    request.setParam("action_pluginname",pluginName);
-                    request.setParam("action_pluginmd5",pluginMD5);
-                    request.setParam("action_jarfile",jarFile);
-
-                    MsgEvent retMsg = plugin.sendRPC(request);
-
-                    String jarFileSavePath = getRepoCacheDir().getAbsolutePath() + "/" + jarFile;
-
-                    logger.debug("SAVE FILE : " + jarFileSavePath);
-
-                    Path path = Paths.get(jarFileSavePath);
-                    Files.write(path, retMsg.getDataParam("jardata"));
-                    File jarFileSaved = new File(jarFileSavePath);
-                    if(jarFileSaved.isFile()) {
-                        String md5 = plugin.getMD5(jarFileSavePath);
-                        if(pluginMD5.equals(md5)) {
-                            isFound = true;
-                            logger.debug("SAVE FILE : " + jarFileSavePath + " isFound" + isFound);
-                        }
-                    }
-                }
-
-        }
-        catch(Exception ex) {
-            //System.out.println("getPlugin " + ex.getMessage());
-            ex.printStackTrace();
-        }
-        return isFound;
-    }
-
 
 
 }
