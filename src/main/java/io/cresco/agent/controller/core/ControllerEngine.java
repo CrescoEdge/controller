@@ -124,33 +124,26 @@ public class ControllerEngine {
         boolean isCoreInit = false;
         try {
             //set agent name
-
-            boolean setAgentId = true;
             String tmpAgent = plugin.getConfig().getStringParam("agentname");
+            String tmpRegion = plugin.getConfig().getStringParam("regionname");
+
             if(tmpAgent == null) {
-                tmpAgent = gdb.getAgentId();
+                tmpAgent = cstate.getAgent();
                 if(tmpAgent == null) {
                     tmpAgent = "agent-" + java.util.UUID.randomUUID().toString();
-                } else {
-                    setAgentId = false;
                 }
             }
 
-            cstate.setStandaloneInit(tmpAgent,"Core Init");
-
-            /*
-            if(setAgentId) {
-                // addANode(agent,status_code,status_desc,watchdog_period,watchdog_ts,configparams);
-                gdb.addANode(tmpAgent,0,"Core Init",0,0,null);
-                gdb.setAgentId(tmpAgent);
+            if(tmpRegion == null) {
+                tmpRegion = cstate.getRegion();
+                if(tmpRegion == null) {
+                    tmpRegion = "region-" + java.util.UUID.randomUUID().toString();
+                }
             }
-            */
+
+            cstate.setStandaloneInit(tmpRegion, tmpAgent,"Core Init");
 
 
-            //establish backend database
-            //removed region consumer, no longer needed things to go agents
-            //this.gdb = new DBInterfaceImpl(this);
-            //logger.debug("DB Service Started");
             isCoreInit = true;
         } catch (Exception ex) {
             logger.error(ex.getMessage());
@@ -771,9 +764,9 @@ public class ControllerEngine {
     private Boolean initRegion() {
         boolean isInit = false;
         try {
-            String tmpRegion = plugin.getConfig().getStringParam("regionname", "region-" + java.util.UUID.randomUUID().toString());
+            //String tmpRegion = plugin.getConfig().getStringParam("regionname", "region-" + java.util.UUID.randomUUID().toString());
             //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
-            cstate.setRegionInit(tmpRegion,cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
+            cstate.setRegionInit(cstate.getRegion(),cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
             logger.debug("Generated regionid=" + cstate.getRegion());
 
             certificateManager = new CertificateManager(this,cstate.getAgentPath());

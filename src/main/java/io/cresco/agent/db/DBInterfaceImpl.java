@@ -43,9 +43,6 @@ public class DBInterfaceImpl implements DBInterface {
 
     }
 
-    public String getAgentId() {
-        return dbe.getAgentId();
-    }
 
     public Map<String,String> getInodeMap(String inodeId) {
         return dbe.getInodeMap(inodeId);
@@ -76,8 +73,8 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.nodeExist(region,agent,plugin);
     }
 
-    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams) {
-        dbe.addPNode(agent,plugin,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams);
+    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
+        dbe.addPNode(agent,plugin,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams, persistence_code);
     }
 
     /*
@@ -595,10 +592,10 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getINodeStatus(inodeId);
     }
 
-    public int getPNodePersistenceCode(String region, String agent, String plugin) { return dbe.getPNodePersistenceCode(region,agent,plugin); }
+    public int getPNodePersistenceCode(String plugin) { return dbe.getPNodePersistenceCode(plugin); }
 
-    public int setPNodePersistenceCode(String region, String agent, String plugin, int persistence_code) {
-        return dbe.setPNodePersistenceCode(region,agent,plugin,persistence_code);
+    public int setPNodePersistenceCode(String plugin, int persistence_code) {
+        return dbe.setPNodePersistenceCode(plugin,persistence_code);
     }
 
     public Map<String,List<pNode>> getPluginListRepoSet() {

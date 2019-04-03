@@ -594,6 +594,26 @@ public class PluginAdmin {
         return isStarted;
     }
 
+    public boolean pluginExist(String pluginID) {
+        boolean pluginExist = false;
+
+        try {
+
+            synchronized (lockPlugin) {
+                if(pluginMap.containsKey(pluginID)) {
+                    pluginExist = true;
+                }
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+
+        return pluginExist;
+    }
+
+
     public Map<String,String> getPluginStatus(String pluginID) {
         Map<String,String> statusMap = null;
         try {

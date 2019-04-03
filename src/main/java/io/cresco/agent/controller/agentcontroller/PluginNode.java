@@ -6,6 +6,7 @@ import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
+import javafx.beans.binding.IntegerBinding;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -106,6 +107,13 @@ public class PluginNode {
         version = mainAttributess.getValue("Bundle-Version");
 
 
+        //persistance code < 9, keep config and try to restart plugin on next restart
+        int persistence_code = 0;
+
+        if(configMap.containsKey("persistence_code")) {
+            persistence_code = Integer.parseInt(configMap.get("persistence_code").toString());
+        }
+
         //System.out.println("NAME: " + name);
         //System.out.println("VERSION: " + version);
         //System.out.println("JAR PATH: " + jarPath);
@@ -114,7 +122,7 @@ public class PluginNode {
         //public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
         //
         //create DB entry for plugin
-        gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts, pluginName,jarPath,version,MD5, gson.toJson(configMap));
+        gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts, pluginName,jarPath,version,MD5, gson.toJson(configMap), persistence_code);
 
     }
 

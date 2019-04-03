@@ -21,14 +21,13 @@ public interface DBInterface {
     public String getPluginList(String actionRegion, String actionAgent);
     public String getPluginInfo(String actionRegion, String actionAgent, String actionPlugin);
     public String getNetResourceInfo();
-    public String getAgentId();
     public String getGPipeline(String actionPipelineId);
     public String getGPipelineExport(String actionPipelineId);
     public String getIsAssignedInfo(String resourceid, String inodeid, boolean isResourceMetric);
     public String getPipelineInfo(String pipeline_action);
     public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin);
     public boolean addNodeFromUpdate(MsgEvent de);
-    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams);
+    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code);
     public boolean watchDogUpdate(MsgEvent de);
     public boolean removeNode(MsgEvent de);
     public boolean removeNode(String region, String agent, String plugin);
@@ -50,7 +49,6 @@ public interface DBInterface {
     public boolean removePipeline(String pipelineId);
     public List<String> getNodeList(String region, String agent);
     public boolean setDBImport(String exportData);
-
     public Map<String, NodeStatusType> getNodeStatus(String region, String agent, String plugin);
     public Map<String,String> getEdgeParamsNoTx(String edgeId);
     public String getINodeParams(String iNode_id);
@@ -61,6 +59,5 @@ public interface DBInterface {
     public String getResourceEdgeId(String resource_id, String inode_id);
     public String getIsAssignedParam(String edge_id, String param_name);
     public Map<String,String> paramStringToMap(String param);
-
 
 }

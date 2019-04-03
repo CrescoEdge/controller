@@ -6,7 +6,6 @@ import io.cresco.library.agent.ControllerStatePersistance;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.util.HashMap;
 import java.util.Map;
 
 public class ControllerStatePersistanceImp implements ControllerStatePersistance {
@@ -31,6 +30,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
         switch (currentMode) {
             case PRE_INIT:
+                preInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 break;
             case STANDALONE_INIT:
                 //STANDALONE_INIT Core Init null null null null null agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
@@ -65,9 +65,10 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 //GLOBAL gCheck : Creating Global Host null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 // region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                logger.error("LINKING REGION: " + localRegion + " AGENT: " + localAgent);
+                //logger.error("LINKING REGION: " + localRegion + " AGENT: " + localAgent);
+
                 dbe.assoicateANodetoRNode(localRegion, localAgent);
-                logger.error("LINKED REGION: " + localRegion + " AGENT: " + localAgent);
+                //logger.error("LINKED REGION: " + localRegion + " AGENT: " + localAgent);
                 break;
 
             default:
@@ -75,6 +76,28 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 break;
         }
 
+
+    }
+
+    public void preInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
+
+        //pull CSTATE to see if current region and agent match past region and agent
+        Map<String,String> stateMap = dbe.getCSTATE(null);
+        if(stateMap != null) {
+            String previousRegion = stateMap.get("local_region");
+            String previousAgent = stateMap.get("local_agent");
+
+            //clean up plugins that should not persist
+            dbe.purgeTransientPNodes(previousRegion, previousAgent);
+
+            //if name has changed we need to change assoications
+            if(!(previousRegion.equals(localRegion) && previousAgent.equals(localAgent))) {
+
+                dbe.reassoicateANodes(previousRegion,previousAgent,localRegion,localAgent);
+                dbe.reassoicatePNodes(previousAgent,localAgent);
+
+            }
+        }
 
     }
 
@@ -107,9 +130,13 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     public Map<String,String> getStateMap() {
 
         Map<String,String> stateMap = dbe.getCSTATE(null);
-        if(stateMap.containsKey("local_agent")) {
-            stateMap.put("configparams", dbe.getNodeConfigParams(null,stateMap.get("local_agent"), null));
+        /*
+        if(stateMap != null) {
+            if (stateMap.containsKey("local_agent") && stateMap.containsKey("local_region")) {
+                stateMap.put("configparams", dbe.getNodeConfigParams(null, stateMap.get("local_agent"), null));
+            }
         }
+        */
         return stateMap;
     }
 

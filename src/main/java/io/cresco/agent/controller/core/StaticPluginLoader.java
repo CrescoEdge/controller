@@ -1,14 +1,15 @@
 package io.cresco.agent.controller.core;
 
 import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.core.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.osgi.framework.Constants;
 
 import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Type;
 import java.net.URL;
 import java.util.*;
 
@@ -18,14 +19,16 @@ public class StaticPluginLoader implements Runnable  {
     private PluginBuilder plugin;
     private CLogger logger;
     private Config config;
-    private boolean internalModInit = false;
+    private Type hashMaptype;
     private Gson gson;
+
 
 
     public StaticPluginLoader(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         logger = plugin.getLogger(this.getClass().getName(), CLogger.Level.Info);
+        hashMaptype = new TypeToken<Map<String, Object>>(){}.getType();
         gson = new Gson();
 
         try {
@@ -194,6 +197,34 @@ public class StaticPluginLoader implements Runnable  {
                             }
 
                         }
+
+                            //pull the list of all plugins
+                            List<String> pluginList = controllerEngine.getGDB().getNodeList(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent());
+                            for (String pluginId : pluginList) {
+
+                                try {
+
+                                    //check if plugin is already running already
+                                    if (!controllerEngine.getPluginAdmin().pluginExist(pluginId)) {
+                                        //check if plugin should be running
+                                        if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) > 9) {
+                                            //start new plugin
+                                            String configParams = controllerEngine.getGDB().getPluginInfo(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId);
+                                            if (configParams != null) {
+                                                Map<String, Object> map = gson.fromJson(configParams, hashMaptype);
+                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(pluginId, (String) map.get("pluginname"), (String) map.get("jarfile"), map);
+                                            }
+                                        }
+                                    }
+
+                                } catch (Exception ex) {
+                                    logger.error("Failed to restart plugin: " + pluginId);
+                                    ex.printStackTrace();
+                                }
+
+                            }
+
+
 
                     }
                     logger.trace("Status : " + controllerEngine.cstate.getControllerState());

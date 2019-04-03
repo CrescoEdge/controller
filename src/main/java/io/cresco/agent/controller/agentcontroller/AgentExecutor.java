@@ -115,6 +115,9 @@ public class AgentExecutor implements Executor {
 
             //logger.error("incoming hm: [" + hm + "]");
 
+            //todo persistance should be set by the application not here
+            hm.put("persistence_code","10");
+
 
             boolean jarIsLocal = pluginIsLocal(hm);
 
@@ -131,7 +134,7 @@ public class AgentExecutor implements Executor {
                 //replace remote jarfilename with local
                 hm.put("jarfile",getCachedJarPath(hm));
 
-                String jarFileName = getRepoCacheDir() + "/" + hm.get("jarfile");
+                //String jarFileName = getRepoCacheDir() + "/" + hm.get("jarfile");
 
                 //logger.error("jarIslocal:: " + jarFileName);
 
@@ -146,9 +149,9 @@ public class AgentExecutor implements Executor {
                 String pluginId = null;
 
                 if(ce.getParam("edges") != null) {
-                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), jarFileName, map, ce.getCompressedParam("edges"));
+                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), hm.get("jarfile"), map, ce.getCompressedParam("edges"));
                 } else {
-                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), jarFileName, map);
+                    pluginId = controllerEngine.getPluginAdmin().addPlugin(hm.get("pluginname"), hm.get("jarfile"), map);
                 }
 
                 if(pluginId != null) {
