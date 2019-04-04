@@ -447,46 +447,49 @@ public class PluginAdmin {
                     }
 
                     //String pluginID = addConfig(pluginName, map);
-                    addConfig(pluginID, map);
+                    if(addConfig(pluginID, map)) {
 
-                    if (startBundle(bundleID)) {
-                        if (pluginID != null) {
+                        if (startBundle(bundleID)) {
+                            if (pluginID != null) {
 
-                            PluginNode pluginNode = null;
-                            if(edges != null) {
-                                Type type = new TypeToken<List<gEdge>>() {
-                                }.getType();
-                                List<gEdge> edgeList = gson.fromJson(edges, type);
+                                PluginNode pluginNode = null;
+                                if (edges != null) {
+                                    Type type = new TypeToken<List<gEdge>>() {
+                                    }.getType();
+                                    List<gEdge> edgeList = gson.fromJson(edges, type);
 
-                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, map, edgeList);
-                            } else {
-                                pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, map, null);
-                            }
-
-                            synchronized (lockPlugin) {
-                                pluginMap.put(pluginID, pluginNode);
-                            }
-                            synchronized (lockBundle) {
-                                if(!bundleMap.containsKey(bundleID)) {
-                                    bundleMap.put(bundleID,new ArrayList<>());
+                                    pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, map, edgeList);
+                                } else {
+                                    pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, map, null);
                                 }
-                                bundleMap.get(bundleID).add(pluginID);
-                            }
+
+                                synchronized (lockPlugin) {
+                                    pluginMap.put(pluginID, pluginNode);
+                                }
+                                synchronized (lockBundle) {
+                                    if (!bundleMap.containsKey(bundleID)) {
+                                        bundleMap.put(bundleID, new ArrayList<>());
+                                    }
+                                    bundleMap.get(bundleID).add(pluginID);
+                                }
 
 
-                            if (startPlugin(pluginID)) {
-                                returnPluginID = pluginID;
+                                if (startPlugin(pluginID)) {
+                                    returnPluginID = pluginID;
+                                } else {
+                                    System.out.println("Could not start agentcontroller " + pluginID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                                }
+
                             } else {
-                                System.out.println("Could not start agentcontroller " + pluginID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                                System.out.println("Could not create config for " + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
                             }
-
                         } else {
-                            System.out.println("Could not create config for " + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                            System.out.println("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                            System.out.println("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
+
                         }
                     } else {
-                        System.out.println("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
-                        System.out.println("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
-
+                        System.out.println("Could not create config pluginName " + map.get("pluginname") + " for jar " + map.get("jarfile"));
                     }
                     //controllerEngine.getPluginAdmin().startBundle(bundleID);
                     //String pluginID = controllerEngine.getPluginAdmin().addConfig(pluginName,jarFile, map);
@@ -535,6 +538,7 @@ public class PluginAdmin {
 
                             configMap.put(pluginId, configuration);
                             isEmpty = true;
+                            isAdded = true;
                         }
                     }
 
