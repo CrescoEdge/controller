@@ -384,6 +384,8 @@ public class DBInterfaceImpl implements DBInterface {
 
                     node.node_id = inodeId;
 
+
+
                 }
                 catch(Exception ex)
                 {

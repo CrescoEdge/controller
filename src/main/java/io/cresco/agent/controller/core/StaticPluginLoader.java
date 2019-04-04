@@ -212,7 +212,7 @@ public class StaticPluginLoader implements Runnable  {
                                             String configParams = controllerEngine.getGDB().getPluginInfo(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId);
                                             if (configParams != null) {
                                                 Map<String, Object> map = gson.fromJson(configParams, hashMaptype);
-                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(pluginId, map);
+                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                             }
                                         }
                                     }

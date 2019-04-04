@@ -26,6 +26,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.jar.JarInputStream;
+import java.util.jar.Manifest;
 
 public class PluginAdmin {
 
@@ -156,6 +158,28 @@ public class PluginAdmin {
         return exists;
     }
 
+
+    public boolean jarIsEmbedded(Map<String,Object> pluginMap) {
+        boolean isEmbedded = false;
+        try {
+
+            String jarPath = (String) pluginMap.get("jarfile");
+
+            URL url = getClass().getClassLoader().getResource(jarPath);
+            Manifest manifest = null;
+            if(url != null) {
+                manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(jarPath)).getManifest();
+                String MD5 = plugin.getMD5(getClass().getClassLoader().getResourceAsStream(url.getPath()));
+
+            }
+
+
+        } catch (Exception ex) {
+            logger.error("jarIsEmbedded()");
+            ex.printStackTrace();
+        }
+        return isEmbedded;
+    }
 
 
     public long addBundle(Map<String,Object> pluginMap) {
@@ -418,22 +442,16 @@ public class PluginAdmin {
     }
 
     public String addPlugin(Map<String,Object> map) {
-        return addPlugin(null, map, null);
-    }
-
-    public String addPlugin(String pluginId, Map<String,Object> map) {
-        return addPlugin(pluginId, map, null);
+        return addPlugin(map, null);
     }
 
     public String addPlugin(Map<String,Object> map, String edges) {
-        return addPlugin(null, map, edges);
-    }
-
-    public String addPlugin(String pluginID, Map<String,Object> map, String edges) {
 
         String returnPluginID = null;
         if(pluginCount() < PLUGINLIMIT) {
             try {
+
+                String pluginID = (String)map.get("inode_id");
 
                 if(pluginID == null) {
                     pluginID = "plugin-" + UUID.randomUUID().toString();

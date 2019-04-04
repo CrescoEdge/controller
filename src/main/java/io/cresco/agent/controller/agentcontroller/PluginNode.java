@@ -122,7 +122,7 @@ public class PluginNode {
         //public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
         //
         //create DB entry for plugin
-        gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts, pluginName,jarPath,version,MD5, gson.toJson(configMap), persistence_code);
+        gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts,name,jarPath,version,MD5, gson.toJson(configMap), persistence_code);
 
     }
 
