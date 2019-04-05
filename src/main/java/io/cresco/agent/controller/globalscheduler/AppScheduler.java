@@ -194,11 +194,11 @@ public class AppScheduler implements IncomingApp {
             //Generate a list of edges for each related node
             Map<String,List<gEdge>> edgeNodeMap = new HashMap<>();
 
-            List<String> nodeIds = new ArrayList<>();
+            Map<String,gNode> nodeMap = new HashMap<>();
+
+            //List<String> nodeIds = new ArrayList<>();
             for(gNode node : nodes) {
-                nodeIds.add(node.node_id);
-                //nodeMap.put(node.node_id,node);
-                //logger.error("node_id=" + node.node_id);
+                nodeMap.put(node.node_id,node);
             }
 
             //verify predicates
@@ -206,8 +206,31 @@ public class AppScheduler implements IncomingApp {
 
                 logger.debug("edge_id=" + edge.edge_id + " node_from=" + edge.node_from + " node_to=" + edge.node_to);
 
-                if ((nodeIds.contains(edge.node_to)) && (nodeIds.contains(edge.node_from))) {
+
+                if ((nodeMap.containsKey(edge.node_to)) && (nodeMap.containsKey(edge.node_from))) {
                     //modify nodes
+
+                    gNode node_to = nodeMap.get(edge.node_to);
+                    gNode node_from = nodeMap.get(edge.node_from);
+
+
+                    logger.error("NODE_TO PARAMS: [" + node_to.params + "]");
+                    logger.error("NODE_FROM PARAMS: [" + node_from.params + "]");
+
+                    String ntRegion = node_to.params.get("location_region");
+                    String ntAgent = node_to.params.get("location_agent");
+
+                    String nfRegion = node_from.params.get("location_region");
+                    String nfAgent = node_from.params.get("location_agent");
+
+                    logger.error("nfr: " + nfRegion + " nfa:" + nfAgent + " ntr:" + ntRegion + " nta:" + ntAgent);
+
+                    edge.getParamsTo().put("location_region",ntRegion);
+                    edge.getParamsTo().put("location_agent",ntAgent);
+
+                    edge.getParamsFrom().put("location_region",nfRegion);
+                    edge.getParamsFrom().put("location_agent",nfAgent);
+
 
                     if(!edgeNodeMap.containsKey(edge.node_to)) {
                         edgeNodeMap.put(edge.node_to, new ArrayList<>());
@@ -222,9 +245,9 @@ public class AppScheduler implements IncomingApp {
 
 
                 } else {
-                    if ((!nodeIds.contains(edge.node_to)) && (nodeIds.contains(edge.node_to))) {
+                    if ((!nodeMap.containsKey(edge.node_to)) && (nodeMap.containsKey(edge.node_to))) {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_to = " + edge.node_to);
-                    } else if ((nodeIds.contains(edge.node_to)) && (!nodeIds.contains(edge.node_to))) {
+                    } else if ((nodeMap.containsKey(edge.node_to)) && (!nodeMap.containsKey(edge.node_to))) {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_from = " + edge.node_from);
                     } else {
                         logger.error("Error Edge assignments = " + edge.edge_id + " missing node_from = " + edge.node_from + " and missing node_to = " + edge.node_to);
@@ -235,7 +258,6 @@ public class AppScheduler implements IncomingApp {
             for(gNode node : nodes) {
                 //nodeIds.add(node.node_id);
                 if(edgeNodeMap.containsKey(node.node_id)) {
-
 
                     String edgePayload = gson.toJson(edgeNodeMap.get(node.node_id));
                     //logger.error("EDGE PAYLOAD: " + edgePayload);

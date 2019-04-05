@@ -44,6 +44,8 @@ public class ResourceScheduler implements IncomingResource {
         gson = new Gson();
 		this.ghw = ghw;
 
+
+
     }
 
 
@@ -61,8 +63,29 @@ public class ResourceScheduler implements IncomingResource {
                     //do something to activate a agentcontroller
                     logger.debug("starting precheck...");
                     //String pluginJar = verifyPlugin(ce);
-                    pNode pluginNode = verifyPlugin(ce);
+                    //pNode pluginNode = verifyPlugin(ce);
 
+                    //Here is where scheduling is taking place
+                    logger.debug("agentcontroller precheck = OK");
+                    String region = ce.getParam("location_region");
+                    String agent = ce.getParam("location_agent");
+                    String resource_id = ce.getParam("resource_id");
+                    String inode_id = ce.getParam("inode_id");
+
+                    //schedule agentcontroller
+                    logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
+                    MsgEvent me = addPlugin(region,agent,ce.getParam("configparams"));
+                    //me.setCompressedParam("pnode",gson.toJson(pluginNode));
+                    me.setParam("edges",ce.getParam("edges"));
+
+
+
+                    logger.debug("pluginadd message: " + me.getParams().toString());
+
+
+                    new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
+
+                    /*
                     if(pluginNode == null)
                     {
                         logger.error("pluginnode == null");
@@ -84,7 +107,7 @@ public class ResourceScheduler implements IncomingResource {
                         //schedule agentcontroller
                         logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
                         MsgEvent me = addPlugin(region,agent,ce.getParam("configparams"));
-                        me.setCompressedParam("pnode",gson.toJson(pluginNode));
+                        //me.setCompressedParam("pnode",gson.toJson(pluginNode));
                         me.setParam("edges",ce.getParam("edges"));
 
 
@@ -95,6 +118,7 @@ public class ResourceScheduler implements IncomingResource {
                         new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
 
                     }
+                    */
                 }
                 else if(ce.getParam("globalcmd").equals("removeplugin"))
                 {
@@ -119,6 +143,7 @@ public class ResourceScheduler implements IncomingResource {
 
     }
 
+    /*
     private pNode verifyPlugin(MsgEvent ce) {
         pNode node = null;
 
@@ -134,6 +159,7 @@ public class ResourceScheduler implements IncomingResource {
 
         return node;
     }
+    */
 
 	public String getLowAgent() {
 		

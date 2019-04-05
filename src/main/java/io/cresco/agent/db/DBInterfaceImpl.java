@@ -369,10 +369,14 @@ public class DBInterfaceImpl implements DBInterface {
             HashMap<String,String> iNodeHm = new HashMap<>();
             HashMap<String,String> vNodeHm = new HashMap<>();
 
+            HashMap<String,String> incomingToINodeMap = new HashMap<>();
+
             for(gNode node : gpay.nodes)
             {
                 try
                 {
+                    String originalInodeId = node.node_id;
+
                     //add resource_id to configs
                     node.params.put("resource_id",gpay.pipeline_id);
 
@@ -390,6 +394,8 @@ public class DBInterfaceImpl implements DBInterface {
                     node.node_id = inodeId;
                     node.params.put("inode_id",node.node_id);
 
+                    incomingToINodeMap.put(originalInodeId, node.node_id);
+
 
                 }
                 catch(Exception ex)
@@ -405,6 +411,16 @@ public class DBInterfaceImpl implements DBInterface {
             for(gEdge edge : gpay.edges) {
                 try
                 {
+
+                    edge.edge_id = "edge=" + UUID.randomUUID().toString();
+                    if(incomingToINodeMap.containsKey(edge.node_from)) {
+                        edge.node_from = incomingToINodeMap.get(edge.node_from);
+                    }
+
+                    if(incomingToINodeMap.containsKey(edge.node_to)) {
+                        edge.node_to = incomingToINodeMap.get(edge.node_to);
+                    }
+
                     /*
                     if((edge.node_from != null) && (edge.node_to != null)) {
                         if ((vNodeHm.containsKey(edge.node_from)) && (vNodeHm.containsKey(edge.node_to))) {
