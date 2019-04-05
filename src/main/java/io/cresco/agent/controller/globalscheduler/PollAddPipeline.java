@@ -39,7 +39,7 @@ public class PollAddPipeline implements Runnable {
                 logger.debug("PipelineId " + pipelineId + " Pipeline Starting");
                 for(gNode gnode : pipelineNodes) {
 
-                    logger.debug("gnode_id : " + gnode.node_id + " params : " + gnode.params);
+                    logger.error("gnode_id : " + gnode.node_id + " params : " + gnode.params);
                     MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, null, null, null, "add application node");
                     me.setParam("globalcmd", "addplugin");
                     me.setParam("inode_id", gnode.node_id);
@@ -48,6 +48,8 @@ public class PollAddPipeline implements Runnable {
                     me.setParam("location_agent",gnode.params.get("location_agent"));
                     gnode.params.remove("location_region");
                     gnode.params.remove("location_agent");
+
+                    logger.error("AddPipeline RUN MsgEvent [" + gson.toJson(me) + "]");
 
                     if(gnode.params.containsKey("edges")) {
                         //remove edges from config if they exist

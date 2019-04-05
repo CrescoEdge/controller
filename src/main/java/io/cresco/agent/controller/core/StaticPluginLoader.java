@@ -72,52 +72,10 @@ public class StaticPluginLoader implements Runnable  {
                                 try {
                                     Map<String, Object> map = config.getConfigMap(tmpPluginID);
 
-                                    if ((map.containsKey("pluginname") && (map.containsKey("jarfile")))) {
-                                        String pluginName = (String) map.get("pluginname");
-                                        String baseJarFile = (String) map.get("jarfile");
-                                        String jarFile = null;
-                                        String pluginPath = plugin.getConfig().getStringParam("pluginpath");
-
-                                        //try and find file in conf
-                                        if (pluginPath != null) {
-                                            if (pluginPath.endsWith("/")) {
-                                                jarFile = pluginPath + baseJarFile;
-                                            } else {
-                                                jarFile = pluginPath + "/" + baseJarFile;
-                                            }
-                                        }
-
-                                        //try and find file in local root repo
-                                        if (jarFile == null) {
-                                            File pluginRepo = new File("repo");
-                                            if(pluginRepo.isDirectory()) {
-                                                String pluginRepoPath = pluginRepo.getAbsolutePath() + "/" + baseJarFile;
-                                                System.out.println("repo path : " + pluginRepoPath);
-                                                File jarFileRepo = new File(pluginRepoPath);
-                                                if(jarFileRepo.isFile()) {
-                                                    jarFile = pluginRepoPath + "/";
-                                                }
-                                            }
-                                        }
-
-                                        //try and find it embedded
-                                        if(jarFile == null) {
-                                            URL bundleURL = getClass().getClassLoader().getResource(baseJarFile);
-                                            if(bundleURL != null) {
-                                                jarFile = baseJarFile;
-                                            }
-                                        }
-
-                                        //logger.error("name: " + pluginName + " jar: " + jarFile + " path:" + pluginPath);
-
-                                        if(jarFile == null) {
-                                            logger.error("pluginPath = null");
-                                        } else {
+                                    if ((map.containsKey("pluginname"))) {
                                             String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                            logger.info("STATIC LOADED : pluginID: " + pluginID + " pluginName: " + pluginName + " jarName: " + jarFile);
-                                        }
                                     } else {
-                                        logger.error("Bad Jar Path");
+                                        logger.error("Bad Config Found " + map.toString());
                                     }
 
                                 } catch (Exception exe) {

@@ -842,6 +842,45 @@ public class DBEngine {
 
     }
 
+    public void updatePNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
+
+
+        try {
+            Connection conn = ds.getConnection();
+            try
+            {
+
+
+
+                Statement stmt = conn.createStatement();
+
+                String insertPNodeString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                    ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                    "WHERE plugin_id='" + plugin + "'";;
+
+
+                stmt.executeUpdate(insertPNodeString);
+                //force update of pnode, so the next command does not fail.
+
+                stmt.close();
+
+            }
+            catch(Exception e)
+            {
+                conn.rollback();
+                e.printStackTrace();
+            }
+            finally
+            {
+                conn.close();
+            }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
     public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
 
 
@@ -1255,160 +1294,6 @@ public class DBEngine {
         return statusMap;
     }
 
-    public void initDBOld() {
-
-
-        String largeFieldType = "clob";
-
-        if(dbType == DBType.MYSQL) {
-            largeFieldType = "blob";
-        }
-
-        String createRNode = "CREATE TABLE rnode" +
-                "(" +
-                "   region_id varchar(43) primary key NOT NULL," +
-                "   status_code int," +
-                "   status_desc varchar(255)," +
-                "   watchdog_period int," +
-                "   watchdog_ts bigint," +
-                "   configparams varchar(255)" +
-                ")";
-
-        String createANode = "CREATE TABLE anode" +
-                "(" +
-                "   region_id varchar(43) NOT NULL," +
-                "   agent_id varchar(42) primary key NOT NULL," +
-                "   status_code int," +
-                "   status_desc varchar(255)," +
-                "   watchdog_period int," +
-                "   watchdog_ts bigint," +
-                "   configparams varchar(255)," +
-                "   FOREIGN KEY (region_id) REFERENCES rnode(region_id) " +
-                ")";
-
-        String createPNode = "CREATE TABLE pnode" +
-                "(" +
-                "   region_id varchar(43) NOT NULL," +
-                "   agent_id varchar(42) NOT NULL," +
-                "   plugin_id varchar(43) NOT NULL," +
-                "   status_code int," +
-                "   status_desc varchar(255)," +
-                "   watchdog_period int," +
-                "   watchdog_ts bigint," +
-                "   pluginname varchar(255)," +
-                "   jarfile varchar(255)," +
-                "   version varchar(255)," +
-                "   md5 varchar(255)," +
-                "   configparams " + largeFieldType + "," +
-                "   persistence_code int DEFAULT 0," +
-                "   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
-                "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
-                "   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
-                ")";
-
-        String createTenantNode = "CREATE TABLE tenantnode" +
-                "(" +
-                "   tenant_id int primary key NOT NULL," +
-                "   tenantname varchar(255)" +
-                ")";
-
-        String createResourceNode = "CREATE TABLE resourcenode" +
-                "(" +
-                "   resource_id varchar(45) primary key NOT NULL," +
-                "   resource_name varchar(255)," +
-                "   tenant_id int," +
-                "   status_code int," +
-                "   status_desc varchar(255)," +
-                "   submission " + largeFieldType + "," +
-                "   FOREIGN KEY (tenant_id) REFERENCES tenantnode(tenant_id)" +
-                ")";
-
-        String createVnode = "CREATE TABLE vnode" +
-                "(" +
-                "   vnode_id varchar(42) primary key NOT NULL," +
-                "   resource_id varchar(45) NOT NULL," +
-                "   inode_id varchar(42)," +
-                "   configparams " + largeFieldType + "," +
-                "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
-                ")";
-
-        String createInode = "CREATE TABLE inode" +
-                "(" +
-                "   inode_id varchar(42) primary key NOT NULL," +
-                "   resource_id varchar(45) NOT NULL," +
-                "   region_id varchar(43)," +
-                "   agent_id varchar(42)," +
-                "   plugin_id varchar(43)," +
-                "   status_code int NOT NULL," +
-                "   status_desc varchar(255) NOT NULL," +
-                "   configparams " + largeFieldType + " NOT NULL," +
-                "   kpiparams " + largeFieldType + "," +
-                "   FOREIGN KEY (resource_id) REFERENCES resourcenode(resource_id)" +
-                ")";
-
-        String createInodeKPI = "CREATE TABLE inodekpi" +
-                "(" +
-                //"   inodekpi_id varchar(42) primary key NOT NULL," +
-                "   inode_id varchar(43)," +
-                "   kpiparams " + largeFieldType +
-                //"   FOREIGN KEY (inode_id) REFERENCES inode(inode_id)" +
-                ")";
-
-
-        if(dbType == DBType.MYSQL) {
-            if (tableExist("inodekpi")) {
-                dropTable("inodekpi");
-            }
-
-            if (tableExist("vnode")) {
-                dropTable("vnode");
-            }
-
-            if (tableExist("inode")) {
-                dropTable("inode");
-            }
-
-            if (tableExist("resourcenode")) {
-                dropTable("resourcenode");
-            }
-
-            if (tableExist("tenantnode")) {
-                dropTable("tenantnode");
-            }
-
-            if (tableExist("pnode")) {
-                dropTable("pnode");
-            }
-
-            if (tableExist("anode")) {
-                dropTable("anode");
-            }
-
-            if (tableExist("rnode")) {
-                dropTable("rnode");
-            }
-        }
-
-        try {
-            Connection conn = ds.getConnection();
-            Statement stmt = conn.createStatement();
-
-            stmt.executeUpdate(createRNode);
-            stmt.executeUpdate(createANode);
-            stmt.executeUpdate(createPNode);
-            stmt.executeUpdate(createTenantNode);
-            stmt.executeUpdate(createResourceNode);
-            stmt.executeUpdate(createInode);
-            stmt.executeUpdate(createVnode);
-            stmt.executeUpdate(createInodeKPI);
-
-            stmt.close();
-            conn.close();
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-    }
-
     public void initDB() {
 
 //ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent
@@ -1427,9 +1312,9 @@ public class DBEngine {
                 "   global_region varchar(43)," +
                 "   global_agent varchar(43)," +
                 "   regional_region varchar(43)," +
-                "   regional_agent varchar(43)," +
+                "   regional_agent varchar(42)," +
                 "   local_region varchar(43)," +
-                "   local_agent varchar(43)" +
+                "   local_agent varchar(42)" +
                 ")";
 
         String createRNode = "CREATE TABLE rnode" +
@@ -1533,7 +1418,7 @@ public class DBEngine {
         String createInodeKPI = "CREATE TABLE inodekpi" +
                 "(" +
                 //"   inodekpi_id varchar(42) primary key NOT NULL," +
-                "   inode_id varchar(43)," +
+                "   inode_id varchar(42)," +
                 "   kpiparams " + largeFieldType +
                 //"   FOREIGN KEY (inode_id) REFERENCES inode(inode_id)" +
                 ")";

@@ -25,11 +25,10 @@ public class PluginNode {
 
     //private Logger logger =
     private String pluginID;
-    private String jarPath;
-    private String MD5;
-    private String pluginName;
     private String name;
     private String version;
+    private String MD5;
+    private String jarPath;
     private boolean active = false;
     private int status_code = 3;
     private String status_desc = "Plugin Configuration Created";
@@ -85,10 +84,14 @@ public class PluginNode {
         this.gson = new Gson();
         this.bundleID = bundleID;
         this.pluginID = pluginID;
+        this.name = (String)configMap.get("pluginname");
+        this.version = (String)configMap.get("version");
+        this.MD5 = (String)configMap.get("md5");
         this.jarPath = (String)configMap.get("jarfile");
         this.configMap = configMap;
         this.edgeList = edgeList;
 
+        /*
         URL url = getClass().getClassLoader().getResource(jarPath);
         Manifest manifest = null;
         if(url != null) {
@@ -113,6 +116,7 @@ public class PluginNode {
         if(configMap.containsKey("persistence_code")) {
             persistence_code = Integer.parseInt(configMap.get("persistence_code").toString());
         }
+        */
 
         //System.out.println("NAME: " + name);
         //System.out.println("VERSION: " + version);
@@ -122,6 +126,13 @@ public class PluginNode {
         //public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
         //
         //create DB entry for plugin
+
+        int persistence_code = 0;
+
+        if(configMap.containsKey("persistence_code")) {
+            persistence_code = Integer.parseInt(configMap.get("persistence_code").toString());
+        }
+
         gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts,name,jarPath,version,MD5, gson.toJson(configMap), persistence_code);
 
     }

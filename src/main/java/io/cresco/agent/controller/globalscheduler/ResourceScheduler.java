@@ -1,12 +1,9 @@
 package io.cresco.agent.controller.globalscheduler;
 
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
-import io.cresco.library.app.gPayload;
 import io.cresco.library.app.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -17,21 +14,15 @@ import java.io.FileInputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Type;
-import java.math.BigInteger;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.URLDecoder;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
 import java.util.*;
 import java.util.Map.Entry;
-import java.util.concurrent.TimeUnit;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
+
 
 
 public class ResourceScheduler implements IncomingResource {
@@ -40,11 +31,6 @@ public class ResourceScheduler implements IncomingResource {
 	private PluginBuilder plugin;
 	private GlobalHealthWatcher ghw;
 	private CLogger logger;
-    public Cache<String, String> jarStringCache;
-    public Cache<String, String> jarHashCache;
-    public Cache<String, String> jarTimeCache;
-
-    public Cache<String, List<pNode>> repoCache;
 
 
     private Gson gson;
@@ -56,35 +42,8 @@ public class ResourceScheduler implements IncomingResource {
         this.logger = plugin.getLogger(ResourceScheduler.class.getName(),CLogger.Level.Info);
 
         gson = new Gson();
-		//this.agentcontroller = agentcontroller;
 		this.ghw = ghw;
-        //logger = new CLogger(ResourceSchedulerEngine.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
 
-        jarStringCache = CacheBuilder.newBuilder()
-                .concurrencyLevel(4)
-                .softValues()
-                .maximumSize(10)
-                .expireAfterWrite(15, TimeUnit.MINUTES)
-                .build();
-        jarHashCache = CacheBuilder.newBuilder()
-                .concurrencyLevel(4)
-                .softValues()
-                .maximumSize(100)
-                .expireAfterWrite(15, TimeUnit.MINUTES)
-                .build();
-        jarTimeCache = CacheBuilder.newBuilder()
-                .concurrencyLevel(4)
-                .softValues()
-                .maximumSize(100)
-                .expireAfterWrite(15, TimeUnit.MINUTES)
-                .build();
-
-        repoCache = CacheBuilder.newBuilder()
-                .concurrencyLevel(4)
-                .softValues()
-                .maximumSize(1000)
-                .expireAfterWrite(5, TimeUnit.SECONDS)
-                .build();
     }
 
 
@@ -160,151 +119,21 @@ public class ResourceScheduler implements IncomingResource {
 
     }
 
-
-    public String getJarMD5(String pluginFile) {
-        String jarString = null;
-        try
-        {
-            Path path = Paths.get(pluginFile);
-            byte[] data = Files.readAllBytes(path);
-
-            MessageDigest m= MessageDigest.getInstance("MD5");
-            m.update(data);
-            jarString = new BigInteger(1,m.digest()).toString(16);
-        }
-        catch(Exception e)
-        {
-            e.printStackTrace();
-        }
-        return jarString;
-    }
-
-
     private pNode verifyPlugin(MsgEvent ce) {
         pNode node = null;
 
-        Type type = new TypeToken<Map<String, String>>(){}.getType();
-        Map<String, String> params = gson.fromJson(ce.getCompressedParam("configparams"), type);
+        logger.error("verifyPlugin MsgEvent [" + gson.toJson(ce) + "]");
+        logger.error("verifyPlugin configparams [" + ce.getCompressedParam("configparams") + "]");
+
+        Type type = new TypeToken<Map<String, Object>>(){}.getType();
+        Map<String, Object> params = gson.fromJson(ce.getCompressedParam("configparams"), type);
 
         logger.debug("config params: " + params.toString());
 
-        String requestedPlugin = params.get("pluginname");
-
-        //make sure cache is populated
-        repoCache.cleanUp();
-        if(repoCache.size() == 0) {
-            repoCache.putAll(controllerEngine.getGDB().getPluginListRepoSet());
-        }
-
-        List<pNode> nodeList = repoCache.getIfPresent(requestedPlugin);
-
-
-
-        if(nodeList != null) {
-            boolean isMatch = true;
-            for(pNode tmpNode : nodeList) {
-                if(params.containsKey("version")) {
-                    if(!params.get("version").equals(tmpNode.version)) {
-                        isMatch = false;
-                    }
-                }
-                if(isMatch) {
-                   if(node == null) {
-                       node = tmpNode;
-                   } else {
-                       if(node.getBuildTime().getTime() < tmpNode.getBuildTime().getTime()) {
-                           node = tmpNode;
-                       }
-                   }
-                }
-            }
-
-        } else {
-            logger.error("requested agentcontroller not found!");
-        }
-
+        node = controllerEngine.getPluginAdmin().getPnode(params);
 
         return node;
     }
-
-	private String verifyPluginOld(MsgEvent ce) {
-	    String returnPluginfile = null;
-	    //boolean isVerified = false;
-		//pre-schedule check
-		//String configparams = ce.getParam("configparams");
-
-
-		//logger.debug("verifyPlugin params " + configparams);
-        Type type = new TypeToken<Map<String, String>>(){}.getType();
-        Map<String, String> params = gson.fromJson(ce.getCompressedParam("configparams"), type);
-
-        //Map<String,String> params = getMapFromString(configparams, false);
-
-        logger.debug("config params: " + params.toString());
-
-        String requestedPlugin = params.get("pluginname");
-
-        List<String> pluginMap = getPluginInventory();
-        for(String pluginfile : pluginMap) {
-            logger.debug("agentcontroller = " + pluginfile);
-            logger.debug("agentcontroller name = " + getPluginName(pluginfile));
-                String pluginName = getPluginName(pluginfile);
-                if(pluginName != null) {
-                    if (requestedPlugin.equals(pluginName)) {
-                        returnPluginfile = pluginfile;
-                    }
-                }
-        }
-
-        /*
-        String[] cparams = configparams.split(",");
-		Map<String,String> cm = new HashMap<String,String>();
-		for(String param : cparams)
-		{
-			String[] paramkv = param.split("=");
-			cm.put(paramkv[0], paramkv[1]);
-		}
-
-		String requestedPlugin = cm.get("pluginname") + "=" + cm.get("pluginversion");
-        String requestedPlugin = params.get("pluginname");
-		logger.debug("Requested Plugin=" + requestedPlugin);
-		if(pluginMap.contains(requestedPlugin))
-		{
-			return getPluginFileMap().get(requestedPlugin);
-		}
-		else
-		{
-			ce.setMsgBody("Matching agentcontroller could not be found!");
-			ce.setParam("pluginstatus","failed");
-		}
-		*/
-		return returnPluginfile;
-	}
-	
-	public Map<String,String> paramStringToMap(String param)
-	{
-		Map<String,String> params = null;
-		try
-		{
-			params = new HashMap<String,String>();
-			String[] pstr = param.split(",");
-			for(String str : pstr)
-			{
-				String[] pstrs = str.split("=");
-				params.put(pstrs[0], pstrs[1]);
-			}
-		}
-		catch(Exception ex)
-		{
-			logger.error("ResourceSchedulerEngine paramStringToMap : Error " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
-
-		}
-		return params;
-	}
 
 	public String getLowAgent() {
 		
@@ -474,57 +303,6 @@ public class ResourceScheduler implements IncomingResource {
         return pluginFiles;
     }
 
-    public String getPluginName(String jarFile) { //This should pull the version information from jar Meta data
-        String version = null;
-        try{
-            //String jarFile = AgentEngine.class.getProtectionDomain().getCodeSource().getLocation().getPath();
-            //logger.debug("JARFILE:" + jarFile);
-            //File file = new File(jarFile.substring(5, (jarFile.length() )));
-            File file = new File(jarFile);
-
-            boolean calcHash = true;
-            BasicFileAttributes attr = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-            long fileTime = attr.creationTime().toMillis();
-
-            String jarCreateTimeString = jarTimeCache.getIfPresent(jarFile);
-
-
-            if(jarCreateTimeString != null) {
-              long jarCreateTime = Long.parseLong(jarCreateTimeString);
-              if(jarCreateTime == fileTime) {
-                calcHash = false;
-              } else {
-
-                  jarStringCache.invalidate(jarFile);
-                  jarHashCache.invalidate(jarFile);
-              }
-            }
-            if(calcHash) {
-                jarStringCache.put(jarFile,String.valueOf(fileTime));
-                jarHashCache.put(jarFile,getJarMD5(jarFile));
-            }
-
-            FileInputStream fis = new FileInputStream(file);
-            @SuppressWarnings("resource")
-            JarInputStream jarStream = new JarInputStream(fis);
-            Manifest mf = jarStream.getManifest();
-
-            Attributes mainAttribs = mf.getMainAttributes();
-            version = mainAttribs.getValue("artifactId");
-        }
-        catch(Exception ex)
-        {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
-
-            logger.error("Unable to determine Plugin Version " + ex.getMessage());
-            //version = "Unable to determine Version";
-        }
-        return version;
-    }
-
     public String getNetworkAddresses() {
         String netwokrAddressesString = null;
         try {
@@ -583,6 +361,7 @@ public class ResourceScheduler implements IncomingResource {
         return version;
     }
 
+    /*
 	public Map<String,String> getPluginFileMap() {
 		Map<String,String> pluginList = new HashMap<String,String>();
 		
@@ -625,6 +404,7 @@ public class ResourceScheduler implements IncomingResource {
 		return null; 
 		
 	}
+    */
 
     public Map<String,String> getMapFromString(String param, boolean isRestricted) {
         Map<String,String> paramMap = null;

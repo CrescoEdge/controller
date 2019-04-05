@@ -68,9 +68,9 @@ class ControllerInfoBuilder {
                         //MBeanInfo info = server.getMBeanInfo(instance.getObjectName());
                         //MBeanAttributeInfo[] attrInfo = info.getAttributes();
                         //(ObjectName[])server.getAttribute(http, attr.getName()))
-                        System.out.println(server.getAttribute(instance.getObjectName(), "Subscriptions"));
+                        //logger.info(server.getAttribute(instance.getObjectName(), "Subscriptions"));
                         for(ObjectName on : (ObjectName[])server.getAttribute(instance.getObjectName(), "Subscriptions")) {
-                            System.out.println(on.getCanonicalName());
+                            logger.info(on.getCanonicalName());
                         }
                         //WriteAttributes(server, instance.getObjectName(), false);
 
@@ -114,7 +114,7 @@ class ControllerInfoBuilder {
         {
             try {
                 MBeanServer server = ManagementFactory.getPlatformMBeanServer();
-                System.out.println(attr.getName() + "=" + server.getAttribute(http, attr.getName()) + " " + indent);
+                //System.out.println(attr.getName() + "=" + server.getAttribute(http, attr.getName()) + " " + indent);
                 if(attr.getName().equals("Subscriptions")){
 
                     for(ObjectName on : (ObjectName[])server.getAttribute(http, attr.getName())) {

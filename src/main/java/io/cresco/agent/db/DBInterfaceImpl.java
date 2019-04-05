@@ -74,7 +74,12 @@ public class DBInterfaceImpl implements DBInterface {
     }
 
     public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
-        dbe.addPNode(agent,plugin,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams, persistence_code);
+
+        if(dbe.nodeExist(null,null, plugin)) {
+            dbe.updatePNode(agent, plugin, status_code, status_desc, watchdog_period, watchdog_ts, pluginname, jarfile, version, md5, configparams, persistence_code);
+        } else {
+            dbe.addPNode(agent, plugin, status_code, status_desc, watchdog_period, watchdog_ts, pluginname, jarfile, version, md5, configparams, persistence_code);
+        }
     }
 
     /*
@@ -337,7 +342,7 @@ public class DBInterfaceImpl implements DBInterface {
 
             gpay = gson.fromJson(gPayload, gPayload.class);
 
-            gpay.pipeline_id = UUID.randomUUID().toString();
+            gpay.pipeline_id = "resource-" + UUID.randomUUID().toString();
             gpay.status_code = "3";
             gpay.status_desc = "Record added to DB.";
 
@@ -371,8 +376,8 @@ public class DBInterfaceImpl implements DBInterface {
                     //add resource_id to configs
                     node.params.put("resource_id",gpay.pipeline_id);
 
-                    String vnodeId = UUID.randomUUID().toString();
-                    String inodeId = UUID.randomUUID().toString();
+                    String vnodeId = "vnode-" + UUID.randomUUID().toString();
+                    String inodeId = "inode-" + UUID.randomUUID().toString();
 
                     //create clean vnode first
                     dbe.addVnode(vnodeId,gpay.pipeline_id,inodeId,gson.toJson(node.params));
@@ -383,7 +388,7 @@ public class DBInterfaceImpl implements DBInterface {
                     iNodeHm.put(node.node_id, inodeId);
 
                     node.node_id = inodeId;
-
+                    node.params.put("inode_id",node.node_id);
 
 
                 }
@@ -615,6 +620,7 @@ public class DBInterfaceImpl implements DBInterface {
                 Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
                 List<Map<String,String>> tmpPluginsList = myRepoMap.get("plugins");
                 List<Map<String,String>> tmpServerList = myRepoMap.get("server");
+
 
                 for(Map<String,String> plugin : tmpPluginsList) {
                     String name = plugin.get("pluginname");
