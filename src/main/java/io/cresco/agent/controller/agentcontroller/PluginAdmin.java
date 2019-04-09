@@ -322,7 +322,7 @@ public class PluginAdmin {
                     logger.error("pnode ! file");
                 }
             } else {
-                logger.error("pnode = null");
+                logger.error("Unable to retreve pnode from repo!");
             }
 
         } catch (Exception ex) {
@@ -1220,11 +1220,15 @@ public class PluginAdmin {
             }
 
             List<pNode> nodeList = repoCache.getIfPresent(requestedName);
-
+            if(nodeList == null) {
+                logger.debug("getPnode() nodeList is NULL");
+            } else {
+                logger.debug("getPnode() nodeList size : " + nodeList.size());
+            }
             if(nodeList != null) {
                 for(pNode tmpNode : nodeList) {
 
-                    if(tmpNode.isEqual(requestedName,requestedMD5,requestedVersion)) {
+                    if(tmpNode.isEqual(requestedName,requestedVersion,requestedMD5)) {
                            return tmpNode;
                     }
                 }

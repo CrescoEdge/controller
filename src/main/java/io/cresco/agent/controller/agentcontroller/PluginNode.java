@@ -6,16 +6,9 @@ import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
-import javafx.beans.binding.IntegerBinding;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URL;
 import java.util.*;
-import java.util.jar.Attributes;
-import java.util.jar.JarInputStream;
-import java.util.jar.Manifest;
 
 public class PluginNode {
 
