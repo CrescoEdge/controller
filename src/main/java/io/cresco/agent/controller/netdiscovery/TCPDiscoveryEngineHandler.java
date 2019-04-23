@@ -11,6 +11,7 @@ import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 
 import java.security.cert.Certificate;
+import java.util.UUID;
 
 /**
  * Handles both client-side and server-side handler depending on which
@@ -309,13 +310,13 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
         try {
             String discoverySecret = null;
             if (rme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
                 groupName = "agent";
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
                 groupName = "region";
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
                 groupName = "global";
             }
 

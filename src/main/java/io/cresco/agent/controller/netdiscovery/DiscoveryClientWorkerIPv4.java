@@ -226,11 +226,11 @@ class DiscoveryClientWorkerIPv4 {
 
             String discoverySecret = null;
             if (rme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
             }
             if(rme.getParam("validated_authenication") != null) {
                 decryptedString = discoveryCrypto.decrypt(rme.getParam("validated_authenication"), discoverySecret);
@@ -254,11 +254,11 @@ class DiscoveryClientWorkerIPv4 {
 
             String discoverySecret = null;
             if (sme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
             } else if (sme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
             } else if (sme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
             }
 
             String verifyMessage = "DISCOVERY_MESSAGE_VERIFIED";
