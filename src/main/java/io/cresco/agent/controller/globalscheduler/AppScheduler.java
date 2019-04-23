@@ -213,9 +213,8 @@ public class AppScheduler implements IncomingApp {
                     gNode node_to = nodeMap.get(edge.node_to);
                     gNode node_from = nodeMap.get(edge.node_from);
 
-
-                    logger.error("NODE_TO PARAMS: [" + node_to.params + "]");
-                    logger.error("NODE_FROM PARAMS: [" + node_from.params + "]");
+                    logger.debug("NODE_TO PARAMS: [" + node_to.params + "]");
+                    logger.debug("NODE_FROM PARAMS: [" + node_from.params + "]");
 
                     String ntRegion = node_to.params.get("location_region");
                     String ntAgent = node_to.params.get("location_agent");
@@ -223,7 +222,7 @@ public class AppScheduler implements IncomingApp {
                     String nfRegion = node_from.params.get("location_region");
                     String nfAgent = node_from.params.get("location_agent");
 
-                    logger.error("nfr: " + nfRegion + " nfa:" + nfAgent + " ntr:" + ntRegion + " nta:" + ntAgent);
+                    logger.debug("nfr: " + nfRegion + " nfa:" + nfAgent + " ntr:" + ntRegion + " nta:" + ntAgent);
 
                     edge.getParamsTo().put("location_region",ntRegion);
                     edge.getParamsTo().put("location_agent",ntAgent);
