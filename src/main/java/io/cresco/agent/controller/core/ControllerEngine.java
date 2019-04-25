@@ -361,7 +361,7 @@ public class ControllerEngine {
                     cstate.setAgentInit(tmpRegion,cstate.getAgent(),"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
                     //this.agent = agentcontroller.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
                     //this.agentpath = tmpRegion + "_" + this.agent;
-                    certificateManager = new CertificateManager(this, cstate.getAgentPath());
+                    certificateManager = new CertificateManager(this);
 
                     TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
                     List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host"), true);
@@ -438,7 +438,7 @@ public class ControllerEngine {
                         //agent name now set on core init
                         cstate.setAgentInit(pcRegion,cstate.getAgent(),"initAgent() : Dynamic Discovery");
 
-                        certificateManager = new CertificateManager(this, cstate.getAgentPath());
+                        certificateManager = new CertificateManager(this);
 
                         TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
                         List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), pcbrokerAddress, true);
@@ -768,7 +768,7 @@ public class ControllerEngine {
             cstate.setRegionInit(cstate.getRegion(),cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
             logger.debug("Generated regionid=" + cstate.getRegion());
 
-            certificateManager = new CertificateManager(this,cstate.getAgentPath());
+            certificateManager = new CertificateManager(this);
 
             logger.debug("AgentPath=" + cstate.getAgentPath());
             //Start controller services

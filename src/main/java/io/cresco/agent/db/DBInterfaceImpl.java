@@ -147,7 +147,7 @@ public class DBInterfaceImpl implements DBInterface {
                     }
                 }
 
-                throw new NullPointerException("demo");
+                //throw new NullPointerException("demo");
             }
 
             wasAdded = true;

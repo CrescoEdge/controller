@@ -16,8 +16,6 @@ import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.UUID;
 
-//import org.apache.commons.net.util.Base64;
-
 public class CertificateManager {
 
     private KeyStore keyStore;
@@ -35,7 +33,7 @@ public class CertificateManager {
 
     private int keySize = 2048;
 
-    public CertificateManager(ControllerEngine controllerEngine, String agentPath) {
+    public CertificateManager(ControllerEngine controllerEngine) {
 
         try {
 
@@ -46,7 +44,7 @@ public class CertificateManager {
 
             keySize = plugin.getConfig().getIntegerParam("messagekeysize",2048);
 
-            this.keyStoreAlias = agentPath;
+            this.keyStoreAlias = controllerEngine.cstate.getAgentPath();
             
             //keyStoreAlias = UUID.randomUUID().toString();
             keyStorePassword = UUID.randomUUID().toString().toCharArray();
@@ -68,53 +66,6 @@ public class CertificateManager {
             logger.error("CertificateChainGeneration() Error: " + ex.getMessage());
         }
 
-    }
-
-    public void updateSSL(X509Certificate[] cert, String alias) {
-
-        
-        try {
-            //broker.getSslContext().addTrustManager();
-
-            TrustManager[] trustmanagers = getTrustManagers();
-            if (trustmanagers != null) {
-                for (TrustManager tm : trustmanagers) {
-                    if (tm instanceof X509TrustManager) {
-                        //((X509TrustManager) tm).checkClientTrusted(cert, alias);
-                        //((X509TrustManager) tm).checkServerTrusted(cert, alias);
-
-                        ((X509TrustManager) tm).checkClientTrusted(cert, "RSA");
-                        ((X509TrustManager) tm).checkServerTrusted(cert, "RSA");
-
-                        //((X509TrustManager) tm).checkClientTrusted(null, null);
-                        //((X509TrustManager) tm).checkServerTrusted(null, null);
-
-                        //trustmanagers[i] = new TrustManagerDecorator(
-                        //        (X509TrustManager) tm, trustStrategy);
-                    }
-                }
-            }
-
-        } catch(Exception ex) {
-            logger.error("updateSSL error " + ex.getMessage());
-        }
-    }
-
-    public void addCertificatesToKeyStore(String alias, Certificate[] certs) {
-        try {
-            for(Certificate cert:certs){
-                //logger.error(cert.toString());
-                //PublicKey publicKey = cert.getPublicKey();
-
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                //trustStore.setCertificateEntry(UUID.randomUUID().toString(),cert);
-                keyStore.setCertificateEntry(alias,cert);
-
-                //logger.error(publicKeyString);
-            }
-        } catch (Exception ex) {
-            logger.error("addCertificatesToTrustStore() : error " + ex.getMessage());
-        }
     }
 
     public void addCertificatesToTrustStore(String alias, Certificate[] certs) {
@@ -165,41 +116,6 @@ public class CertificateManager {
         }
 
         return  certChain;
-    }
-
-    private void generateCertChain2() {
-        try{
-
-
-            //Generate ROOT certificate
-            CertAndKeyGen keyGen=new CertAndKeyGen("RSA","SHA256WithRSA",null);
-            keyGen.generate(keySize);
-            PrivateKey rootPrivateKey=keyGen.getPrivateKey();
-
-            X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT-" + keyStoreAlias), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
-
-
-            rootCertificate   = createSignedCertificate(rootCertificate,rootCertificate,rootPrivateKey);
-
-            chain = new X509Certificate[1];
-            chain[0]=rootCertificate;
-
-            //String alias = "mykey";
-            //String keystore = "testkeys.jks";
-
-            //Store the certificate chain
-            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, rootPrivateKey, chain);
-
-            //Reload the keystore and display key and certificate chain info
-            //loadCertChain(alias, keyStorePassword, keystore);
-            //Clear the keystore
-            //clearKeyStore(alias, password, keystore);
-            signingCertificate = rootCertificate;
-            signingKey = rootPrivateKey;
-
-        }catch(Exception ex){
-            ex.printStackTrace();
-        }
     }
 
     private void generateCertChain() {
@@ -256,29 +172,6 @@ public class CertificateManager {
         }
     }
 
-    public TrustManager getTrustManager() {
-        TrustManager trustManager = null;
-        try {
-            trustManager = getTrustManagers()[0];
-            if(trustManager == null) {
-                logger.error("TRUST MANAGER NULL!!!");
-            }
-        } catch(Exception ex) {
-            logger.error("getTrustManager Error : " + ex.getMessage());
-        }
-        return trustManager;
-    }
-
-    public KeyManager getKeyManager() {
-        KeyManager keyManager = null;
-        try {
-            keyManager = getKeyManagers()[0];
-        } catch(Exception ex) {
-            logger.error("getKeyManager Error : " + ex.getMessage());
-        }
-        return keyManager;
-    }
-
     public TrustManager[] getTrustManagers() {
         TrustManager[] trustManagers = null;
         try {
@@ -319,155 +212,6 @@ public class CertificateManager {
         //TODO trying to to save
         //keyStore.store(new FileOutputStream(keystore),password);
 
-    }
-
-    public Certificate[] getPublicCertificates() {
-        Certificate[] certs = null;
-        try {
-            Key key = keyStore.getKey(keyStoreAlias, keyStorePassword);
-
-            if (key instanceof PrivateKey) {
-
-                certs = keyStore.getCertificateChain(keyStoreAlias);
-
-            }
-        } catch(Exception ex) {
-            logger.error("getCertificates() : error " + ex.getMessage());
-        }
-        return certs;
-    }
-
-    public Certificate[] getCertificates() {
-        Certificate[] certs = null;
-        try {
-            Key key = keyStore.getKey(keyStoreAlias, keyStorePassword);
-
-            if (key instanceof PrivateKey) {
-
-                certs = keyStore.getCertificateChain(keyStoreAlias);
-
-            }
-        } catch(Exception ex) {
-            logger.error("getCertificates() : error " + ex.getMessage());
-        }
-        return certs;
-    }
-
-    public void loadTrustStoreCertChain(String alias) throws Exception{
-
-        Key key=trustStore.getKey(alias, keyStorePassword);
-
-        if(key instanceof PrivateKey){
-            //logger.error("Get private key : ");
-            logger.error(key.toString());
-
-            Certificate[] certs=trustStore.getCertificateChain(alias);
-            logger.error("Certificate chain length : "+certs.length);
-            for(Certificate cert:certs){
-                logger.error(cert.toString());
-                PublicKey publicKey = cert.getPublicKey();
-
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-                        //trustStore.setCertificateEntry(cert.toString(),cert);
-                //keyStore.setCertificateEntry(cert.toString(),cert);
-
-                logger.error(publicKeyString);
-            }
-        }else{
-
-            logger.error("Key is not private key");
-            Certificate cert = trustStore.getCertificate(alias);
-            if(cert != null) {
-
-
-                logger.error(cert.toString());
-                PublicKey publicKey = cert.getPublicKey();
-
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-                //trustStore.setCertificateEntry(cert.toString(),cert);
-                //keyStore.setCertificateEntry(cert.toString(),cert);
-
-                logger.error(publicKeyString);
-            } else {
-                logger.error("cert null");
-            }
-
-        }
-    }
-
-    public void loadKeyStoreCertChain(String alias) throws Exception{
-
-        Key key=keyStore.getKey(alias, keyStorePassword);
-
-        if(key instanceof PrivateKey){
-            //logger.error("Get private key : ");
-            logger.error(key.toString());
-
-            Certificate[] certs=keyStore.getCertificateChain(alias);
-            logger.error("Certificate chain length : "+certs.length);
-            for(Certificate cert:certs){
-                logger.error(cert.toString());
-                PublicKey publicKey = cert.getPublicKey();
-                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                //trustStore.setCertificateEntry(cert.toString(),cert);
-                //keyStore.setCertificateEntry(cert.toString(),cert);
-
-                logger.error(publicKeyString);
-            }
-        }else{
-
-            logger.error("Key is not private key");
-            Certificate cert = keyStore.getCertificate(alias);
-            if(cert != null) {
-                logger.error(cert.toString());
-                PublicKey publicKey = cert.getPublicKey();
-                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                //trustStore.setCertificateEntry(cert.toString(),cert);
-                //keyStore.setCertificateEntry(cert.toString(),cert);
-
-                logger.error(publicKeyString);
-            } else {
-                logger.error("cert null");
-            }
-
-        }
-    }
-
-    private void loadAndDisplayChain(String alias,char[] password, String keystore) throws Exception{
-        //Reload the keystore
-        KeyStore keyStore=KeyStore.getInstance("jks");
-        keyStore.load(new FileInputStream(keystore),password);
-
-        Key key=keyStore.getKey(alias, password);
-
-        if(key instanceof PrivateKey){
-            logger.error("Get private key : ");
-            logger.error(key.toString());
-
-            Certificate[] certs=keyStore.getCertificateChain(alias);
-            logger.error("Certificate chain length : "+certs.length);
-            for(Certificate cert:certs){
-                logger.error(cert.toString());
-                PublicKey publicKey = cert.getPublicKey();
-                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                trustStore.setCertificateEntry(cert.toString(),cert);
-                logger.error(publicKeyString);
-            }
-        }else{
-            logger.error("Key is not private key");
-        }
-    }
-
-    private  void clearKeyStore(String alias,char[] password, String keystore) throws Exception{
-        KeyStore keyStore=KeyStore.getInstance("jks");
-        keyStore.load(new FileInputStream(keystore),password);
-        keyStore.deleteEntry(alias);
-        keyStore.store(new FileOutputStream(keystore),password);
     }
 
     private X509Certificate createSignedCertificate(X509Certificate cetrificate,X509Certificate issuerCertificate,PrivateKey issuerPrivateKey){
@@ -581,6 +325,262 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("getJsonFromCerts() : error " + ex.getMessage());
         }
         return certJson;
+    }
+
+    //unused
+
+    public void updateSSL(X509Certificate[] cert, String alias) {
+
+
+        try {
+            //broker.getSslContext().addTrustManager();
+
+            TrustManager[] trustmanagers = getTrustManagers();
+            if (trustmanagers != null) {
+                for (TrustManager tm : trustmanagers) {
+                    if (tm instanceof X509TrustManager) {
+                        //((X509TrustManager) tm).checkClientTrusted(cert, alias);
+                        //((X509TrustManager) tm).checkServerTrusted(cert, alias);
+
+                        ((X509TrustManager) tm).checkClientTrusted(cert, "RSA");
+                        ((X509TrustManager) tm).checkServerTrusted(cert, "RSA");
+
+                        //((X509TrustManager) tm).checkClientTrusted(null, null);
+                        //((X509TrustManager) tm).checkServerTrusted(null, null);
+
+                        //trustmanagers[i] = new TrustManagerDecorator(
+                        //        (X509TrustManager) tm, trustStrategy);
+                    }
+                }
+            }
+
+        } catch(Exception ex) {
+            logger.error("updateSSL error " + ex.getMessage());
+        }
+    }
+
+    public void addCertificatesToKeyStore(String alias, Certificate[] certs) {
+        try {
+            for(Certificate cert:certs){
+                //logger.error(cert.toString());
+                //PublicKey publicKey = cert.getPublicKey();
+
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                //trustStore.setCertificateEntry(UUID.randomUUID().toString(),cert);
+                keyStore.setCertificateEntry(alias,cert);
+
+                //logger.error(publicKeyString);
+            }
+        } catch (Exception ex) {
+            logger.error("addCertificatesToTrustStore() : error " + ex.getMessage());
+        }
+    }
+
+    private void generateCertChain2() {
+        try{
+
+
+            //Generate ROOT certificate
+            CertAndKeyGen keyGen=new CertAndKeyGen("RSA","SHA256WithRSA",null);
+            keyGen.generate(keySize);
+            PrivateKey rootPrivateKey=keyGen.getPrivateKey();
+
+            X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT-" + keyStoreAlias), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+
+
+            rootCertificate   = createSignedCertificate(rootCertificate,rootCertificate,rootPrivateKey);
+
+            chain = new X509Certificate[1];
+            chain[0]=rootCertificate;
+
+            //String alias = "mykey";
+            //String keystore = "testkeys.jks";
+
+            //Store the certificate chain
+            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, rootPrivateKey, chain);
+
+            //Reload the keystore and display key and certificate chain info
+            //loadCertChain(alias, keyStorePassword, keystore);
+            //Clear the keystore
+            //clearKeyStore(alias, password, keystore);
+            signingCertificate = rootCertificate;
+            signingKey = rootPrivateKey;
+
+        }catch(Exception ex){
+            ex.printStackTrace();
+        }
+    }
+
+    public TrustManager getTrustManager() {
+        TrustManager trustManager = null;
+        try {
+            trustManager = getTrustManagers()[0];
+            if(trustManager == null) {
+                logger.error("TRUST MANAGER NULL!!!");
+            }
+        } catch(Exception ex) {
+            logger.error("getTrustManager Error : " + ex.getMessage());
+        }
+        return trustManager;
+    }
+
+    public KeyManager getKeyManager() {
+        KeyManager keyManager = null;
+        try {
+            keyManager = getKeyManagers()[0];
+        } catch(Exception ex) {
+            logger.error("getKeyManager Error : " + ex.getMessage());
+        }
+        return keyManager;
+    }
+
+    public Certificate[] getPublicCertificates() {
+        Certificate[] certs = null;
+        try {
+            Key key = keyStore.getKey(keyStoreAlias, keyStorePassword);
+
+            if (key instanceof PrivateKey) {
+
+                certs = keyStore.getCertificateChain(keyStoreAlias);
+
+            }
+        } catch(Exception ex) {
+            logger.error("getCertificates() : error " + ex.getMessage());
+        }
+        return certs;
+    }
+
+    public Certificate[] getCertificates() {
+        Certificate[] certs = null;
+        try {
+            Key key = keyStore.getKey(keyStoreAlias, keyStorePassword);
+
+            if (key instanceof PrivateKey) {
+
+                certs = keyStore.getCertificateChain(keyStoreAlias);
+
+            }
+        } catch(Exception ex) {
+            logger.error("getCertificates() : error " + ex.getMessage());
+        }
+        return certs;
+    }
+
+    public void loadTrustStoreCertChain(String alias) throws Exception{
+
+        Key key=trustStore.getKey(alias, keyStorePassword);
+
+        if(key instanceof PrivateKey){
+            //logger.error("Get private key : ");
+            logger.error(key.toString());
+
+            Certificate[] certs=trustStore.getCertificateChain(alias);
+            logger.error("Certificate chain length : "+certs.length);
+            for(Certificate cert:certs){
+                logger.error(cert.toString());
+                PublicKey publicKey = cert.getPublicKey();
+
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+                //trustStore.setCertificateEntry(cert.toString(),cert);
+                //keyStore.setCertificateEntry(cert.toString(),cert);
+
+                logger.error(publicKeyString);
+            }
+        }else{
+
+            logger.error("Key is not private key");
+            Certificate cert = trustStore.getCertificate(alias);
+            if(cert != null) {
+
+
+                logger.error(cert.toString());
+                PublicKey publicKey = cert.getPublicKey();
+
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+                //trustStore.setCertificateEntry(cert.toString(),cert);
+                //keyStore.setCertificateEntry(cert.toString(),cert);
+
+                logger.error(publicKeyString);
+            } else {
+                logger.error("cert null");
+            }
+
+        }
+    }
+
+    public void loadKeyStoreCertChain(String alias) throws Exception{
+
+        Key key=keyStore.getKey(alias, keyStorePassword);
+
+        if(key instanceof PrivateKey){
+            //logger.error("Get private key : ");
+            logger.error(key.toString());
+
+            Certificate[] certs=keyStore.getCertificateChain(alias);
+            logger.error("Certificate chain length : "+certs.length);
+            for(Certificate cert:certs){
+                logger.error(cert.toString());
+                PublicKey publicKey = cert.getPublicKey();
+                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                //trustStore.setCertificateEntry(cert.toString(),cert);
+                //keyStore.setCertificateEntry(cert.toString(),cert);
+
+                logger.error(publicKeyString);
+            }
+        }else{
+
+            logger.error("Key is not private key");
+            Certificate cert = keyStore.getCertificate(alias);
+            if(cert != null) {
+                logger.error(cert.toString());
+                PublicKey publicKey = cert.getPublicKey();
+                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                //trustStore.setCertificateEntry(cert.toString(),cert);
+                //keyStore.setCertificateEntry(cert.toString(),cert);
+
+                logger.error(publicKeyString);
+            } else {
+                logger.error("cert null");
+            }
+
+        }
+    }
+
+    private void loadAndDisplayChain(String alias,char[] password, String keystore) throws Exception{
+        //Reload the keystore
+        KeyStore keyStore=KeyStore.getInstance("jks");
+        keyStore.load(new FileInputStream(keystore),password);
+
+        Key key=keyStore.getKey(alias, password);
+
+        if(key instanceof PrivateKey){
+            logger.error("Get private key : ");
+            logger.error(key.toString());
+
+            Certificate[] certs=keyStore.getCertificateChain(alias);
+            logger.error("Certificate chain length : "+certs.length);
+            for(Certificate cert:certs){
+                logger.error(cert.toString());
+                PublicKey publicKey = cert.getPublicKey();
+                String publicKeyString = Base64.getEncoder().encodeToString(publicKey.getEncoded());
+                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
+                trustStore.setCertificateEntry(cert.toString(),cert);
+                logger.error(publicKeyString);
+            }
+        }else{
+            logger.error("Key is not private key");
+        }
+    }
+
+    private  void clearKeyStore(String alias,char[] password, String keystore) throws Exception{
+        KeyStore keyStore=KeyStore.getInstance("jks");
+        keyStore.load(new FileInputStream(keystore),password);
+        keyStore.deleteEntry(alias);
+        keyStore.store(new FileOutputStream(keystore),password);
     }
 
 
