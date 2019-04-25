@@ -1324,7 +1324,7 @@ public class DBEngine {
                 "   status_desc varchar(255)," +
                 "   watchdog_period int," +
                 "   watchdog_ts bigint," +
-                "   configparams varchar(255)" +
+                "   configparams " + largeFieldType +
                 ")";
 
         String createANode = "CREATE TABLE anode" +
@@ -1335,7 +1335,7 @@ public class DBEngine {
                 "   status_desc varchar(255)," +
                 "   watchdog_period int," +
                 "   watchdog_ts bigint," +
-                "   configparams varchar(255)" +
+                "   configparams " + largeFieldType +
                 //"   FOREIGN KEY (region_id) REFERENCES rnode(region_id) " +
                 ")";
 
