@@ -842,6 +842,35 @@ public class DBEngine {
 
     }
 
+    public void assoicatePNodetoANode(String agent, String plugin) {
+
+        if(!assoicatePNodetoANodeExist(agent,plugin)) {
+            try {
+                Connection conn = ds.getConnection();
+                try {
+
+                    Statement stmt = conn.createStatement();
+
+                    String insertANodeToRNode = "insert into pluginof (agent_id, plugin_id) " +
+                            "values ('" + agent + "','" + plugin + "')";
+
+                    stmt.executeUpdate(insertANodeToRNode);
+                    stmt.close();
+
+                } catch (Exception e) {
+                    conn.rollback();
+                    e.printStackTrace();
+                } finally {
+                    conn.close();
+                }
+
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+
+    }
+
     public void updatePNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
 
 
@@ -1950,12 +1979,12 @@ public class DBEngine {
                 //plugin
 
                 queryString = "UPDATE pnode SET watchdog_ts = + " + System.currentTimeMillis()
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "' and plugin_id='" + pluginId + "'";
+                        + " WHERE plugin_id='" + pluginId + "'";
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "UPDATE anode SET watchdog_ts = + " + System.currentTimeMillis()
-                        + " WHERE region_id='" + regionId + "' and agent_id='" + agentId + "'";
+                        + " WHERE agent_id='" + agentId + "'";
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region

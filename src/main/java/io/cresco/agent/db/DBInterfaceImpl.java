@@ -120,6 +120,8 @@ public class DBInterfaceImpl implements DBInterface {
                     //fixme take into account current state
                     //add region, this will need to be more complex in future
                     dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+                    //assoicate agent to region
+                    dbe.assoicateANodetoRNode(region, agent);
                 } else {
                     dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
                 }
@@ -141,6 +143,8 @@ public class DBInterfaceImpl implements DBInterface {
                         if(!nodeExist(region,agent,pluginId)) {
                             //todo plugins need to list their watchdog peroid
                             dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
+                            //assoicate pNode to aNode
+                            dbe.assoicatePNodetoANode(agent,pluginId);
                         } else {
                             dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
                         }
