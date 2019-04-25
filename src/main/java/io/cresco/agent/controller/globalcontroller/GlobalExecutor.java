@@ -603,7 +603,7 @@ public class GlobalExecutor implements Executor {
                             String params = getPluginParams(pluginPath);
                             if(params != null)
                             {
-                                System.out.println("Found Plugin: " + plugin_id);
+                                logger.error("Found Plugin: " + plugin_id);
                                 ce.setParam("node_name",getPluginName(pluginPath));
                                 ce.setParam("node_id",plugin_id);
                                 ce.setParam("params",params);
@@ -772,9 +772,9 @@ public class GlobalExecutor implements Executor {
             File pluginDirfile = new File(pluginDir);
             if (!pluginDirfile.exists()) {
                 if (pluginDirfile.mkdir()) {
-                    System.out.println("Directory " + pluginDir + " didn't exist and was created.");
+                    logger.error("Directory " + pluginDir + " didn't exist and was created.");
                 } else {
-                    System.out.println("Directory " + pluginDir + " didn't exist and we failed to create it!");
+                    logger.error("Directory " + pluginDir + " didn't exist and we failed to create it!");
                 }
             }
             String pluginFile = parentDirName + "/plugins/" + ce.getParam("agentcontroller");
@@ -782,7 +782,7 @@ public class GlobalExecutor implements Executor {
             if(ce.getParam("forceplugindownload") != null)
             {
                 forceDownload = true;
-                System.out.println("Forcing Plugin Download");
+                logger.error("Forcing Plugin Download");
             }
 
             File pluginFileObject = new File(pluginFile);
@@ -795,19 +795,19 @@ public class GlobalExecutor implements Executor {
                 {
                     ce.setParam("hasplugin", ce.getParam("agentcontroller"));
                     ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
-                    System.out.println("Downloaded Plugin:" + ce.getParam("agentcontroller"));
+                    logger.error("Downloaded Plugin:" + ce.getParam("agentcontroller"));
                 }
                 else
                 {
                     ce.setMsgBody("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
-                    System.out.println("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
+                    logger.error("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
                 }
             }
             else
             {
                 ce.setMsgBody("Plugin already exists:" + ce.getParam("agentcontroller"));
                 ce.setParam("hasplugin", ce.getParam("agentcontroller"));
-                System.out.println("Plugin already exists:" + ce.getParam("agentcontroller"));
+                logger.error("Plugin already exists:" + ce.getParam("agentcontroller"));
             }
 
         }

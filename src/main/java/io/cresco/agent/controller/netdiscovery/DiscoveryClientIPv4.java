@@ -56,7 +56,7 @@ public class DiscoveryClientIPv4 {
             reachable = address.isReachable(10000);
 
         } catch (Exception ex) {
-            System.out.println("DiscoveryClient : isReachable : Error " + ex.toString());
+            logger.error("DiscoveryClient : isReachable : Error " + ex.toString());
         }
         return reachable;
     }

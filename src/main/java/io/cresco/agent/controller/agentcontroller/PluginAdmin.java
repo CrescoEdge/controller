@@ -99,11 +99,11 @@ public class PluginAdmin {
                 if (assign) {
                     confAdmin = (ConfigurationAdmin) context.getService(configurationAdminReference);
                 } else {
-                    System.out.println("Could not Assign Configuration Admin!");
+                    logger.error("Could not Assign Configuration Admin!");
                 }
 
             } else {
-                System.out.println("Admin Does Not Exist!");
+                logger.error("Admin Does Not Exist!");
             }
 
     }
@@ -739,15 +739,15 @@ public class PluginAdmin {
                                     if (startPlugin(pluginID)) {
                                         returnPluginID = pluginID;
                                     } else {
-                                        System.out.println("Could not start agentcontroller " + pluginID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                                        logger.error("Could not start agentcontroller " + pluginID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
                                     }
 
                                 } else {
-                                    System.out.println("Could not create config for " + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                                    logger.error("Could not create config for " + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
                                 }
                             } else {
-                                System.out.println("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
-                                System.out.println("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
+                                logger.error("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
+                                logger.error("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
 
                             }
                         } else {
@@ -860,7 +860,7 @@ public class PluginAdmin {
                                   statusDesc = "Plugin Active";
                                 }
                             } catch(Exception ex) {
-                                System.out.println("Could not start!");
+                                logger.error("Could not start!");
                                 ex.printStackTrace();
                             }
 
@@ -869,7 +869,7 @@ public class PluginAdmin {
                                     pluginMap.get(pluginID).setPluginService((PluginService) context.getService(sr));
                                     pluginMap.get(pluginID).setStatus(statusCode, statusDesc);
                                 } else {
-                                    System.out.println("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " elements " + pluginMap.hashCode() + " thread:" + Thread.currentThread().getName());
+                                    logger.error("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " elements " + pluginMap.hashCode() + " thread:" + Thread.currentThread().getName());
                                 }
                             }
 
@@ -968,7 +968,7 @@ public class PluginAdmin {
             exportString = gson.toJson(configMapList);
 
         } catch(Exception ex) {
-            System.out.println("PluginExport.pluginExport() Error " + ex.getMessage());
+            logger.error("PluginExport.pluginExport() Error " + ex.getMessage());
         }
 
         return exportString;
@@ -1015,7 +1015,7 @@ public class PluginAdmin {
                 Thread.sleep(1000);
             }
             if(servRefs == null) {
-                System.out.println("COULD NOT START PLUGIN COULD NOT GET SERVICE");
+                logger.error("COULD NOT START PLUGIN COULD NOT GET SERVICE");
             }
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -1035,14 +1035,14 @@ public class PluginAdmin {
                         getClass().getClassLoader().getResourceAsStream(bundleName));
 
             } else {
-                System.out.println("installInternalBundleJars() Bundle = null");
+                logger.error("installInternalBundleJars() Bundle = null");
             }
         } catch(Exception ex) {
             ex.printStackTrace();
         }
 
         if(installedBundle == null) {
-            System.out.println("controller installInternalBundleJars() Failed to load bundle " + bundleName + " exiting!");
+            logger.error("controller installInternalBundleJars() Failed to load bundle " + bundleName + " exiting!");
             System.exit(0);
         }
 

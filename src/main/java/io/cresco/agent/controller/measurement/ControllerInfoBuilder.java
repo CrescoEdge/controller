@@ -75,7 +75,7 @@ class ControllerInfoBuilder {
                         //WriteAttributes(server, instance.getObjectName(), false);
 
                     } catch(Exception ex) {
-                        System.out.println("get error " + ex.getMessage());
+                        logger.error("get error " + ex.getMessage());
                         ex.printStackTrace();
                     }
                 }
@@ -109,7 +109,7 @@ class ControllerInfoBuilder {
         MBeanInfo info = mBeanServer.getMBeanInfo(http);
         MBeanAttributeInfo[] attrInfo = info.getAttributes();
 
-        System.out.println("\n --Attributes for object: " + http);
+        logger.error("\n --Attributes for object: " + http);
         for (MBeanAttributeInfo attr : attrInfo)
         {
             try {
@@ -123,7 +123,7 @@ class ControllerInfoBuilder {
                         try {
                             WriteAttributes(mBeanServer, on, true);
                         } catch(Exception ex) {
-                            System.out.println("Error Write Attb 2: " + ex.toString());
+                            logger.error("Error Write Attb 2: " + ex.toString());
 
                             ex.printStackTrace();
                         }
@@ -137,7 +137,7 @@ class ControllerInfoBuilder {
 
                 }
             } catch(Exception ex) {
-                System.out.println("Error Write Attb : " + ex.toString());
+                logger.error("Error Write Attb : " + ex.toString());
                 ex.printStackTrace();
             }
             //System.out.println("  " + attr.getName() + "\n");

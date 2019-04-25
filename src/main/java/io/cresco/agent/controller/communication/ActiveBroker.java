@@ -200,7 +200,7 @@ public class ActiveBroker {
 			broker.getSslContext().getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 
 		} catch(Exception ex) {
-			System.out.println("updateTrustManager() : Error " + ex.getMessage());
+			logger.error("updateTrustManager() : Error " + ex.getMessage());
 		}
 	}
 

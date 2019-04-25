@@ -306,7 +306,6 @@ public class ControllerEngine {
             logger.info("CSTATE : " + cstate.getControllerState() + " Region:" + cstate.getRegion() + " Agent:" + cstate.getAgent());
 
         } catch (Exception e) {
-            System.out.println("ERROR : " + e.getMessage());
 
             e.printStackTrace();
 
@@ -1247,7 +1246,6 @@ public class ControllerEngine {
             ex.printStackTrace(pw);
             logger.error(sw.toString());
         }
-        System.out.println("SHUTDOWN COMPLETE!!!");
         logger.info("complete comm shutting down");
 
     }

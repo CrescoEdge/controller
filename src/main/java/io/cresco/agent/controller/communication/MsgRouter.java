@@ -93,7 +93,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalGlobal() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.error("forwardToLocalGlobal() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
        
     }
@@ -107,7 +107,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.error("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -493,7 +493,7 @@ public class MsgRouter {
 
         } catch (Exception ex) {
             ex.printStackTrace();
-            System.out.println("Controller : MsgRoute : Route Failed " + ex.toString() + " " + rm.getParams().toString());
+            logger.error("Controller : MsgRoute : Route Failed " + ex.toString() + " " + rm.getParams().toString());
 
         }
         finally
@@ -607,9 +607,9 @@ public class MsgRouter {
                 int ttlCount = Integer.valueOf(rm.getParam("ttl"));
 
                 if (ttlCount > 10) {
-                    System.out.println("**Controller : MsgRoute : High Loop Count**");
-                    System.out.println("MsgType=" + rm.getMsgType().toString());
-                    System.out.println("params=" + rm.getParams());
+                    logger.error("**Controller : MsgRoute : High Loop Count**");
+                    logger.error("MsgType=" + rm.getMsgType().toString());
+                    logger.error("params=" + rm.getParams());
                     isValid = false;
                 }
 
