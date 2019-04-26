@@ -124,6 +124,8 @@ public class PluginNode {
 
         if(configMap.containsKey("persistence_code")) {
             persistence_code = Integer.parseInt(configMap.get("persistence_code").toString());
+        } else {
+            configMap.put("persistence_code","0");
         }
 
         gdb.addPNode(plugin.getAgent(), pluginID,status_code,status_desc,watchdog_period,watchdog_ts,name,jarPath,version,MD5, gson.toJson(configMap), persistence_code);
@@ -166,7 +168,7 @@ public class PluginNode {
         return version;
     }
 
-    public long getWatchdogTimer() {
+    public long getWatchdogPeriod() {
         return watchdog_period;
     }
 

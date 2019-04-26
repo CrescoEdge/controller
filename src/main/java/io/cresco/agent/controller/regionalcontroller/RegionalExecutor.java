@@ -97,6 +97,7 @@ public class RegionalExecutor implements Executor {
         if(!controllerEngine.getGDB().watchDogUpdate(incoming)) {
             logger.error("Unable to update Regional WatchDog " + incoming.printHeader());
         }
+
         return null;
     }
     @Override

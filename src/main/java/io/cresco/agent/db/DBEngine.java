@@ -475,6 +475,58 @@ public class DBEngine {
         return status_code;
     }
 
+    public Map<String,String> getPNode(String pluginId) {
+        Map<String,String> pNodeMap = null;
+        try {
+
+            pNodeMap = new HashMap<>();
+
+             /*
+                    String status_code = configMap.get("status_code");
+                                String status_desc = configMap.get("status_desc");
+                                String watchdog_period = configMap.get("watchdog_period");
+                                String watchdog_ts = configMap.get("watchdog_ts");
+                                String pluginname = configMap.get("pluginname");
+                                String jarfile = configMap.get("jarfile");
+                                String version = configMap.get("version");
+                                String md5 = configMap.get("md5");
+                                String configparams = configMap.get("configparams");
+                                String persistence_code = configMap.get("persistence_code");
+                     */
+
+            String queryString = null;
+
+            queryString = "SELECT * FROM pnode " +
+                    "WHERE plugin_id='" + pluginId + "'";
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            rs.next();
+            pNodeMap.put("plugin_id", rs.getString("plugin_id"));
+            pNodeMap.put("status_code", rs.getString("status_code"));
+            pNodeMap.put("status_desc", rs.getString("status_desc"));
+            pNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
+            pNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            pNodeMap.put("pluginname", rs.getString("pluginname"));
+            pNodeMap.put("version", rs.getString("version"));
+            pNodeMap.put("jarfile", rs.getString("jarfile"));
+            pNodeMap.put("md5", rs.getString("md5"));
+            pNodeMap.put("configparams", rs.getString("configparams"));
+            pNodeMap.put("persistence_code", rs.getString("persistence_code"));
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return pNodeMap;
+    }
+
     public int setPNodePersistenceCode(String plugin, int persistence_code) {
         int queryReturn = -1;
         try {
@@ -910,9 +962,9 @@ public class DBEngine {
 
     }
 
-    public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
+    public int addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code) {
 
-
+        int status = -1;
         try {
             Connection conn = ds.getConnection();
             try
@@ -930,11 +982,12 @@ public class DBEngine {
                 String insertPNodeToANode = "insert into pluginof (agent_id, plugin_id) " +
                         "values ('" + agent + "','" + plugin + "')";
 
-                stmt.executeUpdate(insertPNodeString);
+
+                status = stmt.executeUpdate(insertPNodeString);
                 //force update of pnode, so the next command does not fail.
                 conn.commit();
 
-                stmt.executeUpdate(insertPNodeToANode);
+                status = status + stmt.executeUpdate(insertPNodeToANode);
 
 
                 stmt.close();
@@ -954,9 +1007,10 @@ public class DBEngine {
         } catch(Exception ex) {
             ex.printStackTrace();
         }
-
+        return status;
     }
 
+    /*
     public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try {
@@ -1012,6 +1066,9 @@ public class DBEngine {
         }
 
     }
+
+    */
+
 
     public int updateINodeAssignment(String inodeId, int status_code, String status_desc, String regionId, String agentId, String pluginId) {
         int queryReturn = -1;

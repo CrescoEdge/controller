@@ -106,7 +106,8 @@ public class DBInterfaceImpl implements DBInterface {
                 if(!dbe.nodeExist(region,null,null)) {
                     //fixme take into account current state
                     //add region, this will need to be more complex in future
-                    dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
+                    //dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
+                    dbe.addRNode(region,0,"Region addNodeFromUpdate" , 0, 0, "none");
                 }
 
                 //if region update, otherwise ignore
@@ -119,39 +120,64 @@ public class DBInterfaceImpl implements DBInterface {
             //Is Agent
             if((region != null) && (agent != null) && (plugin == null)) {
 
+
+
                 if(!dbe.nodeExist(region,agent,null)) {
                     //fixme take into account current state
                     //add region, this will need to be more complex in future
-                    dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+                    //dbe.addNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+
+                    logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+
+                    dbe.addANode(agent,0,"Agent addNodeFromUpdate",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
+
                     //assoicate agent to region
                     dbe.assoicateANodetoRNode(region, agent);
                 } else {
+                    logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
                     dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
                 }
 
                 if (de.getParam("pluginconfigs") != null) {
+
+                    logger.debug("found plugins! ");
+
                     List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
                             new TypeToken<List<Map<String, String>>>() {
                             }.getType());
 
                     //Add Plugin Information
                     for (Map<String, String> configMap : configMapList) {
-                        String pluginId = configMap.get("pluginid");
+                        String pluginId = configMap.get("plugin_id");
+
                         String status_code = configMap.get("status_code");
                         String status_desc = configMap.get("status_desc");
+                        String watchdog_period = configMap.get("watchdog_period");
+                        String watchdog_ts = configMap.get("watchdog_ts");
+                        String pluginname = configMap.get("pluginname");
+                        String jarfile = configMap.get("jarfile");
+                        String version = configMap.get("version");
+                        String md5 = configMap.get("md5");
                         String configparams = configMap.get("configparams");
+                        String persistence_code = configMap.get("persistence_code");
 
-                        logger.debug("Adding Sub-Node: " + configMap.toString());
+                        logger.debug("Sub-Node: region: " + region + " agent: " + agent + " plugin: " + pluginId);
 
-                        if(!nodeExist(region,agent,pluginId)) {
-                            //todo plugins need to list their watchdog peroid
-                            dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
+                        if(!nodeExist(null,null,pluginId)) {
+                            logger.debug("Adding Sub-Node: " + configMap.toString());
+                            //dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
+                            int status = dbe.addPNode(agent,pluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),Long.parseLong(watchdog_ts),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
+
+                            logger.debug("\n\n" + "status: " + status + " \n\n");
                             //assoicate pNode to aNode
-                            dbe.assoicatePNodetoANode(agent,pluginId);
+                            //dbe.assoicatePNodetoANode(agent,pluginId);
                         } else {
+                            logger.debug("Updating Sub-Node: " + configMap.toString());
                             dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
                         }
                     }
+                } else {
+                    logger.debug("NO PLUGINS");
                 }
 
                 //throw new NullPointerException("demo");
@@ -160,8 +186,11 @@ public class DBInterfaceImpl implements DBInterface {
             wasAdded = true;
 
         } catch (Exception ex) {
-            ex.printStackTrace();
-            System.out.println("GraphDBUpdater : addNode ERROR : " + ex.toString());
+            logger.error("addNodeFromUpdate() : " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
         }
 
         return wasAdded;
@@ -176,14 +205,20 @@ public class DBInterfaceImpl implements DBInterface {
 
         try {
 
-            //logger.error("src_region:" + de.getSrcRegion() + " src_agent:" + de.getSrcAgent() + " src_plugin:" + de.getSrcPlugin());
-            //logger.error(de.getParams().toString());
+
+            if(de.paramsContains("pluginconfigs")) {
+                logger.debug("watchDogUpdate() src_region:" + de.getSrcRegion() + " src_agent:" + de.getSrcAgent() + " src_plugin:" + de.getSrcPlugin());
+                logger.debug("watchDogUpdate() " + de.getParams().toString());
+                logger.debug("watchDogUpdate() " + de.getCompressedParam("pluginconfigs"));
+            }
+
+
             String region = de.getParam("region_name");
             String agent = de.getParam("agent_name");
             String pluginId = de.getParam("plugin_id");
 
 
-            logger.debug("watchdog() region=" + region + " agent=" + agent + " agentcontroller=" + pluginId);
+            logger.debug("watchdog() region=" + region + " agent=" + agent + " plugin=" + pluginId);
 
             if(dbe.nodeExist(region,agent,pluginId)) {
 
@@ -203,7 +238,7 @@ public class DBInterfaceImpl implements DBInterface {
                         List<String> pluginRemoveList = dbe.getNodeList(region,agent);
 
                         for (Map<String, String> configMap : configMapList) {
-                            String subpluginId = configMap.get("pluginid");
+                            String subpluginId = configMap.get("plugin_id");
 
                             //remove agentcontroller from remove list of new config exist
                             pluginRemoveList.remove(subpluginId);
@@ -213,12 +248,31 @@ public class DBInterfaceImpl implements DBInterface {
 
                                 String status_code = configMap.get("status_code");
                                 String status_desc = configMap.get("status_desc");
+                                String watchdog_period = configMap.get("watchdog_period");
+                                String watchdog_ts = configMap.get("watchdog_ts");
+                                String pluginname = configMap.get("pluginname");
+                                String jarfile = configMap.get("jarfile");
+                                String version = configMap.get("version");
+                                String md5 = configMap.get("md5");
                                 String configparams = configMap.get("configparams");
+                                String persistence_code = configMap.get("persistence_code");
+
+                                logger.debug("configMap: " + configMap.toString());
+                                /*
+                                configMap.put("status_code", String.valueOf(status_code));
+                                configMap.put("status_desc", status_desc);
+                                configMap.put("watchdogtimer", String.valueOf(pluginNode.getWatchdogTS()));
+                                configMap.put("watchdogperiod", String.valueOf(pluginNode.getWatchdogPeriod()));
+
+                                configMap.put("pluginid", pluginID);
+                                configMap.put("configparams", gson.toJson(pluginNode.exportParamMap()));
+                                 */
 
                                 logger.debug("subpluginId:" + subpluginId + " status_code=" + status_code + " status_desc=" + status_desc + " watchdogtimer=" + configMap.get("watchdogtimer") + " configMap: " + configMap.toString());
 
                                 //todo plugins need to list their watchdog peroid
                                 //dbe.addNode(region,agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(configMap.get("watchdogtimer")),System.currentTimeMillis(),configparams);
+                                dbe.addPNode(agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),Long.parseLong(watchdog_ts),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
                             }
                         }
 
@@ -953,6 +1007,10 @@ public class DBInterfaceImpl implements DBInterface {
         }
 
         return queryReturn;
+    }
+
+    public Map<String,String> getPNode(String pluginId) {
+        return dbe.getPNode(pluginId);
     }
 
     public int getPipelineStatusCode(String pipelineId) {

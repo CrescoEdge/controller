@@ -950,6 +950,38 @@ public class PluginAdmin {
                     Map.Entry pair = (Map.Entry) it.next();
 
                     String pluginID = (String) pair.getKey();
+
+                    configMapList.add(gdb.getPNode(pluginID));
+                    //it.remove(); // avoids a ConcurrentModificationException
+                }
+            }
+            exportString = gson.toJson(configMapList);
+
+        } catch(Exception ex) {
+            logger.error("PluginExport.pluginExport() Error " + ex.getMessage());
+        }
+
+        return exportString;
+    }
+
+
+    /*
+    public String getPluginExport() {
+
+
+        String exportString = null;
+        try {
+
+            List<Map<String,String>> configMapList = new ArrayList<>();
+
+            synchronized (lockPlugin) {
+                Iterator it = pluginMap.entrySet().iterator();
+                while (it.hasNext()) {
+                    Map.Entry pair = (Map.Entry) it.next();
+
+                    String pluginID = (String) pair.getKey();
+
+
                     PluginNode pluginNode = (PluginNode) pair.getValue();
 
                     int status_code = pluginNode.getStatus_code();
@@ -958,10 +990,14 @@ public class PluginAdmin {
 
                     Map<String, String> configMap = new HashMap<>();
 
-
                     configMap.put("status_code", String.valueOf(status_code));
                     configMap.put("status_desc", status_desc);
-                    configMap.put("watchdogtimer", String.valueOf(pluginNode.getWatchdogTimer()));
+                    configMap.put("watchdog_period", String.valueOf(pluginNode.getWatchdogPeriod()));
+                    configMap.put("watchdog_ts", String.valueOf(pluginNode.getWatchdogTS()));
+                    configMap.put("pluginname", pluginNode.getName());
+                    configMap.put("jarfile", pluginNode.getJarPath());
+                    configMap.put("version", pluginNode.getVersion());
+
                     //configMap.put("isactive", String.valueOf(isActive));
                     configMap.put("pluginid", pluginID);
                     configMap.put("configparams", gson.toJson(pluginNode.exportParamMap()));
@@ -977,6 +1013,7 @@ public class PluginAdmin {
 
         return exportString;
     }
+    */
 
     public boolean checkService(String className, String componentName) {
 

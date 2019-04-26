@@ -69,7 +69,6 @@ public class AgentHealthWatcher {
                   jsonExport = controllerEngine.getPluginAdmin().getPluginExport();
                   enableMsg.setCompressedParam("pluginconfigs", jsonExport);
 
-
                   Map<String, String> configParams = new HashMap<>();
 
 
