@@ -354,7 +354,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-            logger.error("addBundle()");
+            logger.error("validatePluginMap()");
             ex.printStackTrace();
         }
         return validatedMap;
@@ -1215,9 +1215,9 @@ public class PluginAdmin {
 
             //make sure cache is populated
             repoCache.cleanUp();
-            if(repoCache.size() == 0) {
+            //if(repoCache.size() == 0) {
                 repoCache.putAll(gdb.getPluginListRepoSet());
-            }
+            //}
 
             List<pNode> nodeList = repoCache.getIfPresent(requestedName);
             if(nodeList == null) {
