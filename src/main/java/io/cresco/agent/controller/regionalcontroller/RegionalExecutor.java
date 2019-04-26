@@ -7,6 +7,9 @@ import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
+
 public class RegionalExecutor implements Executor {
 
     private ControllerEngine controllerEngine;
@@ -203,7 +206,11 @@ public class RegionalExecutor implements Executor {
                 }
 
         } catch(Exception ex) {
-            logger.error("senRegionalMsg Error : " + ex.getMessage());
+            logger.error("sendGlobalMsg() Error : " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
         }
 
     }

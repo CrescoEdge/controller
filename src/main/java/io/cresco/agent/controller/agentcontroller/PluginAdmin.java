@@ -316,17 +316,21 @@ public class PluginAdmin {
             pNode node = getPnode(map);
             if(node != null) {
                 Path jarPath = getPlugin(node);
-                if(jarPath.toFile().isFile()) {
-                    returnMap = getJarFromLocalCache(map);
+                if(jarPath != null) {
+                    if (jarPath.toFile().isFile()) {
+                        returnMap = getJarFromLocalCache(map);
+                    } else {
+                        logger.error("pnode ! file");
+                    }
                 } else {
-                    logger.error("pnode ! file");
+                    logger.error("Unable to retreve pnode from repo!");
                 }
             } else {
-                logger.error("Unable to retreve pnode from repo!");
+                logger.error("Unable to find pnode in repo(s)!");
             }
 
         } catch (Exception ex) {
-            logger.error("getJarFromLocalCache()");
+            logger.error("getJarFromRepo()");
             ex.printStackTrace();
         }
 
@@ -1171,6 +1175,7 @@ public class PluginAdmin {
 
             for(Map<String,String> repoMap : node.repoServers) {
 
+
                 String region = repoMap.get("region");
                 String agent = repoMap.get("agent");
                 String pluginID = repoMap.get("pluginid");
@@ -1181,11 +1186,11 @@ public class PluginAdmin {
                 request.setParam("action_pluginmd5",pluginMD5);
                 request.setParam("action_jarfile",jarFile);
 
+
                 MsgEvent retMsg = plugin.sendRPC(request);
 
-
-
                 Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + "/" + jarFile);
+
                 Files.write(path, retMsg.getDataParam("jardata"));
 
                 if(path.toFile().isFile()) {
@@ -1209,15 +1214,16 @@ public class PluginAdmin {
         pNode pNode = null;
         try {
 
+
             String requestedName = (String)pluginMap.get("pluginname");
             String requestedVersion = (String)pluginMap.get("version");
             String requestedMD5 = (String)pluginMap.get("md5");
 
             //make sure cache is populated
             repoCache.cleanUp();
-            //if(repoCache.size() == 0) {
+            if(repoCache.size() == 0) {
                 repoCache.putAll(gdb.getPluginListRepoSet());
-            //}
+            }
 
 
             List<pNode> nodeList = repoCache.getIfPresent(requestedName);

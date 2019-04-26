@@ -637,6 +637,8 @@ public class DBInterfaceImpl implements DBInterface {
         {
             List<String> repoList = getPluginListRepoInventory();
 
+            logger.debug("getPluginListRepoInventory() SIZE " + repoList.size());
+
             pluginRepoMap = new HashMap<>();
 
             for(String repoJSON : repoList) {
@@ -740,24 +742,42 @@ public class DBInterfaceImpl implements DBInterface {
         try
         {
             repoList = new ArrayList<>();
-            String repoPluginsJSON = getPluginListByType("pluginname","io.cresco.repo");
 
-            Map<String,List<Map<String,String>>> myMap = gson.fromJson(repoPluginsJSON, type);
+            //get the list of all global repo plugins
+            MsgEvent requestRepos  = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.EXEC);
+            requestRepos.setParam("action","listpluginsbytype");
+            requestRepos.setParam("action_plugintype_id","pluginname");
+            requestRepos.setParam("action_plugintype_value","io.cresco.repo");
 
-            for(Map<String,String> perfMap : myMap.get("plugins")) {
+            MsgEvent responseRepos = plugin.sendRPC(requestRepos);
 
-                String region = perfMap.get("region");
-                String agent = perfMap.get("agent");
-                String pluginID = perfMap.get("pluginid");
+            String repoPluginsJSON = null;
 
-                MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC,region,agent,pluginID);
-                request.setParam("action", "repolist");
+            if(requestRepos != null) {
+                repoPluginsJSON = responseRepos.getCompressedParam("pluginsbytypelist");
+            }
 
-                MsgEvent response = plugin.sendRPC(request);
-                if(response.getParam("repolist") != null) {
-                    repoList.add(response.getCompressedParam("repolist"));
-                } else {
-                    logger.error("NO RESPONSE FROM REPO LIST");
+            //String repoPluginsJSON = getPluginListByType("pluginname","io.cresco.repo");
+
+            //query all repo plugins
+            if(repoPluginsJSON != null) {
+                Map<String, List<Map<String, String>>> myMap = gson.fromJson(repoPluginsJSON, type);
+
+                for (Map<String, String> perfMap : myMap.get("plugins")) {
+
+                    String region = perfMap.get("region");
+                    String agent = perfMap.get("agent");
+                    String pluginID = perfMap.get("pluginid");
+
+                    MsgEvent request = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pluginID);
+                    request.setParam("action", "repolist");
+
+                    MsgEvent response = plugin.sendRPC(request);
+                    if (response.getParam("repolist") != null) {
+                        repoList.add(response.getCompressedParam("repolist"));
+                    } else {
+                        logger.error("NO RESPONSE FROM REPO LIST");
+                    }
                 }
             }
 

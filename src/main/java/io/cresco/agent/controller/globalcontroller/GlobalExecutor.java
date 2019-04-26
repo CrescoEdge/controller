@@ -92,65 +92,74 @@ public class GlobalExecutor implements Executor {
     @Override
     public MsgEvent executeEXEC(MsgEvent ce) {
 
-        switch (ce.getParam("action")) {
-            case "listregions":
-                return listRegions(ce);
+        try {
+            switch (ce.getParam("action")) {
+                case "listregions":
+                    return listRegions(ce);
 
-            case "listagents":
-                return listAgents(ce);
+                case "listagents":
+                    return listAgents(ce);
 
-            case "listplugins":
-                return listPlugins(ce);
+                case "listplugins":
+                    return listPlugins(ce);
 
-            case "listpluginsbytype":
-                return listPluginsByType(ce);
+                case "listpluginsbytype":
+                    return listPluginsByType(ce);
 
-            case "listpluginsrepo":
-                return listPluginsRepo(ce);
+                case "listpluginsrepo":
+                    return listPluginsRepo(ce);
 
-            case "listrepoinstances":
-                return listRepoInstances(ce);
+                case "listrepoinstances":
+                    return listRepoInstances(ce);
 
-            case "plugininfo":
-                return pluginInfo(ce);
+                case "plugininfo":
+                    return pluginInfo(ce);
 
-            case "pluginkpi":
-                return pluginKPI(ce);
+                case "pluginkpi":
+                    return pluginKPI(ce);
 
-            case "resourceinfo":
-                return resourceInfo(ce);
+                case "resourceinfo":
+                    return resourceInfo(ce);
 
-            case "netresourceinfo":
-                return netResourceInfo(ce);
+                case "netresourceinfo":
+                    return netResourceInfo(ce);
 
-            case "getenvstatus":
-                return getEnvStatus(ce);
+                case "getenvstatus":
+                    return getEnvStatus(ce);
 
-            case "getinodestatus":
-                return getINodeStatus(ce);
+                case "getinodestatus":
+                    return getINodeStatus(ce);
 
-            case "resourceinventory":
-                return resourceInventory(ce);
+                case "resourceinventory":
+                    return resourceInventory(ce);
 
-            case "plugininventory":
-                return pluginInventory(ce);
+                case "plugininventory":
+                    return pluginInventory(ce);
 
-            case "getgpipeline":
-                return getGPipeline(ce);
+                case "getgpipeline":
+                    return getGPipeline(ce);
 
-            case "getgpipelineexport":
-                return getGPipelineExport(ce);
+                case "getgpipelineexport":
+                    return getGPipelineExport(ce);
 
-            case "getgpipelinestatus":
-                return getGPipelineStatus(ce);
+                case "getgpipelinestatus":
+                    return getGPipelineStatus(ce);
 
-            case "getisassignmentinfo":
-                return getIsAssignment(ce);
+                case "getisassignmentinfo":
+                    return getIsAssignment(ce);
 
-            default:
-                logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
-                return null;
+                default:
+                    logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
+                    return null;
+            }
+        } catch (Exception ex) {
+            logger.error("executeEXEC() " + ex.toString());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString()); //
         }
+        return null;
     }
     @Override
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {
