@@ -26,6 +26,7 @@ public class DBInterfaceImpl implements DBInterface {
 
     private Gson gson;
     private Type type;
+    private Type mapType;
 
     public BlockingQueue<String> importQueue;
 
@@ -40,6 +41,8 @@ public class DBInterfaceImpl implements DBInterface {
         this.gson = new Gson();
         this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
+
+        mapType = new TypeToken<Map<String, String>>(){}.getType();
 
     }
 
@@ -883,6 +886,15 @@ public class DBInterfaceImpl implements DBInterface {
                             regionMap.put("name", plugin);
                             regionMap.put("region", region);
                             regionMap.put("agent", agent);
+
+                            try {
+                                String configParamString = dbe.getNodeConfigParams(region, agent, plugin);
+                                Map<String,String> configMap = gson.fromJson(configParamString,mapType);
+                                regionMap.putAll(configMap);
+                            }catch (Exception ex) {
+                                logger.error("Could not get plugin configMap");
+                            }
+
                             regionArray.add(regionMap);
                         }
                     }

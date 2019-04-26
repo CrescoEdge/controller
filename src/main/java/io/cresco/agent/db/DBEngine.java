@@ -182,12 +182,12 @@ public class DBEngine {
 
                 stmtString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
                         ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE region_id='" + region + "' AND agent_id='" + agent + "' AND plugin_id='" + plugin + "'";
+                        "WHERE plugin_id='" + plugin + "'";
 
             } else if((region != null) && (agent != null) && (plugin == null)) {
                 stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
                         ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE region_id='" + region + "' AND agent_id='" + agent + "'";
+                        "WHERE agent_id='" + agent + "'";
 
             } else if((region != null) && (agent == null) && (plugin == null)) {
                 stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
