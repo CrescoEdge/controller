@@ -44,10 +44,11 @@ public class AgentHealthWatcher {
 	      wdMap = new HashMap<>(); //for sending future WD messages
 
           if((controllerEngine.cstate.isActive()) && (plugin.isActive())) {
-              isRegistered = enable(true);
+              //isRegistered = enable(true);
           }
       }
 
+      /*
       public boolean enable(boolean register) {
 	      boolean isRegistered = false;
 
@@ -155,6 +156,7 @@ public class AgentHealthWatcher {
               return true;
           }
       }
+      */
 
       public void shutdown(boolean unregister) {
           if(!controllerEngine.cstate.isRegionalController() && unregister) {
@@ -210,7 +212,7 @@ public class AgentHealthWatcher {
 	    	    if((!isRegistered) && (controllerEngine.cstate.isActive())) {
 	    	        if(!isRegistering) {
 	    	            isRegistering = true;
-                        isRegistered = enable(true);
+                        //isRegistered = enable(true);
                         isRegistering = false;
                     }
                 } else {

@@ -3,10 +3,14 @@ package io.cresco.agent.db;
 import com.google.gson.Gson;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.agent.ControllerStatePersistance;
+import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.util.Map;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.net.InetAddress;
+import java.util.*;
 
 public class ControllerStatePersistanceImp implements ControllerStatePersistance {
 
@@ -24,111 +28,216 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
     }
 
-    public void setControllerState(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean setControllerState(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         //logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
 
         switch (currentMode) {
             case PRE_INIT:
-                preInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return preInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_INIT:
                 //STANDALONE_INIT Core Init null null null null null agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                standAloneINIT(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return standAloneInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE:
-                break;
+                return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_INIT:
-                //todo agent might need something diff than region
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT:
-                //todo agent might need something diff than region
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_INIT:
                 //REGION_INIT initRegion() TS :1553784233245 null null null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
                 // agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_FAILED:
                 break;
             case REGION_GLOBAL_INIT:
                 //REGION_GLOBAL_INIT initRegion() : Success null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 // region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_FAILED:
                 //REGION_GLOBAL_FAILED gCheck : Dynamic Global Host :null_null is not reachable. null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
                 // agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540 region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                break;
+                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL:
                 break;
             case GLOBAL:
                 //GLOBAL gCheck : Creating Global Host null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 // region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 //logger.error("LINKING REGION: " + localRegion + " AGENT: " + localAgent);
 
-                dbe.assoicateANodetoRNode(localRegion, localAgent);
+                //dbe.assoicateANodetoRNode(localRegion, localAgent);
                 //logger.error("LINKED REGION: " + localRegion + " AGENT: " + localAgent);
-                break;
 
             default:
                 logger.error("INVALID MODE : " + currentMode.name());
                 break;
         }
-
-
+        return false;
     }
 
-    public void preInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
+    public boolean preInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
 
-        //pull CSTATE to see if current region and agent match past region and agent
-        Map<String,String> stateMap = dbe.getCSTATE(null);
-        if(stateMap != null) {
-            String previousRegion = stateMap.get("local_region");
-            String previousAgent = stateMap.get("local_agent");
+        boolean returnState = false;
+        try {
+            //pull CSTATE to see if current region and agent match past region and agent
+            Map<String, String> stateMap = dbe.getCSTATE(null);
+            if (stateMap != null) {
+                String previousRegion = stateMap.get("local_region");
+                String previousAgent = stateMap.get("local_agent");
 
-            //clean up plugins that should not persist
-            dbe.purgeTransientPNodes(previousRegion, previousAgent);
+                //clean up plugins that should not persist
+                dbe.purgeTransientPNodes(previousRegion, previousAgent);
 
-            //if name has changed we need to change assoications
-            if(!(previousRegion.equals(localRegion) && previousAgent.equals(localAgent))) {
+                //if name has changed we need to change assoications
+                if (!(previousRegion.equals(localRegion) && previousAgent.equals(localAgent))) {
 
-                dbe.reassoicateANodes(previousRegion,previousAgent,localRegion,localAgent);
-                dbe.reassoicatePNodes(previousAgent,localAgent);
-
+                    dbe.reassoicateANodes(previousRegion, previousAgent, localRegion, localAgent);
+                    dbe.reassoicatePNodes(previousAgent, localAgent);
+                }
+                returnState = true;
             }
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
-
+        return returnState;
     }
 
-    public void standAloneINIT(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
-        //check if agent exist, if not add it, if so update it
-        if(!dbe.nodeExist(null,localAgent,null)) {
-            dbe.addANode(localAgent, 0, "Core Init", 0, 0, gson.toJson(plugin.getConfig().getConfigMap()));
-        } else {
-            dbe.updateANode(localAgent, 0, "Core Init", 0, 0, gson.toJson(plugin.getConfig().getConfigMap()));
+    public boolean standAloneInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+
+            //check if agent exist, if not add it, if so update it
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
-        //add event
-        dbe.addCStateEvent(System.currentTimeMillis(),currentMode.name(),currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+        return returnState;
     }
 
-    public void regionInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
-        if(!dbe.nodeExist(localRegion,null,null)) {
-            dbe.addRNode(localRegion, 0, "Core Init", 0, 0, "pending");
-        } else {
-            dbe.updateRNode(localRegion, 0, "Core Init", 0, 0, "pending");
+    public boolean standAloneSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+
+            //check if agent exist, if not add it, if so update it
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
-        if(!dbe.nodeExist(null,localAgent,null)) {
-            dbe.addANode(localAgent, 0, "Core Init", 0, 0, gson.toJson(plugin.getConfig().getConfigMap()));
-        } else {
-            dbe.updateANode(localAgent, 0, "Core Init", 0, 0, gson.toJson(plugin.getConfig().getConfigMap()));
+        return returnState;
+    }
+
+    public boolean agentInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
-        //add event
-        dbe.addCStateEvent(System.currentTimeMillis(),currentMode.name(),currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+        return returnState;
+    }
+
+    public boolean agentSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return returnState;
+    }
+
+    public boolean regionInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("preInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return returnState;
     }
 
     public Map<String,String> getStateMap() {
@@ -143,6 +252,45 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         */
         return stateMap;
     }
+
+    public boolean registerAgent(String localRegion, String localAgent) {
+        boolean isRegistered = false;
+
+            try {
+
+                MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+                enableMsg.setParam("action", "agent_enable");
+                enableMsg.setParam("req-seq", UUID.randomUUID().toString());
+                enableMsg.setParam("region_name", localRegion);
+                enableMsg.setParam("agent_name", localAgent);
+                enableMsg.setParam("desc", "to-rc-agent");
+                enableMsg.setCompressedParam("agentconfig",gson.toJson(dbe.getANode(localAgent)));
+
+                List<Map<String,String>> configMapList = new ArrayList<>();
+                List<String> pluginList = dbe.getNodeList(localRegion, localAgent);
+                for(String pluginId : pluginList) {
+                    configMapList.add(dbe.getPNode(pluginId));
+                }
+
+                enableMsg.setCompressedParam("pluginconfigs", gson.toJson(configMapList));
+
+                MsgEvent re = plugin.sendRPC(enableMsg);
+
+                if (re != null) {
+                    logger.info("Agent: " + localAgent + " registered with Region: " + localRegion);
+                    isRegistered = true;
+                } else {
+                    logger.error("Agent: " + localAgent + " failed to register with Region: " + localRegion + "!");
+                }
+
+            } catch (Exception ex) {
+                logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
+            }
+
+            return isRegistered;
+        }
+
+}
 
 
     /*
@@ -169,5 +317,3 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
      */
 
 
-
-}

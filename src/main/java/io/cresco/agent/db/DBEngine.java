@@ -481,19 +481,6 @@ public class DBEngine {
 
             pNodeMap = new HashMap<>();
 
-             /*
-                    String status_code = configMap.get("status_code");
-                                String status_desc = configMap.get("status_desc");
-                                String watchdog_period = configMap.get("watchdog_period");
-                                String watchdog_ts = configMap.get("watchdog_ts");
-                                String pluginname = configMap.get("pluginname");
-                                String jarfile = configMap.get("jarfile");
-                                String version = configMap.get("version");
-                                String md5 = configMap.get("md5");
-                                String configparams = configMap.get("configparams");
-                                String persistence_code = configMap.get("persistence_code");
-                     */
-
             String queryString = null;
 
             queryString = "SELECT * FROM pnode " +
@@ -525,6 +512,40 @@ public class DBEngine {
             ex.printStackTrace();
         }
         return pNodeMap;
+    }
+
+    public Map<String,String> getANode(String agentId) {
+        Map<String,String> aNodeMap = null;
+        try {
+
+            aNodeMap = new HashMap<>();
+
+            String queryString = null;
+
+            queryString = "SELECT * FROM anode " +
+                    "WHERE agent_id='" + agentId + "'";
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            rs.next();
+            aNodeMap.put("agent_id", rs.getString("plugin_id"));
+            aNodeMap.put("status_code", rs.getString("status_code"));
+            aNodeMap.put("status_desc", rs.getString("status_desc"));
+            aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
+            aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            aNodeMap.put("configparams", rs.getString("configparams"));
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return aNodeMap;
     }
 
     public int setPNodePersistenceCode(String plugin, int persistence_code) {
