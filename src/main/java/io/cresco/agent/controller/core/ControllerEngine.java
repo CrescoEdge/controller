@@ -243,10 +243,13 @@ public class ControllerEngine {
             }
 
             //setup producer, consumers, and data plane
+            //move this to the specific role starters so we can make sure things are really active before setting state.
+            /*
             if(!initIOChannels()) {
                 logger.error("initIOChannels Failed");
                 return false;
             }
+            */
 
 
             //set new watchdog to reflect discovered values
@@ -396,8 +399,16 @@ public class ControllerEngine {
 
                             this.brokerAddressAgent = cbrokerAddress;
 
-                            //TODO SET AGENT INFORMATOIN HERE
-                            this.cstate.setAgentSuccess(cRegion,cAgent,"AgentSuccess() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
+
+                            if(initIOChannels()) {
+                                logger.error("initIOChannels Success");
+                                //agent name not set on core init
+                                this.cstate.setAgentSuccess(cRegion,cAgent,"AgentSuccess() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
+                                isInit = true;
+                            } else {
+                                this.cstate.setAgentFailed(cRegion,cAgent,"AgentSuccess() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " failed.");
+                                logger.error("initIOChannels Failed");
+                            }
 
                             isInit = true;
                             logger.info("Broker IP: " + cbrokerAddress);
@@ -475,9 +486,16 @@ public class ControllerEngine {
 
                             logger.info("Assigned regionid=" + cstate.getRegion());
                             logger.debug("AgentPath=" + cstate.getAgentPath());
-                            //agent name not set on core init
-                            this.cstate.setAgentSuccess(cRegion, cstate.getAgent(), "initAgent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
-                            isInit = true;
+
+                            if(initIOChannels()) {
+                                logger.error("initIOChannels Success");
+                                //agent name not set on core init
+                                this.cstate.setAgentSuccess(cRegion, cstate.getAgent(), "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
+                                isInit = true;
+                            } else {
+                                this.cstate.setAgentFailed(cRegion, cstate.getAgent(), "Agent() Dynamic Regional Host: " + cbrokerAddress + " failed.");
+                                logger.error("initIOChannels Failed");
+                            }
                         }
                     }
                     if (this.plugin.getConfig().getBooleanParam("enable_clientnetdiscovery", true)) {
@@ -817,18 +835,6 @@ public class ControllerEngine {
 
             this.discoveryMap = new ConcurrentHashMap<>(); //discovery map
 
-            //TODO Does this still need to be done, this was causing a delay?
-            /*
-            //enable this regional controller in the DB
-            MsgEvent le = new MsgEvent(MsgEvent.Type.CONFIG, getRegion(), getAgent(), getPluginID(), "enabled");
-            le.setParam("src_region", getRegion());
-            le.setParam("dst_region", getRegion());
-            le.setParam("action", "enable");
-            le.setParam("watchdogtimer", String.valueOf(agentcontroller.getConfig().getLongParam("watchdogtimer", 5000L)));
-            le.setParam("source", "initRegion()");
-            getGDB().addNode(le);
-            */
-
             logger.info("Discovery Engine ");
 
             //discovery engine
@@ -836,9 +842,14 @@ public class ControllerEngine {
                 logger.error("Start Network Discovery Engine Failed!");
             }
 
-            cstate.setRegionGlobalInit("initRegion() : Success");
-            isInit = true;
-            //measurementEngine.initRegionalMetrics();
+            if(initIOChannels()) {
+                logger.error("initIOChannels Success");
+                cstate.setRegionGlobalInit("initRegion() : Success");
+                isInit = true;
+            } else {
+                logger.error("initIOChannels Failed");
+                cstate.setRegionalGlobalFailed("initIOChannels Failed");
+            }
 
         } catch (Exception ex) {
             logger.error("initRegion() Error " + ex.getMessage());
@@ -1316,6 +1327,8 @@ public class ControllerEngine {
         try {
             while (!getActiveClient().isFaultURIActive()) {
                 Thread.sleep(1000);
+                logger.error("STUCK IN CONNECTION FAULT!!!");
+                logger.error("[" + msg.getParams() + "]");
             }
             msgRouter.route(msg);
         } catch (Exception ex) {

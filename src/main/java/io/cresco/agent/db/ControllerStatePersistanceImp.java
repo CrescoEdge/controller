@@ -208,11 +208,15 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 dbe.assoicateANodetoRNode(localRegion, localAgent);
             }
 
+            logger.error("PRE REGISTER");
             //send information to remote
             if(registerAgent(localRegion, localAgent)) {
+                logger.error("POST REGISTER");
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 returnState = true;
+            } else {
+
             }
 
         } catch (Exception ex) {
@@ -290,6 +294,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                 enableMsg.setCompressedParam("agentconfigs",gson.toJson(agentMap));
 
+                /*
                 Map<String,List<Map<String,String>>> pluginMap = new HashMap<>();
                 List<Map<String,String>> pluginList = new ArrayList<>();
                 List<String> tmpPluginList = dbe.getNodeList(localRegion, localAgent);
@@ -299,6 +304,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 pluginMap.put(localAgent,pluginList);
 
                 enableMsg.setCompressedParam("pluginconfigs", gson.toJson(pluginMap));
+                */
 
                 MsgEvent re = plugin.sendRPC(enableMsg);
 
