@@ -39,8 +39,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             case STANDALONE:
                 break;
             case AGENT_INIT:
+                //todo agent might need something diff than region
+                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 break;
             case AGENT:
+                //todo agent might need something diff than region
+                regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 break;
             case REGION_INIT:
                 //REGION_INIT initRegion() TS :1553784233245 null null null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
