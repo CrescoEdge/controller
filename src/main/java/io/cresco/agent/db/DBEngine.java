@@ -531,7 +531,7 @@ public class DBEngine {
             ResultSet rs = stmt.executeQuery(queryString);
 
             rs.next();
-            aNodeMap.put("agent_id", rs.getString("plugin_id"));
+            aNodeMap.put("agent_id", rs.getString("agent_id"));
             aNodeMap.put("status_code", rs.getString("status_code"));
             aNodeMap.put("status_desc", rs.getString("status_desc"));
             aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));

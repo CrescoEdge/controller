@@ -1,5 +1,6 @@
 package io.cresco.agent.controller.regionalcontroller;
 
+import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
 import io.cresco.library.messaging.MsgEvent;
@@ -9,6 +10,9 @@ import io.cresco.library.utilities.CLogger;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Type;
+import java.util.List;
+import java.util.Map;
 
 public class RegionalExecutor implements Executor {
 
@@ -16,13 +20,17 @@ public class RegionalExecutor implements Executor {
     private PluginBuilder plugin;
     private CLogger logger;
     private GlobalExecutor globalExecutor;
+    private Type mapType;
+    private Type type;
 
     public RegionalExecutor(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         logger = plugin.getLogger(RegionalExecutor.class.getName(),CLogger.Level.Info);
         globalExecutor = new GlobalExecutor(controllerEngine);
-
+        mapType = new TypeToken<Map<String, String>>(){}.getType();
+        type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+        }.getType();
     }
 
     @Override

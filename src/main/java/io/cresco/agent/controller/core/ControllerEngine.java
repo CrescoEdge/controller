@@ -397,7 +397,7 @@ public class ControllerEngine {
                             this.brokerAddressAgent = cbrokerAddress;
 
                             //TODO SET AGENT INFORMATOIN HERE
-                            this.cstate.setAgentSuccess(cRegion,cAgent,"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
+                            this.cstate.setAgentSuccess(cRegion,cAgent,"AgentSuccess() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
 
                             isInit = true;
                             logger.info("Broker IP: " + cbrokerAddress);

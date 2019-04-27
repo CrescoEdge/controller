@@ -114,15 +114,15 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
             //check if agent exist, if not add it, if so update it
             if (!dbe.nodeExist(null, localAgent, null)) {
-                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.addANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
-                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.updateANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             returnState = true;
         } catch (Exception ex) {
-            logger.error("preInit()");
+            logger.error("standAloneInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -138,16 +138,16 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
             //check if agent exist, if not add it, if so update it
             if (!dbe.nodeExist(null, localAgent, null)) {
-                dbe.addANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.addANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
-                dbe.updateANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.updateANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("preInit()");
+            logger.error("standAloneSuccess()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -161,21 +161,26 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         boolean returnState = false;
         try {
             if (!dbe.nodeExist(localRegion, null, null)) {
-                dbe.addRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.addRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             } else {
-                dbe.updateRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.updateRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             }
             if (!dbe.nodeExist(null, localAgent, null)) {
-                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.addANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
-                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.updateANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("preInit()");
+            logger.error("agentInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -189,21 +194,29 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         boolean returnState = false;
         try {
             if (!dbe.nodeExist(localRegion, null, null)) {
-                dbe.addRNode(localRegion, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.addRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             } else {
-                dbe.updateRNode(localRegion, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.updateRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             }
             if (!dbe.nodeExist(null, localAgent, null)) {
-                dbe.addANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.addANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
-                dbe.updateANode(localAgent, 10, "Core Active", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.updateANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
-            //add event
-            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            returnState = true;
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
+            //send information to remote
+            if(registerAgent(localRegion, localAgent)) {
+                //add event
+                dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+                returnState = true;
+            }
 
         } catch (Exception ex) {
-            logger.error("preInit()");
+            logger.error("agentSuccess()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -217,21 +230,26 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         boolean returnState = false;
         try {
             if (!dbe.nodeExist(localRegion, null, null)) {
-                dbe.addRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.addRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             } else {
-                dbe.updateRNode(localRegion, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+                dbe.updateRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
             }
             if (!dbe.nodeExist(null, localAgent, null)) {
-                dbe.addANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.addANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
-                dbe.updateANode(localAgent, 3, "Core Init", plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+                dbe.updateANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("preInit()");
+            logger.error("regionInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -264,15 +282,23 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 enableMsg.setParam("region_name", localRegion);
                 enableMsg.setParam("agent_name", localAgent);
                 enableMsg.setParam("desc", "to-rc-agent");
-                enableMsg.setCompressedParam("agentconfig",gson.toJson(dbe.getANode(localAgent)));
 
-                List<Map<String,String>> configMapList = new ArrayList<>();
-                List<String> pluginList = dbe.getNodeList(localRegion, localAgent);
-                for(String pluginId : pluginList) {
-                    configMapList.add(dbe.getPNode(pluginId));
+                Map<String,List<Map<String,String>>> agentMap = new HashMap<>();
+                List<Map<String,String>> agentList = new ArrayList<>();
+                agentList.add(dbe.getANode(localAgent));
+                agentMap.put(localRegion,agentList);
+
+                enableMsg.setCompressedParam("agentconfigs",gson.toJson(agentMap));
+
+                Map<String,List<Map<String,String>>> pluginMap = new HashMap<>();
+                List<Map<String,String>> pluginList = new ArrayList<>();
+                List<String> tmpPluginList = dbe.getNodeList(localRegion, localAgent);
+                for(String pluginId : tmpPluginList) {
+                    pluginList.add(dbe.getPNode(pluginId));
                 }
+                pluginMap.put(localAgent,pluginList);
 
-                enableMsg.setCompressedParam("pluginconfigs", gson.toJson(configMapList));
+                enableMsg.setCompressedParam("pluginconfigs", gson.toJson(pluginMap));
 
                 MsgEvent re = plugin.sendRPC(enableMsg);
 
