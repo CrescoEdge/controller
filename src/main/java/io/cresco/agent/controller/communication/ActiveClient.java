@@ -264,16 +264,20 @@ public class ActiveClient {
     }
 
     public void sendAPMessage(MsgEvent msg) {
+        /*
         if ((hasActiveProducer()) && (!controllerEngine.cstate.getRegion().equals("init"))) {
-            logger.error("AP is null");
+            logger.error("AP is null 0");
             logger.error("Message: " + msg.getParams());
             return;
         } else if (hasActiveProducer()) {
             logger.trace("AP is null");
-            System.out.println("AP is null");
+            System.out.println("AP is null 1");
             return;
         }
-        agentProducer.sendMessage(msg);
+        */
+        if(hasActiveProducer()) {
+            agentProducer.sendMessage(msg);
+        }
     }
 
     public void shutdown() {

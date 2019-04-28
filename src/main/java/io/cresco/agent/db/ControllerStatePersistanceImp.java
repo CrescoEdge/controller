@@ -1,12 +1,16 @@
 package io.cresco.agent.db;
 
 import com.google.gson.Gson;
+import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.agent.ControllerStatePersistance;
+import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import javax.jms.MapMessage;
+import javax.jms.TextMessage;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.InetAddress;
@@ -18,13 +22,15 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     private CLogger logger;
     private DBEngine dbe;
     private Gson gson;
-
+    private Timer updateTimer;
 
     public ControllerStatePersistanceImp(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(ControllerStatePersistanceImp.class.getName(),CLogger.Level.Info);
         this.dbe = dbe;
         this.gson = new Gson();
+        this.updateTimer = new Timer();
+        this.updateTimer.scheduleAtFixedRate(new UpdateTask(), 500, 5000l);
 
     }
 
@@ -356,6 +362,50 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return isRegistered;
     }
 
+    class UpdateTask extends TimerTask {
+        public void run() {
+            if (plugin != null) {
+                if (plugin.isActive()) {
+
+                    switch (plugin.getAgentService().getAgentState().getControllerState()) {
+
+                        case STANDALONE:
+                            break;
+                        case AGENT:
+
+                            try {
+                                Map<String, String> exportMap = dbe.getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
+
+                                MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
+                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
+                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
+
+                                //updateMap.setStringProperty("update_mode", plugin.getAgentService().getAgentState().getControllerState().toString());
+                                updateMap.setStringProperty("update_mode", "AGENT");
+                                updateMap.setStringProperty("region_id", plugin.getRegion());
+                                updateMap.setStringProperty("agent_id", plugin.getAgent());
+
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+
+                            } catch (Exception ex) {
+                                ex.printStackTrace();
+                            }
+
+                            break;
+                        case REGION_GLOBAL:
+                            break;
+                        case GLOBAL:
+                            break;
+
+                        default:
+                            logger.error("INVALID MODE : " + plugin.getAgentService().getAgentState().getControllerState());
+                            break;
+                    }
+
+                }
+            }
+        }
+    }
 
 }
 

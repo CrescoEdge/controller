@@ -23,7 +23,10 @@ public class GlobalHealthWatcher implements Runnable {
 	private Map<String,String> global_host_map;
     private Timer regionalUpdateTimer;
     private Long gCheckInterval;
-    private String lastDBUpdate;
+    private String lastDBUpdateRegions;
+    private String lastDBUpdateAgents;
+    private String lastDBUpdatePlugins;
+
 
     public Boolean SchedulerActive;
     public Boolean AppSchedulerActive;
@@ -560,68 +563,86 @@ public class GlobalHealthWatcher implements Runnable {
         return discoveryList;
     }
 
-    private boolean doRegionalUpdate(String dbExport) {
-        boolean doUpdate = false;
-            if(lastDBUpdate == null) {
-                doUpdate = true;
+
+    private Map<String,String> filterRegionalUpdate(Map<String,String> dbExport) {
+
+        if(dbExport.containsKey("regionconfigs")) {
+
+            if(lastDBUpdateRegions != null) {
+                if (!dbExport.get("regionconfigs").equals(lastDBUpdateRegions)) {
+                    lastDBUpdateRegions = dbExport.get("regionconfigs");
+                } else {
+                    dbExport.remove("regionconfigs");
+                    logger.error("REMOVE REGION CONFIG");
+                }
             } else {
-                //if(!(lastDBUpdate.length() == dbExport.length())) {
-                    //doUpdate = true;
-                //} else {
-                    if(!lastDBUpdate.equals(dbExport)) {
-                        doUpdate = true;
-                    }
-                //}
+                lastDBUpdateRegions = dbExport.get("regionconfigs");
             }
-        return doUpdate;
+        }
+
+        if(dbExport.containsKey("agentconfigs")) {
+
+            if(lastDBUpdateAgents != null) {
+                if (!dbExport.get("agentconfigs").equals(lastDBUpdateAgents)) {
+                    lastDBUpdateAgents = dbExport.get("agentconfigs");
+                } else {
+                    dbExport.remove("agentconfigs");
+                    logger.error("REMOVE AGENT CONFIG");
+                }
+            } else {
+                lastDBUpdateAgents = dbExport.get("agentconfigs");
+            }
+        }
+
+        if(dbExport.containsKey("pluginconfigs")) {
+
+            if(lastDBUpdatePlugins != null) {
+                if (!dbExport.get("pluginconfigs").equals(lastDBUpdatePlugins)) {
+                    lastDBUpdatePlugins = dbExport.get("pluginconfigs");
+                } else {
+                    dbExport.remove("pluginconfigs");
+                    logger.error("REMOVE PLUGIN CONFIG");
+                }
+            } else {
+                lastDBUpdatePlugins = dbExport.get("pluginconfigs");
+            }
+        }
+
+        return dbExport;
     }
 
     public MsgEvent regionalDBexport() {
         MsgEvent me = null;
 	    try {
             if(!this.controllerEngine.cstate.isGlobalController()) {
-                //TODO Enable Export
-                String dbexport = controllerEngine.getGDB().getDBExport();
 
-                if (doRegionalUpdate(dbexport)) {
+                Map<String,String> dbexport = controllerEngine.getGDB().getDBExport(true,true,true,null,null,null);
 
-                    logger.info("Exporting Region DB to Global Controller");
 
-                    lastDBUpdate = dbexport;
+                dbexport = filterRegionalUpdate(dbexport);
+
+                logger.error("[" + dbexport + "]");
+
+                logger.info("Exporting Region DB to Global Controller");
+
                     me = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
                     me.setParam("action", "regionalimport");
-                    /*
-                    me = new MsgEvent(MsgEvent.Type.CONFIG, this.plugin.getRegion(), this.plugin.getAgent(), this.plugin.getPluginID(), "regionalimport");
-                    me.setParam("action", "regionalimport");
-                    me.setParam("src_region", this.plugin.getRegion());
-                    me.setParam("src_agent", this.plugin.getAgent());
 
-                    me.setParam("dst_region", controllerEngine.cstate.getGlobalRegion());
-                    me.setParam("dst_agent", controllerEngine.cstate.getGlobalAgent());
+                    me.setParam("region_watchdog_update", plugin.getRegion());
 
-                    me.setParam("is_regional", Boolean.TRUE.toString());
-                    me.setParam("is_global", Boolean.TRUE.toString());
-                    */
-
-                    me.setParam("exportdata", dbexport);
-
-                    //logger.error("*" + me.getCompressedParam("exportdata")  + "*");
-
-                    /*
-                    MsgEvent re = this.plugin.sendRPC(me);
-                    if(re != null) {
-                        logger.info("EXPORT RETURNED!");
-                    } else {
-                        logger.info("RE = NULL");
+                    for (Map.Entry<String, String> entry : dbexport.entrySet()) {
+                        String key = entry.getKey();
+                        String value = entry.getValue();
+                        me.setCompressedParam(key,value);
                     }
-                    */
+
                     this.plugin.msgOut(me);
-                }
             }
 
         }
         catch(Exception ex) {
             logger.error("regionalDBexport() " + ex.getMessage());
+            ex.printStackTrace();
         }
         return me;
     }

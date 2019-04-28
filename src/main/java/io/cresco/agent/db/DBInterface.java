@@ -12,7 +12,6 @@ public interface DBInterface {
     public void shutdown();
     public Map<String,String> getResourceTotal();
     public String getRegionList();
-    public void submitDBImport(String exportData);
     public String getAgentList(String actionRegion);
     public String getPluginListRepo();
     public Map<String, List<pNode>> getPluginListRepoSet();
@@ -40,7 +39,7 @@ public interface DBInterface {
     public String getPipeline(String pipelineId);
     public gPayload createPipelineRecord(String tenant_id, String gPayload);
     public boolean updateKPI(String region, String agent, String pluginId, String resource_id, String inode_id, Map<String, String> params);
-    public String getDBExport();
+    public Map<String,String> getDBExport(boolean regions, boolean agents, boolean plugins, String region_id, String agent_id, String plugin_id);
     public gPayload createPipelineNodes(gPayload gpay);
     public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc);
     public gPayload getPipelineObj(String pipelineId);

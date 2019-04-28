@@ -217,7 +217,6 @@ public class AgentHealthWatcher {
               if(!pluginExport.equals(tmpPluginExport)) {
                   pluginExport = tmpPluginExport;
                   le.setCompressedParam("pluginconfigs", pluginExport);
-
               }
 
               plugin.msgOut(le);
@@ -227,8 +226,7 @@ public class AgentHealthWatcher {
           }
       }
 
-	class WatchDogTask extends TimerTask 
-	{
+	class WatchDogTask extends TimerTask {
 	    public void run() 
 	    {
 	    	if(controllerEngine.cstate.isActive())
@@ -248,5 +246,5 @@ public class AgentHealthWatcher {
 
 	    	}
 	    }
-	  }
+      }
 }

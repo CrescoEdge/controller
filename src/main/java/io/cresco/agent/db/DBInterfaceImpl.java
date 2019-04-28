@@ -116,25 +116,31 @@ public class DBInterfaceImpl implements DBInterface {
             logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
 
             if(de.paramsContains("regionconfigs")) {
-                logger.error("IMPLEMENT REGION CONFIG UPDATE");
                 logger.debug("Adding region(s)");
-                /*
 
-            if(region != null) {
-                if(!dbe.nodeExist(region,null,null)) {
-                    //fixme take into account current state
-                    //add region, this will need to be more complex in future
-                    //dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
-                    dbe.addRNode(region,0,"Region addNodeFromUpdate" , 0, 0, "none");
+                Map<String,List<Map<String,String>>> regionConfigMap = gson.fromJson(de.getCompressedParam("regionconfigs"),type);
+                for (Map.Entry<String, List<Map<String,String>>> entry : regionConfigMap.entrySet()) {
+                    List<Map<String, String>> regionList = entry.getValue();
+                    for(Map<String,String> regionMap : regionList) {
+                        String region_id = regionMap.get("region_id");
+                        String status_code = regionMap.get("status_code");
+                        String status_desc = regionMap.get("status_desc");
+                        String watchdog_period = regionMap.get("watchdog_period");
+                        //String watchdog_ts = agentMap.get("watchdog_ts");
+                        String configparams = regionMap.get("configparams");
+
+                        if(!dbe.nodeExist(region_id,null,null)) {
+
+                            logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+                            dbe.addRNode(region_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+
+                        } else {
+                            logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
+                            dbe.updateNode(region_id,null,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                        }
+
+                    }
                 }
-
-                //if region update, otherwise ignore
-                if((region != null) && (agent == null)) {
-                    dbe.updateNode(region,null,null,0,"Region added by Agent",0, 0, null);
-                }
-
-            }
-                 */
 
             }
 
@@ -1372,6 +1378,10 @@ public class DBInterfaceImpl implements DBInterface {
         return wasRemoved;
     }
 
+    public Map<String,String> getDBExport(boolean regions, boolean agents, boolean plugins, String region_id, String agent_id, String plugin_id) {
+        return dbe.getDBExport(regions,agents,plugins,region_id,agent_id,plugin_id);
+    }
+
     /*
     public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
 
@@ -1425,10 +1435,6 @@ public class DBInterfaceImpl implements DBInterface {
         Map<String,String> resourceTotal = null;
         logger.error("Map<String,String> getResourceTotal()");
         return resourceTotal;
-    }
-
-    public void submitDBImport(String exportData) {
-        logger.error("void submitDBImport(String exportData)");
     }
 
     private String getGlobalNetResourceInfo() {
@@ -1507,12 +1513,6 @@ public class DBInterfaceImpl implements DBInterface {
         logger.error("String addEdge(String src_region, String src_agent, String src_plugin, String dst_region, String dst_agent, String dst_plugin, String className, Map<String,String> paramMap)");
         return null;
     }
-
-    public String getDBExport() {
-        logger.error("String getDBExport()");
-        return null;
-    }
-
 
     public String getNodeId(String region, String agent, String plugin) {
         logger.error("String getNodeId(String region, String agent, String plugin)");

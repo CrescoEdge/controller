@@ -95,7 +95,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 Files.walk(journalPath)
                         .sorted(Comparator.reverseOrder())
                         .map(Path::toFile)
-                        .peek(System.out::println)
+                        //.peek(System.out::println)
                         .forEach(File::delete);
             }
             Files.createDirectories(journalPath);

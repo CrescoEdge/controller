@@ -330,10 +330,12 @@ public class ActiveBroker {
 			//int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
 
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
-			logger.info("Added Network Connector to Broker URI: static:ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
+			logger.info("Added Network Connector to Broker URI: static:nio+ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
 			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
 			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
-			bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
+			bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false"));
+
+			//bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
 
 
 			bridge.setUserName(brokerUserName);

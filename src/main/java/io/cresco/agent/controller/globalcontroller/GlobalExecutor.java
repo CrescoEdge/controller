@@ -661,19 +661,8 @@ public class GlobalExecutor implements Executor {
     private MsgEvent regionalImport(MsgEvent ce) {
         try {
             logger.debug("CONFIG : regionalimport message type found");
-            logger.debug(ce.getParam("exportdata"));
-            if(ce.getParam("exportdata") != null) {
-                controllerEngine.getGDB().submitDBImport(ce.getParam("exportdata"));
-                /*
-                if (controllerEngine.getGDB().gdb.setDBImport(ce.getParam("exportdata"))) {
-                    logger.debug("Database Imported.");
-                } else {
-                    logger.debug("Database Import Failed!");
-                }
-                */
-            } else {
-                logger.error("regionalImport Failed : exportdata == null");
-            }
+
+            controllerEngine.getGDB().nodeUpdate(ce);
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());

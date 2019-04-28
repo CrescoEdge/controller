@@ -3,10 +3,14 @@ package io.cresco.agent.controller.regionalcontroller;
 
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.db.NodeStatusType;
+import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageListener;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -41,6 +45,31 @@ public class RegionHealthWatcher {
         regionalUpdateTimer = new Timer();
         regionalUpdateTimer.scheduleAtFixedRate(new RegionHealthWatcher.RegionalNodeStatusWatchDog(controllerEngine, logger), 15000, 15000);//remote
         logger.info("Initialized");
+
+        MessageListener ml = new MessageListener() {
+            public void onMessage(Message msg) {
+                try {
+
+                    if (msg instanceof MapMessage) {
+
+                        MapMessage mapMessage = (MapMessage)msg;
+                        logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
+
+                        String pluginconfigs = mapMessage.getString("pluginconfigs");
+                        logger.error(pluginconfigs);
+
+
+                    }
+                } catch(Exception ex) {
+
+                    ex.printStackTrace();
+                }
+            }
+        };
+
+        //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
+        plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
+
 
     }
 
@@ -156,6 +185,9 @@ public class RegionHealthWatcher {
             }
         }
     }
+
+
+
 
     class RegionalNodeStatusWatchDog extends TimerTask {
         private ControllerEngine controllerEngine;

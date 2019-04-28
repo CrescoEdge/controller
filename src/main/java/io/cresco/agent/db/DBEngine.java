@@ -25,9 +25,13 @@ public class DBEngine {
 
     private List<String> tablesNames;
 
+    private PluginBuilder pluginBuilder;
+
     public DBEngine(PluginBuilder plugin) {
 
         try {
+
+            this.pluginBuilder = plugin;
 
             tablesNames = new ArrayList<>();
             tablesNames.add("inodekpi");
@@ -216,6 +220,102 @@ public class DBEngine {
             "   local_region varchar(43)," +
             "   local_agent varchar(43)," +
             ")";
+
+    public Map<String,String> getDBExport(boolean regions, boolean agents, boolean plugins, String region_id, String agent_id, String plugin_id) {
+
+        Map<String,String> exportMap = null;
+
+        try {
+
+            exportMap = new HashMap<>();
+
+
+            if(regions) {
+
+                Map<String, List<Map<String, String>>> regionMap = new HashMap<>();
+                List<Map<String, String>> regionList = new ArrayList<>();
+                List<String> tmpRegionList = null;
+                if(region_id == null) {
+                    tmpRegionList = getNodeList(null,null);
+                } else {
+                    tmpRegionList = new ArrayList<>();
+                    tmpRegionList.add(region_id);
+                }
+
+                for(String tmp_region_id : tmpRegionList) {
+                    regionList.add(getRNode(tmp_region_id));
+                }
+                regionMap.put(pluginBuilder.getRegion(), regionList);
+
+                exportMap.put("regionconfigs",gson.toJson(regionMap));
+
+            }
+
+            if(agents) {
+
+                Map<String, List<Map<String, String>>> agentMap = new HashMap<>();
+
+                if((region_id != null) && (agent_id != null)) {
+                    List<Map<String, String>> agentList = new ArrayList<>();
+                    agentList.add(getANode(agent_id));
+                    agentMap.put(region_id, agentList);
+
+                } else {
+
+                    List<String> tmpRegionList = getNodeList(null,null);
+                    for(String tmp_region_id : tmpRegionList) {
+                        List<Map<String, String>> agentList = new ArrayList<>();
+                        List<String> tmpAgentList = getNodeList(tmp_region_id, null);
+                        for(String tmp_agent_id : tmpAgentList) {
+                            agentList.add(getANode(tmp_agent_id));
+                        }
+                        agentMap.put(tmp_region_id, agentList);
+                    }
+
+                }
+
+                exportMap.put("agentconfigs",gson.toJson(agentMap));
+
+            }
+
+            if(plugins) {
+
+                Map<String, List<Map<String, String>>> pluginMap = new HashMap<>();
+
+                if((region_id != null) && (agent_id != null)) {
+
+                    List<Map<String, String>> pluginList = new ArrayList<>();
+                    List<String> tmpPluginList = getNodeList(region_id, agent_id);
+                    for (String pluginId : tmpPluginList) {
+                        pluginList.add(getPNode(pluginId));
+                    }
+                    pluginMap.put(agent_id, pluginList);
+                } else {
+
+                    List<String> tmpRegionList = getNodeList(null,null);
+                    for(String tmp_region_id : tmpRegionList) {
+                        List<String> tmpAgentList = getNodeList(tmp_region_id, null);
+                        for(String tmp_agent_id : tmpAgentList) {
+                            List<String> tmpPluginList = getNodeList(tmp_region_id, tmp_agent_id);
+                            List<Map<String, String>> pluginList = new ArrayList<>();
+                            for(String tmp_plugin_id : tmpPluginList) {
+                                pluginList.add(getPNode(tmp_plugin_id));
+                            }
+                            pluginMap.put(tmp_agent_id, pluginList);
+                        }
+                    }
+                }
+                exportMap.put("pluginconfigs",gson.toJson(pluginMap));
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
+
+        return exportMap;
+    }
+
 
     public void addCStateEvent(long config_ts, String current_mode, String current_desc, String global_region, String global_agent, String regional_region, String regional_agent, String local_region, String local_agent) {
 
@@ -496,7 +596,7 @@ public class DBEngine {
             pNodeMap.put("status_code", rs.getString("status_code"));
             pNodeMap.put("status_desc", rs.getString("status_desc"));
             pNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-            pNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            //pNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
             pNodeMap.put("pluginname", rs.getString("pluginname"));
             pNodeMap.put("version", rs.getString("version"));
             pNodeMap.put("jarfile", rs.getString("jarfile"));
@@ -535,7 +635,7 @@ public class DBEngine {
             aNodeMap.put("status_code", rs.getString("status_code"));
             aNodeMap.put("status_desc", rs.getString("status_desc"));
             aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-            aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
             aNodeMap.put("configparams", rs.getString("configparams"));
 
             rs.close();
@@ -569,7 +669,7 @@ public class DBEngine {
             aNodeMap.put("status_code", rs.getString("status_code"));
             aNodeMap.put("status_desc", rs.getString("status_desc"));
             aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-            aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
             aNodeMap.put("configparams", rs.getString("configparams"));
 
             rs.close();

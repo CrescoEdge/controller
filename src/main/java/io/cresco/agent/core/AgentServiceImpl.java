@@ -280,6 +280,7 @@ public class AgentServiceImpl implements AgentService {
             //controllerEngine.closeCommunications();
 
             switch (controllerEngine.cstate.getControllerState()) {
+
                 case STANDALONE:
                     controllerEngine.cstate.setStandaloneShutdown("Shutdown Called");
                     break;
