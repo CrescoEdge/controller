@@ -205,9 +205,9 @@ public class DBInterfaceImpl implements DBInterface {
                             String configparams = pluginMap.get("configparams");
                             String persistence_code = pluginMap.get("persistence_code");
 
-                            logger.info("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
-                            logger.info("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
-                            logger.info("Sub-Node: [" + pluginMap.toString() + "]");
+                            logger.debug("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
+                            logger.debug("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
+                            logger.debug("Sub-Node: [" + pluginMap.toString() + "]");
 
 
                             if(!nodeExist(null,null, plugin_id)) {
