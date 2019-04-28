@@ -216,10 +216,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 dbe.assoicateANodetoRNode(localRegion, localAgent);
             }
 
-            logger.error("PRE REGISTER");
             //send information to remote
             if(registerAgent(localRegion, localAgent)) {
-                logger.error("POST REGISTER");
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 returnState = true;
