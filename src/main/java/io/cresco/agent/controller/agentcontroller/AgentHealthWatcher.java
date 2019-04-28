@@ -19,7 +19,9 @@ public class AgentHealthWatcher {
 	  private boolean isRegistered = false;
 	  private boolean isRegistering = false;
 
-	  private String jsonExport;
+	  private String agentExport = "";
+	  private String pluginExport = "";
+
 	  private String watchDogTimerString;
 
 	  private ControllerEngine controllerEngine;
@@ -161,12 +163,14 @@ public class AgentHealthWatcher {
       public void shutdown(boolean unregister) {
           if(!controllerEngine.cstate.isRegionalController() && unregister) {
 
+              /*
               MsgEvent disableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
               disableMsg.setParam("region_name",plugin.getRegion());
               disableMsg.setParam("agent_name",plugin.getAgent());
               disableMsg.setParam("desc","to-rc-agent");
 			  disableMsg.setParam("action", "agent_disable");
               plugin.msgOut(disableMsg);
+              */
 			  //le.setParam("watchdogtimer", watchDogTimerString);
 			  //AgentEngine.msgInQueue.add(le);
               //MsgEvent re = new RPCCall().call(le);
@@ -185,21 +189,41 @@ public class AgentHealthWatcher {
               MsgEvent le = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.WATCHDOG);
 
               le.setParam("desc", "to-rc-agent");
-              le.setParam("region_name", plugin.getRegion());
-              le.setParam("agent_name", plugin.getAgent());
+              //le.setParam("region_name", plugin.getRegion());
+              le.setParam("agent_watchdog_update", plugin.getAgent());
 
 
-              String tmpJsonExport = controllerEngine.getPluginAdmin().getPluginExport();
-              if (!jsonExport.equals(tmpJsonExport)) {
+              Map<String,List<Map<String,String>>> agentMap = new HashMap<>();
+              List<Map<String,String>> agentList = new ArrayList<>();
+              agentList.add(controllerEngine.getGDB().getANode(controllerEngine.cstate.getAgent()));
+              agentMap.put(controllerEngine.cstate.getRegion(),agentList);
 
-                  jsonExport = tmpJsonExport;
-                  le.setCompressedParam("pluginconfigs", jsonExport);
+              String tmpAgentExport = gson.toJson(agentMap);
+              if (!agentExport.equals(tmpAgentExport)) {
+
+                  agentExport = tmpAgentExport;
+                  le.setCompressedParam("agentconfigs", agentExport);
+              }
+
+              Map<String,List<Map<String,String>>> pluginMap = new HashMap<>();
+              List<Map<String,String>> pluginList = new ArrayList<>();
+              List<String> tmpPluginList = controllerEngine.getGDB().getNodeList(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent());
+              for(String pluginId : tmpPluginList) {
+                  pluginList.add(controllerEngine.getGDB().getPNode(pluginId));
+              }
+              pluginMap.put(controllerEngine.cstate.getAgent(),pluginList);
+
+              String tmpPluginExport = gson.toJson(pluginMap);
+              if(!pluginExport.equals(tmpPluginExport)) {
+                  pluginExport = tmpPluginExport;
+                  le.setCompressedParam("pluginconfigs", pluginExport);
+
               }
 
               plugin.msgOut(le);
+
           } else {
               //need to update timer in DB
-
           }
       }
 
@@ -209,6 +233,8 @@ public class AgentHealthWatcher {
 	    {
 	    	if(controllerEngine.cstate.isActive())
 	    	{
+                sendUpdate();
+	    	    /*
 	    	    if((!isRegistered) && (controllerEngine.cstate.isActive())) {
 	    	        if(!isRegistering) {
 	    	            isRegistering = true;
@@ -218,6 +244,7 @@ public class AgentHealthWatcher {
                 } else {
 	    	        sendUpdate();
                 }
+                */
 
 	    	}
 	    }

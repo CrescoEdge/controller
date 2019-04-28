@@ -180,7 +180,7 @@ public class GlobalHealthWatcher implements Runnable {
 
                 logger.trace("gNotify Global Controller Message : " + tick.getParams().toString());
 
-                controllerEngine.getGDB().watchDogUpdate(tick);
+                controllerEngine.getGDB().nodeUpdate(tick);
             }
 
             else {

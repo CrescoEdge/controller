@@ -64,6 +64,7 @@ public class ActiveClient {
             }
         } catch (Exception ex) {
             logger.error(ex.getMessage());
+            ex.printStackTrace();
         }
         return isActive;
     }
@@ -269,6 +270,7 @@ public class ActiveClient {
             return;
         } else if (hasActiveProducer()) {
             logger.trace("AP is null");
+            System.out.println("AP is null");
             return;
         }
         agentProducer.sendMessage(msg);
@@ -287,6 +289,7 @@ public class ActiveClient {
             synchronized (lockConnectionMap) {
                 for (Map.Entry<String, ActiveMQConnection> entry : connectionMap.entrySet()) {
                     ActiveMQConnection value = entry.getValue();
+
                     value.close();
                 }
                 connectionMap.clear();

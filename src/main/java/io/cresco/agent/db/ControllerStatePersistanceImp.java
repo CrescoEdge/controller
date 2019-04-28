@@ -40,14 +40,20 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 return standAloneInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case STANDALONE_SHUTDOWN:
+                break;
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT:
                 return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case AGENT_SHUTDOWN:
+                return unregisterAgent(localRegion, localAgent);
             case REGION_INIT:
                 //REGION_INIT initRegion() TS :1553784233245 null null null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
                 // agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case REGION_SHUTDOWN:
+                break;
             case REGION_FAILED:
                 break;
             case REGION_GLOBAL_INIT:
@@ -68,6 +74,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                 //dbe.assoicateANodetoRNode(localRegion, localAgent);
                 //logger.error("LINKED REGION: " + localRegion + " AGENT: " + localAgent);
+            case GLOBAL_SHUTDOWN:
+                break;
 
             default:
                 logger.error("INVALID MODE : " + currentMode.name());
@@ -321,6 +329,35 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
             return isRegistered;
         }
+
+    public boolean unregisterAgent(String localRegion, String localAgent) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent disableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            disableMsg.setParam("unregister_region_id",plugin.getRegion());
+            disableMsg.setParam("unregister_agent_id",plugin.getAgent());
+            disableMsg.setParam("desc","to-rc-agent");
+            disableMsg.setParam("action", "agent_disable");
+
+            MsgEvent re = plugin.sendRPC(disableMsg);
+
+            if (re != null) {
+                logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);
+                isRegistered = true;
+            } else {
+                logger.error("Agent: " + localAgent + " failed to unregister with Region: " + localRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
 
 }
 

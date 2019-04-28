@@ -153,7 +153,7 @@ public class DBEngine {
             Statement stmt = conn.createStatement();
             String stmtString = null;
 
-            if((region != null) && (agent != null) && (plugin != null)) {
+            if(((region != null) && (agent != null) && (plugin != null)) || ((region == null) && (agent == null) && (plugin != null))) {
                 //add plugin metadata where it exist
 
                 String pluginname = "unknown";
@@ -184,7 +184,7 @@ public class DBEngine {
                         ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
                         "WHERE plugin_id='" + plugin + "'";
 
-            } else if((region != null) && (agent != null) && (plugin == null)) {
+            } else if(((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
                 stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
                         ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
                         "WHERE agent_id='" + agent + "'";
@@ -512,6 +512,40 @@ public class DBEngine {
             ex.printStackTrace();
         }
         return pNodeMap;
+    }
+
+    public Map<String,String> getRNode(String regionId) {
+        Map<String,String> aNodeMap = null;
+        try {
+
+            aNodeMap = new HashMap<>();
+
+            String queryString = null;
+
+            queryString = "SELECT * FROM rnode " +
+                    "WHERE region_id='" + regionId + "'";
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            rs.next();
+            aNodeMap.put("region_id", rs.getString("region_id"));
+            aNodeMap.put("status_code", rs.getString("status_code"));
+            aNodeMap.put("status_desc", rs.getString("status_desc"));
+            aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
+            aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+            aNodeMap.put("configparams", rs.getString("configparams"));
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+        return aNodeMap;
     }
 
     public Map<String,String> getANode(String agentId) {
@@ -2053,13 +2087,13 @@ public class DBEngine {
 
             String queryString = null;
 
-            if((regionId != null) && (agentId != null) && (pluginId != null)) {
+            if((regionId == null) && (agentId == null) && (pluginId != null)) {
                 //plugin
 
                 queryString = "UPDATE pnode SET watchdog_ts = + " + System.currentTimeMillis()
                         + " WHERE plugin_id='" + pluginId + "'";
 
-            } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
+            } else if((regionId == null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "UPDATE anode SET watchdog_ts = + " + System.currentTimeMillis()
                         + " WHERE agent_id='" + agentId + "'";

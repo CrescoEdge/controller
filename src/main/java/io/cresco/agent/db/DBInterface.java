@@ -26,9 +26,9 @@ public interface DBInterface {
     public String getIsAssignedInfo(String resourceid, String inodeid, boolean isResourceMetric);
     public String getPipelineInfo(String pipeline_action);
     public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin);
-    public boolean addNodeFromUpdate(MsgEvent de);
+    public boolean nodeUpdate(MsgEvent de);
     public void addPNode(String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String pluginname, String jarfile, String version, String md5, String configparams, int persistence_code);
-    public boolean watchDogUpdate(MsgEvent de);
+    //public boolean watchDogUpdate(MsgEvent de);
     public boolean removeNode(MsgEvent de);
     public boolean removeNode(String region, String agent, String plugin);
     public Map<String,String> getNodeParams(String node_id);

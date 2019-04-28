@@ -686,7 +686,7 @@ public class GlobalExecutor implements Executor {
         try {
             logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
             logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
-            controllerEngine.getGDB().addNodeFromUpdate(ce);
+            controllerEngine.getGDB().nodeUpdate(ce);
 
             logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
 
@@ -967,7 +967,7 @@ public class GlobalExecutor implements Executor {
         Map<String,String> params = ce.getParams();
         controllerEngine.getGDB().dba.updateKPI(region, agent, pluginid, resource_id, inode_id, params);
  */
-            controllerEngine.getGDB().watchDogUpdate(ce);
+            controllerEngine.getGDB().nodeUpdate(ce);
 
 
         }

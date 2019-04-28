@@ -92,20 +92,32 @@ public class DBInterfaceImpl implements DBInterface {
     */
 
 
-    public boolean addNodeFromUpdate(MsgEvent de) {
+    public boolean nodeUpdate(MsgEvent de) {
         boolean wasAdded = false;
 
         try {
 
-            //String region = de.getParam("region_name");
-            //String agent = de.getParam("agent_name");
-            //String plugin = de.getParam("plugin_id");
+            String region_watchdog_update = de.getParam("region_watchdog_update");
+            String agent_watchdog_update = de.getParam("agent_watchdog_update");
+            String plugin_watchdog_update = de.getParam("plugin_watchdog_update");
 
-            logger.debug("Adding Node: " + de.getParams().toString());
+            if(region_watchdog_update != null) {
+                dbe.updateWatchDogTS(region_watchdog_update, null, null);
+            }
+
+            if(agent_watchdog_update != null) {
+                dbe.updateWatchDogTS(null, agent_watchdog_update, null);
+            }
+
+            if(plugin_watchdog_update != null) {
+                dbe.updateWatchDogTS(null, null, plugin_watchdog_update);
+            }
+
+            logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
 
             if(de.paramsContains("regionconfigs")) {
                 logger.error("IMPLEMENT REGION CONFIG UPDATE");
-
+                logger.debug("Adding region(s)");
                 /*
 
             if(region != null) {
@@ -128,6 +140,9 @@ public class DBInterfaceImpl implements DBInterface {
 
             //process agents
             if(de.paramsContains("agentconfigs")) {
+
+                logger.debug("Adding agent(s)");
+
                 Map<String,List<Map<String,String>>> agentConfigMap = gson.fromJson(de.getCompressedParam("agentconfigs"),type);
 
                 for (Map.Entry<String, List<Map<String,String>>> entry : agentConfigMap.entrySet()) {
@@ -143,7 +158,7 @@ public class DBInterfaceImpl implements DBInterface {
 
                         if(!dbe.nodeExist(region_id,agent_id,null)) {
 
-                            logger.info("addNodeFromUpdate add [" + de.getParams() + "]");
+                            logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
                             dbe.addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
 
                         } else {
@@ -182,7 +197,7 @@ public class DBInterfaceImpl implements DBInterface {
                             String status_code = pluginMap.get("status_code");
                             String status_desc = pluginMap.get("status_desc");
                             String watchdog_period = pluginMap.get("watchdog_period");
-                            String watchdog_ts = pluginMap.get("watchdog_ts");
+                            //String watchdog_ts = pluginMap.get("watchdog_ts");
                             String pluginname = pluginMap.get("pluginname");
                             String jarfile = pluginMap.get("jarfile");
                             String version = pluginMap.get("version");
@@ -190,19 +205,22 @@ public class DBInterfaceImpl implements DBInterface {
                             String configparams = pluginMap.get("configparams");
                             String persistence_code = pluginMap.get("persistence_code");
 
-                            logger.debug("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
+                            logger.info("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
+                            logger.info("Sub-Node: agent: " + agent_id + " plugin: " + plugin_id);
+                            logger.info("Sub-Node: [" + pluginMap.toString() + "]");
+
 
                             if(!nodeExist(null,null, plugin_id)) {
                                 logger.debug("Adding Sub-Node: " + pluginMap.toString());
                                 //dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
-                                int status = dbe.addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),Long.parseLong(watchdog_ts),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
+                                int status = dbe.addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
 
                                 logger.debug("\n\n" + "status: " + status + " \n\n");
                                 //assoicate pNode to aNode
                                 //dbe.assoicatePNodetoANode(agent,pluginId);
                             } else {
                                 logger.debug("Updating Sub-Node: " + pluginMap.toString());
-                                dbe.updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
+                                dbe.updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
                             }
 
                             if(!dbe.assoicatePNodetoANodeExist(agent_id,plugin_id)) {
@@ -344,6 +362,7 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getResourceNodeSubmission(pipelineId);
     }
 
+    /*
     public boolean watchDogUpdate(MsgEvent de) {
         boolean wasUpdated = false;
 
@@ -402,15 +421,7 @@ public class DBInterfaceImpl implements DBInterface {
                                 String persistence_code = configMap.get("persistence_code");
 
                                 logger.debug("configMap: " + configMap.toString());
-                                /*
-                                configMap.put("status_code", String.valueOf(status_code));
-                                configMap.put("status_desc", status_desc);
-                                configMap.put("watchdogtimer", String.valueOf(pluginNode.getWatchdogTS()));
-                                configMap.put("watchdogperiod", String.valueOf(pluginNode.getWatchdogPeriod()));
 
-                                configMap.put("pluginid", pluginID);
-                                configMap.put("configparams", gson.toJson(pluginNode.exportParamMap()));
-                                 */
 
                                 logger.debug("subpluginId:" + subpluginId + " status_code=" + status_code + " status_desc=" + status_desc + " watchdogtimer=" + configMap.get("watchdogtimer") + " configMap: " + configMap.toString());
 
@@ -442,6 +453,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         return wasUpdated;
     }
+    */
 
     public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
 
@@ -1157,6 +1169,14 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getPNode(pluginId);
     }
 
+    public Map<String,String> getANode(String agentId) {
+        return dbe.getANode(agentId);
+    }
+
+    public Map<String,String> getRNode(String regionId) {
+        return dbe.getRNode(regionId);
+    }
+
     public int getPipelineStatusCode(String pipelineId) {
         return dbe.getResourceNodeStatus(pipelineId);
     }
@@ -1333,7 +1353,24 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getNodeList(region,agent);
     }
 
+    public boolean removeNode(MsgEvent de) {
+        boolean wasRemoved = false;
+        try {
 
+            String unregister_region = de.getParam("unregister_region_id");
+            String unregister_agent = de.getParam("unregister_agent_id");
+            String unregister_plugin = de.getParam("unregister_plugin_id");
+
+            dbe.removeNode(unregister_region, unregister_agent, unregister_plugin);
+
+            wasRemoved = true;
+
+        } catch (Exception ex) {
+            logger.error("Boolean removeNode(MsgEvent de) " + ex.getMessage());
+        }
+
+        return wasRemoved;
+    }
 
     /*
     public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
@@ -1424,12 +1461,6 @@ public class DBInterfaceImpl implements DBInterface {
         Map<String, NodeStatusType> nodeStatusMap = null;
         logger.error("Map<String,NodeStatusType> getNodeStatus(String region, String agent, String plugin)");
         return nodeStatusMap;
-    }
-
-    public boolean removeNode(MsgEvent de) {
-        boolean wasRemoved = false;
-        logger.error("Boolean removeNode(MsgEvent de)");
-        return wasRemoved;
     }
 
     public boolean setEdgeParam(String edgeId, String paramKey, String paramValue) {

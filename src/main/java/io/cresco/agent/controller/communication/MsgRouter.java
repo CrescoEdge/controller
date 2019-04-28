@@ -120,6 +120,11 @@ public class MsgRouter {
 
             //me.setParam("action", "pluginadd");
 
+            if(rm.paramsContains("action")) {
+                if(rm.getParam("action").equals("agent_disable")) {
+                    System.out.println("DISABLE: " + rm.getParams());
+                }
+            }
 
             if(rm != null) {
                 int routePath = getRoutePath(rm);

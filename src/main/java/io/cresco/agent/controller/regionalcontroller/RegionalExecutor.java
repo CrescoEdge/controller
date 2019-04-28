@@ -40,16 +40,18 @@ public class RegionalExecutor implements Executor {
                 case "agent_disable":
                     logger.debug("CONFIG : AGENTDISCOVER REMOVE: " + incoming.printHeader());
                     if (controllerEngine.getGDB().removeNode(incoming)) {
+
                         incoming.setParam("success",Boolean.TRUE.toString());
                     } else {
                         incoming.setParam("success",Boolean.FALSE.toString());
                     }
+
                     return incoming;
 
                 case "agent_enable":
                     logger.debug("CONFIG : AGENT ADD: " + incoming.printHeader());
 
-                    if(controllerEngine.getGDB().addNodeFromUpdate(incoming)) {
+                    if(controllerEngine.getGDB().nodeUpdate(incoming)) {
                         incoming.setParam("success",Boolean.TRUE.toString());
 
                         logger.debug("CODY INCOMING AGENT ADD REGION*: " +incoming.getParams());
@@ -58,6 +60,7 @@ public class RegionalExecutor implements Executor {
                         incoming.setParam("success",Boolean.FALSE.toString());
                     }
                     return incoming;
+
                 default:
                     logger.debug("RegionalCommandExec Unknown configtype found: {}", incoming.getParam("action"));
                     return null;
@@ -102,9 +105,12 @@ public class RegionalExecutor implements Executor {
     @Override
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {
 
-        if(!controllerEngine.getGDB().watchDogUpdate(incoming)) {
+        //if(!controllerEngine.getGDB().watchDogUpdate(incoming)) {
+        if(!controllerEngine.getGDB().nodeUpdate(incoming)) {
             logger.error("Unable to update Regional WatchDog " + incoming.printHeader());
         }
+
+
 
         return null;
     }

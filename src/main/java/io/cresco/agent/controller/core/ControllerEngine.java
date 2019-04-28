@@ -742,10 +742,11 @@ public class ControllerEngine {
         boolean isInit = false;
         try {
 
-            String kpiPort = plugin.getConfig().getStringParam("kpiport","32011");
-            String kpiProtocol = plugin.getConfig().getStringParam("kpiprotocol","tcp");
-            //init KPIBroker
-            this.kpiBroker = new KPIBroker(this, kpiProtocol, kpiPort,cstate.getAgentPath() + "_KPI",brokerUserNameAgent,brokerPasswordAgent);
+            //String kpiPort = plugin.getConfig().getStringParam("kpiport","32011");
+            //String kpiProtocol = plugin.getConfig().getStringParam("kpiprotocol","tcp");
+            //this.kpiBroker = new KPIBroker(this, kpiProtocol, kpiPort,cstate.getAgentPath() + "_KPI",brokerUserNameAgent,brokerPasswordAgent);
+
+
             //create bridge
             //todo create bridge
             //BridgeAgentKPI bridgeAgentKPI = new BridgeAgentKPI(plugin.getAgentService().getAgentState().getRegion() + "_" + plugin.getAgentService().getAgentState().getAgent());
@@ -753,7 +754,7 @@ public class ControllerEngine {
             //BridgeAgentKPI(String localport, String remotePort, String brokerName)
 
             //init KPIProducer
-            this.kpip = new KPIProducer(this, "KPI", kpiProtocol + "://" + this.brokerAddressAgent + ":" + kpiPort, "bname", "bpass");
+            //this.kpip = new KPIProducer(this, "KPI", kpiProtocol + "://" + this.brokerAddressAgent + ":" + kpiPort, "bname", "bpass");
 
             if(cstate.isRegionalController()) {
 
@@ -1333,6 +1334,7 @@ public class ControllerEngine {
             msgRouter.route(msg);
         } catch (Exception ex) {
         logger.error(ex.getMessage());
+        ex.printStackTrace();
         }
 
 

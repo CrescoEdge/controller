@@ -107,8 +107,10 @@ public class ActiveBroker {
 				PolicyMap map = new PolicyMap();
 		        map.setDefaultEntry(entry);
 
+
 				broker = new SslBrokerService();
-				broker.setUseShutdownHook(true);
+				//broker.setUseShutdownHook(true);
+				broker.setUseShutdownHook(false);
 				broker.setPersistent(true);
 				broker.setBrokerName(brokerName);
 				broker.setSchedulePeriodForDestinationPurge(2500);
@@ -157,11 +159,11 @@ public class ActiveBroker {
 
 				if (plugin.isIPv6())
 					//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://[::]:"+ discoveryPort));
+					connector.setUri(new URI("nio+ssl://[::]:"+ discoveryPort + "?daemon=true"));
 
 				else
 					//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ discoveryPort));
+					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ discoveryPort + "?daemon=true"));
 
 
                 /*
@@ -241,19 +243,34 @@ public class ActiveBroker {
 
 	public void stopBroker() {
 		try {
+
+			logger.error("0");
+			connector.stop();
+			logger.error("1");
+
 			ServiceStopper stopper = new ServiceStopper();
 			//broker.getManagementContext().stop();
+			logger.error("2");
 			for(TransportConnector tc : broker.getTransportConnectors()) {
+				logger.error("3");
 				tc.stop();
-
 			}
-			connector.stop();
+			logger.error("4");
 			broker.stopAllConnectors(stopper);
+			logger.error("5");
             broker.stop();
 
-			while(!broker.isStopped()) {
+			logger.error("6");
+            while(broker.isStopping()) {
+				logger.error("7");
 				Thread.sleep(1000);
 			}
+			logger.error("8");
+			while(!broker.isStopped()) {
+				logger.error("9");
+				Thread.sleep(1000);
+			}
+			logger.error("10");
 			logger.debug("Broker has shutdown");
 		} catch (Exception e) {
 			logger.error("stopBroker {}", e.getMessage());

@@ -271,20 +271,41 @@ public class AgentServiceImpl implements AgentService {
 
     @Deactivate
     void deactivate(BundleContext context) {
+
         if(logger != null) {
             logger.info("Deactivate Controller");
+        }
+
+        if(controllerEngine != null) {
+            //controllerEngine.closeCommunications();
+
+            switch (controllerEngine.cstate.getControllerState()) {
+                case STANDALONE:
+                    controllerEngine.cstate.setStandaloneShutdown("Shutdown Called");
+                    break;
+                case AGENT:
+                    controllerEngine.cstate.setAgentShutdown("Shutdown Called");
+                    break;
+                case REGION_GLOBAL:
+                    controllerEngine.cstate.setRegionShutdown("Shutdown Called");
+                    break;
+                case GLOBAL:
+                    controllerEngine.cstate.setGlobalShutdown("Shutdown Called");
+                    break;
+
+                default:
+                    logger.error("INVALID MODE : " + controllerEngine.cstate.getControllerState());
+                    break;
+            }
+
         }
 
         if(plugin != null) {
             plugin.setIsActive(false);
         }
 
-        if(controllerEngine != null) {
-            controllerEngine.closeCommunications();
-        }
-
-
         if(gdb != null) {
+
             gdb.shutdown();
         }
 
