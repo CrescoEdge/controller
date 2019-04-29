@@ -519,6 +519,18 @@ public class PluginAdmin {
         return  isRemoved;
     }
 
+    public void stopAllPlugins() {
+
+        Set<String> keys = null;
+        synchronized (lockConfig) {
+            keys = pluginMap.keySet();
+        }
+
+        for(String pid : keys) {
+            stopPlugin(pid);
+        }
+
+    }
 
     public boolean stopPlugin(String pluginId) {
         boolean isStopped = false;

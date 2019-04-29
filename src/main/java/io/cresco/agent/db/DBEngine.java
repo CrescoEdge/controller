@@ -1545,18 +1545,6 @@ public class DBEngine {
             largeFieldType = "blob";
         }
 
-        String createCState = "CREATE TABLE cstate" +
-                "(" +
-                "   config_ts bigint unique NOT NULL," +
-                "   current_mode varchar(43) NOT NULL," +
-                "   current_desc varchar(255)," +
-                "   global_region varchar(43)," +
-                "   global_agent varchar(43)," +
-                "   regional_region varchar(43)," +
-                "   regional_agent varchar(42)," +
-                "   local_region varchar(43)," +
-                "   local_agent varchar(42)" +
-                ")";
 
         String createRNode = "CREATE TABLE rnode" +
                 "(" +
@@ -1615,6 +1603,44 @@ public class DBEngine {
                 "   FOREIGN KEY (agent_id) REFERENCES anode(agent_id) ON DELETE CASCADE, " +
                 "   FOREIGN KEY (plugin_id) REFERENCES pnode(plugin_id) ON DELETE CASCADE " +
                 ")";
+
+        /*
+        String createCState = "CREATE TABLE cstate" +
+                "(" +
+                "   config_ts bigint unique NOT NULL," +
+                "   current_mode varchar(43) NOT NULL," +
+                "   current_desc varchar(255)," +
+                "   global_region varchar(43)," +
+                "   global_agent varchar(42)," +
+                "   regional_region varchar(43)," +
+                "   regional_agent varchar(42)," +
+                "   local_region varchar(43)," +
+                "   local_agent varchar(42)," +
+                "   FOREIGN KEY (global_region) REFERENCES rnode(region_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (global_agent) REFERENCES anode(agent_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (regional_region) REFERENCES rnode(region_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (regional_agent) REFERENCES anode(agent_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (local_region) REFERENCES rnode(region_id) ON DELETE CASCADE, " +
+                "   FOREIGN KEY (local_agent) REFERENCES anode(agent_id) ON DELETE CASCADE " +
+                ")";
+        */
+
+        String createCState = "CREATE TABLE cstate" +
+                "(" +
+                "   config_ts bigint unique NOT NULL," +
+                "   current_mode varchar(43) NOT NULL," +
+                "   current_desc varchar(255)," +
+                "   global_region varchar(43)," +
+                "   global_agent varchar(42)," +
+                "   regional_region varchar(43)," +
+                "   regional_agent varchar(42)," +
+                "   local_region varchar(43)," +
+                "   local_agent varchar(42)," +
+                "   FOREIGN KEY (local_region) REFERENCES rnode(region_id) ON DELETE CASCADE," +
+                "   FOREIGN KEY (local_agent) REFERENCES anode(agent_id) ON DELETE CASCADE" +
+                ")";
+
+
 
         String createTenantNode = "CREATE TABLE tenantnode" +
                 "(" +
@@ -1693,6 +1719,10 @@ public class DBEngine {
                 dropTable("tenantnode");
             }
 
+            if (tableExist("cstate")) {
+                dropTable("cstate");
+            }
+
             if (tableExist("pluginof")) {
                 dropTable("pluginof");
             }
@@ -1717,9 +1747,6 @@ public class DBEngine {
                 dropTable("rnode");
             }
 
-            if (tableExist("cstate")) {
-                dropTable("cstate");
-            }
         }
 
 
@@ -1727,12 +1754,12 @@ public class DBEngine {
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
 
-            stmt.executeUpdate(createCState);
             stmt.executeUpdate(createRNode);
             stmt.executeUpdate(createANode);
             stmt.executeUpdate(createAgentOf);
             stmt.executeUpdate(createPNode);
             stmt.executeUpdate(createPluginOf);
+            stmt.executeUpdate(createCState);
             stmt.executeUpdate(createTenantNode);
             stmt.executeUpdate(createResourceNode);
             stmt.executeUpdate(createInode);

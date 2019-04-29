@@ -360,7 +360,7 @@ public class ControllerEngine {
                     //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
 
                     //Agent Name now set on core init
-                    cstate.setAgentInit(tmpRegion,cstate.getAgent(),"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
+                    //cstate.setAgentInit(tmpRegion,cstate.getAgent(),"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
                     //this.agent = agentcontroller.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
                     //this.agentpath = tmpRegion + "_" + this.agent;
                     certificateManager = new CertificateManager(this);
@@ -843,12 +843,12 @@ public class ControllerEngine {
             }
 
             if(initIOChannels()) {
-                logger.error("initIOChannels Success");
-                cstate.setRegionGlobalInit("initRegion() : Success");
+                logger.debug("initIOChannels Success");
+                cstate.setRegionSuccess(plugin.getRegion(),plugin.getAgent(), "initRegion() Success");
                 isInit = true;
             } else {
                 logger.error("initIOChannels Failed");
-                cstate.setRegionalGlobalFailed("initIOChannels Failed");
+                cstate.setRegionFailed("initRegion() initIOChannels Failed");
             }
 
         } catch (Exception ex) {

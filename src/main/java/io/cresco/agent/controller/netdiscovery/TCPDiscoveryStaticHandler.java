@@ -151,23 +151,23 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                     String[] remoteScope = remoteAddress.split("%");
                     remoteAddress = remoteScope[0];
                 }
-                logger.info("Processing packet for {} {}_{}", remoteAddress, me.getParam("src_region"), me.getParam("src_agent"));
+                logger.debug("Processing packet for {} {}_{}", remoteAddress, me.getParam("src_region"), me.getParam("src_agent"));
                 me.setParam("dst_ip", remoteAddress);
                 me.setParam("dst_region", me.getParam("src_region"));
                 me.setParam("dst_agent", me.getParam("src_agent"));
                 me.setParam("validated_authenication",ValidatedAuthenication(me));
                 discoveredList.add(me);
                 if(me.getParam("public_cert") != null) {
-                    logger.info("public_cert Exists");
+                    logger.info("Incoming Public Certificate");
                     String remoteAgentPath = me.getParam("src_region") + "_" + me.getParam("src_agent");
                     if(setCertTrust(remoteAgentPath,me.getParam("public_cert"))) {
-                        logger.info("Added Static discovered host to discoveredList.");
-                        logger.info("discoveredList contains " + discoveredList.size() + " items.");
+                        logger.debug("Added Static discovered host to discoveredList.");
+                        logger.debug("discoveredList contains " + discoveredList.size() + " items.");
                     } else {
-                        logger.info("Could not set Trust");
+                        logger.error("Could not set Trust");
                     }
                 } else {
-                    logger.info("processIncoming() : no cert found");
+                    logger.debug("processIncoming() : no cert found");
                 }
                 //sme.setParam("public_cert", agentcontroller.getCertificateManager().getJsonFromCerts(agentcontroller.getCertificateManager().getPublicCertificate()));
 

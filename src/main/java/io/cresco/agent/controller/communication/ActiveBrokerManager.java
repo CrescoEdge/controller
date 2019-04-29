@@ -57,12 +57,10 @@ public class ActiveBrokerManager implements Runnable  {
 
 				if(cb != null) {
 
-					logger.error("cb != null");
 
 					String agentIP = cb.getParam("dst_ip");
 					if((!controllerEngine.isLocal(agentIP)) || (agentIP.equals("127.0.0.1")) || (agentIP.equals("localhost"))) { //ignore local responses
 
-						logger.error("! local ip");
 
 						boolean addBroker = false;
 						String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");

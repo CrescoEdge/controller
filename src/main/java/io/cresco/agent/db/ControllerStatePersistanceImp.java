@@ -42,11 +42,11 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             case PRE_INIT:
                 return preInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_INIT:
-                //STANDALONE_INIT Core Init null null null null null agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 return standAloneInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_SHUTDOWN:
+                logger.error("STANDALONE_SHUTDOWN: NOT IMPLEMENTED");
                 break;
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
@@ -55,32 +55,26 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             case AGENT_SHUTDOWN:
                 return unregisterAgent(localRegion, localAgent);
             case REGION_INIT:
-                //REGION_INIT initRegion() TS :1553784233245 null null null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
-                // agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case REGION:
+                return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
+                logger.error("REGION_SHUTDOWN: NOT IMPLEMENTED");
                 break;
             case REGION_FAILED:
+                logger.error("REGION_FAILED: NOT IMPLEMENTED");
                 break;
             case REGION_GLOBAL_INIT:
-                //REGION_GLOBAL_INIT initRegion() : Success null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                // region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_FAILED:
-                //REGION_GLOBAL_FAILED gCheck : Dynamic Global Host :null_null is not reachable. null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6
-                // agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540 region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            case REGION_GLOBAL:
+                logger.error("GLOBAL_FAILED: NOT IMPLEMENTED");
                 break;
+            case REGION_GLOBAL:
+                return regionGlobalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL:
-                //GLOBAL gCheck : Creating Global Host null null region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                // region-07581fcc-bfb9-48f8-a2da-165583fb65c6 agent-b612f075-0f3b-4ba6-ba75-1d08bd24b540
-                return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                //logger.error("LINKING REGION: " + localRegion + " AGENT: " + localAgent);
-
-                //dbe.assoicateANodetoRNode(localRegion, localAgent);
-                //logger.error("LINKED REGION: " + localRegion + " AGENT: " + localAgent);
+                return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
+                logger.error("GLOBAL_SHUTDOWN: NOT IMPLEMENTED");
                 break;
 
             default:
@@ -126,6 +120,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         boolean returnState = false;
         try {
 
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+
             //check if agent exist, if not add it, if so update it
             if (!dbe.nodeExist(null, localAgent, null)) {
                 dbe.addANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
@@ -149,6 +149,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
         boolean returnState = false;
         try {
+
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
 
             //check if agent exist, if not add it, if so update it
             if (!dbe.nodeExist(null, localAgent, null)) {
@@ -254,6 +260,105 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 dbe.addANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             } else {
                 dbe.updateANode(localAgent, 3, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("regionInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return returnState;
+    }
+
+    public boolean regionSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("regionInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return returnState;
+    }
+
+    public boolean regionGlobalSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            }
+
+            if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {
+                dbe.assoicateANodetoRNode(localRegion, localAgent);
+            }
+
+            //add event
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            returnState = true;
+
+        } catch (Exception ex) {
+            logger.error("regionInit()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+        return returnState;
+    }
+
+    public boolean globalSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+
+        boolean returnState = false;
+        try {
+            if (!dbe.nodeExist(localRegion, null, null)) {
+                dbe.addRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            } else {
+                dbe.updateRNode(localRegion, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), "pending");
+            }
+            if (!dbe.nodeExist(null, localAgent, null)) {
+                dbe.addANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
+            } else {
+                dbe.updateANode(localAgent, 10, currentDesc, plugin.getConfig().getIntegerParam("watchdog_period",5000), System.currentTimeMillis(), gson.toJson(plugin.getConfig().getConfigMap()));
             }
 
             if(!dbe.assoicateANodetoRNodeExist(localRegion, localAgent)) {

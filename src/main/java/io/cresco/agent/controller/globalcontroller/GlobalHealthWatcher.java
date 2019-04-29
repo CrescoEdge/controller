@@ -14,7 +14,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.util.*;
-import java.util.concurrent.LinkedBlockingQueue;
 
 public class GlobalHealthWatcher implements Runnable {
     private ControllerEngine controllerEngine;
@@ -245,16 +244,18 @@ public class GlobalHealthWatcher implements Runnable {
                     }
                 }
             }
-            else if(this.controllerEngine.cstate.isGlobalController()) {
+            else if(plugin.getConfig().getBooleanParam("is_global",false)) {
                 //Do nothing if already controller, will reinit on regional restart
                 logger.trace("Starting Local Global Controller Check");
 
-                //if(controllerEngine.getAppScheduleQueue() == null) {
-                //    controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
-                    //startGlobalSchedulers();
-                //}
-                if(controllerEngine.getAppScheduler() == null) {
-                    startGlobalSchedulers();
+                //if not global controller start it
+                if(!this.controllerEngine.cstate.isGlobalController()) {
+                    this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");
+                    logger.info("Global: " + this.controllerEngine.cstate.getRegionalRegion() + " Agent: " + this.controllerEngine.cstate.getRegionalAgent());
+
+                    if (controllerEngine.getAppScheduler() == null) {
+                        startGlobalSchedulers();
+                    }
                 }
 
 
@@ -372,7 +373,7 @@ public class GlobalHealthWatcher implements Runnable {
 
     private String[] connectToGlobal(List<MsgEvent> discoveryList) {
 
-        logger.error("connecToGlobal()");
+        logger.debug("connecToGlobal()");
 
         String[] globalController = null;
         MsgEvent cme = null;
@@ -380,7 +381,7 @@ public class GlobalHealthWatcher implements Runnable {
 
 	    try {
 	        for(MsgEvent ime : discoveryList) {
-	            logger.info("Global Discovery Response : " + ime.getParams().toString());
+	            logger.debug("Global Discovery Response : " + ime.getParams().toString());
 	            //determine least loaded
 	            String ime_count_string = ime.getParam("agent_count");
 	            if(ime_count_string != null) {
@@ -400,14 +401,14 @@ public class GlobalHealthWatcher implements Runnable {
             }
             //if we have a canadate, check to see if we are already connected a regions
             if(cme != null) {
-                logger.error("cme != null 0");
-	            if((cme.getParam("dst_region") != null) && (cme.getParam("dst_agent")) !=null) {
-                    logger.error("cme != null 1");
+
+                if((cme.getParam("dst_region") != null) && (cme.getParam("dst_agent")) !=null) {
+
                     String cGlobalPath = cme.getParam("dst_region") + "_" + (cme.getParam("dst_agent"));
                     if(!controllerEngine.isReachableAgent(cGlobalPath)) {
-                        logger.error("cme NOT REACHABLE");
+                        logger.debug("cme NOT REACHABLE");
                         controllerEngine.getIncomingCanidateBrokers().add(cme);
-                        logger.error("cme submitted canidate broker");
+                        logger.debug("cme submitted canidate broker");
                         //while
                         int timeout = 0;
                         while((!controllerEngine.isReachableAgent(cGlobalPath)) && (timeout < 10)) {
@@ -416,16 +417,12 @@ public class GlobalHealthWatcher implements Runnable {
                             Thread.sleep(1000);
                         }
                         if(controllerEngine.isReachableAgent(cGlobalPath)) {
-                            logger.error("rearchable 0");
                             globalController = new String[2];
                             globalController[0] = cme.getParam("dst_region");
                             globalController[1] = cme.getParam("dst_agent");
-                        } else {
-                            logger.error("still not reachable");
                         }
                     }
                     else {
-                        logger.error("reachable 1");
                         globalController = new String[2];
                         globalController[0] = cme.getParam("dst_region");
                         globalController[1] = cme.getParam("dst_agent");

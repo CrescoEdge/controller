@@ -323,7 +323,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
             String verifyMessage = "DISCOVERY_MESSAGE_VERIFIED";
             String discoveryValidator = rme.getParam("discovery_validator");
 
-            logger.error("Discovery Secret: [" + discoverySecret + "]");
+            logger.debug("Discovery Secret: [" + discoverySecret + "]");
 
             String decryptedString = discoveryCrypto.decrypt(discoveryValidator,discoverySecret);
 
