@@ -22,15 +22,15 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     private CLogger logger;
     private DBEngine dbe;
     private Gson gson;
-    private Timer updateTimer;
+    private Timer stateUpdateTimer;
 
     public ControllerStatePersistanceImp(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(ControllerStatePersistanceImp.class.getName(),CLogger.Level.Info);
         this.dbe = dbe;
         this.gson = new Gson();
-        this.updateTimer = new Timer();
-        this.updateTimer.scheduleAtFixedRate(new UpdateTask(), 500, 5000l);
+        this.stateUpdateTimer = new Timer();
+        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), 500, 5000l);
 
     }
 
@@ -467,7 +467,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return isRegistered;
     }
 
-    class UpdateTask extends TimerTask {
+    class stateUpdateTask extends TimerTask {
         public void run() {
             if (plugin != null) {
                 if (plugin.isActive()) {
@@ -490,7 +490,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+                                //plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
