@@ -44,7 +44,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
     private Map<String,MessageConsumer> messageConsumerMap;
-    private AtomicBoolean lockMessage = new AtomicBoolean();
+    private final AtomicBoolean lockMessage = new AtomicBoolean();
 
     private String URI;
 
@@ -169,13 +169,31 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             consumer.setMessageListener(messageListener);
             listenerId = UUID.randomUUID().toString();
             synchronized (lockMessage) {
-                messageConsumerMap.put(listenerId,consumer);
+                messageConsumerMap.put(listenerId, consumer);
             }
 
         } catch (Exception ex) {
             ex.printStackTrace();
         }
         return listenerId;
+    }
+
+    public void removeMessageListener(String listenerId) {
+	    try {
+	        synchronized (lockMessage) {
+                MessageConsumer consumer = messageConsumerMap.get(listenerId);
+                if (consumer != null) {
+                    try {
+                        consumer.close();
+                        messageConsumerMap.remove(listenerId);
+                    } catch (JMSException e) {
+                        logger.error("Failed to close message listener [{}]", listenerId);
+                    }
+                }
+            }
+        } catch (Exception e) {
+	        logger.error("removeMessageListener('{}'): {}", listenerId, e.getMessage());
+        }
     }
 
     public boolean sendMessage(TopicType topicType, Message message) {
