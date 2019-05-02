@@ -844,13 +844,6 @@ public class PluginAdmin {
                             String bsn = (String)map.get("pluginname");
                             String version = (String)map.get("version");
 
-                            //String configString = pid + "|" + pid + "|" + version;
-                            //String configString2 = pid + "|" + bsn + "|" + version;
-
-                            String configString = pid ;
-
-                            String configString2 = pid + "|" + bsn;
-
                             String configString3 = pid + "|" + bsn + "|" + version;
 
 

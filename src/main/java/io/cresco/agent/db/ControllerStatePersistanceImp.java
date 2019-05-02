@@ -209,6 +209,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
+
     public boolean agentSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
@@ -233,8 +234,6 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 returnState = true;
-            } else {
-
             }
 
         } catch (Exception ex) {
@@ -332,9 +331,11 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 dbe.assoicateANodetoRNode(localRegion, localAgent);
             }
 
-            //add event
-            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            returnState = true;
+            if(registerRegion(localRegion, globalRegion)) {
+                //add event
+                dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+                returnState = true;
+            }
 
         } catch (Exception ex) {
             logger.error("regionInit()");
@@ -392,6 +393,88 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return stateMap;
     }
 
+    /*
+    private Boolean isGlobalWatchDogRegister(String globalRegion, String globalAgent) {
+        boolean isGlobalReg = false;
+        try {
+
+            if(controllerEngine.isReachableAgent(globalRegion + "_" + globalAgent)) {
+
+                MsgEvent le  = new MsgEvent(MsgEvent.Type.CONFIG, controllerEngine.cstate.getRegion(),controllerEngine.cstate.getAgent(),null,globalRegion,globalAgent,null,true,true);
+
+
+                le.setParam("region_name",controllerEngine.cstate.getRegion());
+
+                //le.setParam("dst_region", gPath[0]);
+                le.setParam("is_active", Boolean.TRUE.toString());
+                le.setParam("action", "region_enable");
+                //le.setParam("globalcmd", Boolean.TRUE.toString());
+                le.setParam("watchdogtimer", String.valueOf(plugin.getConfig().getLongParam("watchdogtimer", 5000L)));
+                //this should be RPC, but routing needs to be fixed route 16 -> 32 -> regionsend -> 16 -> 32 -> regionsend (goes to region, not rpc)
+                le.setParam("source","sendGlobalWatchDogRegister()");
+                MsgEvent re = plugin.sendRPC(le);
+                if(re != null) {
+                    isGlobalReg = true;
+                }
+            } else {
+                logger.info("Candidate Global Controller not reachable!");
+            }
+        }
+        catch(Exception ex) {
+            logger.info("sendGlobalWatchDogRegister() " + ex.getMessage());
+            ex.printStackTrace();
+        }
+        return isGlobalReg;
+    }
+    */
+
+    public boolean registerRegion(String localRegion, String globalRegion) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent enableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            enableMsg.setParam("action", "region_enable");
+            enableMsg.setParam("req-seq", UUID.randomUUID().toString());
+            enableMsg.setParam("region_name", localRegion);
+            enableMsg.setParam("desc", "to-gc-region");
+
+            Map<String, String> exportMap = dbe.getDBExport(true, false, false, plugin.getRegion(), null, null);
+
+            /*
+            Map<String,List<Map<String,String>>> regionMap = new HashMap<>();
+            List<Map<String,String>> regionList = new ArrayList<>();
+            regionList.add(dbe.getRNode(localRegion));
+            regionMap.put(localRegion,regionList);
+            */
+
+            enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
+
+            MsgEvent re = plugin.sendRPC(enableMsg);
+
+            if (re != null) {
+
+                if (re.paramsContains("is_registered")) {
+
+                    isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
+
+                }
+            }
+
+            if(isRegistered) {
+                logger.info("Region: " + localRegion + " registered with Region: " + globalRegion);
+            } else {
+                logger.error("Region: " + localRegion + " failed to register with Region: " + globalRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            logger.error("Exception during Agent: " + localRegion + " registration with Region: " + globalRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
+
     public boolean registerAgent(String localRegion, String localAgent) {
         boolean isRegistered = false;
 
@@ -404,30 +487,31 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 enableMsg.setParam("agent_name", localAgent);
                 enableMsg.setParam("desc", "to-rc-agent");
 
+                Map<String, String> exportMap = dbe.getDBExport(false, true, false, plugin.getRegion(), plugin.getAgent(), null);
+
+                /*
                 Map<String,List<Map<String,String>>> agentMap = new HashMap<>();
                 List<Map<String,String>> agentList = new ArrayList<>();
                 agentList.add(dbe.getANode(localAgent));
                 agentMap.put(localRegion,agentList);
-
-                enableMsg.setCompressedParam("agentconfigs",gson.toJson(agentMap));
-
-                /*
-                Map<String,List<Map<String,String>>> pluginMap = new HashMap<>();
-                List<Map<String,String>> pluginList = new ArrayList<>();
-                List<String> tmpPluginList = dbe.getNodeList(localRegion, localAgent);
-                for(String pluginId : tmpPluginList) {
-                    pluginList.add(dbe.getPNode(pluginId));
-                }
-                pluginMap.put(localAgent,pluginList);
-
-                enableMsg.setCompressedParam("pluginconfigs", gson.toJson(pluginMap));
                 */
+                enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
+
 
                 MsgEvent re = plugin.sendRPC(enableMsg);
 
                 if (re != null) {
+
+                    if (re.paramsContains("is_registered")) {
+
+                        isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
+
+                    }
+                }
+
+                if (isRegistered) {
                     logger.info("Agent: " + localAgent + " registered with Region: " + localRegion);
-                    isRegistered = true;
+
                 } else {
                     logger.error("Agent: " + localAgent + " failed to register with Region: " + localRegion + "!");
                 }

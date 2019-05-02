@@ -216,7 +216,7 @@ public class GlobalHealthWatcher implements Runnable {
                     if(controllerEngine.isReachableAgent(global_host_map.get(global_controller_host))) {
                         logger.trace("Static Global Controller Check " + global_controller_host + " Ok.");
                         //TODO Check if regionalDBexport() is needed
-                        regionalDBexport();
+                        //regionalDBexport();
                         return;
                     }
                     else {
@@ -231,11 +231,11 @@ public class GlobalHealthWatcher implements Runnable {
                     controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + global_controller_host + " failed to connect.");
                 }
                 else {
-                    if(isGlobalWatchDogRegister(globalController[0],globalController[1])) {
-                        controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                    boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                    if(isRegistered) {
+                        //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
                         logger.info("Static Global Controller Static Host: " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
                         global_host_map.put(global_controller_host, controllerEngine.cstate.getGlobalControllerPath());
-
 
                         //register with global controller
                         //sendGlobalWatchDogRegister();
@@ -330,16 +330,6 @@ public class GlobalHealthWatcher implements Runnable {
             AppScheduler appScheduler = new AppScheduler(controllerEngine,this);
             controllerEngine.setAppScheduler(appScheduler);
 
-            /*
-            ResourceSchedulerEngine se = new ResourceSchedulerEngine(controllerEngine,this);
-            Thread schedulerEngineThread = new Thread(se);
-            schedulerEngineThread.start();
-
-            AppSchedulerEngine ae = new AppSchedulerEngine(controllerEngine,this);
-            Thread appSchedulerEngineThread = new Thread(ae);
-            appSchedulerEngineThread.start();
-            */
-
             isStarted = true;
         }
         catch (Exception ex) {
@@ -348,28 +338,6 @@ public class GlobalHealthWatcher implements Runnable {
         return isStarted;
     }
 
-    /*
-    private Boolean startGlobalSchedulers() {
-        boolean isStarted = false;
-        try {
-            //Start Global Controller Services
-            logger.info("Initialized");
-            ResourceSchedulerEngine se = new ResourceSchedulerEngine(controllerEngine,this);
-            Thread schedulerEngineThread = new Thread(se);
-            schedulerEngineThread.start();
-
-            AppSchedulerEngine ae = new AppSchedulerEngine(controllerEngine,this);
-            Thread appSchedulerEngineThread = new Thread(ae);
-            appSchedulerEngineThread.start();
-
-            isStarted = true;
-        }
-        catch (Exception ex) {
-            logger.error("startGlobalSchedulers() " + ex.getMessage());
-        }
-        return isStarted;
-    }
-    */
 
     private String[] connectToGlobal(List<MsgEvent> discoveryList) {
 
@@ -439,6 +407,7 @@ public class GlobalHealthWatcher implements Runnable {
         return globalController;
     }
 
+    /*
     private Boolean isGlobalWatchDogRegister(String globalRegion, String globalAgent) {
         boolean isGlobalReg = false;
         try {
@@ -471,6 +440,7 @@ public class GlobalHealthWatcher implements Runnable {
         }
         return isGlobalReg;
     }
+    */
 
     private void sendGlobalWatchDogRegister() {
 
@@ -649,7 +619,6 @@ public class GlobalHealthWatcher implements Runnable {
         private CLogger logger;
         private PluginBuilder plugin;
         public GlobalNodeStatusWatchDog(ControllerEngine controllerEngine, CLogger logger) {
-            //this.agentcontroller = agentcontroller;
             this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
             this.logger = logger;
@@ -657,60 +626,32 @@ public class GlobalHealthWatcher implements Runnable {
         }
 
         public void run() {
-            if(controllerEngine.cstate.isGlobalController()) { //only run if node is a global controller
-                logger.debug("GlobalNodeStatusWatchDog");
-                //update own database
 
-                /*
-                Map<String, NodeStatusType> edgeHealthListStatus = controllerEngine.getGDB().getNodeStatus(null, null, null);
-                for (Map.Entry<String, NodeStatusType> entry : edgeHealthListStatus.entrySet()) {
-                    logger.info("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+            if (controllerEngine.cstate.isGlobalController()) { //only run if node is global controller
+                logger.debug("RegionalNodeStatusWatchDog");
+
+                Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(null, null, null);
+
+                for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {
+
+                    if (!plugin.getRegion().equals(entry.getKey())) {
+
+                        logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+
+                        if (entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
+                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            controllerEngine.getGDB().setNodeStatusCode(entry.getKey(), null, null, 40, "set STALE by global controller health watcher");
+
+                        } else if (entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
+                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            controllerEngine.getGDB().setNodeStatusCode(entry.getKey(), null, null, 50, "set LOST by regional controller health watcher");
+
+                        } else if (entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
+
+                        }
+
+                    }
                 }
-
-                Map<String, NodeStatusType> nodeListStatus = controllerEngine.getGDB().getNodeStatus(null, null, null);
-
-
-                for (Map.Entry<String, NodeStatusType> entry : nodeListStatus.entrySet()) {
-*/
-                Map<String, NodeStatusType> edgeHealthListStatus = controllerEngine.getGDB().getEdgeHealthStatus(null, null, null);
-
-                for (Map.Entry<String, NodeStatusType> entry : edgeHealthListStatus.entrySet()) {
-
-                logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-
-                    if(entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        //mark node disabled
-                        //controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
-                        controllerEngine.getGDB().setNodeStatusCode(entry.getKey(),null,null,40,"set STALE by global controller health watcher");
-
-                        //mark it stale
-                    }
-                    else if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
-                        logger.error("Setting STALE " + entry.getKey());
-                       // controllerEngine.getGDB().removeNode(region,agent,pluginId);
-                        controllerEngine.getGDB().setNodeStatusCode(entry.getKey(),null,null,50,"set LOST by global controller health watcher");
-
-                    }
-                    else if(entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
-                        //logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-
-                    } /*else {
-                        logger.info("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        Map<String,String> nodeMap = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
-                        logger.info("Region : " + nodeMap.get("region_name") + " Agent : " + nodeMap.get("agent_name"));
-                    }
-                    */
-
-                }
-            }
-            else {
-                //send full export of region to global controller
-                //Need to develop a better inconsistency method
-                //logger.info("Regional Export");
-                //TODO enable global export
-                //regionalDBexport();
-
             }
         }
     }

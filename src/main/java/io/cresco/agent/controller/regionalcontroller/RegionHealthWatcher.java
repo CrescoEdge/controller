@@ -27,7 +27,6 @@ public class RegionHealthWatcher {
 
 
     public RegionHealthWatcher(ControllerEngine controllerEngine) {
-        //this.logger = new CLogger(RegionHealthWatcher.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(RegionHealthWatcher.class.getName(),CLogger.Level.Info);
@@ -187,12 +186,11 @@ public class RegionHealthWatcher {
     }
 
 
-
-
     class RegionalNodeStatusWatchDog extends TimerTask {
         private ControllerEngine controllerEngine;
         private CLogger logger;
         private PluginBuilder plugin;
+
         public RegionalNodeStatusWatchDog(ControllerEngine controllerEngine, CLogger logger) {
 
             this.controllerEngine = controllerEngine;
@@ -200,46 +198,32 @@ public class RegionHealthWatcher {
 
             this.logger = logger;
         }
+
         public void run() {
-            if(controllerEngine.cstate.isRegionalController()) { //only run if node is regional controller
+            if (controllerEngine.cstate.isRegionalController()) { //only run if node is regional controller
                 logger.debug("RegionalNodeStatusWatchDog");
 
                 Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(plugin.getRegion(), null, null);
 
                 for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {
-                    logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
-                    if(entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        //mark node disabled
-                        //controllerEngine.getGDB().setEdgeParam(entry.getKey(),"is_active",Boolean.FALSE.toString());
-                        controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(),entry.getKey(),null,40,"set STALE by regional controller health watcher");
+                    if (!plugin.getAgent().equals(entry.getKey())) {
 
-                    }
-                    else if(entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        logger.error("Removing " + plugin.getRegion() + " " + entry.getKey());
-                        controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(),entry.getKey(),null,50,"set LOST by regional controller health watcher");
-                        //controllerEngine.getGDB().removeNode(region,agent,pluginId);
-                    }
-                    else if(entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
-                        /*
-                        Map<String,String> nodeParams = controllerEngine.getGDB().getNodeParams(entry.getKey());
-                        for (Map.Entry<String, String> entry2 : nodeParams.entrySet()) {
-                            logger.error("Key = " + entry2.getKey() + ", Value = " + entry2.getValue());
+                        logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+
+                        if (entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
+                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 40, "set STALE by regional controller health watcher");
+
+                        } else if (entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
+                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 50, "set LOST by regional controller health watcher");
+
+                        } else if (entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
+
                         }
-                        String region = nodeParams.get("region");
-                        String agent = nodeParams.get("agent");
-                        String pluginId = nodeParams.get("agentcontroller");
-                        logger.error("Problem with " + region + " " + agent + " " + pluginId);
-                        logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        */
-                    } /* else {
-                        logger.info("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
-                        Map<String,String> nodeMap = controllerEngine.getGDB().gdb.getNodeParams(entry.getKey());
-                        logger.info("Region : " + nodeMap.get("region_name") + " Agent : " + nodeMap.get("agent_name"));
-                    } */
 
+                    }
                 }
             }
         }

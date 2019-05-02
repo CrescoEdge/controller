@@ -40,10 +40,9 @@ public class RegionalExecutor implements Executor {
                 case "agent_disable":
                     logger.debug("CONFIG : AGENTDISCOVER REMOVE: " + incoming.printHeader());
                     if (controllerEngine.getGDB().removeNode(incoming)) {
-
-                        incoming.setParam("success",Boolean.TRUE.toString());
+                        incoming.setParam("is_unregistered",Boolean.TRUE.toString());
                     } else {
-                        incoming.setParam("success",Boolean.FALSE.toString());
+                        incoming.setParam("is_unregistered",Boolean.TRUE.toString());
                     }
 
                     return incoming;
@@ -52,12 +51,12 @@ public class RegionalExecutor implements Executor {
                     logger.debug("CONFIG : AGENT ADD: " + incoming.printHeader());
 
                     if(controllerEngine.getGDB().nodeUpdate(incoming)) {
-                        incoming.setParam("success",Boolean.TRUE.toString());
+                        incoming.setParam("is_registered",Boolean.TRUE.toString());
 
                         logger.debug("CODY INCOMING AGENT ADD REGION*: " +incoming.getParams());
 
                     } else {
-                        incoming.setParam("success",Boolean.FALSE.toString());
+                        incoming.setParam("is_registered",Boolean.FALSE.toString());
                     }
                     return incoming;
 

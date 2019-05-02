@@ -411,12 +411,10 @@ public class GlobalExecutor implements Executor {
                 actionResourceId = ce.getParam("action_resourceid");
             }
 
-            logger.error(ce.getParams().toString());
-
             ce.setCompressedParam("isassignmentinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,false));
             ce.setCompressedParam("isassignmentresourceinfo",controllerEngine.getGDB().getIsAssignedInfo(actionResourceId,actionInodeId,true));
 
-            logger.error("get isassigned params : " + ce.getParams().toString());
+            //logger.error("get isassigned params : " + ce.getParams().toString());
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -594,47 +592,6 @@ public class GlobalExecutor implements Executor {
         return ce;
     }
 
-    private MsgEvent pluginInfo2(MsgEvent ce) {
-        try
-        {
-            if(ce.getParam("plugin_id") != null)
-            {
-                String plugin_id = ce.getParam("plugin_id");
-                List<String> pluginFiles = getPluginFiles();
-
-                if(pluginFiles != null)
-                {
-                    for (String pluginPath : pluginFiles)
-                    {
-                        String found_plugin_id = getPluginName(pluginPath) + "=" + getPluginVersion(pluginPath);
-                        if(plugin_id.equals(found_plugin_id))
-                        {
-                            String params = getPluginParams(pluginPath);
-                            if(params != null)
-                            {
-                                logger.error("Found Plugin: " + plugin_id);
-                                ce.setParam("node_name",getPluginName(pluginPath));
-                                ce.setParam("node_id",plugin_id);
-                                ce.setParam("params",params);
-                            }
-
-                        }
-                    }
-                }
-                else
-                {
-                    ce.setMsgBody("Plugin does not exist");
-                }
-            }
-        }
-        catch(Exception ex) {
-            ce.setParam("error", ex.getMessage());
-        }
-
-        return ce;
-    }
-
-
 
     //CONFIG
 
@@ -687,9 +644,11 @@ public class GlobalExecutor implements Executor {
 
             String edgeId = controllerEngine.getGDB().addEdge(ce.getSrcRegion(),null,null, ce.getDstRegion(), null,null,"isRegionHealth",paramMap);
 
-            ce.setParam("is_registered","true");
+            ce.removeParam("regionconfigs");
+            ce.setParam("is_registered",Boolean.TRUE.toString());
         }
         catch(Exception ex) {
+            ce.setParam("is_registered",Boolean.FALSE.toString());
             ce.setParam("error", ex.getMessage());
         }
 
@@ -703,8 +662,10 @@ public class GlobalExecutor implements Executor {
             logger.debug("CONFIG : AGENTDISCOVER REMOVE: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
             logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().removeNode(ce);
+            ce.setParam("is_unregistered",Boolean.TRUE.toString());
         }
         catch(Exception ex) {
+            ce.setParam("is_unregistered",Boolean.FALSE.toString());
             ce.setParam("error", ex.getMessage());
         }
 
