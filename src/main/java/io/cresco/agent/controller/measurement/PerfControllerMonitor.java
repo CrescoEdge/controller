@@ -397,6 +397,7 @@ public class PerfControllerMonitor {
                 MapMessage mapMessage = controllerEngine.getDataPlaneService().createMapMessage();
 
 
+
                 mapMessage.setString("perf", builder.getControllerInfoMap());
 
                 //set property

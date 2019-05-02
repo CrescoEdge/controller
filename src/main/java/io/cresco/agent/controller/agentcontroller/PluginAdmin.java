@@ -12,10 +12,7 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
 import io.cresco.library.utilities.CLogger;
-import org.osgi.framework.Bundle;
-import org.osgi.framework.BundleContext;
-import org.osgi.framework.Filter;
-import org.osgi.framework.ServiceReference;
+import org.osgi.framework.*;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
 
@@ -415,6 +412,7 @@ public class PluginAdmin {
             }
 
 
+
         } catch(Exception ex) {
             logger.error("addBundle()");
             ex.printStackTrace();
@@ -486,10 +484,40 @@ public class PluginAdmin {
     }
     */
 
-    public boolean startBundle(long bundleID) {
+    String mostTargeted(String key, String pid, Bundle bundle) throws Exception {
+
+        String bsn = bundle.getSymbolicName();
+        Version version = bundle.getVersion();
+        String location = bundle.getLocation();
+        String f = String.format("(|(%1$s=%2$s)(%1$s=%2$s|%3$s)" +
+                        "(%1$s=%2$s|%3$s|%4$s)(%1$s=%2$s|%3$s|%4$s|%5$s))",
+                key, pid, bsn, version, location );
+
+        System.out.println("Config: " + f);
+
+        Configuration[] configurations = confAdmin.listConfigurations(f);
+        if (configurations == null)
+            return null;
+
+        String largest = null;
+        for (Configuration c : configurations) {
+            String s = (String) c.getProperties().get(key);
+            if ((largest == null) || (largest.length() < s.length()))
+                largest = s;
+        }
+        return largest;
+    }
+
+
+
+    public boolean startBundle(long bundleID, String pid) {
         boolean isStarted = false;
         try {
             context.getBundle(bundleID).start();
+            //Bundle b = context.getBundle(bundleID);
+            //b.start();
+            //System.out.println("Real Config: " + mostTargeted("service.factoryPid", pid + ".Plugin", b));
+
             isStarted = true;
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -727,7 +755,7 @@ public class PluginAdmin {
                         //String pluginID = addConfig(pluginName, map);
                         if (addConfig(pluginID, map)) {
 
-                            if (startBundle(bundleID)) {
+                            if (startBundle(bundleID, (String)map.get("pluginname"))) {
                                 if (pluginID != null) {
 
                                     PluginNode pluginNode = null;
@@ -800,6 +828,7 @@ public class PluginAdmin {
 
     }
 
+
     public boolean addConfig(String pluginId, Map<String,Object> map) {
         boolean isAdded = false;
         try {
@@ -810,13 +839,31 @@ public class PluginAdmin {
 
                     synchronized (lockConfig) {
                         if (!configMap.containsKey(pluginId)) {
-                            Configuration configuration = confAdmin.createFactoryConfiguration((String)map.get("pluginname") + ".Plugin", null);
+
+                            String pid = (String)map.get("pluginname") + ".Plugin";
+                            String bsn = (String)map.get("pluginname");
+                            String version = (String)map.get("version");
+
+                            //String configString = pid + "|" + pid + "|" + version;
+                            //String configString2 = pid + "|" + bsn + "|" + version;
+
+                            String configString = pid ;
+
+                            String configString2 = pid + "|" + bsn;
+
+                            String configString3 = pid + "|" + bsn + "|" + version;
+
+
+                            Configuration configuration = confAdmin.createFactoryConfiguration(configString3, null);
+
+                            //Configuration configuration = confAdmin.createFactoryConfiguration((String)map.get("pluginname") + ".Plugin", null);
+
 
                             Dictionary properties = new Hashtable();
 
                             ((Hashtable) properties).putAll(map);
-
                             properties.put("pluginID", pluginId);
+                            //properties.put("service.pid2",configString2);
                             configuration.update(properties);
 
                             configMap.put(pluginId, configuration);
@@ -824,6 +871,8 @@ public class PluginAdmin {
                             isAdded = true;
                         }
                     }
+
+
 
                 }
 
@@ -852,7 +901,8 @@ public class PluginAdmin {
 
                 //System.out.println("REFS : " + servRefs.length);
                 if (servRefs == null || servRefs.length == 0) {
-                    //System.out.println("NULL FOUND NOTHING!");
+
+                    System.out.println("NULL FOUND NOTHING!");
 
                 } else {
                     //System.out.println("Running Service Count: " + servRefs.length);

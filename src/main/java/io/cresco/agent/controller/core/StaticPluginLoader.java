@@ -186,7 +186,6 @@ public class StaticPluginLoader implements Runnable  {
 
                     }
                     logger.trace("Status : " + controllerEngine.cstate.getControllerState());
-                    Thread.sleep(1000);
                 }
 
             } catch(Exception ex) {
