@@ -400,7 +400,7 @@ public class ControllerEngine {
 
 
                             if(initIOChannels()) {
-                                logger.error("initIOChannels Success");
+                                logger.debug("initIOChannels Success");
                                 //agent name not set on core init
                                 this.cstate.setAgentSuccess(cRegion,cAgent,"AgentSuccess() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + " connected.");
                                 isInit = true;
@@ -487,7 +487,7 @@ public class ControllerEngine {
                             logger.debug("AgentPath=" + cstate.getAgentPath());
 
                             if(initIOChannels()) {
-                                logger.error("initIOChannels Success");
+                                logger.debug("initIOChannels Success");
                                 //agent name not set on core init
                                 this.cstate.setAgentSuccess(cRegion, cstate.getAgent(), "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
                                 isInit = true;

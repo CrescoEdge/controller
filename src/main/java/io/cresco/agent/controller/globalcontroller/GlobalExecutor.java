@@ -669,8 +669,8 @@ public class GlobalExecutor implements Executor {
             ce.setParam("error", ex.getMessage());
         }
 
-        return null;
-        //return ce;
+        //return null;
+        return ce;
     }
 
 

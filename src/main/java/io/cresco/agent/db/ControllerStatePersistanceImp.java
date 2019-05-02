@@ -10,6 +10,8 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageListener;
 import javax.jms.TextMessage;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -23,6 +25,9 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     private DBEngine dbe;
     private Gson gson;
     private Timer stateUpdateTimer;
+
+    String regionalListener = null;
+    String globalListener = null;
 
     public ControllerStatePersistanceImp(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
@@ -59,8 +64,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             case REGION:
                 return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
-                logger.error("REGION_SHUTDOWN: NOT IMPLEMENTED");
-                break;
+                return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
                 logger.error("REGION_FAILED: NOT IMPLEMENTED");
                 break;
@@ -334,6 +338,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             if(registerRegion(localRegion, globalRegion)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+                regionalListener = registerRegionalListener();
                 returnState = true;
             }
 
@@ -368,6 +373,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            regionalListener = registerRegionalListener();
+            globalListener = registerGlobalListener();
             returnState = true;
 
         } catch (Exception ex) {
@@ -383,50 +390,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     public Map<String,String> getStateMap() {
 
         Map<String,String> stateMap = dbe.getCSTATE(null);
-        /*
-        if(stateMap != null) {
-            if (stateMap.containsKey("local_agent") && stateMap.containsKey("local_region")) {
-                stateMap.put("configparams", dbe.getNodeConfigParams(null, stateMap.get("local_agent"), null));
-            }
-        }
-        */
         return stateMap;
     }
-
-    /*
-    private Boolean isGlobalWatchDogRegister(String globalRegion, String globalAgent) {
-        boolean isGlobalReg = false;
-        try {
-
-            if(controllerEngine.isReachableAgent(globalRegion + "_" + globalAgent)) {
-
-                MsgEvent le  = new MsgEvent(MsgEvent.Type.CONFIG, controllerEngine.cstate.getRegion(),controllerEngine.cstate.getAgent(),null,globalRegion,globalAgent,null,true,true);
-
-
-                le.setParam("region_name",controllerEngine.cstate.getRegion());
-
-                //le.setParam("dst_region", gPath[0]);
-                le.setParam("is_active", Boolean.TRUE.toString());
-                le.setParam("action", "region_enable");
-                //le.setParam("globalcmd", Boolean.TRUE.toString());
-                le.setParam("watchdogtimer", String.valueOf(plugin.getConfig().getLongParam("watchdogtimer", 5000L)));
-                //this should be RPC, but routing needs to be fixed route 16 -> 32 -> regionsend -> 16 -> 32 -> regionsend (goes to region, not rpc)
-                le.setParam("source","sendGlobalWatchDogRegister()");
-                MsgEvent re = plugin.sendRPC(le);
-                if(re != null) {
-                    isGlobalReg = true;
-                }
-            } else {
-                logger.info("Candidate Global Controller not reachable!");
-            }
-        }
-        catch(Exception ex) {
-            logger.info("sendGlobalWatchDogRegister() " + ex.getMessage());
-            ex.printStackTrace();
-        }
-        return isGlobalReg;
-    }
-    */
 
     public boolean registerRegion(String localRegion, String globalRegion) {
         boolean isRegistered = false;
@@ -440,13 +405,6 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             enableMsg.setParam("desc", "to-gc-region");
 
             Map<String, String> exportMap = dbe.getDBExport(true, false, false, plugin.getRegion(), null, null);
-
-            /*
-            Map<String,List<Map<String,String>>> regionMap = new HashMap<>();
-            List<Map<String,String>> regionList = new ArrayList<>();
-            regionList.add(dbe.getRNode(localRegion));
-            regionMap.put(localRegion,regionList);
-            */
 
             enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
 
@@ -475,6 +433,45 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     }
 
 
+    public boolean unregisterRegion(String localRegion, String globalRegion) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent disableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            disableMsg.setParam("unregister_region_id",plugin.getRegion());
+            disableMsg.setParam("desc","to-gc-region");
+            disableMsg.setParam("action", "region_disable");
+
+
+
+            MsgEvent re = plugin.sendRPC(disableMsg);
+
+            if (re != null) {
+
+                if (re.paramsContains("is_registered")) {
+
+                    isRegistered = Boolean.parseBoolean(re.getParam("is_unregistered"));
+
+                }
+            }
+
+            if (isRegistered) {
+                logger.info("Region: " + localRegion + " unregistered from Global: " + globalRegion);
+                isRegistered = true;
+            } else {
+                logger.error("Region: " + localRegion + " failed to unregister with Global: " + globalRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
+
     public boolean registerAgent(String localRegion, String localAgent) {
         boolean isRegistered = false;
 
@@ -489,12 +486,6 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                 Map<String, String> exportMap = dbe.getDBExport(false, true, false, plugin.getRegion(), plugin.getAgent(), null);
 
-                /*
-                Map<String,List<Map<String,String>>> agentMap = new HashMap<>();
-                List<Map<String,String>> agentList = new ArrayList<>();
-                agentList.add(dbe.getANode(localAgent));
-                agentMap.put(localRegion,agentList);
-                */
                 enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
 
 
@@ -551,6 +542,82 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return isRegistered;
     }
 
+    public String registerRegionalListener() {
+        String lid = null;
+        try {
+
+            try {
+
+                MessageListener ml = new MessageListener() {
+                    public void onMessage(Message msg) {
+                        try {
+
+                            if (msg instanceof MapMessage) {
+
+                                MapMessage mapMessage = (MapMessage)msg;
+                                logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
+                                dbe.nodeUpdateStatus(null, mapMessage.getStringProperty("agent_id"), null, null,mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+
+                            }
+                        } catch(Exception ex) {
+
+                            ex.printStackTrace();
+                        }
+                    }
+                };
+
+                //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
+                plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT' AND region_id = '" + plugin.getRegion() + "'");
+                //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return lid;
+    }
+
+    public String registerGlobalListener() {
+        String lid = null;
+        try {
+
+            try {
+
+                MessageListener ml = new MessageListener() {
+                    public void onMessage(Message msg) {
+                        try {
+
+                            if (msg instanceof MapMessage) {
+
+                                MapMessage mapMessage = (MapMessage)msg;
+                                logger.error("GLOBAL HEALTH MESSAGE: INCOMING");
+                                dbe.nodeUpdateStatus(mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+
+                            }
+                        } catch(Exception ex) {
+
+                            ex.printStackTrace();
+                        }
+                    }
+                };
+
+                //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
+                plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'REGION'");
+                //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return lid;
+    }
+
     class stateUpdateTask extends TimerTask {
         public void run() {
             if (plugin != null) {
@@ -569,12 +636,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                                 updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
                                 updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
 
-                                //updateMap.setStringProperty("update_mode", plugin.getAgentService().getAgentState().getControllerState().toString());
                                 updateMap.setStringProperty("update_mode", "AGENT");
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
-                                //plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+                                logger.error("SENDING AGENT UPDATE!!!");
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -582,6 +649,25 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                             break;
                         case REGION_GLOBAL:
+
+                            try {
+                                Map<String, String> exportMap = dbe.getDBExport(true, true, true, plugin.getRegion(), null, null);
+
+                                MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
+                                updateMap.setString("regionconfigs", exportMap.get("regionconfigs"));
+                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
+                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
+
+                                updateMap.setStringProperty("update_mode", "REGION");
+                                updateMap.setStringProperty("region_id", plugin.getRegion());
+
+                                logger.error("SENDING REGIONAL UPDATE!!!");
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+
+                            } catch (Exception ex) {
+                                ex.printStackTrace();
+                            }
+
                             break;
                         case GLOBAL:
                             break;

@@ -21,6 +21,7 @@ public class DBEngine {
 
     private DataSource ds;
     private Gson gson;
+    private Type type;
     private DBType dbType = DBType.EMBEDDED;
 
     private List<String> tablesNames;
@@ -46,6 +47,8 @@ public class DBEngine {
             tablesNames.add("rnode");
 
             this.gson = new Gson();
+            this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+            }.getType();
 
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
@@ -149,6 +152,134 @@ public class DBEngine {
         }
         return isOk;
     }
+
+    public boolean nodeUpdateStatus(String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
+
+        boolean isUpdated = true;
+
+        try {
+
+            if(region_watchdog_update != null) {
+                updateWatchDogTS(region_watchdog_update, null, null);
+            }
+
+            if(agent_watchdog_update != null) {
+                updateWatchDogTS(null, agent_watchdog_update, null);
+            }
+
+            if(plugin_watchdog_update != null) {
+                updateWatchDogTS(null, null, plugin_watchdog_update);
+            }
+
+            if(regionconfigs != null) {
+
+                Map<String,List<Map<String,String>>> regionConfigMap = gson.fromJson(regionconfigs,type);
+                for (Map.Entry<String, List<Map<String,String>>> entry : regionConfigMap.entrySet()) {
+                    List<Map<String, String>> regionList = entry.getValue();
+                    for(Map<String,String> regionMap : regionList) {
+                        String region_id = regionMap.get("region_id");
+                        String status_code = regionMap.get("status_code");
+                        String status_desc = regionMap.get("status_desc");
+                        String watchdog_period = regionMap.get("watchdog_period");
+                        //String watchdog_ts = agentMap.get("watchdog_ts");
+                        String configparams = regionMap.get("configparams");
+
+                        if(!nodeExist(region_id,null,null)) {
+
+                            //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+                            addRNode(region_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+
+                        } else {
+                            //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
+                            updateNode(region_id,null,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                        }
+
+                    }
+                }
+
+            }
+
+            if(agentconfigs != null) {
+
+                Map<String,List<Map<String,String>>> agentConfigMap = gson.fromJson(agentconfigs,type);
+
+                for (Map.Entry<String, List<Map<String,String>>> entry : agentConfigMap.entrySet()) {
+                    String region_id = entry.getKey();
+                    List<Map<String,String>> agentList = entry.getValue();
+                    for(Map<String,String> agentMap : agentList) {
+                        String agent_id = agentMap.get("agent_id");
+                        String status_code = agentMap.get("status_code");
+                        String status_desc = agentMap.get("status_desc");
+                        String watchdog_period = agentMap.get("watchdog_period");
+                        //String watchdog_ts = agentMap.get("watchdog_ts");
+                        String configparams = agentMap.get("configparams");
+
+                        if(!nodeExist(region_id,agent_id,null)) {
+
+                            //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+                            addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+
+                        } else {
+                            //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
+                            updateNode(region_id,agent_id,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                        }
+
+                        if(!assoicateANodetoRNodeExist(region_id,agent_id)) {
+                            assoicateANodetoRNode(region_id, agent_id);
+                        }
+
+                    }
+
+                }
+            }
+
+            if(pluginconfigs != null) {
+
+                Map<String,List<Map<String,String>>> pluginConfigMap = gson.fromJson(pluginconfigs,type);
+
+                for (Map.Entry<String, List<Map<String,String>>> entry : pluginConfigMap.entrySet()) {
+
+                    String agent_id = entry.getKey();
+                    List<Map<String,String>> pluginList = entry.getValue();
+
+                    for(Map<String,String> pluginMap : pluginList) {
+
+                        String plugin_id = pluginMap.get("plugin_id");
+                        String status_code = pluginMap.get("status_code");
+                        String status_desc = pluginMap.get("status_desc");
+                        String watchdog_period = pluginMap.get("watchdog_period");
+                        //String watchdog_ts = pluginMap.get("watchdog_ts");
+                        String pluginname = pluginMap.get("pluginname");
+                        String jarfile = pluginMap.get("jarfile");
+                        String version = pluginMap.get("version");
+                        String md5 = pluginMap.get("md5");
+                        String configparams = pluginMap.get("configparams");
+                        String persistence_code = pluginMap.get("persistence_code");
+
+
+                        if(!nodeExist(null,null, plugin_id)) {
+                            int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
+                        } else {
+                            updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
+                        }
+
+                        if(!assoicatePNodetoANodeExist(agent_id,plugin_id)) {
+                            assoicatePNodetoANode(agent_id,plugin_id);
+                        }
+
+                    }
+                }
+
+            }
+
+            isUpdated = true;
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return isUpdated;
+    }
+
 
     public void updateNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
