@@ -121,7 +121,14 @@ public class MsgRouter {
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
+
                 switch (routePath) {
+
+                    case 335:
+                        logger.debug("remote agent sending message to local agent 463");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalAgent(rm);
+                        break;
 
                     case 463:
                         logger.debug("remote agent sending message to local agent 463");
@@ -138,13 +145,13 @@ public class MsgRouter {
                     case 655:
                         logger.debug("Local agent sending message to remote global agent 655");
                         logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
+                        forwardToRemoteRegion(rm);
                         break;
 
                     case 671:
                         logger.debug("Local agent sending message to remote global agentcontroller 671");
                         logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
+                        forwardToRemoteRegion(rm);
                         break;
 
                     case 687:
@@ -207,16 +214,22 @@ public class MsgRouter {
                         forwardToLocalPlugin(rm);
                         break;
 
+                    case 4431:
+                        logger.debug("Remote region sending message to local agent 4431");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalAgent(rm);
+                        break;
+
                     case 4751:
                         logger.debug("Local agentcontroller sending message to remote global agent 4751");
                         logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
+                        forwardToRemoteRegion(rm);
                         break;
 
                     case 4767:
                         logger.debug("Local agentcontroller sending message to remote global agent 4767");
                         logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
+                        forwardToRemoteRegion(rm);
                         break;
 
                     case 4783:
@@ -242,7 +255,6 @@ public class MsgRouter {
                         logger.trace(rm.getParams().toString());
                         forwardToLocalRegion(rm);
                         break;
-
 
                     case 4847:
                         logger.debug("Local agentcontroller sending message to local regional agent 4847");
@@ -280,6 +292,12 @@ public class MsgRouter {
                         forwardToLocalPlugin(rm);
                         break;
 
+                    case 12639:
+                        logger.debug("remote agent sending message to local agent");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalPlugin(rm);
+                        break;
+
                     case 12767:
                         logger.debug("remote agent sending message to local plugin 12767");
                         logger.trace(rm.getParams().toString());
@@ -293,9 +311,10 @@ public class MsgRouter {
                         break;
 
                     case 12943:
-                        logger.debug("Local agent sending message to local global agent 12943");
+                        logger.debug("Local region sending message to remote region 12943");
                         logger.trace(rm.getParams().toString());
-                        forwardToLocalGlobal(rm);
+                        forwardToRemoteRegion(rm);
+                        //forwardToLocalGlobal(rm);
                         break;
 
                     case 12959:
@@ -307,7 +326,7 @@ public class MsgRouter {
                     case 12975:
                         logger.debug("Local agentcontroller sending message to local global agent 12975");
                         logger.trace(rm.getParams().toString());
-                        forwardToLocalGlobal(rm);
+                        forwardToRemoteRegion(rm);
                         break;
 
                     case 12991:

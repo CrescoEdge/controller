@@ -633,6 +633,8 @@ public class PluginAdmin {
                             synchronized (lockConfig) {
                                 configMap.remove(pluginId);
                             }
+                            //remove from database
+                            gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
 
                             isStopped = true;
                     }

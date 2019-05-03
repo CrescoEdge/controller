@@ -96,48 +96,60 @@ public class DBInterfaceImpl implements DBInterface {
 
         try {
 
-            String region_watchdog_update = de.getParam("region_watchdog_update");
-            String agent_watchdog_update = de.getParam("agent_watchdog_update");
-            String plugin_watchdog_update = de.getParam("plugin_watchdog_update");
+            String mode = null;
 
-            if(region_watchdog_update != null) {
-                dbe.updateWatchDogTS(region_watchdog_update, null, null);
+            if(de.paramsContains("mode")) {
+                mode = de.getParam("mode");
             }
 
-            if(agent_watchdog_update != null) {
-                dbe.updateWatchDogTS(null, agent_watchdog_update, null);
+            if(mode != null) {
+
+                String region_watchdog_update = de.getParam("region_watchdog_update");
+                String agent_watchdog_update = de.getParam("agent_watchdog_update");
+                String plugin_watchdog_update = de.getParam("plugin_watchdog_update");
+
+
+                if (region_watchdog_update != null) {
+                    dbe.updateWatchDogTS(region_watchdog_update, null, null);
+                }
+
+                if (agent_watchdog_update != null) {
+                    dbe.updateWatchDogTS(null, agent_watchdog_update, null);
+                }
+
+                if (plugin_watchdog_update != null) {
+                    dbe.updateWatchDogTS(null, null, plugin_watchdog_update);
+                }
+
+                logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
+
+                String regionconfigs = null;
+                String agentconfigs = null;
+                String pluginconfigs = null;
+
+                if (de.paramsContains("regionconfigs")) {
+                    logger.debug("Adding region(s)");
+                    regionconfigs = de.getCompressedParam("regionconfigs");
+                }
+
+                //process agents
+                if (de.paramsContains("agentconfigs")) {
+
+                    logger.debug("Adding agent(s)");
+                    agentconfigs = de.getCompressedParam("agentconfigs");
+
+                }
+
+                if (de.paramsContains("pluginconfigs")) {
+
+                    logger.debug("found plugins! ");
+                    pluginconfigs = de.getCompressedParam("pluginconfigs");
+                }
+
+                wasAdded = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
+            } else {
+                logger.error("nodeUpdate() node mode found!");
             }
-
-            if(plugin_watchdog_update != null) {
-                dbe.updateWatchDogTS(null, null, plugin_watchdog_update);
-            }
-
-            logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
-
-            String regionconfigs = null;
-            String agentconfigs = null;
-            String pluginconfigs = null;
-
-            if(de.paramsContains("regionconfigs")) {
-                logger.debug("Adding region(s)");
-                regionconfigs = de.getCompressedParam("regionconfigs");
-            }
-
-            //process agents
-            if(de.paramsContains("agentconfigs")) {
-
-                logger.debug("Adding agent(s)");
-                agentconfigs = de.getCompressedParam("agentconfigs");
-
-            }
-
-            if (de.paramsContains("pluginconfigs")) {
-
-                logger.debug("found plugins! ");
-                pluginconfigs = de.getCompressedParam("pluginconfigs");
-            }
-
-            wasAdded = dbe.nodeUpdateStatus(region_watchdog_update,agent_watchdog_update,plugin_watchdog_update,regionconfigs,agentconfigs,pluginconfigs);
 
         } catch (Exception ex) {
             logger.error("addNodeFromUpdate() : " + ex.getMessage());

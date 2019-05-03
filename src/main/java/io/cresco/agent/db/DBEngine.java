@@ -153,11 +153,21 @@ public class DBEngine {
         return isOk;
     }
 
-    public boolean nodeUpdateStatus(String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
+    public boolean nodeUpdateStatus(String mode, String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
 
         boolean isUpdated = true;
 
+        boolean isRegionUpdate = false;
+        boolean isAgentUpdate = false;
+
         try {
+
+            if(mode.equals("REGION")) {
+                isRegionUpdate = true;
+            } else if(mode.equals("AGENT")) {
+                isAgentUpdate = true;
+            }
+
 
             if(region_watchdog_update != null) {
                 updateWatchDogTS(region_watchdog_update, null, null);
@@ -205,6 +215,13 @@ public class DBEngine {
 
                 for (Map.Entry<String, List<Map<String,String>>> entry : agentConfigMap.entrySet()) {
                     String region_id = entry.getKey();
+
+                    List<String> removeAgentList = null;
+
+                    if(isRegionUpdate) {
+                        removeAgentList = getNodeList(region_id,null);
+                    }
+
                     List<Map<String,String>> agentList = entry.getValue();
                     for(Map<String,String> agentMap : agentList) {
                         String agent_id = agentMap.get("agent_id");
@@ -222,12 +239,23 @@ public class DBEngine {
                         } else {
                             //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
                             updateNode(region_id,agent_id,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                            //remove from removeAgentList
+                            if(isRegionUpdate) {
+                                removeAgentList.remove(agent_id);
+                            }
                         }
 
                         if(!assoicateANodetoRNodeExist(region_id,agent_id)) {
                             assoicateANodetoRNode(region_id, agent_id);
                         }
 
+                    }
+
+                    //remove any agents not in the update
+                    if(removeAgentList != null) {
+                        for (String agent_id : removeAgentList) {
+                            removeNode(region_id, agent_id, null);
+                        }
                     }
 
                 }
@@ -240,6 +268,11 @@ public class DBEngine {
                 for (Map.Entry<String, List<Map<String,String>>> entry : pluginConfigMap.entrySet()) {
 
                     String agent_id = entry.getKey();
+
+                    String region_id = getRNodeFromAnode(agent_id);
+
+                    List<String> removePluginList = getNodeList(region_id,agent_id);
+
                     List<Map<String,String>> pluginList = entry.getValue();
 
                     for(Map<String,String> pluginMap : pluginList) {
@@ -261,12 +294,18 @@ public class DBEngine {
                             int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
                         } else {
                             updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
+                            removePluginList.remove(plugin_id);
                         }
 
                         if(!assoicatePNodetoANodeExist(agent_id,plugin_id)) {
                             assoicatePNodetoANode(agent_id,plugin_id);
                         }
 
+                    }
+
+                    //remove any agents not in the update
+                    for(String plugin_id : removePluginList) {
+                        removeNode(region_id,agent_id,plugin_id);
                     }
                 }
 
@@ -838,6 +877,35 @@ public class DBEngine {
         return queryReturn;
     }
 
+    public String getRNodeFromAnode(String agentId) {
+        String configParams = null;
+        try {
+
+            String queryString = "SELECT region_id FROM agentOf WHERE agent_id = '" + agentId +"'";
+
+
+            Connection conn = ds.getConnection();
+            Statement stmt = conn.createStatement();
+
+            ResultSet rs = stmt.executeQuery(queryString);
+
+            rs.next();
+            configParams = rs.getString(1);
+
+            rs.close();
+            stmt.close();
+            conn.close();
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+            System.out.println(ex.getMessage());
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            System.out.println(errors.toString());
+        }
+        return configParams;
+    }
+
     public String getNodeConfigParams(String regionId, String agentId, String pluginId) {
         String configParams = null;
         try {
@@ -1014,6 +1082,7 @@ public class DBEngine {
         return queryReturn;
     }
 
+
     public void addRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try {
@@ -1044,6 +1113,39 @@ public class DBEngine {
             {
                 conn.close();
             }
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+
+    private void cleanANodesfromRNode(String region_id) {
+
+        try {
+
+            List<String> agentList = getNodeList(region_id,null);
+            for(String agent_id : agentList) {
+                cleanPnodesFromAnode(region_id, agent_id);
+            }
+
+
+        } catch(Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    private void cleanPnodesFromAnode(String region_id, String agent_id) {
+
+        try {
+
+            List<String> pluginList = getNodeList(region_id,agent_id);
+            for(String plugin_id : pluginList) {
+                removeNode(region_id,agent_id,plugin_id);
+            }
+
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2271,9 +2373,6 @@ public class DBEngine {
 
     public boolean removeNode(String regionId, String agentId, String pluginId) {
 
-        //System.out.println(regionId + " " + agentId + " " + pluginId);
-
-
         boolean isRemoved = false;
         try {
             Connection conn = ds.getConnection();
@@ -2282,9 +2381,6 @@ public class DBEngine {
             //DELETE FROM table_name WHERE condition;
             if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
-                queryString = "DELETE FROM pnode " +
-                        "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "' and plugin_id = '" + pluginId + "'";
-
                 queryString = "DELETE FROM PNODE WHERE PLUGIN_ID IN ( " +
                         "SELECT P.PLUGIN_ID " +
                         "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
@@ -2307,6 +2403,10 @@ public class DBEngine {
                         "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "'";
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
+
+                //first remove agent plugins
+                cleanPnodesFromAnode(regionId,agentId);
+
                 //agent
                 queryString = "DELETE FROM ANODE WHERE AGENT_ID IN ( " +
                         "SELECT A.AGENT_ID " +
@@ -2317,6 +2417,9 @@ public class DBEngine {
                         "AND AO.AGENT_ID = A.AGENT_ID)";
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
+                //first remove agents and plugins from region
+                cleanANodesfromRNode(regionId);
+
                 //region
                 queryString = "DELETE FROM rnode " +
                         "WHERE region_id = '" + regionId + "'";

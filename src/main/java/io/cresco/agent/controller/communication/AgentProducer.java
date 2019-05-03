@@ -140,7 +140,7 @@ public class AgentProducer {
                 }
                 isSent = true;
             } else {
-                logger.error("apw [" + apw.toString() + "] is null");
+                logger.error("apw is null");
             }
         } catch (Exception ex) {
             logger.error("ActiveProducer : sendMessage Error " + ex.toString());

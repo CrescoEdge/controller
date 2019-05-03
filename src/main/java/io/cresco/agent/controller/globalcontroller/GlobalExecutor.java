@@ -619,6 +619,7 @@ public class GlobalExecutor implements Executor {
         try {
             logger.debug("CONFIG : regionalimport message type found");
 
+            ce.setParam("mode","REGION");
             controllerEngine.getGDB().nodeUpdate(ce);
         }
         catch(Exception ex) {
@@ -634,7 +635,7 @@ public class GlobalExecutor implements Executor {
             logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().nodeUpdate(ce);
 
-            logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
+            //logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
 
             //TODO Hack to create region health edge
             Map<String,String> paramMap = new HashMap<>();
@@ -917,6 +918,7 @@ public class GlobalExecutor implements Executor {
         Map<String,String> params = ce.getParams();
         controllerEngine.getGDB().dba.updateKPI(region, agent, pluginid, resource_id, inode_id, params);
  */
+            ce.setParam("mode","REGION");
             controllerEngine.getGDB().nodeUpdate(ce);
 
 

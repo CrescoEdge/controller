@@ -1,7 +1,6 @@
 package io.cresco.agent.db;
 
 import com.google.gson.Gson;
-import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.library.agent.ControllerState;
 import io.cresco.library.agent.ControllerStatePersistance;
 import io.cresco.library.data.TopicType;
@@ -12,10 +11,8 @@ import io.cresco.library.utilities.CLogger;
 import javax.jms.MapMessage;
 import javax.jms.Message;
 import javax.jms.MessageListener;
-import javax.jms.TextMessage;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.net.InetAddress;
 import java.util.*;
 
 public class ControllerStatePersistanceImp implements ControllerStatePersistance {
@@ -403,12 +400,15 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             enableMsg.setParam("req-seq", UUID.randomUUID().toString());
             enableMsg.setParam("region_name", localRegion);
             enableMsg.setParam("desc", "to-gc-region");
+            enableMsg.setParam("mode","REGION");
 
             Map<String, String> exportMap = dbe.getDBExport(true, false, false, plugin.getRegion(), null, null);
 
             enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
 
             MsgEvent re = plugin.sendRPC(enableMsg);
+
+
 
             if (re != null) {
 
@@ -445,7 +445,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
 
 
-            MsgEvent re = plugin.sendRPC(disableMsg);
+            MsgEvent re = plugin.sendRPC(disableMsg,3000);
 
             if (re != null) {
 
@@ -483,6 +483,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 enableMsg.setParam("region_name", localRegion);
                 enableMsg.setParam("agent_name", localAgent);
                 enableMsg.setParam("desc", "to-rc-agent");
+                enableMsg.setParam("mode","AGENT");
 
                 Map<String, String> exportMap = dbe.getDBExport(false, true, false, plugin.getRegion(), plugin.getAgent(), null);
 
@@ -525,7 +526,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             disableMsg.setParam("desc","to-rc-agent");
             disableMsg.setParam("action", "agent_disable");
 
-            MsgEvent re = plugin.sendRPC(disableMsg);
+            MsgEvent re = plugin.sendRPC(disableMsg, 2000);
 
             if (re != null) {
                 logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);
@@ -555,8 +556,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                             if (msg instanceof MapMessage) {
 
                                 MapMessage mapMessage = (MapMessage)msg;
-                                logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
-                                dbe.nodeUpdateStatus(null, mapMessage.getStringProperty("agent_id"), null, null,mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                //logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
+                                dbe.nodeUpdateStatus("AGENT",null, mapMessage.getStringProperty("agent_id"), null, null,mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
 
                             }
                         } catch(Exception ex) {
@@ -593,8 +594,8 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                             if (msg instanceof MapMessage) {
 
                                 MapMessage mapMessage = (MapMessage)msg;
-                                logger.error("GLOBAL HEALTH MESSAGE: INCOMING");
-                                dbe.nodeUpdateStatus(mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                //logger.error("GLOBAL HEALTH MESSAGE: INCOMING");
+                                dbe.nodeUpdateStatus("REGION", mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
 
                             }
                         } catch(Exception ex) {
@@ -640,7 +641,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
-                                logger.error("SENDING AGENT UPDATE!!!");
+                                //logger.error("SENDING AGENT UPDATE!!!");
                                 plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
@@ -661,7 +662,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                                 updateMap.setStringProperty("update_mode", "REGION");
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
 
-                                logger.error("SENDING REGIONAL UPDATE!!!");
+                                //logger.error("SENDING REGIONAL UPDATE!!!");
                                 plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {

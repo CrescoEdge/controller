@@ -56,6 +56,7 @@ public class AgentDiscovery {
 
                 logger.debug("WATCHDOG : AGENTDISCOVER: Region:" + le.getParam("src_region") + " Agent:" + le.getParam("src_agent"));
                 logger.trace("Message Body [" + le.getMsgBody() + "] [" + le.getParams().toString() + "]");
+                le.setParam("mode","AGENT");
                 controllerEngine.getGDB().nodeUpdate(le);
 
 

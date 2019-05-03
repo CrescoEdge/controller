@@ -182,6 +182,7 @@ public class GlobalHealthWatcher implements Runnable {
 
                 logger.trace("gNotify Global Controller Message : " + tick.getParams().toString());
 
+                tick.setParam("mode","REGION");
                 controllerEngine.getGDB().nodeUpdate(tick);
             }
 
