@@ -30,7 +30,7 @@ import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
 
-public class PluginAdmin {
+public class PluginAdminBroken {
 
     private Gson gson;
 
@@ -47,6 +47,7 @@ public class PluginAdmin {
     private Map<Long,List<String>> bundleMap;
 
     private String agentEmbeddedJarPath = null;
+
     private CLogger logger;
 
     private AtomicBoolean lockConfig = new AtomicBoolean();
@@ -65,7 +66,7 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
+    public PluginAdminBroken(PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
         this.plugin = plugin;
         this.gdb = gdb;
         this.gson = new Gson();
@@ -75,7 +76,7 @@ public class PluginAdmin {
 
         this.context = context;
         this.agentState = agentState;
-        logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
+        logger = plugin.getLogger(PluginAdminBroken.class.getName(), CLogger.Level.Info);
 
 
         repoCache = CacheBuilder.newBuilder()
@@ -85,24 +86,23 @@ public class PluginAdmin {
                 .expireAfterWrite(5, TimeUnit.SECONDS)
                 .build();
 
-
         ServiceReference configurationAdminReference = null;
 
-        configurationAdminReference = context.getServiceReference(ConfigurationAdmin.class.getName());
+            configurationAdminReference = context.getServiceReference(ConfigurationAdmin.class.getName());
 
-        if (configurationAdminReference != null) {
+            if (configurationAdminReference != null) {
 
-            boolean assign = configurationAdminReference.isAssignableTo(context.getBundle(), ConfigurationAdmin.class.getName());
+                boolean assign = configurationAdminReference.isAssignableTo(context.getBundle(), ConfigurationAdmin.class.getName());
 
-            if (assign) {
-                confAdmin = (ConfigurationAdmin) context.getService(configurationAdminReference);
+                if (assign) {
+                    confAdmin = (ConfigurationAdmin) context.getService(configurationAdminReference);
+                } else {
+                    logger.error("Could not Assign Configuration Admin!");
+                }
+
             } else {
-                logger.error("Could not Assign Configuration Admin!");
+                logger.error("Admin Does Not Exist!");
             }
-
-        } else {
-            logger.error("Admin Does Not Exist!");
-        }
 
     }
 
@@ -117,12 +117,12 @@ public class PluginAdmin {
             }
             */
 
-            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+                Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
 
-            Dictionary<String, Object> log4jProps = logConfig.getProperties();
-            log4jProps.put("log4j.logger." + logId, level.name().toUpperCase());
+                Dictionary<String, Object> log4jProps = logConfig.getProperties();
+                log4jProps.put("log4j.logger." + logId, level.name().toUpperCase());
 
-            logConfig.updateIfDifferent(log4jProps);
+                logConfig.updateIfDifferent(log4jProps);
 
 
         } catch (Exception ex) {
@@ -168,122 +168,98 @@ public class PluginAdmin {
         return exists;
     }
 
-/*
-    public Map<String,Object> jarIsEmbedded(Map<String,Object> map) {
-        Map<String,Object> returnMap = null;
-        try {
-
-            String requestedJarPath = (String) map.get("jarfile");
-
-            if(requestedJarPath != null) {
-                URL url = getClass().getClassLoader().getResource(requestedJarPath);
-                Manifest manifest = null;
-                if (url != null) {
-                    manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(requestedJarPath)).getManifest();
-                    Attributes mainAttributess = manifest.getMainAttributes();
-                    String eName = mainAttributess.getValue("Bundle-SymbolicName");
-                    String eVersion = mainAttributess.getValue("Bundle-Version");
-                    String eMD5 = plugin.getMD5(getClass().getClassLoader().getResourceAsStream(url.getPath()));
-
-
-                    String requestedName = (String) map.get("pluginname");
-                    if(map.containsKey("version")) {
-                        String requestedVersion = (String) map.get("version");
-                        String requestedMD5 = (String) map.get("md5");
-
-                        if((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)))) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("jarstatus","embedded");
-                        }
-                    } else {
-                        if(eName.equals(requestedName)) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("version",eVersion);
-                            returnMap.put("md5",eMD5);
-                            returnMap.put("jarstatus","embedded");
-                        }
-                    }
-                }
-            }
-
-        } catch (Exception ex) {
-            logger.error("jarIsEmbedded()");
-            ex.printStackTrace();
-        }
-        return returnMap;
-    }
-*/
 
     public Map<String,Object> jarIsBundle(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
         try {
 
-            Bundle[] bundleList = context.getBundles();
+            //String requestedJarPath = (String) map.get("jarfile");
 
-            for(Bundle b : bundleList) {
 
-                String eBundleId = String.valueOf(b.getBundleId());
-                String eName = b.getSymbolicName();
-                String eVersion = b.getVersion().toString();
+            //if(requestedJarPath != null) {
 
-                String requestedName = (String) map.get("pluginname");
+                Bundle[] bundleList = context.getBundles();
 
-                if((eName != null) && (eVersion != null)) {
+                for(Bundle b : bundleList) {
 
-                    if (map.containsKey("version")) {
+                    String eBundleId = String.valueOf(b.getBundleId());
+                    String eName = b.getSymbolicName();
+                    String eVersion = b.getVersion().toString();
 
-                        String requestedVersion = (String) map.get("version");
-                        String requestedMD5 = (String) map.get("md5");
+                    String requestedName = (String) map.get("pluginname");
 
-                        if(requestedMD5 != null) {
+                    if((eName != null) && (eVersion != null)) {
 
-                            String jarLocation = Paths.get(b.getLocation()).toString();
+                        logger.error("NAME REQUEST: " + requestedName + " FOUND: " + eName);
 
-                            if(jarLocation.contains("!")) {
-                                jarLocation = "jar:" + jarLocation;
-                            }
 
-                            String eMD5 = plugin.getMD5(jarLocation);
+                        if (map.containsKey("version")) {
 
-                            if(eMD5 != null) {
+                            String requestedVersion = (String) map.get("version");
+                            String requestedMD5 = (String) map.get("md5");
 
-                                if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
+                            logger.error("VERSION REQUEST: " + requestedVersion + " FOUND: " + eVersion);
+
+                            if(requestedMD5 != null) {
+
+                                String jarLocation = Paths.get(b.getLocation()).toString();
+
+                                logger.error("jarLoction 0 : " + jarLocation);
+
+                                if(jarLocation.contains("!")) {
+                                    jarLocation = "jar:" + jarLocation;
+                                }
+
+                                String eMD5 = plugin.getMD5(jarLocation);
+
+                                logger.error("MD5 REQUEST: " + requestedMD5 + " FOUND: " + eMD5);
+                                logger.error("jarLoction 1 : " + jarLocation);
+
+                                if(eMD5 != null) {
+
+                                    logger.error("eMD5: " + eMD5 + " requestedMD5: " + requestedMD5);
+                                    //if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)) )) {
+                                    if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
+
+                                        returnMap = new HashMap<>();
+                                        returnMap.putAll(map);
+                                        returnMap.put("jarstatus", "bundle");
+                                        returnMap.put("bundle_id", eBundleId);
+                                        logger.error("REGISTERED: " + returnMap);
+                                    }
+
+                                }
+
+                            } else {
+
+                                if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
 
                                     returnMap = new HashMap<>();
                                     returnMap.putAll(map);
                                     returnMap.put("jarstatus", "bundle");
                                     returnMap.put("bundle_id", eBundleId);
+                                    logger.error("REGISTERED: " + returnMap);
                                 }
-
                             }
-
                         } else {
-
-                            if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
+                            if (eName.equals(requestedName)) {
 
                                 returnMap = new HashMap<>();
                                 returnMap.putAll(map);
+                                returnMap.put("version", eVersion);
                                 returnMap.put("jarstatus", "bundle");
                                 returnMap.put("bundle_id", eBundleId);
+                                logger.error("REGISTERED: " + returnMap);
                             }
                         }
-                    } else {
-                        if (eName.equals(requestedName)) {
 
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("version", eVersion);
-                            returnMap.put("jarstatus", "bundle");
-                            returnMap.put("bundle_id", eBundleId);
-                        }
+                    } else {
+                        logger.error("NAME OR VERSION NULL");
                     }
 
                 }
 
-            }
-
+            //}
 
         } catch (Exception ex) {
             logger.error("jarIsBundle() " + ex.getMessage());
@@ -292,8 +268,7 @@ public class PluginAdmin {
         return returnMap;
     }
 
-
-    public Map<String,Object> jarIsEmbedded(Map<String,Object> map) {
+    public Map<String,Object> jarIsEmbeddedAgent(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
         try {
 
@@ -353,7 +328,7 @@ public class PluginAdmin {
                                 if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)))) {
                                     returnMap = new HashMap<>();
                                     returnMap.putAll(map);
-                                    returnMap.put("jarstatus", "embedded");
+                                    returnMap.put("jarstatus", "embedded-agent");
                                 }
                             } else {
                                 if (eName.equals(requestedName)) {
@@ -361,7 +336,7 @@ public class PluginAdmin {
                                     returnMap.putAll(map);
                                     returnMap.put("version", eVersion);
                                     returnMap.put("md5", eMD5);
-                                    returnMap.put("jarstatus", "embedded");
+                                    returnMap.put("jarstatus", "embedded-agent");
                                 }
                             }
                         }catch (Exception ex) {
@@ -378,6 +353,51 @@ public class PluginAdmin {
         return returnMap;
     }
 
+    public Map<String,Object> jarIsEmbeddedController(Map<String,Object> map) {
+        Map<String,Object> returnMap = null;
+        try {
+
+            String requestedJarPath = (String) map.get("jarfile");
+
+            if(requestedJarPath != null) {
+                URL url = getClass().getClassLoader().getResource(requestedJarPath);
+                Manifest manifest = null;
+                if (url != null) {
+                    manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(requestedJarPath)).getManifest();
+                    Attributes mainAttributess = manifest.getMainAttributes();
+                    String eName = mainAttributess.getValue("Bundle-SymbolicName");
+                    String eVersion = mainAttributess.getValue("Bundle-Version");
+                    String eMD5 = plugin.getMD5(getClass().getClassLoader().getResourceAsStream(url.getPath()));
+
+
+                    String requestedName = (String) map.get("pluginname");
+                    if(map.containsKey("version")) {
+                        String requestedVersion = (String) map.get("version");
+                        String requestedMD5 = (String) map.get("md5");
+
+                        if((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)))) {
+                            returnMap = new HashMap<>();
+                            returnMap.putAll(map);
+                            returnMap.put("jarstatus","embedded-controller");
+                        }
+                    } else {
+                        if(eName.equals(requestedName)) {
+                            returnMap = new HashMap<>();
+                            returnMap.putAll(map);
+                            returnMap.put("version",eVersion);
+                            returnMap.put("md5",eMD5);
+                            returnMap.put("jarstatus","embedded-controller");
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception ex) {
+            logger.error("jarIsEmbedded-Controller()");
+            ex.printStackTrace();
+        }
+        return returnMap;
+    }
 
     public Map<String,Object> jarIsAbsolutePath(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
@@ -503,8 +523,10 @@ public class PluginAdmin {
         Map<String,Object> validatedMap = null;
         try {
 
-            //see if config is currently running
-            validatedMap = jarIsBundle(map);
+            //plugin that is already loaded
+            //validatedMap = jarIsBundle(map);
+
+            validatedMap = null;
 
             //if explicitly defined use first
             if(validatedMap == null) {
@@ -513,18 +535,33 @@ public class PluginAdmin {
                 return validatedMap;
             }
 
+            //plugin that has already been loaded
             if(validatedMap == null) {
                 validatedMap = getJarFromLocalCache(map);
+            } else {
+                return validatedMap;
             }
 
+            //plugin that is embedded with the agent
             if(validatedMap == null) {
-                validatedMap = jarIsEmbedded(map);
+                validatedMap = jarIsEmbeddedAgent(map);
+            } else {
+                return validatedMap;
             }
 
+            //plugin that is embedded with the controller
+            if(validatedMap == null) {
+                validatedMap = jarIsEmbeddedController(map);
+            } else {
+                return validatedMap;
+            }
+
+            //plugin that is in a repo within the network
             if(validatedMap == null) {
                 validatedMap = getJarFromRepo(map);
+            } else {
+                return validatedMap;
             }
-
 
         } catch(Exception ex) {
             logger.error("validatePluginMap()");
@@ -540,19 +577,26 @@ public class PluginAdmin {
             Bundle bundle = null;
             String jarStatus = (String)map.get("jarstatus");
 
+            /*
+            String jarURLString = "jar:" + agentEmbeddedJarPath + "!/" + requestedJarPath;
+
+                    URL inputURL = new URL(jarURLString);
+                    Manifest manifest = null;
+
+                    if (inputURL != null) {
+
+                        logger.error("IN URL");
+
+                        JarURLConnection conn = (JarURLConnection)inputURL.openConnection();
+                        InputStream in = conn.getInputStream();
+
+             */
+
+
+
             switch(jarStatus)
             {
-                case "embedded":
-
-                    /*
-                    URL bundleURL = getClass().getClassLoader().getResource((String) map.get("jarfile"));
-                    if (bundleURL != null) {
-
-                        String bundlePath = bundleURL.getPath();
-                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream((String) map.get("jarfile"));
-                        bundle = context.installBundle(bundlePath, bundleStream);
-                    }
-                    */
+                case "embedded-agent":
 
                     String requestedJarPath = (String) map.get("jarfile");
                     String jarURLString = "jar:" + agentEmbeddedJarPath + "!/" + requestedJarPath;
@@ -565,6 +609,17 @@ public class PluginAdmin {
                         bundle = context.installBundle(bundlePath, in);
                     }
 
+                    break;
+
+                case "embedded-controller":
+
+                    URL bundleURL = getClass().getClassLoader().getResource((String) map.get("jarfile"));
+                    if (bundleURL != null) {
+
+                        String bundlePath = bundleURL.getPath();
+                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream((String) map.get("jarfile"));
+                        bundle = context.installBundle(bundlePath, bundleStream);
+                    }
 
                     break;
                 case "absolutepath":
@@ -572,6 +627,7 @@ public class PluginAdmin {
                     bundle = context.getBundle((String) map.get("jarfile"));
 
                     if (bundle == null) {
+
                         bundle = context.installBundle("file:" + (String) map.get("jarfile"));
                     }
 
@@ -590,11 +646,18 @@ public class PluginAdmin {
 
                     break;
 
-
                 case "bundle":
 
                     if(map.containsKey("bundle_id")) {
+                        /*
+                        long existingBundleId = Long.parseLong((String)map.get("bundle_id"));
+                        Bundle oldBundle = context.getBundle(existingBundleId);
+
+                        Bundle newBundle = context.installBundle(oldBundle.getLocation());
+                        bundleID = newBundle.getBundleId();
+                        */
                         bundleID = Long.parseLong((String)map.get("bundle_id"));
+
 
                     } else {
                         logger.error("addBundle() Missing Bundle Id");
@@ -619,69 +682,6 @@ public class PluginAdmin {
         return bundleID;
     }
 
-
-    /*
-    public long addBundle(Map<String,Object> pluginMap) {
-        long bundleID = -1;
-        try {
-
-
-            boolean jarIsLocal = pluginIsLocal(pluginMap);
-            String fileLocation = null;
-
-            if(!jarIsLocal) {
-                //try to download node
-                //pNode node = gson.fromJson(ce.getCompressedParam("pnode"), pNode.class);
-                //jarIsLocal = controllerEngine.getPluginAdmin().getPlugin(node);
-                //logger.error("!!! Implement plugin fetch from repo");
-            }
-
-            if(jarIsLocal) {
-
-                //replace remote jarfilename with local
-                fileLocation = getCachedJarPath(pluginMap);
-
-            } else {
-                fileLocation = (String) pluginMap.get("jarfile");
-            }
-
-            if(fileLocation != null) {
-                Bundle bundle = null;
-
-                //absolute file path was given
-                Path checkFile = Paths.get(fileLocation);
-
-                if (checkFile.toFile().isFile()) {
-
-                    bundle = context.getBundle(fileLocation);
-
-                    if (bundle == null) {
-                        bundle = context.installBundle("file:" + fileLocation);
-                    }
-
-                }
-                //check local repo
-                else {
-                    URL bundleURL = getClass().getClassLoader().getResource(fileLocation);
-                    if (bundleURL != null) {
-
-                        String bundlePath = bundleURL.getPath();
-                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream(fileLocation);
-                        bundle = context.installBundle(bundlePath, bundleStream);
-                    }
-                }
-                if (bundle != null) {
-                    bundleID = bundle.getBundleId();
-                }
-            }
-
-
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-        return bundleID;
-    }
-    */
 
     String mostTargeted(String key, String pid, Bundle bundle) throws Exception {
 
@@ -709,10 +709,10 @@ public class PluginAdmin {
 
 
 
-    public boolean startBundle(long bundleID, String pid) {
+    public boolean startBundle(long bundleID) {
         boolean isStarted = false;
         try {
-            //context.getBundle(bundleID).start();
+
             Bundle b = context.getBundle(bundleID);
 
             if(b.getState() != 32) {
@@ -722,9 +722,8 @@ public class PluginAdmin {
             if(b.getState() == 32) {
                 isStarted = true;
             } else {
-                logger.error("Bundle: " + bundleID + " pluginname: " + pid + " state:" + b.getState());
+                logger.error("BUNDLE STATE: " + b.getState());
             }
-
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -834,16 +833,16 @@ public class PluginAdmin {
 
                         pluginConfig.delete();
 
-                        synchronized (lockPlugin) {
-                            pluginMap.remove(pluginId);
-                        }
-                        synchronized (lockConfig) {
-                            configMap.remove(pluginId);
-                        }
-                        //remove from database
-                        gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
+                            synchronized (lockPlugin) {
+                                pluginMap.remove(pluginId);
+                            }
+                            synchronized (lockConfig) {
+                                configMap.remove(pluginId);
+                            }
+                            //remove from database
+                            gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
 
-                        isStopped = true;
+                            isStopped = true;
                     }
                 }
             } else {
@@ -964,7 +963,7 @@ public class PluginAdmin {
                         //String pluginID = addConfig(pluginName, map);
                         if (addConfig(pluginID, map)) {
 
-                            if (startBundle(bundleID, (String)map.get("pluginname"))) {
+                            if (startBundle(bundleID)) {
                                 if (pluginID != null) {
 
                                     PluginNode pluginNode = null;
@@ -1042,41 +1041,41 @@ public class PluginAdmin {
         boolean isAdded = false;
         try {
 
-            boolean isEmpty = false;
+                boolean isEmpty = false;
 
-            while (!isEmpty) {
+                while (!isEmpty) {
 
-                synchronized (lockConfig) {
-                    if (!configMap.containsKey(pluginId)) {
+                    synchronized (lockConfig) {
+                        if (!configMap.containsKey(pluginId)) {
 
-                        String pid = (String)map.get("pluginname") + ".Plugin";
-                        String bsn = (String)map.get("pluginname");
-                        String version = (String)map.get("version");
+                            String pid = (String)map.get("pluginname") + ".Plugin";
+                            String bsn = (String)map.get("pluginname");
+                            String version = (String)map.get("version");
 
-                        String configString = pid + "|" + bsn + "|" + version;
-
-
-                        //Configuration configuration = confAdmin.createFactoryConfiguration(configString, null);
-
-                        Configuration configuration = confAdmin.createFactoryConfiguration((String)map.get("pluginname") + ".Plugin", null);
+                            String configString3 = pid + "|" + bsn + "|" + version;
 
 
-                        Dictionary properties = new Hashtable();
+                            Configuration configuration = confAdmin.createFactoryConfiguration(configString3, null);
 
-                        ((Hashtable) properties).putAll(map);
-                        properties.put("pluginID", pluginId);
-                        //properties.put("service.pid2",configString2);
-                        configuration.update(properties);
+                            //Configuration configuration = confAdmin.createFactoryConfiguration((String)map.get("pluginname") + ".Plugin", null);
 
-                        configMap.put(pluginId, configuration);
-                        isEmpty = true;
-                        isAdded = true;
+
+                            Dictionary properties = new Hashtable();
+
+                            ((Hashtable) properties).putAll(map);
+                            properties.put("pluginID", pluginId);
+                            //properties.put("service.pid2",configString2);
+                            configuration.update(properties);
+
+                            configMap.put(pluginId, configuration);
+                            isEmpty = true;
+                            isAdded = true;
+                        }
                     }
+
+
+
                 }
-
-
-
-            }
 
 
         } catch(Exception ex) {
@@ -1096,7 +1095,7 @@ public class PluginAdmin {
             while ((!isStarted) && (count < TRYCOUNT)) {
 
                 String filterString = "(pluginID=" + pluginID + ")";
-                Filter filter = context.createFilter(filterString);
+                //Filter filter = context.createFilter(filterString);
 
                 //servRefs = context.getServiceReferences(PluginService.class.getName(), filterString);
                 servRefs = context.getServiceReferences(PluginService.class.getName(), filterString);
@@ -1104,7 +1103,7 @@ public class PluginAdmin {
                 //System.out.println("REFS : " + servRefs.length);
                 if (servRefs == null || servRefs.length == 0) {
 
-                    System.out.println("NULL FOUND NOTHING!");
+                    logger.error("NULL FOUND NOTHING!");
 
                 } else {
                     //System.out.println("Running Service Count: " + servRefs.length);
@@ -1124,8 +1123,8 @@ public class PluginAdmin {
                                 }
 
                                 if(ps.isStarted()) {
-                                    statusCode = 10;
-                                    statusDesc = "Plugin Active";
+                                  statusCode = 10;
+                                  statusDesc = "Plugin Active";
                                 }
                             } catch(Exception ex) {
                                 logger.error("Could not start!");
@@ -1537,7 +1536,7 @@ public class PluginAdmin {
                 for(pNode tmpNode : nodeList) {
 
                     if(tmpNode.isEqual(requestedName,requestedVersion,requestedMD5)) {
-                        return tmpNode;
+                           return tmpNode;
                     }
                 }
 
