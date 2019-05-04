@@ -84,7 +84,6 @@ public class PluginAdmin {
                 .expireAfterWrite(5, TimeUnit.SECONDS)
                 .build();
 
-
         ServiceReference configurationAdminReference = null;
 
             configurationAdminReference = context.getServiceReference(ConfigurationAdmin.class.getName());
@@ -167,6 +166,88 @@ public class PluginAdmin {
         return exists;
     }
 
+    public Map<String,Object> jarIsBundle(Map<String,Object> map) {
+        Map<String,Object> returnMap = null;
+        try {
+
+            String requestedJarPath = (String) map.get("jarfile");
+
+            if(requestedJarPath != null) {
+
+                Bundle[] bundleList = context.getBundles();
+
+                for(Bundle b : bundleList) {
+
+
+
+                    String eBundleId = String.valueOf(b.getBundleId());
+                    String eName = b.getSymbolicName();
+                    String eVersion = b.getVersion().toString();
+
+                    String requestedName = (String) map.get("pluginname");
+
+                    if((eName != null) && (eVersion != null)) {
+
+
+                        if (map.containsKey("version")) {
+                            String requestedVersion = (String) map.get("version");
+                            String requestedMD5 = (String) map.get("md5");
+
+                            if(requestedMD5 != null) {
+
+                                String jarLocation = b.getLocation();
+                                if(jarLocation.contains("!")) {
+                                    jarLocation = "jar:" + jarLocation;
+                                }
+                                String eMD5 = plugin.getMD5(jarLocation);
+
+                                if(eMD5 != null) {
+
+                                    logger.error("eMD5: " + eMD5 + " requestedMD5: " + requestedMD5);
+                                    //if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)) )) {
+                                    if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
+
+                                        returnMap = new HashMap<>();
+                                        returnMap.putAll(map);
+                                        returnMap.put("jarstatus", "bundle");
+                                        returnMap.put("bundle_id", eBundleId);
+                                    }
+
+                                }
+
+                            } else {
+
+                                if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
+
+                                    returnMap = new HashMap<>();
+                                    returnMap.putAll(map);
+                                    returnMap.put("jarstatus", "bundle");
+                                    returnMap.put("bundle_id", eBundleId);
+                                }
+                            }
+                        } else {
+                            if (eName.equals(requestedName)) {
+
+                                returnMap = new HashMap<>();
+                                returnMap.putAll(map);
+                                returnMap.put("version", eVersion);
+                                returnMap.put("jarstatus", "bundle");
+                                returnMap.put("bundle_id", eBundleId);
+                            }
+                        }
+
+                    }
+
+                }
+
+            }
+
+        } catch (Exception ex) {
+            logger.error("jarIsBundle() " + ex.getMessage());
+            ex.printStackTrace();
+        }
+        return returnMap;
+    }
 
     public Map<String,Object> jarIsEmbedded(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
@@ -338,21 +419,36 @@ public class PluginAdmin {
         Map<String,Object> validatedMap = null;
         try {
 
-            //if explicitly defined use first
-            validatedMap = jarIsAbsolutePath(map);
+            //plugin that is already loaded
+            validatedMap = jarIsBundle(map);
 
+            //if explicitly defined use first
+            if(validatedMap == null) {
+                validatedMap = jarIsAbsolutePath(map);
+            } else {
+                return validatedMap;
+            }
+
+            //plugin that has already been loaded
             if(validatedMap == null) {
                 validatedMap = getJarFromLocalCache(map);
+            } else {
+                return validatedMap;
             }
 
+            //plugin that is embedded with the controller
             if(validatedMap == null) {
                 validatedMap = jarIsEmbedded(map);
+            } else {
+                return validatedMap;
             }
 
+            //plugin that is in a repo within the network
             if(validatedMap == null) {
                 validatedMap = getJarFromRepo(map);
+            } else {
+                return validatedMap;
             }
-
 
         } catch(Exception ex) {
             logger.error("validatePluginMap()");
@@ -403,6 +499,18 @@ public class PluginAdmin {
                     }
 
                     break;
+
+                case "bundle":
+
+                    if(map.containsKey("bundle_id")) {
+                        bundleID = Long.parseLong((String)map.get("bundle_id"));
+
+                    } else {
+                        logger.error("addBundle() Missing Bundle Id");
+                    }
+
+                    break;
+
                 default:
                     logger.error("addBundle: Invalid Jar Status");
             }
@@ -420,69 +528,6 @@ public class PluginAdmin {
         return bundleID;
     }
 
-
-    /*
-    public long addBundle(Map<String,Object> pluginMap) {
-        long bundleID = -1;
-        try {
-
-
-            boolean jarIsLocal = pluginIsLocal(pluginMap);
-            String fileLocation = null;
-
-            if(!jarIsLocal) {
-                //try to download node
-                //pNode node = gson.fromJson(ce.getCompressedParam("pnode"), pNode.class);
-                //jarIsLocal = controllerEngine.getPluginAdmin().getPlugin(node);
-                //logger.error("!!! Implement plugin fetch from repo");
-            }
-
-            if(jarIsLocal) {
-
-                //replace remote jarfilename with local
-                fileLocation = getCachedJarPath(pluginMap);
-
-            } else {
-                fileLocation = (String) pluginMap.get("jarfile");
-            }
-
-            if(fileLocation != null) {
-                Bundle bundle = null;
-
-                //absolute file path was given
-                Path checkFile = Paths.get(fileLocation);
-
-                if (checkFile.toFile().isFile()) {
-
-                    bundle = context.getBundle(fileLocation);
-
-                    if (bundle == null) {
-                        bundle = context.installBundle("file:" + fileLocation);
-                    }
-
-                }
-                //check local repo
-                else {
-                    URL bundleURL = getClass().getClassLoader().getResource(fileLocation);
-                    if (bundleURL != null) {
-
-                        String bundlePath = bundleURL.getPath();
-                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream(fileLocation);
-                        bundle = context.installBundle(bundlePath, bundleStream);
-                    }
-                }
-                if (bundle != null) {
-                    bundleID = bundle.getBundleId();
-                }
-            }
-
-
-        } catch(Exception ex) {
-            ex.printStackTrace();
-        }
-        return bundleID;
-    }
-    */
 
     String mostTargeted(String key, String pid, Bundle bundle) throws Exception {
 
@@ -513,12 +558,17 @@ public class PluginAdmin {
     public boolean startBundle(long bundleID, String pid) {
         boolean isStarted = false;
         try {
-            context.getBundle(bundleID).start();
-            //Bundle b = context.getBundle(bundleID);
-            //b.start();
-            //System.out.println("Real Config: " + mostTargeted("service.factoryPid", pid + ".Plugin", b));
 
-            isStarted = true;
+            Bundle b = context.getBundle(bundleID);
+
+            if(b.getState() != 32) {
+                b.start();
+            }
+
+            if(b.getState() == 32) {
+                isStarted = true;
+            }
+
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -744,6 +794,8 @@ public class PluginAdmin {
                 String pluginName = (String)map.get("pluginname");
 
                 map = validatePluginMap(map);
+
+                logger.error("POST MAP: " + map);
 
                 if(map != null) {
 
