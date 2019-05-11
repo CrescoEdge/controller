@@ -53,8 +53,6 @@ public class RegionalExecutor implements Executor {
                     if(controllerEngine.getGDB().nodeUpdate(incoming)) {
                         incoming.setParam("is_registered",Boolean.TRUE.toString());
 
-                        logger.debug("CODY INCOMING AGENT ADD REGION*: " +incoming.getParams());
-
                     } else {
                         incoming.setParam("is_registered",Boolean.FALSE.toString());
                     }

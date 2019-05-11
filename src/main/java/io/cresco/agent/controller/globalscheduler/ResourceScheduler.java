@@ -78,47 +78,10 @@ public class ResourceScheduler implements IncomingResource {
                     //me.setCompressedParam("pnode",gson.toJson(pluginNode));
                     me.setParam("edges",ce.getParam("edges"));
 
-
-
                     logger.debug("pluginadd message: " + me.getParams().toString());
-
 
                     new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
 
-                    /*
-                    if(pluginNode == null)
-                    {
-                        logger.error("pluginnode == null");
-                        if((controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_code","1")) &&
-                                (controllerEngine.getGDB().setINodeParam(ce.getParam("inode_id"),"status_desc","iNode Failed Activation : Plugin not found!")))
-                        {
-                            logger.debug("Provisioning Failed: No matching plugins found!");
-                        }
-                    }
-                    else
-                    {
-                        //Here is where scheduling is taking place
-                        logger.debug("agentcontroller precheck = OK");
-                        String region = ce.getParam("location_region");
-                        String agent = ce.getParam("location_agent");
-                        String resource_id = ce.getParam("resource_id");
-                        String inode_id = ce.getParam("inode_id");
-
-                        //schedule agentcontroller
-                        logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
-                        MsgEvent me = addPlugin(region,agent,ce.getParam("configparams"));
-                        //me.setCompressedParam("pnode",gson.toJson(pluginNode));
-                        me.setParam("edges",ce.getParam("edges"));
-
-
-
-                        logger.debug("pluginadd message: " + me.getParams().toString());
-
-
-                        new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
-
-                    }
-                    */
                 }
                 else if(ce.getParam("globalcmd").equals("removeplugin"))
                 {

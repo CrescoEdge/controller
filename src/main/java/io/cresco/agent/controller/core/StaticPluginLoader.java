@@ -65,6 +65,12 @@ public class StaticPluginLoader implements Runnable  {
 
                     if(controllerEngine.cstate.isActive()) {
 
+                        /*
+                        logger.error("WAITING 30 SEC to LOAD STATICS");
+                        Thread.sleep(30000);
+                        logger.error("STARTING to LOAD STATICS");
+                        */
+
                         if (config != null) {
 
                             for (String tmpPluginID : config.getPluginList(1)) {

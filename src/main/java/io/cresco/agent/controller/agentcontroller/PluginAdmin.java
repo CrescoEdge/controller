@@ -316,7 +316,7 @@ public class PluginAdmin {
                                     String[] locationSplit = jarLocation.split("!");
                                     if (locationSplit.length > 0) {
                                         agentEmbeddedJarPath = locationSplit[0];
-                                        logger.error("agent location: " + locationSplit[0]);
+                                        //logger.error("agent location: " + locationSplit[0]);
                                     }
                                 }
                             }
@@ -507,21 +507,27 @@ public class PluginAdmin {
             validatedMap = jarIsBundle(map);
 
             //if explicitly defined use first
-            if(validatedMap == null) {
-                validatedMap = jarIsAbsolutePath(map);
-            } else {
+            if(validatedMap != null) {
                 return validatedMap;
+            } else {
+                validatedMap = jarIsAbsolutePath(map);
             }
 
-            if(validatedMap == null) {
+            if(validatedMap != null) {
+                return validatedMap;
+            } else {
                 validatedMap = getJarFromLocalCache(map);
             }
 
-            if(validatedMap == null) {
+            if(validatedMap != null) {
+                return validatedMap;
+            } else {
                 validatedMap = jarIsEmbedded(map);
             }
 
-            if(validatedMap == null) {
+            if(validatedMap != null) {
+                return validatedMap;
+            } else {
                 validatedMap = getJarFromRepo(map);
             }
 

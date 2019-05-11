@@ -531,12 +531,12 @@ public class GlobalExecutor implements Executor {
                 }
                 pluginList = pluginList.substring(0, pluginList.length() - 1);
                 ce.setParam("pluginlist", pluginList);
-                ce.setMsgBody("There were " + pluginFiles.size() + " plugins found.");
+                //
             }
-            else
-            {
-                ce.setMsgBody("No agentcontroller directory exist to inventory");
-            }
+            //else
+            //{
+            //    ce.setMsgBody("No agentcontroller directory exist to inventory");
+            //}
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -554,12 +554,12 @@ public class GlobalExecutor implements Executor {
             {
                 logger.trace(resourceTotal.toString());
                 ce.setParam("resourceinventory", resourceTotal.toString());
-                ce.setMsgBody("Inventory found.");
+                //ce.setMsgBody("Inventory found.");
             }
-            else
-            {
-                ce.setMsgBody("No agentcontroller directory exist to inventory");
-            }
+            //else
+            //{
+            //    ce.setMsgBody("No agentcontroller directory exist to inventory");
+            //}
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -632,7 +632,7 @@ public class GlobalExecutor implements Executor {
     private MsgEvent globalEnable(MsgEvent ce) {
         try {
             logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
-            logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
+            //logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().nodeUpdate(ce);
 
             //logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
@@ -661,7 +661,7 @@ public class GlobalExecutor implements Executor {
     private MsgEvent globalDisable(MsgEvent ce) {
         try {
             logger.debug("CONFIG : AGENTDISCOVER REMOVE: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
-            logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
+            //logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().removeNode(ce);
             ce.setParam("is_unregistered",Boolean.TRUE.toString());
         }
@@ -754,18 +754,18 @@ public class GlobalExecutor implements Executor {
                 if(pluginFileObject.exists())
                 {
                     ce.setParam("hasplugin", ce.getParam("agentcontroller"));
-                    ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
+                    //ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
                     logger.error("Downloaded Plugin:" + ce.getParam("agentcontroller"));
                 }
                 else
                 {
-                    ce.setMsgBody("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
+                    //ce.setMsgBody("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
                     logger.error("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
                 }
             }
             else
             {
-                ce.setMsgBody("Plugin already exists:" + ce.getParam("agentcontroller"));
+                //ce.setMsgBody("Plugin already exists:" + ce.getParam("agentcontroller"));
                 ce.setParam("hasplugin", ce.getParam("agentcontroller"));
                 logger.error("Plugin already exists:" + ce.getParam("agentcontroller"));
             }

@@ -35,52 +35,17 @@ public class MsgRouter {
         //set remote regional controller address
         rm.setForwardDst(controllerEngine.cstate.getRegionalRegion(),controllerEngine.cstate.getRegionalAgent(),null);
         controllerEngine.getActiveClient().sendMessage(rm);
-        /*
-        boolean isOk = false;
-        if(rm.getParam("desc") != null) {
-            if(rm.getParam("desc").startsWith("to-rc")) {
-                isOk = true;
-            }
-        }
 
-        if(!isOk) {
-            System.out.println("forwardToRemoteRegionalController() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
-        }
-        */
     }
 
     private void forwardToLocalRegion(MsgEvent rm) {
         controllerEngine.getActiveClient().sendMessage(rm);
-        /*
-        boolean isOk = false;
-        if(rm.getParam("desc") != null) {
-            if(rm.getParam("desc").startsWith("to-region")) {
-                isOk = true;
-            }
-        }
 
-        if(!isOk) {
-            System.out.println("forwardToLocalRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
-        }
-        */
-        
     }
 
     private void forwardToRemoteRegion(MsgEvent rm) {
 
         controllerEngine.getActiveClient().sendMessage(rm);
-        /*
-        boolean isOk = false;
-        if(rm.getParam("desc") != null) {
-            if(rm.getParam("desc").startsWith("to-region")) {
-                isOk = true;
-            }
-        }
-
-        if(!isOk) {
-            System.out.println("forwardToRemoteRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
-        }
-        */
 
     }
 
@@ -117,10 +82,13 @@ public class MsgRouter {
 
             rm = getTTL(rm);
 
+
+
             if(rm != null) {
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
+                //logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
 
                 switch (routePath) {
 
@@ -557,41 +525,43 @@ public class MsgRouter {
             String TXp = "0";
             String TXpe = "0";
 
-            if (rm.getParam("dst_region") != null) {
+
+            if (rm.getDstRegion() != null) {
                 RXre = "1";
-                if (rm.getParam("dst_region").equals(/*PluginEngine.region*/plugin.getRegion())) {
+                if (rm.getDstRegion().equals(/*PluginEngine.region*/plugin.getRegion())) {
                     RXr = "1";
                 }
             }
-            if (rm.getParam("dst_agent") != null) {
+
+            if (rm.getDstAgent() != null) {
                 RXae = "1";
-                if (rm.getParam("dst_agent").equals(/*PluginEngine.agent*/plugin.getAgent())) {
+                if (rm.getDstAgent().equals(/*PluginEngine.agent*/plugin.getAgent())) {
                     RXa = "1";
                 }
             }
-            if (rm.getParam("dst_plugin") != null) {
+
+            if (rm.getDstPlugin() != null) {
                 RXpe = "1";
-                if (rm.getParam("dst_plugin").equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
+                if (rm.getDstPlugin().equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
                     RXp = "1";
                 }
             }
 
-
-            if (rm.getParam("src_region") != null) {
+            if (rm.getSrcRegion() != null) {
                 TXre = "1";
-                if (rm.getParam("src_region").equals(/*PluginEngine.region*/plugin.getRegion())) {
+                if (rm.getSrcRegion().equals(/*PluginEngine.region*/plugin.getRegion())) {
                     TXr = "1";
                 }
             }
-            if (rm.getParam("src_agent") != null) {
+            if (rm.getSrcAgent() != null) {
                 TXae = "1";
-                if (rm.getParam("src_agent").equals(/*PluginEngine.agent*/plugin.getAgent())) {
+                if (rm.getSrcAgent().equals(/*PluginEngine.agent*/plugin.getAgent())) {
                     TXa = "1";
                 }
             }
-            if (rm.getParam("src_plugin") != null) {
+            if ( rm.getSrcPlugin() != null) {
                 TXpe = "1";
-                if (rm.getParam("src_plugin").equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
+                if ( rm.getSrcPlugin().equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
                     TXp = "1";
                 }
             }
@@ -613,6 +583,7 @@ public class MsgRouter {
 
         return routePath;
     }
+
 
     private MsgEvent getTTL(MsgEvent rm) {
 

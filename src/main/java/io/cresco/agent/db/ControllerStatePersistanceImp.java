@@ -231,7 +231,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             }
 
             //send information to remote
-            if(registerAgent(localRegion, localAgent)) {
+            if(registerAgent(regionalRegion, regionalAgent, localRegion, localAgent)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 returnState = true;
@@ -472,12 +472,13 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     }
 
 
-    public boolean registerAgent(String localRegion, String localAgent) {
+    public boolean registerAgent(String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
         boolean isRegistered = false;
 
             try {
 
                 MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+                //MsgEvent enableMsg = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG,regionalRegion,regionalAgent);
                 enableMsg.setParam("action", "agent_enable");
                 enableMsg.setParam("req-seq", UUID.randomUUID().toString());
                 enableMsg.setParam("region_name", localRegion);
@@ -489,6 +490,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                 enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
 
+                //logger.error("SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
 
                 MsgEvent re = plugin.sendRPC(enableMsg);
 
@@ -497,8 +499,13 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                     if (re.paramsContains("is_registered")) {
 
                         isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
+                        logger.error("ISREG: " + isRegistered);
 
+                    } else {
+                        logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
                     }
+                } else {
+                    logger.error("RETURN = NULL");
                 }
 
                 if (isRegistered) {

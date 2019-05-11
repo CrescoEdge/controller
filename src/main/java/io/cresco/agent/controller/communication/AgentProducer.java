@@ -72,15 +72,15 @@ public class AgentProducer {
     }
 
     public boolean sendMessage(MsgEvent sm) {
+
+        logger.debug("sendMessage() SEND MESSAGE: " + sm.printHeader());
         boolean isSent = false;
         try {
             ActiveProducerWorker apw = null;
-            String dstPath;
-            if ((sm.getParam("dst_region") != null) && (sm.getParam("dst_agent") != null)) {
-                dstPath = sm.getParam("dst_region") + "_" + sm.getParam("dst_agent");
-            } else if (sm.getParam("dst_region") != null) {
-                dstPath = sm.getParam("dst_region"); //send to broker for routing
-            } else {
+            String dstPath = sm.getForwardDst();
+
+            if(dstPath == null) {
+                logger.error("sendMessage() DST PATH = NULL");
                 return false;
             }
 
