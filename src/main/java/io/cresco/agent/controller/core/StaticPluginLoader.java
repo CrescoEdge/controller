@@ -105,18 +105,13 @@ public class StaticPluginLoader implements Runnable  {
                                 }
 
                                 //load dashboard
-
-                                //if(controllerEngine.getPluginAdmin().serviceExist("org.osgi.service.http.HttpService")) {
-
                                 if (plugin.getConfig().getBooleanParam("enable_dashboard", true)) {
                                     Map<String, Object> map = new HashMap<>();
                                     map.put("pluginname", "io.cresco.dashboard");
                                     map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
-                                //} else {
-                                //    logger.info("HttpService : Does not exist : Console Disabled.");
-                                //}
+
 
                             } else {
 
