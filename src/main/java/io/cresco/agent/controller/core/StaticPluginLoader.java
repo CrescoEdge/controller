@@ -103,20 +103,20 @@ public class StaticPluginLoader implements Runnable  {
                                     map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
-                                //load global
 
-                                if(controllerEngine.getPluginAdmin().serviceExist("org.osgi.service.http.HttpService")) {
+                                //load dashboard
 
-                                    if (plugin.getConfig().getBooleanParam("enable_web", true)) {
-                                        Map<String, Object> map = new HashMap<>();
-                                        map.put("pluginname", "io.cresco.dashboard");
-                                        map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
-                                        String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
+                                //if(controllerEngine.getPluginAdmin().serviceExist("org.osgi.service.http.HttpService")) {
 
-                                    }
-                                } else {
-                                    logger.info("HttpService : Does not exist : Console Disabled.");
+                                if (plugin.getConfig().getBooleanParam("enable_dashboard", true)) {
+                                    Map<String, Object> map = new HashMap<>();
+                                    map.put("pluginname", "io.cresco.dashboard");
+                                    map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
+                                //} else {
+                                //    logger.info("HttpService : Does not exist : Console Disabled.");
+                                //}
 
                             } else {
 

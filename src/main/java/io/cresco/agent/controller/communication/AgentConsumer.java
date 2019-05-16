@@ -14,7 +14,10 @@ import org.apache.activemq.BlobMessage;
 
 import javax.jms.*;
 import javax.jms.Queue;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.lang.reflect.Type;
 import java.math.BigInteger;
 import java.nio.file.Files;
@@ -86,6 +89,11 @@ public class AgentConsumer {
 		consumer.setMessageListener(new MessageListener() {
 			public void onMessage(Message msg) {
 				try {
+
+					//long jmsTS = msg.getJMSTimestamp();
+					//int messageSize = getMessageSizeInBytes(msg);
+
+
 
 					if (msg instanceof TextMessage) {
 
@@ -281,7 +289,14 @@ public class AgentConsumer {
 			}
 		});
 
+	}
 
+	private int getMessageSizeInBytes(Message message) throws IOException {
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		ObjectOutputStream oos = new ObjectOutputStream(baos);
+		oos.writeObject(message);
+		oos.close();
+		return baos.size();
 	}
 
 	private boolean registerIncomingFiles(String msgEventString, String fileobjectString, String fileGroup) {
