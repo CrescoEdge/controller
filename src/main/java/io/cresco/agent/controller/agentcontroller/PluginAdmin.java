@@ -86,6 +86,7 @@ public class PluginAdmin {
                 .build();
 
 
+
         ServiceReference configurationAdminReference = null;
 
         configurationAdminReference = context.getServiceReference(ConfigurationAdmin.class.getName());
@@ -109,13 +110,6 @@ public class PluginAdmin {
     public void setLogLevel(String logId, CLogger.Level level) {
 
         try {
-
-            logId = logId.toLowerCase();
-            /*
-            if (level != CLogger.Level.Info) {
-                System.out.println("LOG ID: " + logId + " LEVEL:" + level.name());
-            }
-            */
 
             Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
 

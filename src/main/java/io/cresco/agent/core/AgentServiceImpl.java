@@ -50,6 +50,10 @@ public class AgentServiceImpl implements AgentService {
 
     }
 
+    public CLogger getCLogger(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, CLogger.Level level) {
+        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName,level);
+    }
+
     private Map<String,Object> initAgentConfigMap() {
         Map<String, Object> configParams = null;
         try {
