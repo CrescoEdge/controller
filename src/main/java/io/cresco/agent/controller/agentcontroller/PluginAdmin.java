@@ -118,10 +118,50 @@ public class PluginAdmin {
 
             logConfig.updateIfDifferent(log4jProps);
 
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
+    }
+
+    public void setLogLevels(Map<String,String> logMap) {
+
+        try {
+            for (Map.Entry<String, String> entry : logMap.entrySet()) {
+                String logId = entry.getKey();
+                CLogger.Level logLevel = CLogger.Level.valueOf(entry.getValue());
+                setLogLevel(logId,logLevel);
+            }
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
+
+    }
+
+    public Map<String,String> getLogLevels() {
+
+        Map<String,String> logMap = null;
+        try {
+
+            logMap = new HashMap<>();
+
+            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+
+            Dictionary<String, Object> log4jProps = logConfig.getProperties();
+
+            Enumeration<String> e = log4jProps.keys();
+            while(e.hasMoreElements()) {
+                String logId = e.nextElement();
+                String level = (String)log4jProps.get(logId);
+
+                System.out.println(logId.replace("log4j.logger.","") + ": " + level);
+                logMap.put(logId.replace("log4j.logger.",""),level);
+            }
 
         } catch (Exception ex) {
             ex.printStackTrace();
         }
+        return logMap;
 
     }
 
