@@ -34,7 +34,7 @@ public class PollRemovePipeline implements Runnable {
 
 	            int pipelineStatus = controllerEngine.getGDB().getPipelineStatusCode(pipelineId);
 
-                if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
+                //if((pipelineStatus >= 10) && (pipelineStatus < 19)) {
 
                     controllerEngine.getGDB().setPipelineStatus(pipelineId, "9", "Pipeline Scheduled for Removal");
 
@@ -47,7 +47,7 @@ public class PollRemovePipeline implements Runnable {
 						for (gNode gnode : pipelineNodes) {
 
 						    int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
-						    if((statusCode >= 10) && (statusCode < 19))  { //running somewhere
+						    //if((statusCode >= 10) && (statusCode < 19))  { //running somewhere
 
                                 MsgEvent me = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
                                 me.setParam("globalcmd", "removeplugin");
@@ -58,10 +58,10 @@ public class PollRemovePipeline implements Runnable {
 
                                 //controllerEngine.getResourceScheduleQueue().add(me);
                                 controllerEngine.getResourceScheduler().incomingMessage(me);
-                            }
-                            else if(statusCode > 19) {
-                                controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,8,"iNode Disabled");
-                            }
+                            //}
+                            //else if(statusCode > 19) {
+                            //    controllerEngine.getGDB().setINodeStatusCode(gnode.node_id,8,"iNode Disabled");
+                            //}
 						}
 
 						//start watch loop
@@ -103,7 +103,7 @@ public class PollRemovePipeline implements Runnable {
                             logger.error("PipelineID: " + pipelineId + " Removal Failed!");
                         }
                     }
-				}
+				//}
 
 	        }
 		   catch(Exception ex)

@@ -31,7 +31,7 @@ public class PollRemovePlugin implements Runnable {
 	public void run() {
         try {
 
-            if(controllerEngine.getGDB().getINodeStatus(inode_id) > 8) {
+            //if(controllerEngine.getGDB().getINodeStatus(inode_id) > 8) {
 
                 Map<String,String> inodeMap = controllerEngine.getGDB().getInodeMap(inode_id);
                 String region = inodeMap.get("region_id");
@@ -59,14 +59,15 @@ public class PollRemovePlugin implements Runnable {
 
                         }
                     } else {
-                        logger.error("Return remove = null");
+                        controllerEngine.getGDB().setINodeStatusCode(inode_id,91,"iNode unable to verify iNode deactivation!");
+                        logger.error("pollRemovePlugin : unable to verify iNode deactivation! " + inode_id);
                     }
                 } else {
                     controllerEngine.getGDB().setINodeStatusCode(inode_id,92,"iNode with no Plugin Assignment!");
                     logger.error("iNode with no Plugin Assignment for resource_id: " + resource_id + " inode_id:" + inode_id);
                 }
 
-            }
+            //}
         }
 	   catch(Exception ex)
 	   {
