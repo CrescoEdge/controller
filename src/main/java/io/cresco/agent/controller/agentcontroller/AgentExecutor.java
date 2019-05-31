@@ -92,14 +92,53 @@ public class AgentExecutor implements Executor {
         incoming.setParam("desc","to-plugin-agent-rpc");
         return incoming;
     }
+
     @Override
-    public MsgEvent executeEXEC(MsgEvent incoming) { return null; }
+    public MsgEvent executeEXEC(MsgEvent incoming) {
+
+            switch (incoming.getParam("action")) {
+
+                case "getlog":
+                    return getLog(incoming);
+
+                default:
+                    logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
+                    logger.error(incoming.getParams().toString());
+                    break;
+            }
+            return null;
+        }
+
     @Override
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {
         return null;
     }
     @Override
     public MsgEvent executeKPI(MsgEvent incoming) {
+        return null;
+    }
+
+    private MsgEvent getLog(MsgEvent ce) {
+        try {
+
+            Path filePath = Paths.get("log/log.out");
+            ce.addFile(filePath.toAbsolutePath().toString());
+
+            return ce;
+
+
+        } catch(Exception ex) {
+
+            logger.error("getlog Error: " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
         return null;
     }
 
