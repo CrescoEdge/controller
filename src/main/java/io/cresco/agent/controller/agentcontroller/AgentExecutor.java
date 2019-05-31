@@ -205,17 +205,24 @@ public class AgentExecutor implements Executor {
 
         try {
             String plugin = ce.getParam("pluginid");
-            logger.info("disabling plugin : " + plugin);
-            boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(plugin);
+            if(plugin == null) {
 
-            if(isDisabled) {
-
-                ce.setParam("status_code", "7");
-                ce.setParam("status_desc", "Plugin Removed");
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "Plugin NULL");
 
             } else {
-                ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "Plugin Could Not Be Removed");
+                logger.info("disabling plugin : " + plugin);
+                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(plugin);
+
+                if (isDisabled) {
+
+                    ce.setParam("status_code", "7");
+                    ce.setParam("status_desc", "Plugin Removed");
+
+                } else {
+                    ce.setParam("status_code", "9");
+                    ce.setParam("status_desc", "Plugin Could Not Be Removed");
+                }
             }
 
         } catch(Exception ex) {
