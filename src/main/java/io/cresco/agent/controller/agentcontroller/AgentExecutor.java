@@ -10,10 +10,7 @@ import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -64,14 +61,17 @@ public class AgentExecutor implements Executor {
 
         return null;
     }
+
     @Override
     public MsgEvent executeDISCOVER(MsgEvent incoming) {
         return null;
     }
+
     @Override
     public MsgEvent executeERROR(MsgEvent incoming) {
         return null;
     }
+
     @Override
     public MsgEvent executeINFO(MsgEvent incoming) {
         //System.out.println("INCOMING INFO MESSAGE FOR AGENT FROM " + incoming.getSrcPlugin() + " setting new desc");
@@ -79,16 +79,7 @@ public class AgentExecutor implements Executor {
         if(incoming.getParams().containsKey("print")) {
             logger.error("Plugin: " + incoming.getSrcPlugin() + " out: " + incoming.getParam("print"));
         }
-        /*
-            String pluginName = "io.cresco.skeleton";
-            String jarFile = "/Users/cody/IdeaProjects/skeleton/target/skeleton-1.0-SNAPSHOT.jar";
-            Map<String, Object> map = new HashMap<>();
 
-            map.put("pluginname", pluginName);
-            map.put("jarfile", jarFile);
-
-            controllerEngine.getPluginAdmin().addPlugin(pluginName, jarFile, map);
-        */
         incoming.setParam("desc","to-plugin-agent-rpc");
         return incoming;
     }
@@ -100,6 +91,10 @@ public class AgentExecutor implements Executor {
 
                 case "getlog":
                     return getLog(incoming);
+                case "getfileinfo":
+                    return getFileInfo(incoming);
+                case "getfiledata":
+                    return getFileData(incoming);
 
                 default:
                     logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -113,6 +108,7 @@ public class AgentExecutor implements Executor {
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {
         return null;
     }
+
     @Override
     public MsgEvent executeKPI(MsgEvent incoming) {
         return null;
@@ -140,6 +136,82 @@ public class AgentExecutor implements Executor {
         }
 
         return null;
+    }
+
+    private MsgEvent getFileData (MsgEvent ce) {
+        try {
+
+            if(ce.paramsContains("filepath") && ce.paramsContains("skiplength") && ce.paramsContains("partsize")) {
+
+                Path filePath = Paths.get(ce.getParam("filepath"));
+                if (filePath.toFile().exists()) {
+                    if (filePath.toFile().isFile()) {
+
+                        long skipLength = Long.parseLong(ce.getParam("skiplength"));
+                        int partsize = Integer.parseInt(ce.getParam("partsize"));
+
+                        InputStream inputStream = new FileInputStream(filePath.toFile());
+                        byte[] databyte = new byte[partsize];
+                        inputStream.skip(skipLength);
+                        inputStream.read(databyte);
+                        inputStream.close();
+                        ce.setCompressedDataParam("payload",databyte);
+                        ce.setParam("status","10");
+                        ce.setParam("status_desc","wrote data part");
+
+
+                    } else {
+                        ce.setParam("status","9");
+                        ce.setParam("status_desc","path is not a file");
+                    }
+                } else {
+                    ce.setParam("status","9");
+                    ce.setParam("status_desc","file does not exist");
+                }
+            } else {
+                ce.setParam("status","9");
+                ce.setParam("status_desc","no filepath | skiplength | partsize given");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            ce.setParam("status","9");
+            ce.setParam("status_desc","getFileData() failure");
+        }
+        return ce;
+    }
+
+    private MsgEvent getFileInfo (MsgEvent ce) {
+        try {
+
+            if(ce.paramsContains("filepath")) {
+
+                Path filePath = Paths.get(ce.getParam("filepath"));
+                if (filePath.toFile().exists()) {
+                    if (filePath.toFile().isFile()) {
+                        ce.setParam("status","10");
+                        ce.setParam("status_desc","file found");
+                        ce.setParam("md5", plugin.getMD5(filePath.toFile().getAbsolutePath()));
+                        ce.setParam("size", String.valueOf(filePath.toFile().length()));
+                    } else {
+                        ce.setParam("status","9");
+                        ce.setParam("status_desc","path is not a file");
+                    }
+                } else {
+                    ce.setParam("status","9");
+                    ce.setParam("status_desc","file does not exist");
+                }
+            } else {
+                ce.setParam("status","9");
+                ce.setParam("status_desc","no file path given");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            ce.setParam("status","9");
+            ce.setParam("status_desc","getFileInfo() failure");
+        }
+        return ce;
     }
 
     private MsgEvent pluginAdd(MsgEvent ce) {
