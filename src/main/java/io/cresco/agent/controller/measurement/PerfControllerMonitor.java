@@ -295,7 +295,7 @@ public class PerfControllerMonitor {
                             String messageType = mapMessage.getStringProperty("pluginname");
                             if(messageType.equals("io.cresco.sysinfo")) {
                                 sysInfoCache.put(key, mapMessage.getString("perf"));
-                                //logger.error("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
+                                //logger.debug("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
 
                             } else {
 
