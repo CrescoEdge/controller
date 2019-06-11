@@ -424,17 +424,17 @@ public class PerfControllerMonitor {
 
                 if(sysInfoCache != null) {
                     //sysInfoCache.cleanUp();
-                    logger.info("CleanUpTask() sysInfoCache Cleaned");
+                    logger.debug("CleanUpTask() sysInfoCache Cleaned");
                 }
 
                 if(kpiCache != null) {
                     //kpiCache.cleanUp();
-                    logger.info("CleanUpTask() kpiCache Cleaned");
+                    logger.debug("CleanUpTask() kpiCache Cleaned");
                 }
 
                 if(kpiCacheType != null) {
                     //kpiCacheType.cleanUp();
-                    logger.info("CleanUpTask() kpiCacheType Cleaned");
+                    logger.debug("CleanUpTask() kpiCacheType Cleaned");
                 }
 
             } catch(Exception ex) {
