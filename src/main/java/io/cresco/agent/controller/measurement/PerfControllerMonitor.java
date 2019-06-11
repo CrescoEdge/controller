@@ -71,7 +71,7 @@ public class PerfControllerMonitor {
 
         //call cleanup timer otherwise
         cleanUpTimer = new Timer();
-        cleanUpTimer.scheduleAtFixedRate(new CleanUpTask(plugin, sysInfoCache, kpiCache, kpiCacheType), 300000L, 300000L);
+        cleanUpTimer.scheduleAtFixedRate(new CleanUpTask(plugin, logger, sysInfoCache, kpiCache, kpiCacheType), 300000L, 300000L);
 
 
     }
@@ -405,9 +405,17 @@ public class PerfControllerMonitor {
 
     private class CleanUpTask extends TimerTask {
         private PluginBuilder plugin;
+        private CLogger logger;
+        private Cache<String, String> sysInfoCache;
+        private Cache<String, String> kpiCache;
+        private Cache<String, String> kpiCacheType;
 
-        CleanUpTask(PluginBuilder plugin, Cache<String, String> sysInfoCache, Cache<String, String> kpiCache, Cache<String, String> kpiCacheType) {
+        CleanUpTask(PluginBuilder plugin, CLogger logger, Cache<String, String> sysInfoCache, Cache<String, String> kpiCache, Cache<String, String> kpiCacheType) {
             this.plugin = plugin;
+            this.logger = logger;
+            this.sysInfoCache = sysInfoCache;
+            this.kpiCache = kpiCache;
+            this.kpiCacheType = kpiCacheType;
         }
 
         public void run() {
@@ -415,15 +423,18 @@ public class PerfControllerMonitor {
             try {
 
                 if(sysInfoCache != null) {
-                    sysInfoCache.cleanUp();
+                    //sysInfoCache.cleanUp();
+                    logger.info("CleanUpTask() sysInfoCache Cleaned");
                 }
 
                 if(kpiCache != null) {
-                    kpiCache.cleanUp();
+                    //kpiCache.cleanUp();
+                    logger.info("CleanUpTask() kpiCache Cleaned");
                 }
 
                 if(kpiCacheType != null) {
-                    kpiCacheType.cleanUp();
+                    //kpiCacheType.cleanUp();
+                    logger.info("CleanUpTask() kpiCacheType Cleaned");
                 }
 
             } catch(Exception ex) {

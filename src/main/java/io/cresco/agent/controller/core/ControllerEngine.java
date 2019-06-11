@@ -142,7 +142,6 @@ public class ControllerEngine {
 
             cstate.setStandaloneInit(tmpRegion, tmpAgent,"Core Init");
 
-
             isCoreInit = true;
         } catch (Exception ex) {
             logger.error(ex.getMessage());
@@ -260,14 +259,8 @@ public class ControllerEngine {
             //Setup Regional Watcher
             this.regionHealthWatcher = new RegionHealthWatcher(this);
 
-            //Setup Global is Needed
-            if(isRegionalController){
-                initGlobal();
-            }
-
-
+            //enable this here to avoid nu,, perfControllerMonitor on global controller start
             //todo enable metrics
-
             if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
                 //enable measurements
                 this.measurementEngine = new MeasurementEngine(this);
@@ -280,6 +273,10 @@ public class ControllerEngine {
                 logger.info("Performance Controller monitoring initialized");
             }
 
+            //Setup Global is Needed
+            if(isRegionalController){
+                initGlobal();
+            }
 
             //populate controller-specific metrics
             //measurementEngine.initControllerMetrics();

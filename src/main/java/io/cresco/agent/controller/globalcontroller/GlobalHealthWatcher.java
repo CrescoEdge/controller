@@ -13,6 +13,8 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.*;
 
 public class GlobalHealthWatcher implements Runnable {
@@ -341,6 +343,10 @@ public class GlobalHealthWatcher implements Runnable {
         }
         catch (Exception ex) {
             logger.error("startGlobalSchedulers() " + ex.getMessage());
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
+
         }
         return isStarted;
     }
