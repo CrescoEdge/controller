@@ -71,7 +71,7 @@ public class PerfControllerMonitor {
 
         //call cleanup timer otherwise
         cleanUpTimer = new Timer();
-        timer.scheduleAtFixedRate(new CleanUpTask(plugin, sysInfoCache, kpiCache, kpiCacheType), 300000L, 300000L);
+        cleanUpTimer.scheduleAtFixedRate(new CleanUpTask(plugin, sysInfoCache, kpiCache, kpiCacheType), 300000L, 300000L);
 
 
     }
