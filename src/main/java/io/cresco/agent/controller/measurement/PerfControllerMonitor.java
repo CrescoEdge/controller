@@ -31,6 +31,7 @@ public class PerfControllerMonitor {
     private Cache<String, String> kpiCache;
     private Cache<String, String> kpiCacheType;
 
+    private String DBListnerId;
 
     private Gson gson;
 
@@ -257,16 +258,33 @@ public class PerfControllerMonitor {
         return response;
     }
 
+    public void removeKpiListener() {
+
+        try {
+
+            if(DBListnerId != null) {
+
+                String DBListnerIdTmp = DBListnerId;
+                DBListnerId = null;
+                plugin.getAgentService().getDataPlaneService().removeMessageListener(DBListnerIdTmp);
+
+            }
+
+        } catch (Exception ex) {
+            logger.error("removeKpiListener() " + ex.getMessage());
+        }
+
+    }
+
     public void setKpiListener() {
 
         //logger.info("SET KPI LISTENER");
         //setTestListener();
 
         MessageListener ml = new MessageListener() {
+
             public void onMessage(Message msg) {
                 try {
-
-
 
                     if (msg instanceof MapMessage) {
 
@@ -289,10 +307,10 @@ public class PerfControllerMonitor {
                                 kpiCacheType.put(key, messageType);
                                 //logger.error("insert " + mapMessage.getStringProperty("pluginname") + " metric for " + key);
                             }
-
                         }
 
                     }
+
                 } catch(Exception ex) {
 
                     ex.printStackTrace();
@@ -301,7 +319,7 @@ public class PerfControllerMonitor {
         };
 
         //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
-        plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
+        DBListnerId = plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
 
     }
 
@@ -380,6 +398,7 @@ public class PerfControllerMonitor {
     public void stop() {
         timer.cancel();
         cleanUpTimer.cancel();
+        removeKpiListener();
         running = false;
     }
 

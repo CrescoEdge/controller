@@ -54,6 +54,9 @@ public class GlobalHealthWatcher implements Runnable {
         SchedulerActive = false;
         AppSchedulerActive = false;
 
+        //remove listner
+        controllerEngine.getPerfControllerMonitor().removeKpiListener();
+
 
         if(!controllerEngine.cstate.isGlobalController()) {
             if (controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
@@ -330,6 +333,9 @@ public class GlobalHealthWatcher implements Runnable {
 
             AppScheduler appScheduler = new AppScheduler(controllerEngine,this);
             controllerEngine.setAppScheduler(appScheduler);
+
+            //we also need to start collecting KPI information
+            controllerEngine.getPerfControllerMonitor().setKpiListener();
 
             isStarted = true;
         }

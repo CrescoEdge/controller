@@ -275,7 +275,8 @@ public class ControllerEngine {
 
                 //send measurement info out
                 perfControllerMonitor = new PerfControllerMonitor(this);
-                perfControllerMonitor.setKpiListener();
+                //don't start this yet, otherwise agents will be listening for all KPIs
+                //perfControllerMonitor.setKpiListener();
                 logger.info("Performance Controller monitoring initialized");
             }
 
