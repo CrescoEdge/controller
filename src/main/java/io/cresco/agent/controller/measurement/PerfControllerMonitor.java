@@ -19,6 +19,8 @@ import java.util.concurrent.TimeUnit;
 public class PerfControllerMonitor {
     private ControllerInfoBuilder builder;
     private Timer timer;
+    private Timer cleanUpTimer;
+
     private boolean running = false;
 
     private ControllerEngine controllerEngine;
@@ -65,6 +67,10 @@ public class PerfControllerMonitor {
 
         timer = new Timer();
         timer.scheduleAtFixedRate(new PerfMonitorTask(plugin), 500L, interval);
+
+        //call cleanup timer otherwise
+        cleanUpTimer = new Timer();
+        timer.scheduleAtFixedRate(new CleanUpTask(plugin, sysInfoCache, kpiCache, kpiCacheType), 300000L, 300000L);
 
 
     }
@@ -373,8 +379,42 @@ public class PerfControllerMonitor {
 
     public void stop() {
         timer.cancel();
+        cleanUpTimer.cancel();
         running = false;
     }
+
+
+    private class CleanUpTask extends TimerTask {
+        private PluginBuilder plugin;
+
+        CleanUpTask(PluginBuilder plugin, Cache<String, String> sysInfoCache, Cache<String, String> kpiCache, Cache<String, String> kpiCacheType) {
+            this.plugin = plugin;
+        }
+
+        public void run() {
+
+            try {
+
+                if(sysInfoCache != null) {
+                    sysInfoCache.cleanUp();
+                }
+
+                if(kpiCache != null) {
+                    kpiCache.cleanUp();
+                }
+
+                if(kpiCacheType != null) {
+                    kpiCacheType.cleanUp();
+                }
+
+            } catch(Exception ex) {
+                logger.error("CleanUpTask() " + ex.getMessage());
+            }
+
+
+        }
+    }
+
 
     private class PerfMonitorTask extends TimerTask {
         private PluginBuilder plugin;
@@ -429,4 +469,5 @@ public class PerfControllerMonitor {
 
         }
     }
+
 }

@@ -10,7 +10,6 @@ import java.io.File;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Type;
-import java.net.URL;
 import java.util.*;
 
 public class StaticPluginLoader implements Runnable  {
