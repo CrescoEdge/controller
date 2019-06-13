@@ -95,6 +95,14 @@ public class DBEngine {
                 }
             }
 
+            if (dbType == DBType.MYSQL) {
+                if (!checkSchema()) {
+                    initDB();
+
+                    addTenant(0, "default tenant");
+                }
+            }
+
             /*
             if (!checkSchema()) {
 
@@ -135,7 +143,7 @@ public class DBEngine {
             ResultSet rs = md.getTables(null, null, "%", null);
             while (rs.next()) {
                 existingTables.add(rs.getString(3).toLowerCase());
-                System.out.println(rs.getString(3));
+                //System.out.println(rs.getString(3));
             }
 
             rs.close();
@@ -143,7 +151,7 @@ public class DBEngine {
 
             for(String table : tablesNames) {
                 if (!existingTables.contains(table)) {
-                    System.out.println("TABLE DOES NOT EXIST: " + table);
+                    //System.out.println("TABLE DOES NOT EXIST: " + table);
                     return false;
                 }
             }
