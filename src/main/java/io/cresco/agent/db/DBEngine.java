@@ -2736,7 +2736,7 @@ public class DBEngine {
         return nodeMap;
     }
 
-    public List<String> getStaleNodeList(String regionId, String agentId) {
+    public List<String> getStaleNodeList(String regionId, String agentId, int periodMultiplier) {
 
 
 
@@ -2756,19 +2756,19 @@ public class DBEngine {
                         "AND R.REGION_ID = AO.REGION_ID" +
                         "AND AO.AGENT_ID = A.AGENT_ID" +
                         "AND A.AGENT_ID = PO.AGENT_ID" +
-                        "AND P.status_code=10 and ((" + System.currentTimeMillis() + " - P.watchdog_ts) > (P.watchdog_period * 3))";
+                        "AND P.status_code=10 and ((" + System.currentTimeMillis() + " - P.watchdog_ts) > (P.watchdog_period * periodMultiplier))";
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
                 queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
                         + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
-                        + "AND A.status_code=10 and ((" + System.currentTimeMillis() + " - A.watchdog_ts) > (A.watchdog_period * 3))";
+                        + "AND A.status_code=10 and ((" + System.currentTimeMillis() + " - A.watchdog_ts) > (A.watchdog_period * periodMultiplier))";
 
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
                 queryString = "SELECT region_id FROM rnode "
-                        + "WHERE status_code=10 and ((" + System.currentTimeMillis() + " - watchdog_ts) > (watchdog_period * 3))";
+                        + "WHERE status_code=10 and ((" + System.currentTimeMillis() + " - watchdog_ts) > (watchdog_period * periodMultiplier))";
             }
 
             Connection conn = ds.getConnection();

@@ -370,7 +370,7 @@ public class DBInterfaceImpl implements DBInterface {
     }
     */
 
-    public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String plugin) {
+    public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String pluginId) {
 
         Map<String, NodeStatusType> nodeStatusMap = null;
         try {
@@ -413,7 +413,8 @@ public class DBInterfaceImpl implements DBInterface {
                 }
             }
 
-            List<String> pendingStaleList = dbe.getStaleNodeList(region,agent);
+            int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",3);
+            List<String> pendingStaleList = dbe.getStaleNodeList(region,agent, periodMultiplier);
             for(String node : pendingStaleList) {
                 if(nodeStatusMap.containsKey(node)) {
                     nodeStatusMap.put(node, NodeStatusType.PENDINGSTALE);
