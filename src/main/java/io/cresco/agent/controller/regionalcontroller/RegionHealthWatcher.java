@@ -41,9 +41,12 @@ public class RegionHealthWatcher {
         startTS = System.currentTimeMillis();
         communicationsHealthTimer = new Timer();
         communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 1000, wdTimer);
+
+        int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",3);
         regionalUpdateTimer = new Timer();
-        regionalUpdateTimer.scheduleAtFixedRate(new RegionHealthWatcher.RegionalNodeStatusWatchDog(controllerEngine, logger), 15000, 15000);//remote
+        regionalUpdateTimer.scheduleAtFixedRate(new RegionHealthWatcher.RegionalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
         logger.info("Initialized");
+
 
         MessageListener ml = new MessageListener() {
             public void onMessage(Message msg) {
