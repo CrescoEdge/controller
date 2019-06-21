@@ -429,31 +429,42 @@ public class PluginAdmin {
 
                 if (checkFile.toFile().isFile()) {
 
-                    Manifest manifest = new JarInputStream(new FileInputStream(checkFile.toFile())).getManifest();
-                    Attributes mainAttributess = manifest.getMainAttributes();
-                    String aName = mainAttributess.getValue("Bundle-SymbolicName");
-                    String aVersion = mainAttributess.getValue("Bundle-Version");
-                    String aMD5 = plugin.getMD5((String) map.get("jarfile"));
+                    Manifest manifest = null;
 
-                    String requestedName = (String) map.get("pluginname");
-                    if (map.containsKey("version")) {
-                        String requestedVersion = (String) map.get("version");
-                        String requestedMD5 = (String) map.get("md5");
-                        if ((aName.equals(requestedName) && (aVersion.equals(requestedVersion)) && (aMD5.equals(requestedMD5)))) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("jarstatus", "absolutepath");
+                    try {
+
+                        manifest = new JarInputStream(new FileInputStream(checkFile.toFile())).getManifest();
+
+                        Attributes mainAttributess = manifest.getMainAttributes();
+                        String aName = mainAttributess.getValue("Bundle-SymbolicName");
+                        String aVersion = mainAttributess.getValue("Bundle-Version");
+                        String aMD5 = plugin.getMD5((String) map.get("jarfile"));
+
+                        String requestedName = (String) map.get("pluginname");
+                        if (map.containsKey("version")) {
+                            String requestedVersion = (String) map.get("version");
+                            String requestedMD5 = (String) map.get("md5");
+                            if ((aName.equals(requestedName) && (aVersion.equals(requestedVersion)) && (aMD5.equals(requestedMD5)))) {
+                                returnMap = new HashMap<>();
+                                returnMap.putAll(map);
+                                returnMap.put("jarstatus", "absolutepath");
+                            }
+                        } else {
+                            if (aName.equals(requestedName)) {
+                                returnMap = new HashMap<>();
+                                returnMap.putAll(map);
+                                returnMap.put("version", aVersion);
+                                returnMap.put("md5", aMD5);
+                                returnMap.put("jarstatus", "absolutepath");
+                            }
                         }
-                    } else {
-                        if (aName.equals(requestedName)) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("version", aVersion);
-                            returnMap.put("md5", aMD5);
-                            returnMap.put("jarstatus", "absolutepath");
-                        }
+
+                    } catch (Exception e) {
+                        logger.error("jarIsAbsolutePath()");
+                        e.printStackTrace();
+                    } finally {
+                     //do nothing null will return
                     }
-
                 }
             }
 

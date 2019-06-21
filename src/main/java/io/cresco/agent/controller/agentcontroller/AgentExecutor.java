@@ -3,8 +3,6 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.library.app.gEdge;
-import io.cresco.library.app.pNode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
@@ -12,12 +10,9 @@ import io.cresco.library.utilities.CLogger;
 
 import java.io.*;
 import java.lang.reflect.Type;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 
 public class AgentExecutor implements Executor {
@@ -40,13 +35,6 @@ public class AgentExecutor implements Executor {
 
         switch (incoming.getParam("action")) {
 
-            case "enable":
-                //enablePlugin(incoming);
-                break;
-
-            case "disable":
-                //disablePlugin(incoming);
-                break;
             case "pluginadd":
                 return pluginAdd(incoming);
 
@@ -74,7 +62,6 @@ public class AgentExecutor implements Executor {
 
     @Override
     public MsgEvent executeINFO(MsgEvent incoming) {
-        //System.out.println("INCOMING INFO MESSAGE FOR AGENT FROM " + incoming.getSrcPlugin() + " setting new desc");
 
         if(incoming.getParams().containsKey("print")) {
             logger.error("Plugin: " + incoming.getSrcPlugin() + " out: " + incoming.getParam("print"));
@@ -150,15 +137,27 @@ public class AgentExecutor implements Executor {
                         long skipLength = Long.parseLong(ce.getParam("skiplength"));
                         int partsize = Integer.parseInt(ce.getParam("partsize"));
 
-                        InputStream inputStream = new FileInputStream(filePath.toFile());
-                        byte[] databyte = new byte[partsize];
-                        inputStream.skip(skipLength);
-                        inputStream.read(databyte);
-                        inputStream.close();
-                        ce.setCompressedDataParam("payload",databyte);
-                        ce.setParam("status","10");
-                        ce.setParam("status_desc","wrote data part");
+                        InputStream inputStream = null;
 
+                        try {
+                            inputStream = new FileInputStream(filePath.toFile());
+                            byte[] databyte = new byte[partsize];
+                            inputStream.skip(skipLength);
+                            inputStream.read(databyte);
+                            inputStream.close();
+                            ce.setCompressedDataParam("payload",databyte);
+                            ce.setParam("status","10");
+                            ce.setParam("status_desc","wrote data part");
+
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                            ce.setParam("status","9");
+                            ce.setParam("status_desc","inputStream failure");
+                        } finally {
+                            if(inputStream != null) {
+                                inputStream.close();
+                            }
+                        }
 
                     } else {
                         ce.setParam("status","9");

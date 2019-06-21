@@ -34,9 +34,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private Destination agentTopic;
     private Destination regionTopic;
     private Destination globalTopic;
-    private final String agentTopicName = "agent.event";
-    private final String regionTopicName = "region.event";
-    private final String globalTopicName = "global.event";
+    private String agentTopicName = "agent.event";
+    private String regionTopicName = "region.event";
+    private String globalTopicName = "global.event";
 
     private MessageProducer agentProducer;
     private MessageProducer regionProducer;
@@ -108,13 +108,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private ActiveMQSession getSession() {
 	    try {
 
-            //if(!controllerEngine.cstate.isActive()) {
-            //    throw new NullPointerException("BOOM");
-            //}
-            //while(!controllerEngine.cstate.isActive()) {
-            //    Thread.sleep(1000);
-            //}
-
             while (!controllerEngine.getActiveClient().isFaultURIActive()) {
                 Thread.sleep(1000);
             }
@@ -131,7 +124,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
-
 
 	    return activeMQSession;
     }

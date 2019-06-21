@@ -104,18 +104,6 @@ public class AppScheduler implements IncomingApp {
 
             List<String> badINodes = new ArrayList<String>();
 
-            //not needed after db conversion
-            /*
-            logger.debug("Checking Pipeline_id:" + gpay.pipeline_id + " Pipeline_name:" + gpay.pipeline_name);
-            for (gNode node : gpay.nodes) {
-                String iNode_id = node.node_id;
-
-                logger.debug("Checking iNode_id:" + iNode_id);
-                controllerEngine.getGDB().addINodeResource(gpay.pipeline_id, iNode_id);
-
-            }
-            */
-
             //Assign location to specific nodes
             Map<String, List<gNode>> schedulemaps = buildNodeMaps(gpay.nodes);
             //printScheduleStats(schedulemaps);
@@ -163,25 +151,6 @@ public class AppScheduler implements IncomingApp {
             logger.error("schedulePipeline Error " + ex.getMessage());
         }
         return scheduleStatus;
-    }
-
-
-
-    public boolean locationExist(String location) {
-        boolean isLocation = false;
-        //String getINodeId(String resource_id, String inode_id)
-        List<String> aNodeLocations = controllerEngine.getGDB().getANodeFromIndex("location",location);
-        if(aNodeLocations.size() > 0) {
-            isLocation = true;
-        }
-        return isLocation;
-    }
-
-    public void printScheduleStats(Map<String,List<gNode>> schedulemaps) {
-        logger.info("Assigned Nodes : " + schedulemaps.get("assigned").size());
-        logger.info("Unassigned Nodes : " + schedulemaps.get("unassigned").size());
-        logger.info("Noresource Nodes : " + schedulemaps.get("noresource").size());
-        logger.info("Error Nodes : " + schedulemaps.get("error").size());
     }
 
     private List<gNode> buildEdgeMaps(List<gEdge> edges, List<gNode> nodes) {
