@@ -150,7 +150,12 @@ public class AgentExecutor implements Executor {
                             ce.setParam("status_desc","wrote data part");
 
                         } catch (Exception e) {
-                            e.printStackTrace();
+                            StringWriter sw = new StringWriter();
+                            PrintWriter pw = new PrintWriter(sw);
+                            e.printStackTrace(pw);
+                            String sStackTrace = sw.toString(); // stack trace as a string
+                            logger.error(sStackTrace);
+
                             ce.setParam("status","9");
                             ce.setParam("status_desc","inputStream failure");
                         } finally {
@@ -173,7 +178,13 @@ public class AgentExecutor implements Executor {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
             ce.setParam("status","9");
             ce.setParam("status_desc","getFileData() failure");
         }
@@ -206,7 +217,12 @@ public class AgentExecutor implements Executor {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
             ce.setParam("status","9");
             ce.setParam("status_desc","getFileInfo() failure");
         }
@@ -275,15 +291,15 @@ public class AgentExecutor implements Executor {
     private MsgEvent pluginRemove(MsgEvent ce) {
 
         try {
-            String plugin = ce.getParam("pluginid");
-            if(plugin == null) {
+            String pluginId = ce.getParam("pluginid");
+            if(pluginId == null) {
 
                 ce.setParam("status_code", "9");
                 ce.setParam("status_desc", "Plugin NULL");
 
             } else {
-                logger.info("disabling plugin : " + plugin);
-                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(plugin);
+                logger.info("disabling plugin : " + pluginId);
+                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(pluginId);
 
                 if (isDisabled) {
 

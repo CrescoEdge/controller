@@ -57,8 +57,6 @@ public class PluginAdmin {
 
     private long lastRepoUpdate = 0;
 
-    private AgentState agentState;
-
     public Cache<String, List<pNode>> repoCache;
 
     public int pluginCount() {
@@ -79,7 +77,6 @@ public class PluginAdmin {
         this.jarRepoSyncMap = Collections.synchronizedMap(new HashMap<>());
 
         this.context = context;
-        this.agentState = agentState;
         logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
 
 
@@ -124,7 +121,12 @@ public class PluginAdmin {
             logConfig.updateIfDifferent(log4jProps);
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("setLogLevel() " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 
     }
@@ -164,7 +166,12 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("getLogLevels() " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return logMap;
 
@@ -206,54 +213,6 @@ public class PluginAdmin {
         }
         return exists;
     }
-
-/*
-    public Map<String,Object> jarIsEmbedded(Map<String,Object> map) {
-        Map<String,Object> returnMap = null;
-        try {
-
-            String requestedJarPath = (String) map.get("jarfile");
-
-            if(requestedJarPath != null) {
-                URL url = getClass().getClassLoader().getResource(requestedJarPath);
-                Manifest manifest = null;
-                if (url != null) {
-                    manifest = new JarInputStream(getClass().getClassLoader().getResourceAsStream(requestedJarPath)).getManifest();
-                    Attributes mainAttributess = manifest.getMainAttributes();
-                    String eName = mainAttributess.getValue("Bundle-SymbolicName");
-                    String eVersion = mainAttributess.getValue("Bundle-Version");
-                    String eMD5 = plugin.getMD5(getClass().getClassLoader().getResourceAsStream(url.getPath()));
-
-
-                    String requestedName = (String) map.get("pluginname");
-                    if(map.containsKey("version")) {
-                        String requestedVersion = (String) map.get("version");
-                        String requestedMD5 = (String) map.get("md5");
-
-                        if((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)))) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("jarstatus","embedded");
-                        }
-                    } else {
-                        if(eName.equals(requestedName)) {
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
-                            returnMap.put("version",eVersion);
-                            returnMap.put("md5",eMD5);
-                            returnMap.put("jarstatus","embedded");
-                        }
-                    }
-                }
-            }
-
-        } catch (Exception ex) {
-            logger.error("jarIsEmbedded()");
-            ex.printStackTrace();
-        }
-        return returnMap;
-    }
-*/
 
     public Map<String,Object> jarIsBundle(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
@@ -651,15 +610,6 @@ public class PluginAdmin {
             {
                 case "embedded":
 
-                    /*
-                    URL bundleURL = getClass().getClassLoader().getResource((String) map.get("jarfile"));
-                    if (bundleURL != null) {
-
-                        String bundlePath = bundleURL.getPath();
-                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream((String) map.get("jarfile"));
-                        bundle = context.installBundle(bundlePath, bundleStream);
-                    }
-                    */
 
                     String requestedJarPath = (String) map.get("jarfile");
                     String jarURLString = "jar:" + agentEmbeddedJarPath + "!/" + requestedJarPath;
