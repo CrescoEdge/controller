@@ -234,9 +234,13 @@ public class ControllerEngine {
                     return false;
                 }
             } else { //not a region, try and connect to one.
-                if(!initAgent(discoveryList)) {
-                    logger.error("Unable to init agent!");
-                    return false;
+                if(discoveryList == null) {
+                 return false;
+                } else {
+                    if (!initAgent(discoveryList)) {
+                        logger.error("Unable to init agent!");
+                        return false;
+                    }
                 }
             }
 
