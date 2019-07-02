@@ -114,7 +114,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	        if(activeMQSession == null) {
                 activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-            }
+	        }
 
                 
             if(activeMQSession.isClosed()) {

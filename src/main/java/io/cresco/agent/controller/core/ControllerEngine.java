@@ -170,8 +170,8 @@ public class ControllerEngine {
             this.outgoingMessages = new LinkedBlockingQueue<>();
             this.brokerAddressAgent = null;
 
-            DiscoveryClientIPv4 dcv4 = new DiscoveryClientIPv4(this);
-            DiscoveryClientIPv6 dcv6 = new DiscoveryClientIPv6(this);
+            //DiscoveryClientIPv4 dcv4 = new DiscoveryClientIPv4(this);
+            //DiscoveryClientIPv6 dcv6 = new DiscoveryClientIPv6(this);
 
             List<MsgEvent> discoveryList = null;
 
@@ -180,7 +180,7 @@ public class ControllerEngine {
                 if(plugin.getConfig().getStringParam("regional_controller_host") == null) {
 
                     discoveryList = initAgentDiscovery();
-                    while(discoveryList == null) {
+                    while((discoveryList == null) && cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT)) {
                         discoveryList = initAgentDiscovery();
                     }
                     isRegionalController = false;
@@ -188,7 +188,7 @@ public class ControllerEngine {
                 } else {
                     //agent with static region
                     discoveryList = initAgentStatic();
-                    while(discoveryList == null) {
+                    while((discoveryList == null) && cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT)) {
                         discoveryList = initAgentStatic();
                         Thread.sleep(1000);
                     }
