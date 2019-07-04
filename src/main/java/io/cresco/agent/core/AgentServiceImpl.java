@@ -25,7 +25,7 @@ import java.util.Properties;
 
 
 @Component(
-        service = { AgentService.class} ,
+        service = {AgentService.class} ,
         immediate = true,
         reference=@Reference(name="ConfigurationAdmin", service=ConfigurationAdmin.class)
 )
@@ -170,8 +170,99 @@ public class AgentServiceImpl implements AgentService {
         return configParams;
     }
 
+
     @Activate
     void activate(BundleContext context) {
+
+    AgentServiceImpl agentService = this;
+
+    System.out.println("PRETHREAD");
+
+    (new Thread() {
+        public void run() {
+            try {
+
+                System.out.println("THREAD");
+
+                Map<String,Object> configParams = initAgentConfigMap();
+
+                //create plugin
+                plugin = new PluginBuilder(agentService, agentService.getClass().getName(), context, configParams);
+
+
+                dbe = new DBEngine(plugin);
+
+                //create controller database implementation
+                gdb = new DBInterfaceImpl(plugin, dbe);
+
+                //create controller state persistance
+                ControllerStatePersistanceImp controllerStatePersistanceImp = new ControllerStatePersistanceImp(plugin,dbe);
+
+                //control state
+                controllerState = new ControllerState(controllerStatePersistanceImp);
+
+                //agent state
+                agentState = new AgentState(controllerState);
+
+                //create admin
+                pluginAdmin = new PluginAdmin(plugin, agentState, gdb, context);
+
+                logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
+                pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
+
+                logger.info("");
+                logger.info("       ________   _______      ________   ________   ________   ________");
+                logger.info("      /  _____/  /  ___  |    /  _____/  /  _____/  /  _____/  /  ___   /");
+                logger.info("     /  /       /  /__/  /   /  /__     /  /___    /  /       /  /  /  /");
+                logger.info("    /  /       /  __   /    /  ___/    /____   /  /  /       /  /  /  /");
+                logger.info("   /  /____   /  /  |  |   /  /____   _____/  /  /  /____   /  /__/  /");
+                logger.info("  /_______/  /__/   |__|  /_______/  /_______/  /_______/  /________/");
+                logger.info("");
+                //logger.info("      Configuration Source : {}", configMsg);
+                //logger.info("      Plugin Configuration File: {}", config.getPluginConfigFile());
+                logger.info("");
+
+                logger.info("Controller Starting Init");
+
+                controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin, gdb);
+
+                //core init needs to go here
+                if(controllerEngine.coreInit()) {
+                    logger.info("Controller Completed Core-Init");
+                } else {
+                    logger.error("Controlled Failed Core-Init : Exiting");
+                }
+
+                //setup role init
+                if(controllerEngine.commInit()) {
+                    logger.info("Controller Completed Init");
+
+                } else {
+                    logger.error("Controlled Failed Init");
+                }
+
+                while(!controllerEngine.cstate.isActive()) {
+                    logger.info("Waiting for controller to become active...");
+                    logger.info("Controller State = " + controllerEngine.cstate.getControllerState().toString());
+
+                    Thread.sleep(1000);
+                }
+
+                plugin.setIsActive(true);
+
+            } catch(Exception ex) {
+                ex.printStackTrace();
+            }
+        }
+    }).start();
+
+        System.out.println("POSTTHREAD");
+
+    }
+
+
+    @Activate
+    void activateOld(BundleContext context) {
 
 
 
@@ -263,6 +354,8 @@ public class AgentServiceImpl implements AgentService {
 
             while(!controllerEngine.cstate.isActive()) {
                 logger.info("Waiting for controller to become active...");
+                logger.info("Controller State = " + controllerEngine.cstate.getControllerState().toString());
+
                 Thread.sleep(1000);
             }
 
@@ -275,6 +368,8 @@ public class AgentServiceImpl implements AgentService {
 
     @Deactivate
     void deactivate(BundleContext context) {
+
+        System.out.println("CODY DEACTIVATE!!!!!");
 
         if(logger != null) {
             logger.info("Deactivate Controller");

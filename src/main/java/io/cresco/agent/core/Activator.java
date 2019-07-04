@@ -3,6 +3,7 @@ package io.cresco.agent.core;
 
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.ServiceReference;
 
 //import org.slf4j.bridge.SLF4JBridgeHandler;
 
@@ -13,7 +14,6 @@ import org.osgi.framework.BundleContext;
  **/
 public class Activator implements BundleActivator
 {
-
 
 
     /**
@@ -44,10 +44,10 @@ public class Activator implements BundleActivator
             */
             //org.apache.commons.configuration.DefaultFileSystem
 
-
         } catch(Exception ex) {
             ex.printStackTrace();
         }
+
     }
 
     /**
@@ -56,18 +56,12 @@ public class Activator implements BundleActivator
      * service listener.
      * @param context the framework context for the bundle.
      **/
-    public void stop(BundleContext context)
-    {
-        System.out.println("Stopped listening for service events.");
+    public void stop(BundleContext context) {
 
-        // Note: It is not required that we remove the listener here,
-        // since the framework will do it automatically anyway.
 
-        /*
-        ServiceReference configurationAdminReference =
-                context.getServiceReference(ConfigurationAdmin.class.getName());
-        */
     }
+
+
 
 
 }
