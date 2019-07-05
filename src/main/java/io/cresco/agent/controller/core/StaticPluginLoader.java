@@ -22,7 +22,6 @@ public class StaticPluginLoader implements Runnable  {
     private Gson gson;
 
 
-
     public StaticPluginLoader(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();

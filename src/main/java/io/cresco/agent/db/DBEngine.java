@@ -103,6 +103,8 @@ public class DBEngine {
                 }
             }
 
+
+
             /*
             if (!checkSchema()) {
 
@@ -2926,6 +2928,7 @@ public class DBEngine {
                     login, password);
         }
 
+
         //
         // Next we'll create the PoolableConnectionFactory, which wraps
         // the "real" Connections created by the ConnectionFactory with
@@ -2933,6 +2936,8 @@ public class DBEngine {
         //
         PoolableConnectionFactory poolableConnectionFactory =
                 new PoolableConnectionFactory(connectionFactory, null);
+
+
 
         //
         // Now we'll need a ObjectPool that serves as the
@@ -2946,6 +2951,8 @@ public class DBEngine {
 
         // Set the factory's pool property to the owning pool
         poolableConnectionFactory.setPool(connectionPool);
+
+
 
         //
         // Finally, we create the PoolingDriver itself,

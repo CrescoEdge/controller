@@ -17,9 +17,13 @@ import io.netty.handler.codec.serialization.ObjectEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class TCPDiscoveryStatic {
     //private static final Logger logger = LoggerFactory.getLogger(UDPDiscoveryStatic.class);
@@ -43,39 +47,43 @@ public class TCPDiscoveryStatic {
         boolean isSSL = false;
         int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
 
+        if(serverListening(hostAddress,discoveryPort)) {
 
-        final SslContext sslCtx;
-        if (isSSL) {
-            sslCtx = SslContextBuilder.forClient()
-                    .trustManager(InsecureTrustManagerFactory.INSTANCE).build();
-        } else {
-            sslCtx = null;
-        }
+            final SslContext sslCtx;
+            if (isSSL) {
+                sslCtx = SslContextBuilder.forClient()
+                        .trustManager(InsecureTrustManagerFactory.INSTANCE).build();
+            } else {
+                sslCtx = null;
+            }
 
-        EventLoopGroup group = new NioEventLoopGroup();
-        try {
-            Bootstrap b = new Bootstrap();
-            b.group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        public void initChannel(SocketChannel ch) {
-                            ChannelPipeline p = ch.pipeline();
-                            if (sslCtx != null) {
-                                p.addLast(sslCtx.newHandler(ch.alloc(), hostAddress, discoveryPort));
+            EventLoopGroup group = new NioEventLoopGroup();
+            try {
+                Bootstrap b = new Bootstrap();
+                b.group(group)
+                        .channel(NioSocketChannel.class)
+                        .handler(new ChannelInitializer<SocketChannel>() {
+                            @Override
+                            public void initChannel(SocketChannel ch) {
+                                ChannelPipeline p = ch.pipeline()
+                                        .addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
+                                        .addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS));
+                                if (sslCtx != null) {
+                                    p.addLast(sslCtx.newHandler(ch.alloc(), hostAddress, discoveryPort));
+                                }
+                                p.addLast(
+                                        new ObjectEncoder(),
+                                        new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
+                                        new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
                             }
-                            p.addLast(
-                                    new ObjectEncoder(),
-                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
-                                    new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
-                        }
-                    });
+                        });
 
-            // Start the connection attempt.
-            b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
+                // Start the connection attempt.
+                b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
 
-        } finally {
-            group.shutdownGracefully();
+            } finally {
+                group.shutdownGracefully();
+            }
         }
         return discoveredList;
     }
@@ -89,6 +97,26 @@ public class TCPDiscoveryStatic {
             logger.error(ex.getMessage());
         }
         return dList;
+    }
+
+    private boolean serverListening(String host, int port)
+    {
+        Socket s = null;
+        try
+        {
+            s = new Socket(host, port);
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+        finally
+        {
+            if(s != null)
+                try {s.close();}
+                catch(Exception e){}
+        }
     }
 
 
