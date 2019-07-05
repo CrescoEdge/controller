@@ -19,6 +19,9 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.handler.timeout.IdleStateHandler;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,7 +54,7 @@ public class TCPDiscoveryStatic {
             }
 
 
-            EventLoopGroup group = new NioEventLoopGroup();
+            EventLoopGroup group = new NioEventLoopGroup(1);
             try {
                 Bootstrap b = new Bootstrap();
                 b.group(group)
@@ -89,10 +92,14 @@ public class TCPDiscoveryStatic {
     public List<MsgEvent> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress) {
         List<MsgEvent> dList = null;
         try {
+
             dList = discover(disType, discoveryTimeout, hostAddress, false);
 
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("discover() " + ex.getMessage());
+            //StringWriter errors = new StringWriter();
+            //ex.printStackTrace(new PrintWriter(errors));
+            //logger.error(errors.toString());
         }
         return dList;
     }

@@ -3,7 +3,6 @@ package io.cresco.agent.controller.regionalcontroller;
 
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.db.NodeStatusType;
-import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -14,6 +13,7 @@ import javax.jms.MessageListener;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class RegionHealthWatcher {
     public Timer communicationsHealthTimer;
@@ -24,7 +24,7 @@ public class RegionHealthWatcher {
     private int wdTimer;
     public Timer regionalUpdateTimer;
     private RegionalExecutor regionalExecutor;
-
+    private AtomicBoolean communicationsHealthTimerActive = new AtomicBoolean();
 
     public RegionHealthWatcher(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -33,14 +33,13 @@ public class RegionHealthWatcher {
 
         this.regionalExecutor = new RegionalExecutor(controllerEngine);
 
-        //rce = new RegionalCommandExec(controllerEngine);
-        
-        logger.debug("Initializing");
+        logger.debug("RegionHealthWatcher Initializing");
         this.plugin = plugin;
         wdTimer = 1000;
         startTS = System.currentTimeMillis();
         communicationsHealthTimer = new Timer();
         communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 1000, wdTimer);
+
 
         int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",3);
         regionalUpdateTimer = new Timer();
@@ -153,35 +152,44 @@ public class RegionHealthWatcher {
         public void run() {
             boolean isHealthy = true;
             try {
-                if (!controllerEngine.getActiveClient().isFaultURIActive()) {
-                    isHealthy = false;
-                    logger.info("Agent Consumer shutdown detected");
+
+                if(!communicationsHealthTimerActive.get()) {
+                    communicationsHealthTimerActive.set(true);
+                    if (!controllerEngine.getActiveClient().isFaultURIActive()) {
+                        isHealthy = false;
+                        logger.info("Agent Consumer shutdown detected");
+                    }
+
+                    if (controllerEngine.cstate.isRegionalController()) {
+                        if (!controllerEngine.isDiscoveryActive()) {
+                            isHealthy = false;
+                            logger.info("Discovery shutdown detected");
+
+                        }
+                        if (!(controllerEngine.isActiveBrokerManagerActive()) || !(controllerEngine.getActiveBrokerManagerThread().isAlive())) {
+                            isHealthy = false;
+                            logger.info("Active Broker Manager shutdown detected");
+                        }
+                        if (!controllerEngine.getBroker().isHealthy()) {
+                            isHealthy = false;
+                            logger.info("Broker shutdown detected");
+                        }
+                    }
+
+                    if (!isHealthy) {
+                        controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
+                        controllerEngine.removeGDBNode(plugin.getRegion(), plugin.getAgent(), null); //remove self from DB
+                        logger.info("System has become unhealthy, rebooting services");
+                        controllerEngine.setRestartOnShutdown(true);
+                        controllerEngine.closeCommunications();
+                    }
+                    communicationsHealthTimerActive.set(false);
                 }
 
-                if (controllerEngine.cstate.isRegionalController()) {
-                    if (!controllerEngine.isDiscoveryActive()) {
-                        isHealthy = false;
-                        logger.info("Discovery shutdown detected");
-
-                    }
-                    if (!(controllerEngine.isActiveBrokerManagerActive()) || !(controllerEngine.getActiveBrokerManagerThread().isAlive())) {
-                        isHealthy = false;
-                        logger.info("Active Broker Manager shutdown detected");
-                    }
-                    if (!controllerEngine.getBroker().isHealthy()) {
-                        isHealthy = false;
-                        logger.info("Broker shutdown detected");
-                    }
-                }
-
-                if (!isHealthy) {
-                    controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
-                    controllerEngine.removeGDBNode(plugin.getRegion(), plugin.getAgent(), null); //remove self from DB
-                    logger.info("System has become unhealthy, rebooting services");
-                    controllerEngine.setRestartOnShutdown(true);
-                    controllerEngine.closeCommunications();
-                }
             } catch (Exception ex) {
+                if(communicationsHealthTimerActive.get()) {
+                    communicationsHealthTimerActive.set(false);
+                }
                 logger.error("Run {}", ex.getMessage());
                 ex.printStackTrace();
             }

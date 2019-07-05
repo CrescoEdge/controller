@@ -1260,7 +1260,10 @@ public class ControllerEngine {
 
 
             if (this.restartOnShutdown) {
-                while(!commInit()); //reinit everything
+                while(!commInit()) {
+                    Thread.sleep(1000);
+                }
+
                 this.restartOnShutdown = false;
             }
 

@@ -136,7 +136,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         }
         catch(Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("generateValidateMessage() " + ex.getMessage());
         }
 
         return encryptedString;
@@ -200,7 +200,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         }
         catch(Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("ValidatedAuthenication()" + ex.getMessage());
         }
 
         return decryptedString;
