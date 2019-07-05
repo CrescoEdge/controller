@@ -273,15 +273,27 @@ public class MeasurementEngine {
     }
 
     public Timer getTimer(String name) {
-        if(metricMap.containsKey(name)) {
-            return this.crescoMeterRegistry.timer(name);
+        if(metricMap != null) {
+            if (metricMap.containsKey(name)) {
+                if(this.crescoMeterRegistry != null) {
+                    return this.crescoMeterRegistry.timer(name);
+                } else {
+                    return null;
+                }
+            } else {
+                return null;
+            }
         } else {
             return null;
         }
     }
 
     public void updateTimer(String name, long timeStamp) {
-        getTimer(name).record(System.nanoTime() - timeStamp, TimeUnit.NANOSECONDS);
+
+        Timer tmpTimer = getTimer(name);
+        if(tmpTimer != null) {
+            tmpTimer.record(System.nanoTime() - timeStamp, TimeUnit.NANOSECONDS);
+        }
     }
 
     public Gauge getGauge(String name) {
