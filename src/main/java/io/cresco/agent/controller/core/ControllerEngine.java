@@ -1263,8 +1263,10 @@ public class ControllerEngine {
                 while(!commInit()) {
                     Thread.sleep(1000);
                 }
-
                 this.restartOnShutdown = false;
+                logger.info("Communications Reset Complete");
+            } else {
+                logger.info("Communications Shutdown Complete");
             }
 
         } catch (Exception ex) {
@@ -1274,7 +1276,6 @@ public class ControllerEngine {
             ex.printStackTrace(pw);
             logger.error(sw.toString());
         }
-        logger.info("complete comm shutting down");
 
     }
 
