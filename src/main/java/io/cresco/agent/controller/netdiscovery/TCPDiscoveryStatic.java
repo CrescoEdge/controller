@@ -6,6 +6,7 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
 import io.netty.channel.ChannelPipeline;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -17,16 +18,11 @@ import io.netty.handler.codec.serialization.ObjectEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
-import io.netty.handler.timeout.ReadTimeoutHandler;
-import io.netty.handler.timeout.WriteTimeoutHandler;
-
-import java.net.Socket;
+import io.netty.handler.timeout.IdleStateHandler;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 public class TCPDiscoveryStatic {
-    //private static final Logger logger = LoggerFactory.getLogger(UDPDiscoveryStatic.class);
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
@@ -41,13 +37,10 @@ public class TCPDiscoveryStatic {
     public List<MsgEvent> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, Boolean sendCert) throws Exception  {
         // Configure SSL.
 
-        List<MsgEvent> discoveredList = new ArrayList<>();
+        final List<MsgEvent> discoveredList = new ArrayList<>();
 
-        //boolean isSSL = plugin.getConfig().getBooleanParam("netdiscoveryssl",false);
         boolean isSSL = false;
         int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
-
-        if(serverListening(hostAddress,discoveryPort)) {
 
             final SslContext sslCtx;
             if (isSSL) {
@@ -56,6 +49,7 @@ public class TCPDiscoveryStatic {
             } else {
                 sslCtx = null;
             }
+
 
             EventLoopGroup group = new NioEventLoopGroup();
             try {
@@ -66,8 +60,9 @@ public class TCPDiscoveryStatic {
                             @Override
                             public void initChannel(SocketChannel ch) {
                                 ChannelPipeline p = ch.pipeline()
-                                        .addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
-                                        .addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS));
+                                        //.addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
+                                        //.addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
+                                        .addLast(new IdleStateHandler(30,30,30));
                                 if (sslCtx != null) {
                                     p.addLast(sslCtx.newHandler(ch.alloc(), hostAddress, discoveryPort));
                                 }
@@ -78,13 +73,16 @@ public class TCPDiscoveryStatic {
                             }
                         });
 
+                //this is the connection timeout
+                b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, discoveryTimeout);
+
                 // Start the connection attempt.
                 b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
 
             } finally {
                 group.shutdownGracefully();
             }
-        }
+
         return discoveredList;
     }
 
@@ -98,26 +96,5 @@ public class TCPDiscoveryStatic {
         }
         return dList;
     }
-
-    private boolean serverListening(String host, int port)
-    {
-        Socket s = null;
-        try
-        {
-            s = new Socket(host, port);
-            return true;
-        }
-        catch (Exception e)
-        {
-            return false;
-        }
-        finally
-        {
-            if(s != null)
-                try {s.close();}
-                catch(Exception e){}
-        }
-    }
-
 
 }

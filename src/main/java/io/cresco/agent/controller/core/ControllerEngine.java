@@ -188,7 +188,8 @@ public class ControllerEngine {
                 } else {
                     //agent with static region
                     discoveryList = initAgentStatic();
-                    while((discoveryList == null) && cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT)) {
+
+                    while((discoveryList == null) && (cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT) || cstate.getControllerState().equals(ControllerState.Mode.STANDALONE_INIT))) {
                         discoveryList = initAgentStatic();
                         Thread.sleep(1000);
                     }
@@ -536,18 +537,29 @@ public class ControllerEngine {
 
                 TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
 
-                discoveryList.addAll(ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host")));
+                List<MsgEvent> discoveryListTmp = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("regional_controller_host"));
 
-                logger.debug("Static Agent Connection count = {}" + discoveryList.size());
-                if (discoveryList.size() == 0) {
-                    logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
+                if(discoveryListTmp != null) {
+                    discoveryList.addAll(discoveryListTmp);
+
+                    logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+                    if (discoveryList.size() == 0) {
+                        logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
+                        discoveryList = null;
+                    }
+                    if (discoveryList.isEmpty()) {
+                        discoveryList = null;
+                    }
+
+                } else {
                     discoveryList = null;
                 }
-                if (discoveryList.isEmpty()) {
-                    discoveryList = null;
-                }
+
             } catch (Exception ex) {
                 logger.error("initAgentStatic() Error " + ex.getMessage());
+                StringWriter errors = new StringWriter();
+                ex.printStackTrace(new PrintWriter(errors));
+                logger.error(errors.toString());
                 discoveryList = null;
             }
 
