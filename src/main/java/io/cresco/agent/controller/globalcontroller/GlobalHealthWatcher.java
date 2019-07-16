@@ -455,6 +455,8 @@ public class GlobalHealthWatcher implements Runnable {
     }
     */
 
+
+    /*
     private void sendGlobalWatchDogRegister() {
 
 	    try {
@@ -467,15 +469,7 @@ public class GlobalHealthWatcher implements Runnable {
 
                 if(controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
                     MsgEvent le = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
-                    /*
-                    MsgEvent le = new MsgEvent(MsgEvent.Type.CONFIG, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "enabled");
-                    le.setParam("src_region", plugin.getRegion());
-                    le.setParam("src_agent", plugin.getAgent());
-                    le.setParam("dst_region",controllerEngine.cstate.getGlobalRegion());
-                    le.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());
-                    le.setParam("is_regional", Boolean.TRUE.toString());
-                    le.setParam("is_global", Boolean.TRUE.toString());
-                    */
+
 
                     le.setParam("region_name",controllerEngine.cstate.getRegionalRegion());
 
@@ -496,6 +490,9 @@ public class GlobalHealthWatcher implements Runnable {
         }
 
     }
+    */
+
+
 
     private List<MsgEvent> dynamicGlobalDiscovery() {
         List<MsgEvent> discoveryList = null;

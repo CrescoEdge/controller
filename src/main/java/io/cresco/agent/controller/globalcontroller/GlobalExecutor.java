@@ -632,20 +632,13 @@ public class GlobalExecutor implements Executor {
     private MsgEvent globalEnable(MsgEvent ce) {
         try {
             logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
-            //logger.trace("Message Body [" + ce.getMsgBody() + "] [" + ce.getParams().toString() + "]");
+            logger.trace("Message Body [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().nodeUpdate(ce);
 
-            //logger.error("CODY INCOMING AGENT ADD REGION*: " + ce.getParams());
-
-            //TODO Hack to create region health edge
-            Map<String,String> paramMap = new HashMap<>();
-            paramMap.put("enable_pending", Boolean.TRUE.toString());
-            paramMap.put("region", ce.getParam("src_region"));
-
-
-            String edgeId = controllerEngine.getGDB().addEdge(ce.getSrcRegion(),null,null, ce.getDstRegion(), null,null,"isRegionHealth",paramMap);
 
             ce.removeParam("regionconfigs");
+            ce.removeParam("agentconfigs");
+
             ce.setParam("is_registered",Boolean.TRUE.toString());
         }
         catch(Exception ex) {

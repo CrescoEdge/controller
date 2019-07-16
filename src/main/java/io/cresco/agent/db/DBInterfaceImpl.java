@@ -85,11 +85,6 @@ public class DBInterfaceImpl implements DBInterface {
         }
     }
 
-    /*
-    public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
-        dbe.addNode(region,agent,plugin, status_code,status_desc,watchdog_period,watchdog_ts,configparams);
-    }
-    */
 
     public boolean nodeUpdate(MsgEvent de) {
         boolean wasAdded = false;
@@ -145,6 +140,7 @@ public class DBInterfaceImpl implements DBInterface {
                     logger.debug("found plugins! ");
                     pluginconfigs = de.getCompressedParam("pluginconfigs");
                 }
+
 
                 wasAdded = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
             } else {

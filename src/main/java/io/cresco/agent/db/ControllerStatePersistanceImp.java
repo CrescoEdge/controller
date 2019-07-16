@@ -402,13 +402,12 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             enableMsg.setParam("desc", "to-gc-region");
             enableMsg.setParam("mode","REGION");
 
-            Map<String, String> exportMap = dbe.getDBExport(true, false, false, plugin.getRegion(), null, null);
+            Map<String, String> exportMap = dbe.getDBExport(true, true, false, plugin.getRegion(), plugin.getAgent(), null);
 
             enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
+            enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
 
             MsgEvent re = plugin.sendRPC(enableMsg);
-
-
 
             if (re != null) {
 
@@ -420,9 +419,9 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
             }
 
             if(isRegistered) {
-                logger.info("Region: " + localRegion + " registered with Region: " + globalRegion);
+                logger.info("Region: " + localRegion + " registered with Global: " + globalRegion);
             } else {
-                logger.error("Region: " + localRegion + " failed to register with Region: " + globalRegion + "!");
+                logger.error("Region: " + localRegion + " failed to register with Global: " + globalRegion + "!");
             }
 
         } catch (Exception ex) {
@@ -601,7 +600,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                             if (msg instanceof MapMessage) {
 
                                 MapMessage mapMessage = (MapMessage)msg;
-                                //logger.error("GLOBAL HEALTH MESSAGE: INCOMING");
+                                //logger.error("GLOBAL HEALTH MESSAGE: INCOMING " + mapMessage.getStringProperty("region_id"));
                                 dbe.nodeUpdateStatus("REGION", mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
 
                             }

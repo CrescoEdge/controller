@@ -195,7 +195,9 @@ public class DBEngine {
 
                 Map<String,List<Map<String,String>>> regionConfigMap = gson.fromJson(regionconfigs,type);
                 for (Map.Entry<String, List<Map<String,String>>> entry : regionConfigMap.entrySet()) {
+
                     List<Map<String, String>> regionList = entry.getValue();
+
                     for(Map<String,String> regionMap : regionList) {
                         String region_id = regionMap.get("region_id");
                         String status_code = regionMap.get("status_code");
@@ -281,6 +283,8 @@ public class DBEngine {
 
                     String region_id = getRNodeFromAnode(agent_id);
 
+                    if(region_id != null) {
+
                     List<String> removePluginList = getNodeList(region_id,agent_id);
 
                     List<Map<String,String>> pluginList = entry.getValue();
@@ -317,6 +321,12 @@ public class DBEngine {
                     for(String plugin_id : removePluginList) {
                         removeNode(region_id,agent_id,plugin_id);
                     }
+
+                    } else {
+                        System.out.println("WHY DOES AGENT: " + agent_id + " HAVE NO REGION!");
+                        Thread.dumpStack();
+                    }
+
                 }
 
             }
@@ -893,14 +903,16 @@ public class DBEngine {
 
             String queryString = "SELECT region_id FROM agentOf WHERE agent_id = '" + agentId +"'";
 
-
             Connection conn = ds.getConnection();
             Statement stmt = conn.createStatement();
 
             ResultSet rs = stmt.executeQuery(queryString);
 
-            rs.next();
-            configParams = rs.getString(1);
+            if (rs.next()) {
+                configParams = rs.getString(1);
+            } else {
+                System.out.println("WHY IS RESULT SET EMPTY THIS NULL: AGENT_ID = " + agentId);
+            }
 
             rs.close();
             stmt.close();
@@ -913,6 +925,7 @@ public class DBEngine {
             ex.printStackTrace(new PrintWriter(errors));
             System.out.println(errors.toString());
         }
+
         return configParams;
     }
 
@@ -1113,6 +1126,7 @@ public class DBEngine {
                 stmt.close();
 
                 conn.commit();
+
             }
             catch(Exception e)
             {
@@ -2520,21 +2534,27 @@ public class DBEngine {
                 queryString = "SELECT region_id FROM rnode ";
             }
 
-            Connection conn = ds.getConnection();
-            Statement stmt = conn.createStatement();
+            if(queryString != null) {
 
-            ResultSet rs = stmt.executeQuery(queryString);
+                Connection conn = ds.getConnection();
+                Statement stmt = conn.createStatement();
 
-            while (rs.next()) {
-                String node = rs.getString(1);
-                if(!nodeList.contains(node)) {
-                    nodeList.add(node);
+                ResultSet rs = stmt.executeQuery(queryString);
+
+                while (rs.next()) {
+                    String node = rs.getString(1);
+                    if (!nodeList.contains(node)) {
+                        nodeList.add(node);
+                    }
                 }
-            }
 
-            rs.close();
-            stmt.close();
-            conn.close();
+                rs.close();
+                stmt.close();
+                conn.close();
+            } else {
+                System.out.println("getNodeList(regionId = " + regionId + " , agentId= " + agentId + ")");
+                Thread.dumpStack();
+            }
 
         } catch(Exception ex) {
             ex.printStackTrace();
