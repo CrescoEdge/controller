@@ -83,6 +83,7 @@ public class ActiveBrokerManager implements Runnable  {
 								logger.trace("BA EXIST ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
 							}
 							logger.trace("BA EXIST ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
+
 						} else {
 
 							logger.error("brokered agents does not contains key for " + agentPath);
