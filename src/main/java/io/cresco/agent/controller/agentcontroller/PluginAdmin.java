@@ -237,7 +237,8 @@ public class PluginAdmin {
 
                         if(requestedMD5 != null) {
 
-                            String jarLocation = Paths.get(b.getLocation()).toString();
+                            //String jarLocation = Paths.get(b.getLocation()).toString();
+                            String jarLocation = b.getLocation();
 
                             if(jarLocation.contains("!")) {
                                 jarLocation = "jar:" + jarLocation;
