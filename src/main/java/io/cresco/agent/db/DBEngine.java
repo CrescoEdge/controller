@@ -206,8 +206,6 @@ public class DBEngine {
                         //String watchdog_ts = agentMap.get("watchdog_ts");
                         String configparams = regionMap.get("configparams");
 
-                        System.out.println("REGION UPDATE: " + region_id);
-
                         if(!nodeExist(region_id,null,null)) {
 
                             //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
@@ -244,8 +242,6 @@ public class DBEngine {
                         String watchdog_period = agentMap.get("watchdog_period");
                         //String watchdog_ts = agentMap.get("watchdog_ts");
                         String configparams = agentMap.get("configparams");
-
-                        System.out.println("AGENT UPDATE: " + agent_id);
 
                         if(!nodeExist(region_id,agent_id,null)) {
 
@@ -307,8 +303,6 @@ public class DBEngine {
                         String md5 = pluginMap.get("md5");
                         String configparams = pluginMap.get("configparams");
                         String persistence_code = pluginMap.get("persistence_code");
-
-                        System.out.println("PLUGIN UPDATE: " + plugin_id);
 
                         if(!nodeExist(null,null, plugin_id)) {
                             int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
