@@ -161,11 +161,14 @@ public class RegionHealthWatcher {
                     }
 
                     if (controllerEngine.cstate.isRegionalController()) {
+                        //disabled to allow discovery to be started after regional init
+                        /*
                         if (!controllerEngine.isDiscoveryActive()) {
                             isHealthy = false;
                             logger.info("Discovery shutdown detected");
 
                         }
+                         */
                         if (!(controllerEngine.isActiveBrokerManagerActive()) || !(controllerEngine.getActiveBrokerManagerThread().isAlive())) {
                             isHealthy = false;
                             logger.info("Active Broker Manager shutdown detected");

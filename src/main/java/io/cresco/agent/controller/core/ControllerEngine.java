@@ -278,8 +278,17 @@ public class ControllerEngine {
                 logger.info("Performance Controller monitoring initialized");
             }
 
-            //Setup Global is Needed
             if(isRegionalController){
+
+                //don't enable discovery until regional init is complete
+                logger.info("Discovery Engine ");
+
+                //discovery engine
+                if(!startNetDiscoveryEngine()) {
+                    logger.error("Start Network Discovery Engine Failed!");
+                }
+
+                //Setup Global is Needed
                 initGlobal();
             }
 
@@ -500,12 +509,16 @@ public class ControllerEngine {
                             }
                         }
                     }
+
+                    /*
                     if (this.plugin.getConfig().getBooleanParam("enable_clientnetdiscovery", true)) {
                         //discovery engine
                         if (!startNetDiscoveryEngine()) {
                             logger.error("Start Network Discovery Engine Failed!");
                         }
                     }
+                    */
+
                     //hold no loop
                     if(!isInit || discoveryList.isEmpty()) {
 
@@ -848,13 +861,6 @@ public class ControllerEngine {
             }
 
             this.discoveryMap = new ConcurrentHashMap<>(); //discovery map
-
-            logger.info("Discovery Engine ");
-
-            //discovery engine
-            if(!startNetDiscoveryEngine()) {
-                logger.error("Start Network Discovery Engine Failed!");
-            }
 
             if(initIOChannels()) {
                 logger.debug("initIOChannels Success");
