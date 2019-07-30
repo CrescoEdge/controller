@@ -485,7 +485,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                 enableMsg.setParam("desc", "to-rc-agent");
                 enableMsg.setParam("mode","AGENT");
 
-                Map<String, String> exportMap = dbe.getDBExport(false, true, false, plugin.getRegion(), plugin.getAgent(), null);
+                Map<String, String> exportMap = dbe.getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
 
                 enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
 
