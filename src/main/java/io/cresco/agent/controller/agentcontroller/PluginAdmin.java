@@ -284,8 +284,11 @@ public class PluginAdmin {
 
 
         } catch (Exception ex) {
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
             logger.error("jarIsBundle() " + ex.getMessage());
-            ex.printStackTrace();
+            logger.error("jarIsBundle() " + errors);
+
         }
         return returnMap;
     }
