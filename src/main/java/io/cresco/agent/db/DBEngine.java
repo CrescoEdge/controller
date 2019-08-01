@@ -1349,7 +1349,7 @@ public class DBEngine {
 
                 String insertPNodeString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
                     ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                    "WHERE plugin_id='" + plugin + "'";;
+                    "WHERE plugin_id='" + plugin + "'";
 
 
                 stmt.executeUpdate(insertPNodeString);
@@ -2056,7 +2056,6 @@ public class DBEngine {
             stmt.close();
             conn.close();
 
-            //todo likely better way to do this hack to let derby work
         }
         catch (SQLException sqle) {
             //eat SQL exception, if tables does not exist this will throw

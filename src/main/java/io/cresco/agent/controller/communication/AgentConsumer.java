@@ -78,7 +78,7 @@ public class AgentConsumer {
 		logger.trace("RXQueue=" + RXQueueName + " URI=" + URI);
 
 
-		sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI,false, Session.AUTO_ACKNOWLEDGE);
+		sess = controllerEngine.getActiveClient().createSession(URI,false, Session.AUTO_ACKNOWLEDGE);
 
 		RXqueue = sess.createQueue(RXQueueName);
 		MessageConsumer consumer = sess.createConsumer(RXqueue);

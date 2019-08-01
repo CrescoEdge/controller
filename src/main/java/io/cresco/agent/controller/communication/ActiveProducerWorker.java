@@ -39,7 +39,7 @@ public class ActiveProducerWorker {
 			this.TXQueueName = TXQueueName;
 			gson = new Gson();
 
-			sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 
 			destination = sess.createQueue(TXQueueName);
 

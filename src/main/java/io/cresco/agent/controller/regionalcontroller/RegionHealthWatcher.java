@@ -181,8 +181,6 @@ public class RegionHealthWatcher {
 
                     if (!isHealthy) {
                         controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
-                        //todo why remove self from DB?
-                        //controllerEngine.removeGDBNode(plugin.getRegion(), plugin.getAgent(), null); //remove self from DB
                         logger.info("System has become unhealthy, rebooting services");
                         controllerEngine.setRestartOnShutdown(true);
                         controllerEngine.closeCommunications();

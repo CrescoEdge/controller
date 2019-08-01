@@ -158,213 +158,9 @@ public class DBInterfaceImpl implements DBInterface {
         return wasAdded;
     }
 
-    public boolean addNodeFromUpdateOld(MsgEvent de) {
-        boolean wasAdded = false;
-
-        try {
-
-            String region = de.getParam("region_name");
-            String agent = de.getParam("agent_name");
-            String plugin = de.getParam("plugin_id");
-
-            logger.debug("Adding Node: " + de.getParams().toString());
-
-            if(region != null) {
-                if(!dbe.nodeExist(region,null,null)) {
-                    //fixme take into account current state
-                    //add region, this will need to be more complex in future
-                    //dbe.addNode(region,null,null,0,"Region added by Agent",0, 0, null);
-                    dbe.addRNode(region,0,"Region addNodeFromUpdate" , 0, 0, "none");
-                }
-
-                //if region update, otherwise ignore
-                if((region != null) && (agent == null)) {
-                    dbe.updateNode(region,null,null,0,"Region added by Agent",0, 0, null);
-                }
-
-            }
-
-            //Is Agent
-            if((region != null) && (agent != null) && (plugin == null)) {
-
-/*
-                    aNodeMap.put("agent_id", rs.getString("plugin_id"));
-                    aNodeMap.put("status_code", rs.getString("status_code"));
-                    aNodeMap.put("status_desc", rs.getString("status_desc"));
-                    aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-                    aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
-                    aNodeMap.put("configparams", rs.getString("configparams"));
-                     */
-
-                //agentconfig
-
-                if(!dbe.nodeExist(region,agent,null)) {
-
-                    logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
-
-                    dbe.addANode(agent,0,"Agent addNodeFromUpdate",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
-
-                    //assoicate agent to region
-                    dbe.assoicateANodetoRNode(region, agent);
-                } else {
-                    logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
-                    dbe.updateNode(region,agent,null,0,"Agent added by Agent",Integer.parseInt(de.getParam("watchdogtimer")),System.currentTimeMillis(),de.getParam("configparams"));
-                }
-
-                if (de.getParam("pluginconfigs") != null) {
-
-                    logger.debug("found plugins! ");
-
-                    List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
-                            new TypeToken<List<Map<String, String>>>() {
-                            }.getType());
-
-                    //Add Plugin Information
-                    for (Map<String, String> configMap : configMapList) {
-                        String pluginId = configMap.get("plugin_id");
-
-                        String status_code = configMap.get("status_code");
-                        String status_desc = configMap.get("status_desc");
-                        String watchdog_period = configMap.get("watchdog_period");
-                        String watchdog_ts = configMap.get("watchdog_ts");
-                        String pluginname = configMap.get("pluginname");
-                        String jarfile = configMap.get("jarfile");
-                        String version = configMap.get("version");
-                        String md5 = configMap.get("md5");
-                        String configparams = configMap.get("configparams");
-                        String persistence_code = configMap.get("persistence_code");
-
-                        logger.debug("Sub-Node: region: " + region + " agent: " + agent + " plugin: " + pluginId);
-
-                        if(!nodeExist(null,null,pluginId)) {
-                            logger.debug("Adding Sub-Node: " + configMap.toString());
-                            //dbe.addNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
-                            int status = dbe.addPNode(agent,pluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),Long.parseLong(watchdog_ts),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
-
-                            logger.debug("\n\n" + "status: " + status + " \n\n");
-                            //assoicate pNode to aNode
-                            //dbe.assoicatePNodetoANode(agent,pluginId);
-                        } else {
-                            logger.debug("Updating Sub-Node: " + configMap.toString());
-                            dbe.updateNode(region, agent, pluginId, Integer.parseInt(status_code), status_desc, Integer.parseInt(de.getParam("watchdogtimer")), System.currentTimeMillis(), configparams);
-                        }
-                    }
-                } else {
-                    logger.debug("NO PLUGINS");
-                }
-
-                //throw new NullPointerException("demo");
-            }
-
-            wasAdded = true;
-
-        } catch (Exception ex) {
-            logger.error("addNodeFromUpdate() : " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
-        }
-
-        return wasAdded;
-    }
-
     public String getPipeline(String pipelineId) {
         return dbe.getResourceNodeSubmission(pipelineId);
     }
-
-    /*
-    public boolean watchDogUpdate(MsgEvent de) {
-        boolean wasUpdated = false;
-
-        try {
-
-
-            if(de.paramsContains("pluginconfigs")) {
-                logger.debug("watchDogUpdate() src_region:" + de.getSrcRegion() + " src_agent:" + de.getSrcAgent() + " src_plugin:" + de.getSrcPlugin());
-                logger.debug("watchDogUpdate() " + de.getParams().toString());
-                logger.debug("watchDogUpdate() " + de.getCompressedParam("pluginconfigs"));
-            }
-
-
-            String region = de.getParam("region_name");
-            String agent = de.getParam("agent_name");
-            String pluginId = de.getParam("plugin_id");
-
-
-            logger.debug("watchdog() region=" + region + " agent=" + agent + " plugin=" + pluginId);
-
-            if(dbe.nodeExist(region,agent,pluginId)) {
-
-
-                dbe.updateWatchDogTS(region,agent,pluginId);
-
-                if((region != null) && (agent != null) && (pluginId == null)) {
-
-                    //add agentcontroller configs for agent
-                    if (de.getParam("pluginconfigs") != null) {
-
-                        List<Map<String, String>> configMapList = new Gson().fromJson(de.getCompressedParam("pluginconfigs"),
-                                new TypeToken<List<Map<String, String>>>() {
-                                }.getType());
-
-                        //build a list of plugins on record for an agent
-                        List<String> pluginRemoveList = dbe.getNodeList(region,agent);
-
-                        for (Map<String, String> configMap : configMapList) {
-                            String subpluginId = configMap.get("plugin_id");
-
-                            //remove agentcontroller from remove list of new config exist
-                            pluginRemoveList.remove(subpluginId);
-
-                            //add new nodes not currently on the system, add node will check that they exist
-                            if(!dbe.nodeExist(region,agent,subpluginId)) {
-
-                                String status_code = configMap.get("status_code");
-                                String status_desc = configMap.get("status_desc");
-                                String watchdog_period = configMap.get("watchdog_period");
-                                String watchdog_ts = configMap.get("watchdog_ts");
-                                String pluginname = configMap.get("pluginname");
-                                String jarfile = configMap.get("jarfile");
-                                String version = configMap.get("version");
-                                String md5 = configMap.get("md5");
-                                String configparams = configMap.get("configparams");
-                                String persistence_code = configMap.get("persistence_code");
-
-                                logger.debug("configMap: " + configMap.toString());
-
-
-                                logger.debug("subpluginId:" + subpluginId + " status_code=" + status_code + " status_desc=" + status_desc + " watchdogtimer=" + configMap.get("watchdogtimer") + " configMap: " + configMap.toString());
-
-                                //todo plugins need to list their watchdog peroid
-                                //dbe.addNode(region,agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(configMap.get("watchdogtimer")),System.currentTimeMillis(),configparams);
-                                dbe.addPNode(agent,subpluginId,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),Long.parseLong(watchdog_ts),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
-                            }
-                        }
-
-                        //remove nodes on the pluginRemoveList, they are no longer on the agent
-                        for(String removePlugin : pluginRemoveList) {
-                            dbe.removeNode(region,agent,removePlugin);
-                        }
-                    }
-                }
-
-
-                wasUpdated = true;
-            }
-            else {
-                logger.error("watchdog() nodeID does not exist for region:" + region + " agent:" + agent + " pluginId:" + pluginId);
-                logger.error(de.getMsgType().toString() + " [" + de.getParams().toString() + "]");
-
-            }
-
-        } catch (Exception ex) {
-            logger.error(": watchDogUpdate ERROR : " + ex.toString());
-            ex.printStackTrace();
-        }
-        return wasUpdated;
-    }
-    */
 
     public Map<String, NodeStatusType> getEdgeHealthStatus(String region, String agent, String pluginId) {
 
@@ -530,7 +326,6 @@ public class DBInterfaceImpl implements DBInterface {
                 catch(Exception ex)
                 {
                     logger.error("createPipelineNodes() Nodes: " + ex.toString());
-                    //todo remove this
                     StringWriter errors = new StringWriter();
                     ex.printStackTrace(new PrintWriter(errors));
                     logger.error(errors.toString());
@@ -589,7 +384,6 @@ public class DBInterfaceImpl implements DBInterface {
                 catch(Exception ex)
                 {
                     logger.error("createPipelineNodes() Edges: " + ex.toString());
-                    //todo remove this
                     StringWriter errors = new StringWriter();
                     ex.printStackTrace(new PrintWriter(errors));
                     logger.error(errors.toString());
@@ -607,7 +401,6 @@ public class DBInterfaceImpl implements DBInterface {
         catch(Exception ex)
         {
             logger.error("createPipelineNodes(): " + ex.toString());
-            //todo remove this
             StringWriter errors = new StringWriter();
             ex.printStackTrace(new PrintWriter(errors));
             logger.error(errors.toString());
@@ -620,11 +413,7 @@ public class DBInterfaceImpl implements DBInterface {
     }
 
     public boolean setPipelineStatus(String pipelineId, String status_code, String status_desc) {
-        if(dbe.setResourceNodeStatus(pipelineId, Integer.parseInt(status_code),status_desc) == 1) {
-            return true;
-        } else {
-            return false;
-        }
+        return dbe.setResourceNodeStatus(pipelineId, Integer.parseInt(status_code), status_desc) == 1;
 
     }
 

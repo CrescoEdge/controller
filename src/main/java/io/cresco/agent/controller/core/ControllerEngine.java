@@ -47,14 +47,11 @@ public class ControllerEngine {
     private ConcurrentHashMap<String, BrokeredAgent> brokeredAgents;
     private BlockingQueue<MsgEvent> incomingCanidateBrokers;
     private BlockingQueue<MsgEvent> outgoingMessages;
-    //private BlockingQueue<MsgEvent> resourceScheduleQueue;
-    //private BlockingQueue<gPayload> appScheduleQueue;
     private Map<String, Long> discoveryMap;
 
 
     public AtomicInteger responds = new AtomicInteger(0);
 
-    private boolean ConsumerActive = false;
     private boolean ActiveBrokerManagerActive = false;
     private boolean clientDiscoveryActiveIPv4 = false;
     private boolean clientDiscoveryActiveIPv6 = false;
@@ -73,10 +70,7 @@ public class ControllerEngine {
     private ActiveClient activeClient;
     private DataPlaneService dataPlaneService;
     private ActiveBroker broker;
-    private KPIBroker kpiBroker;
     private DBInterfaceImpl gdb;
-    private KPIProducer kpip;
-    //private ActiveProducer ap;
     private AgentHealthWatcher agentHealthWatcher;
     private RegionHealthWatcher regionHealthWatcher;
     private ExecutorService msgInProcessQueue;
@@ -163,15 +157,11 @@ public class ControllerEngine {
         try {
 
 
-            //Queue<Message> receivedMessages = registry.gauge(“unprocessed.messages”, new ConcurrentLinkedQueue<>(), ConcurrentLinkedQueue::size);
             this.brokeredAgents = new ConcurrentHashMap<>();
             //this.brokeredAgents = getMeasurementEngine().\
             this.incomingCanidateBrokers = new LinkedBlockingQueue<>();
             this.outgoingMessages = new LinkedBlockingQueue<>();
             this.brokerAddressAgent = null;
-
-            //DiscoveryClientIPv4 dcv4 = new DiscoveryClientIPv4(this);
-            //DiscoveryClientIPv6 dcv6 = new DiscoveryClientIPv6(this);
 
             List<MsgEvent> discoveryList = null;
 
@@ -245,27 +235,12 @@ public class ControllerEngine {
                 }
             }
 
-            //setup producer, consumers, and data plane
-            //move this to the specific role starters so we can make sure things are really active before setting state.
-            /*
-            if(!initIOChannels()) {
-                logger.error("initIOChannels Failed");
-                return false;
-            }
-            */
-
-
-            //set new watchdog to reflect discovered values
-            //this.setWatchDog(new WatchDog(this.region, this.agent, this.pluginID, this.logger, this.config));
-            //getWatchDog().start();
-            //logger.info("WatchDog Started");
 
             this.agentHealthWatcher = new AgentHealthWatcher(this);
             //Setup Regional Watcher
             this.regionHealthWatcher = new RegionHealthWatcher(this);
 
             //enable this here to avoid nu,, perfControllerMonitor on global controller start
-            //todo enable metrics
             if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
                 //enable measurements
                 this.measurementEngine = new MeasurementEngine(this);
@@ -365,16 +340,11 @@ public class ControllerEngine {
         boolean isInit = false;
         try {
             if(plugin.getConfig().getStringParam("regional_controller_host") != null) {
-                //this.cstate.setAgentInit("initAgent() Static Regional Host: " + agentcontroller.getConfig().getStringParam("regional_controller_host"));
                 while(!isInit) {
 
                     String tmpRegion = discoveryList.get(0).getParam("dst_region");
-                    //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
 
                     //Agent Name now set on core init
-                    //cstate.setAgentInit(tmpRegion,cstate.getAgent(),"initAgent() Static Regional Host: " + plugin.getConfig().getStringParam("regional_controller_host") + "TS : " + System.currentTimeMillis());
-                    //this.agent = agentcontroller.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
-                    //this.agentpath = tmpRegion + "_" + this.agent;
                     certificateManager = new CertificateManager(this);
 
                     TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
@@ -456,7 +426,6 @@ public class ControllerEngine {
 
                     if ((pcbrokerAddress != null) && (pcbrokerValidatedAuthenication != null)) {
 
-                        //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
                         //agent name now set on core init
                         cstate.setAgentInit(pcRegion,cstate.getAgent(),"initAgent() : Dynamic Discovery");
 
@@ -679,11 +648,8 @@ public class ControllerEngine {
             }
             int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
             if(isLocalBroker()) {
-                //this.ap = new ActiveProducer(this, "vm://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
                 this.activeClient.initActiveAgentProducer("vm://" + this.brokerAddressAgent + ":" + discoveryPort);
             } else {
-                //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort, brokerUserNameAgent, brokerPasswordAgent);
-                //this.ap = new ActiveProducer(this, "ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false", brokerUserNameAgent, brokerPasswordAgent);
                 this.activeClient.initActiveAgentProducer("nio+ssl://" + this.brokerAddressAgent + ":" + discoveryPort + "?verifyHostName=false");
             }
             logger.debug("Agent ProducerThread Started..");
@@ -768,19 +734,6 @@ public class ControllerEngine {
         boolean isInit = false;
         try {
 
-            //String kpiPort = plugin.getConfig().getStringParam("kpiport","32011");
-            //String kpiProtocol = plugin.getConfig().getStringParam("kpiprotocol","tcp");
-            //this.kpiBroker = new KPIBroker(this, kpiProtocol, kpiPort,cstate.getAgentPath() + "_KPI",brokerUserNameAgent,brokerPasswordAgent);
-
-
-            //create bridge
-            //todo create bridge
-            //BridgeAgentKPI bridgeAgentKPI = new BridgeAgentKPI(plugin.getAgentService().getAgentState().getRegion() + "_" + plugin.getAgentService().getAgentState().getAgent());
-
-            //BridgeAgentKPI(String localport, String remotePort, String brokerName)
-
-            //init KPIProducer
-            //this.kpip = new KPIProducer(this, "KPI", kpiProtocol + "://" + this.brokerAddressAgent + ":" + kpiPort, "bname", "bpass");
 
             if(cstate.isRegionalController()) {
 
@@ -808,8 +761,6 @@ public class ControllerEngine {
     private Boolean initRegion() {
         boolean isInit = false;
         try {
-            //String tmpRegion = plugin.getConfig().getStringParam("regionname", "region-" + java.util.UUID.randomUUID().toString());
-            //String tmpAgent = plugin.getConfig().getStringParam("agentname", "agent-" + java.util.UUID.randomUUID().toString());
             cstate.setRegionInit(cstate.getRegion(),cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
             logger.debug("Generated regionid=" + cstate.getRegion());
 
@@ -885,15 +836,6 @@ public class ControllerEngine {
     }
 
     public PluginBuilder getPluginBuilder() {return  plugin; }
-
-    /*
-    public void setConsumerActive(boolean consumerActive) {
-        ConsumerActive = consumerActive;
-    }
-    public boolean isConsumerActive() {
-        return ConsumerActive;
-    }
-    */
 
     public ConcurrentHashMap<String, BrokeredAgent> getBrokeredAgents() {
         return brokeredAgents;
@@ -990,9 +932,7 @@ public class ControllerEngine {
             try {
                 ActiveMQDestination[] er = this.broker.broker.getBroker().getDestinations();
                 for (ActiveMQDestination des : er) {
-                    //for(String despaths : des.getDestinationPaths()) {
-                    //    logger.info("isReachable destPaths: " + despaths);
-                    //}
+
                     if (des.isQueue()) {
                         String testPath = des.getPhysicalName();
 
@@ -1017,19 +957,7 @@ public class ControllerEngine {
                         }
                     }
                 }
-                /*
-                Map<String,BrokeredAgent> brokerAgentMap = this.getBrokeredAgents();
-                for (Map.Entry<String, BrokeredAgent> entry : brokerAgentMap.entrySet()) {
-                    String agentPath = entry.getKey();
-                    BrokeredAgent bAgent = entry.getValue();
 
-                    logger.info("isReachable : agentName: " + agentPath + " agentPath:" + bAgent.agentPath + " " + bAgent.activeAddress + " " + bAgent.brokerStatus.toString());
-                    if((remoteAgentPath.equals(agentPath)) && (bAgent.brokerStatus == BrokerStatusType.ACTIVE))
-                    {
-                        isReachableAgent = true;
-                    }
-                }
-                */
             } catch (Exception ex) {
                 logger.error("isReachableAgent Error: {}", ex.getMessage());
             }
@@ -1099,15 +1027,6 @@ public class ControllerEngine {
         this.resourceScheduler = resourceScheduler;
     }
 
-    /*
-    public BlockingQueue<gPayload> getAppScheduleQueue() {
-        return appScheduleQueue;
-    }
-    public void setAppScheduleQueue(BlockingQueue<gPayload> appScheduleQueue) {
-        this.appScheduleQueue = appScheduleQueue;
-    }
-    */
-
     public DBInterfaceImpl getGDB() {
         return gdb;
     }
@@ -1115,23 +1034,12 @@ public class ControllerEngine {
         this.gdb = gdb;
     }
 
-    public KPIProducer getKPIProducer() { return this.kpip; }
-
     public boolean isDBManagerActive() {
         return DBManagerActive;
     }
     public void setDBManagerActive(boolean DBManagerActive) {
         this.DBManagerActive = DBManagerActive;
     }
-
-    /*
-    public BlockingQueue<MsgEvent> getResourceScheduleQueue() {
-        return resourceScheduleQueue;
-    }
-    public void setResourceScheduleQueue(BlockingQueue<MsgEvent> appScheduleQueue) {
-        this.resourceScheduleQueue = appScheduleQueue;
-    }
-    */
 
     public boolean isGlobalControllerManagerActive() {
         return GlobalControllerManagerActive;
@@ -1237,20 +1145,6 @@ public class ControllerEngine {
                 logger.info("Active Broker Manager shutting down");
             }
 
-            if(this.kpip != null) {
-                logger.trace("KPI Producer Shutdown");
-                this.kpip.shutdown();
-                logger.trace("KPI Producer Shutdown");
-
-            }
-
-            if (this.kpiBroker != null) {
-                logger.trace("KPIBroker shutting down");
-                this.kpiBroker.stopBroker();
-                this.kpiBroker = null;
-                logger.info("KPIBroker shutting down");
-
-            }
 
             if (this.broker != null) {
                 logger.trace("Broker shutting down");

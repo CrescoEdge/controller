@@ -186,7 +186,7 @@ public class ActiveBroker {
 
 
 			} else {
-				//todo Figure out some way to run more than one agent per instance if needed
+				//In the future we might need to figure out some way to run more than one agent per instance if needed
 				logger.error("Constructor : portAvailable("+ discoveryPort +") == false");
 				logger.error("Shutting down!");
 				System.exit(0);

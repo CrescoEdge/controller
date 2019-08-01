@@ -113,12 +113,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
 
 	        if(activeMQSession == null) {
-                activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 	        }
 
                 
             if(activeMQSession.isClosed()) {
-                activeMQSession = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
             }
             
         } catch (Exception ex) {
@@ -681,7 +681,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             while ((bytesCount = fis.read(byteArray)) != -1) {
                 digest.update(byteArray, 0, bytesCount);
             }
-            ;
 
             //close the stream; We don't need it now.
             fis.close();

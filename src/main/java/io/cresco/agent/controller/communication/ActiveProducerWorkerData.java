@@ -47,7 +47,7 @@ public class ActiveProducerWorkerData implements Runnable {
 			this.TXQueueName = TXQueueName;
 			gson = new Gson();
 
-			sess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 
 			destination = sess.createQueue(TXQueueName);
 
@@ -96,7 +96,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 						try {
 
-							dataSess = (ActiveMQSession)controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+							dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 
 							TextMessage textMessage = dataSess.createTextMessage(gson.toJson(me));
 
@@ -145,37 +145,13 @@ public class ActiveProducerWorkerData implements Runnable {
 
 									File filePart = new File(filePath.toAbsolutePath().toString(), parList);
 
-									//System.out.println("READING FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList);
-
 									byte[] fileContent = Files.readAllBytes(filePart.toPath());
-
-									//System.out.println("READ FILE TO BYTES : " + filePart.getAbsolutePath() + " " + parList + " bytes:" + fileContent.length);
-
-									//System.out.println("READING FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList);
 
 									bytesMessage.writeBytes(fileContent);
 
-									//System.out.println("READ FILE TO MESSAGE : " + filePart.getAbsolutePath() + " " + parList + " Message Body Length:" + fileContent);
-
-									//System.out.println("MESSAGE ID: " + bytesMessage.getStringProperty("JMSMessageID"));
-
-
-									//give lowest priority to file transfers
-									//todo fix this dirty hack
 									try {
-										//System.out.println("SESSION LAST DELIVERED 0" + dataSess.getLastDeliveredSequenceId());
-										//System.out.println("SESSION NEXT DELEVERY ID 0" + dataSess.getNextDeliveryId());
 
-										//System.out.println("SENDING MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
 										dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
-
-										//System.out.println("SENT MESSAGE FROM PRODUCER " + dataProducer.getDeliveryMode());
-
-
-										//System.out.println("SESSION LAST DELIVERED 1" + dataSess.getLastDeliveredSequenceId());
-										//System.out.println("SESSION NEXT DELEVERY ID 1" + dataSess.getNextDeliveryId());
-
-
 
 									} catch (JMSException jmse) {
 										jmse.printStackTrace();
@@ -186,7 +162,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 										try {
 											logger.error("Rebuilding Session");
-											dataSess = (ActiveMQSession) controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+											dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 											dataProducer = dataSess.createProducer(dataDestination);
 											dataProducer.setTimeToLive(0);
 											dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);

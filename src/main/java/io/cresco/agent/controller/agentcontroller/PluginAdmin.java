@@ -587,9 +587,7 @@ public class PluginAdmin {
 
             synchronized (lockJarRepoSync) {
                 if (jarRepoSyncMap.containsKey(requestedName)) {
-                    if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
-                        jarRepoSyncMap.get(requestedName).remove(requestedMD5);
-                    }
+                    jarRepoSyncMap.get(requestedName).remove(requestedMD5);
                     if(jarRepoSyncMap.get(requestedName).size() == 0) {
                         jarRepoSyncMap.remove(requestedName);
                     }
@@ -633,7 +631,7 @@ public class PluginAdmin {
                     bundle = context.getBundle((String) map.get("jarfile"));
 
                     if (bundle == null) {
-                        bundle = context.installBundle("file:" + (String) map.get("jarfile"));
+                        bundle = context.installBundle("file:" + map.get("jarfile"));
                     }
 
                     break;
@@ -1112,7 +1110,7 @@ public class PluginAdmin {
                 synchronized (lockConfig) {
                     if (!configMap.containsKey(pluginId)) {
 
-                        String pid = (String)map.get("pluginname") + ".Plugin";
+                        String pid = map.get("pluginname") + ".Plugin";
                         String bsn = (String)map.get("pluginname");
                         String version = (String)map.get("version");
 
@@ -1121,7 +1119,7 @@ public class PluginAdmin {
 
                         //Configuration configuration = confAdmin.createFactoryConfiguration(configString, null);
 
-                        Configuration configuration = confAdmin.createFactoryConfiguration((String)map.get("pluginname") + ".Plugin", null);
+                        Configuration configuration = confAdmin.createFactoryConfiguration(map.get("pluginname") + ".Plugin", null);
 
 
                         Dictionary properties = new Hashtable();
