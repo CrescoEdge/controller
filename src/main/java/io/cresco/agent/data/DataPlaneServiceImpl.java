@@ -66,13 +66,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         gson = new Gson();
 
-        if(activeMQSession != null) {
 
-            agentTopic = getDestination(TopicType.AGENT);
-            regionTopic = getDestination(TopicType.REGION);
-            globalTopic = getDestination(TopicType.GLOBAL);
-
-        }
+        agentTopic = getDestination(TopicType.AGENT);
+        regionTopic = getDestination(TopicType.REGION);
+        globalTopic = getDestination(TopicType.GLOBAL);
 
 
         String inputStreamName = "input1";
@@ -103,13 +100,21 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             .forEach(File::delete);
 
                 } catch (IOException e) {
-                    e.printStackTrace();
+                    StringWriter sw = new StringWriter();
+                    PrintWriter pw = new PrintWriter(sw);
+                    e.printStackTrace(pw);
+                    String sStackTrace = sw.toString(); // stack trace as a string
+                    logger.error(sStackTrace);
                 }
 
             }
             Files.createDirectories(journalPath);
         } catch (Exception ex) {
-            ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 
     }
@@ -127,7 +132,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
         } catch (Exception ex) {
-	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 	    return destination;
     }
@@ -149,7 +158,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
             
         } catch (Exception ex) {
-	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 
 	    return activeMQSession;
@@ -173,7 +186,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
 
         } catch (Exception ex) {
-	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 	    return  messageConsumer;
     }
@@ -216,7 +233,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return listenerId;
     }
@@ -236,6 +257,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception e) {
 	        logger.error("removeMessageListener('{}'): {}", listenerId, e.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            e.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
     }
 
@@ -290,10 +316,20 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             return true;
         } catch (JMSException jmse) {
             jmse.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            jmse.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
             return false;
         }
         catch (Exception ex) {
             logger.error(ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
             return false;
         }
     }
@@ -343,6 +379,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             } catch (Exception ex) {
                 ex.printStackTrace();
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                ex.printStackTrace(pw);
+                String sStackTrace = sw.toString(); // stack trace as a string
+                logger.error(sStackTrace);
             }
         }
 
@@ -359,6 +400,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return bytesMessage;
 	}
@@ -373,6 +419,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex){
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 	    return mapMessage;
     }
@@ -387,6 +438,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return message;
     }
@@ -401,6 +457,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 	    return objectMessage;
     }
@@ -417,6 +478,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
 	    return blobMessage;
     }
@@ -430,6 +496,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return blobMessage;
     }
@@ -444,6 +515,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return blobMessage;
 
@@ -460,6 +536,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return streamMessage;
     }
@@ -474,6 +555,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return textMessage;
     }
@@ -492,6 +578,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
 	        logger.error(ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return pluginId;
     }
@@ -578,6 +669,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         }catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return fileObjects;
     }
@@ -597,6 +693,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return fileObject;
     }
@@ -615,6 +716,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return filePartNames;
     }
@@ -665,6 +771,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         return filePartNames;
     }
@@ -789,6 +900,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
         //return complete hash
         return hashString;
@@ -809,6 +925,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
         } catch (Exception ex) {
             ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
         }
     }
 
