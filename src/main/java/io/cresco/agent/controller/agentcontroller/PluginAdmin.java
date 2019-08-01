@@ -57,7 +57,7 @@ public class PluginAdmin {
 
     private long lastRepoUpdate = 0;
 
-    public Cache<String, List<pNode>> repoCache;
+    private Cache<String, List<pNode>> repoCache;
 
     public int pluginCount() {
 

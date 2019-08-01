@@ -9,6 +9,7 @@ import org.apache.activemq.broker.TransportConnector;
 import org.apache.activemq.broker.region.policy.PolicyEntry;
 import org.apache.activemq.broker.region.policy.PolicyMap;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.NetworkConnector;
 import org.apache.activemq.util.ServiceStopper;
 
@@ -18,6 +19,8 @@ import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ActiveBroker {
 	private CLogger logger;
@@ -26,7 +29,7 @@ public class ActiveBroker {
 	//private CrescoAuthorizationPlugin authorizationPlugin;
 	private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
-	public SslBrokerService broker;
+	private SslBrokerService broker;
 
 	public ActiveBroker(ControllerEngine controllerEngine, String brokerName, String brokerUserNameAgent, String brokerPasswordAgent) {
 		this.controllerEngine = controllerEngine;
@@ -192,6 +195,67 @@ public class ActiveBroker {
 			logger.error("Init {}" + ex.getMessage());
 		}
 	}
+
+	public boolean isReachableAgent(String remoteAgentPath) {
+		boolean isReachableAgent = false;
+		if (controllerEngine.cstate.isRegionalController()) {
+			try {
+				ActiveMQDestination[] er = broker.getBroker().getDestinations();
+				for (ActiveMQDestination des : er) {
+
+					if (des.isQueue()) {
+						String testPath = des.getPhysicalName();
+
+						logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+						if (testPath.equals(remoteAgentPath)) {
+							isReachableAgent = true;
+						}
+					}
+				}
+
+				er = broker.getRegionBroker().getDestinations();
+				for (ActiveMQDestination des : er) {
+					//for(String despaths : des.getDestinationPaths()) {
+					//    logger.info("isReachable destPaths: " + despaths);
+					//}
+
+					if (des.isQueue()) {
+						String testPath = des.getPhysicalName();
+						logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+						if (testPath.equals(remoteAgentPath)) {
+							isReachableAgent = true;
+						}
+					}
+				}
+
+			} catch (Exception ex) {
+				logger.error("isReachableAgent Error: {}", ex.getMessage());
+			}
+		} else {
+			isReachableAgent = true; //send all messages to regional controller if not broker
+		}
+		return isReachableAgent;
+	}
+	public List<String> reachableAgents() {
+		List<String> rAgents = null;
+		try {
+			rAgents = new ArrayList<>();
+			if (controllerEngine.cstate.isRegionalController()) {
+				ActiveMQDestination[] er = broker.getBroker().getDestinations();
+				for (ActiveMQDestination des : er) {
+					if (des.isQueue()) {
+						rAgents.add(des.getPhysicalName());
+					}
+				}
+			} else {
+				rAgents.add(controllerEngine.cstate.getRegion()); //just return regional controller
+			}
+		} catch (Exception ex) {
+			logger.error("isReachableAgent Error: {}", ex.getMessage());
+		}
+		return rAgents;
+	}
+
 
 	public void updateTrustManager() {
 		try {
