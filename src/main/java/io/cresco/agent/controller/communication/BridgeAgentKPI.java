@@ -1,7 +1,6 @@
 package io.cresco.agent.controller.communication;
 
 import org.apache.activemq.ActiveMQConnectionFactory;
-import org.apache.activemq.network.jms.InboundTopicBridge;
 import org.apache.activemq.network.jms.OutboundTopicBridge;
 import org.apache.activemq.network.jms.SimpleJmsTopicConnector;
 

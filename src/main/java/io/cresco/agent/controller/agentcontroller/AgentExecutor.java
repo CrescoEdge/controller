@@ -8,7 +8,10 @@ import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.*;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -137,11 +140,7 @@ public class AgentExecutor implements Executor {
                         long skipLength = Long.parseLong(ce.getParam("skiplength"));
                         int partsize = Integer.parseInt(ce.getParam("partsize"));
 
-                        InputStream inputStream = null;
-
-
-                        try {
-                            inputStream = new FileInputStream(filePath.toFile());
+                        try (InputStream inputStream = new FileInputStream(filePath.toFile())) {
                             byte[] databyte = new byte[partsize];
                             inputStream.skip(skipLength);
                             inputStream.read(databyte);
@@ -159,10 +158,6 @@ public class AgentExecutor implements Executor {
 
                             ce.setParam("status","9");
                             ce.setParam("status_desc","inputStream failure");
-                        } finally {
-                            if(inputStream != null) {
-                                inputStream.close();
-                            }
                         }
 
                     } else {

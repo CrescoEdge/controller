@@ -3,7 +3,6 @@ package io.cresco.agent.core;
 
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
-import org.osgi.framework.ServiceReference;
 
 //import org.slf4j.bridge.SLF4JBridgeHandler;
 

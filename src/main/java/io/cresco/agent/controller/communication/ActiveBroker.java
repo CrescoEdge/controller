@@ -9,7 +9,6 @@ import org.apache.activemq.broker.TransportConnector;
 import org.apache.activemq.broker.region.policy.PolicyEntry;
 import org.apache.activemq.broker.region.policy.PolicyMap;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.NetworkConnector;
 import org.apache.activemq.util.ServiceStopper;
 
@@ -19,8 +18,6 @@ import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.List;
 
 public class ActiveBroker {
 	private CLogger logger;

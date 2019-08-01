@@ -953,9 +953,7 @@ public class GlobalExecutor implements Executor {
 
             Map<String,String> params = ce.getParams();
 
-				//forward KPI
-            controllerEngine.getKPIProducer().sendMessage(region,agent,pluginid,resource_id,inode_id,params);
-                //record KPI
+            //record KPI
             controllerEngine.getGDB().updateKPI(region, agent, pluginid, resource_id, inode_id, params);
 
         }

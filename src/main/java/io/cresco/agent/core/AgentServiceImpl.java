@@ -21,7 +21,6 @@ import java.io.File;
 import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Properties;
 
 
 @Component(
