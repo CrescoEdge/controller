@@ -196,66 +196,28 @@ public class ActiveBroker {
 		}
 	}
 
-	public boolean isReachableAgent(String remoteAgentPath) {
-		boolean isReachableAgent = false;
-		if (controllerEngine.cstate.isRegionalController()) {
-			try {
-				ActiveMQDestination[] er = broker.getBroker().getDestinations();
-				for (ActiveMQDestination des : er) {
 
-					if (des.isQueue()) {
-						String testPath = des.getPhysicalName();
-
-						logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
-						if (testPath.equals(remoteAgentPath)) {
-							isReachableAgent = true;
-						}
-					}
-				}
-
-				er = broker.getRegionBroker().getDestinations();
-				for (ActiveMQDestination des : er) {
-					//for(String despaths : des.getDestinationPaths()) {
-					//    logger.info("isReachable destPaths: " + despaths);
-					//}
-
-					if (des.isQueue()) {
-						String testPath = des.getPhysicalName();
-						logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
-						if (testPath.equals(remoteAgentPath)) {
-							isReachableAgent = true;
-						}
-					}
-				}
-
-			} catch (Exception ex) {
-				logger.error("isReachableAgent Error: {}", ex.getMessage());
-			}
-		} else {
-			isReachableAgent = true; //send all messages to regional controller if not broker
-		}
-		return isReachableAgent;
-	}
-	public List<String> reachableAgents() {
-		List<String> rAgents = null;
+	public ActiveMQDestination[] getBrokerDestinations() {
+		ActiveMQDestination[] destinations = null;
 		try {
-			rAgents = new ArrayList<>();
-			if (controllerEngine.cstate.isRegionalController()) {
-				ActiveMQDestination[] er = broker.getBroker().getDestinations();
-				for (ActiveMQDestination des : er) {
-					if (des.isQueue()) {
-						rAgents.add(des.getPhysicalName());
-					}
-				}
-			} else {
-				rAgents.add(controllerEngine.cstate.getRegion()); //just return regional controller
-			}
+			destinations = broker.getBroker().getDestinations();
 		} catch (Exception ex) {
-			logger.error("isReachableAgent Error: {}", ex.getMessage());
+			logger.error("getDestinations() " + ex.getMessage());
 		}
-		return rAgents;
+
+		return destinations;
 	}
 
+	public ActiveMQDestination[] getRegionalBrokerDestinations() {
+		ActiveMQDestination[] destinations = null;
+		try {
+			destinations = broker.getRegionBroker().getDestinations();
+		} catch (Exception ex) {
+			logger.error("getDestinations() " + ex.getMessage());
+		}
+
+		return destinations;
+	}
 
 	public void updateTrustManager() {
 		try {

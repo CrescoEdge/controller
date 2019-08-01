@@ -924,9 +924,66 @@ public class ControllerEngine {
         return isIPv6;
     }
 
-    public boolean isReachableAgent(String remoteAgentPath) { return broker.isReachableAgent(remoteAgentPath); }
+    public boolean isReachableAgent(String remoteAgentPath) {
+        boolean isReachableAgent = false;
+        if (this.cstate.isRegionalController()) {
+            try {
+                ActiveMQDestination[] er = this.broker.getBrokerDestinations();
+                for (ActiveMQDestination des : er) {
 
-    public List<String> reachableAgents() { return broker.reachableAgents(); }
+                    if (des.isQueue()) {
+                        String testPath = des.getPhysicalName();
+
+                        logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        if (testPath.equals(remoteAgentPath)) {
+                            isReachableAgent = true;
+                        }
+                    }
+                }
+
+                er = this.broker.getRegionalBrokerDestinations();
+                for (ActiveMQDestination des : er) {
+                    //for(String despaths : des.getDestinationPaths()) {
+                    //    logger.info("isReachable destPaths: " + despaths);
+                    //}
+
+                    if (des.isQueue()) {
+                        String testPath = des.getPhysicalName();
+                        logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        if (testPath.equals(remoteAgentPath)) {
+                            isReachableAgent = true;
+                        }
+                    }
+                }
+
+            } catch (Exception ex) {
+                logger.error("isReachableAgent Error: {}", ex.getMessage());
+            }
+        } else {
+            isReachableAgent = true; //send all messages to regional controller if not broker
+        }
+        return isReachableAgent;
+    }
+
+    public List<String> reachableAgents() {
+        List<String> rAgents = null;
+        try {
+            rAgents = new ArrayList<>();
+            if (this.cstate.isRegionalController()) {
+                ActiveMQDestination[] er = this.broker.getBrokerDestinations();
+                for (ActiveMQDestination des : er) {
+                    if (des.isQueue()) {
+                        rAgents.add(des.getPhysicalName());
+                    }
+                }
+            } else {
+                rAgents.add(cstate.getRegion()); //just return regional controller
+            }
+        } catch (Exception ex) {
+            logger.error("isReachableAgent Error: {}", ex.getMessage());
+        }
+        return rAgents;
+    }
 
     public boolean isClientDiscoveryActiveIPv4() {
         return clientDiscoveryActiveIPv4;
