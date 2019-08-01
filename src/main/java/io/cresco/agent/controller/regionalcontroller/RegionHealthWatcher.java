@@ -41,7 +41,7 @@ public class RegionHealthWatcher {
         communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 1000, wdTimer);
 
 
-        int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",3);
+        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3l);
         regionalUpdateTimer = new Timer();
         regionalUpdateTimer.scheduleAtFixedRate(new RegionHealthWatcher.RegionalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
         logger.info("Initialized");

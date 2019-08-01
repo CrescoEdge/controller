@@ -264,20 +264,26 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             agentProducer.send(blobMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
                         }
                     } else {
-                        agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        if(agentProducer != null) {
+                            agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        }
                     }
                     break;
                 case REGION:
                     if(regionProducer == null) {
                         regionProducer = getMessageProducer(topicType);
                     }
-                    regionProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    if(regionProducer != null) {
+                        regionProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    }
                     break;
                 case GLOBAL:
                     if(globalProducer == null) {
                         globalProducer = getMessageProducer(topicType);
                     }
-                    globalProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    if(globalProducer != null) {
+                        globalProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                    }
                     break;
             }
 
@@ -487,7 +493,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } catch (Exception ex) {
 	        logger.error(ex.getMessage());
         }
-        return  null;
+        return pluginId;
     }
 
     public String createCEP(String inputRecordSchemaString, String inputStreamName, String outputStreamName, String outputStreamAttributesString,String queryString) {
