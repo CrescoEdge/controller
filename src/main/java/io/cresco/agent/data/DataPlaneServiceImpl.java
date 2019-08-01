@@ -23,6 +23,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 public class DataPlaneServiceImpl implements DataPlaneService {
 	private PluginBuilder plugin;
@@ -92,11 +93,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             journalPath = Paths.get(journalDirPath);
             //remove old files if they exist from the journal
             if(journalPath.toFile().exists()) {
-                Files.walk(journalPath)
-                        .sorted(Comparator.reverseOrder())
-                        .map(Path::toFile)
-                        //.peek(System.out::println)
-                        .forEach(File::delete);
+
+                try (Stream<Path> journalWalk = Files.walk(journalPath)) {
+                            journalWalk.sorted(Comparator.reverseOrder())
+                            .map(Path::toFile)
+                            .forEach(File::delete);
+
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+
             }
             Files.createDirectories(journalPath);
         } catch (Exception ex) {
@@ -601,19 +607,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
                     Path filePath = Paths.get(localFilePath);
 
-                    FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile());
+                    try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
 
-                    MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC,remoteRegion,remoteAgent);
-                    dme.setParam("action","getfiledata");
-                    dme.setParam("filepath",remoteFilePath);
-                    dme.setParam("skiplength","0");
-                    dme.setParam("partsize",String.valueOf(fileSize));
+                        MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
+                        dme.setParam("action", "getfiledata");
+                        dme.setParam("filepath", remoteFilePath);
+                        dme.setParam("skiplength", "0");
+                        dme.setParam("partsize", String.valueOf(fileSize));
 
-                    MsgEvent rdme = plugin.sendRPC(dme);
-                    fileOutputStream.write(rdme.getDataParam("payload"));
-                    fileOutputStream.close();
-
-                    //take output and put it somewhere
+                        MsgEvent rdme = plugin.sendRPC(dme);
+                        fileOutputStream.write(rdme.getDataParam("payload"));
+                    }
 
                 } else { //we need to break up the file
 
@@ -622,30 +626,30 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
                     Path filePath = Paths.get(localFilePath);
 
-                    FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile());
+                    try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
 
-                    while(fileDataRemaining != 0) {
-                        //loop through writing files
+                        while (fileDataRemaining != 0) {
+                            //loop through writing files
 
-                        if(sizeOfFilePart >= fileDataRemaining) {
-                            sizeOfFilePart = (int)fileDataRemaining;
+                            if (sizeOfFilePart >= fileDataRemaining) {
+                                sizeOfFilePart = (int) fileDataRemaining;
+                            }
+
+                            //System.out.println("Size of Data Part " + sizeOfFilePart + " Data Remaining = " + fileDataRemaining + " skipLength " + skipLength);
+                            MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
+                            dme.setParam("action", "getfiledata");
+                            dme.setParam("filepath", remoteFilePath);
+                            dme.setParam("skiplength", String.valueOf(skipLength));
+                            dme.setParam("partsize", String.valueOf(sizeOfFilePart));
+
+                            MsgEvent rdme = plugin.sendRPC(dme);
+                            fileOutputStream.write(rdme.getDataParam("payload"));
+
+                            fileDataRemaining = fileDataRemaining - sizeOfFilePart;
+                            skipLength += sizeOfFilePart;
+
                         }
-
-                        //System.out.println("Size of Data Part " + sizeOfFilePart + " Data Remaining = " + fileDataRemaining + " skipLength " + skipLength);
-                        MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC,remoteRegion,remoteAgent);
-                        dme.setParam("action","getfiledata");
-                        dme.setParam("filepath",remoteFilePath);
-                        dme.setParam("skiplength",String.valueOf(skipLength));
-                        dme.setParam("partsize",String.valueOf(sizeOfFilePart));
-
-                        MsgEvent rdme = plugin.sendRPC(dme);
-                        fileOutputStream.write(rdme.getDataParam("payload"));
-
-                        fileDataRemaining = fileDataRemaining - sizeOfFilePart;
-                        skipLength += sizeOfFilePart;
-
                     }
-                    fileOutputStream.close();
                 }
 
                 //check if file is correct
@@ -669,33 +673,34 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         String hashString = null;
         try {
             //Get file input stream for reading the file content
-            FileInputStream fis = new FileInputStream(filePath);
+            try (FileInputStream fis = new FileInputStream(filePath)) {
 
-            MessageDigest digest = MessageDigest.getInstance("MD5");
+                MessageDigest digest = MessageDigest.getInstance("MD5");
 
-            //Create byte array to read data in chunks
-            byte[] byteArray = new byte[1024];
-            int bytesCount = 0;
+                //Create byte array to read data in chunks
+                byte[] byteArray = new byte[1024];
+                int bytesCount = 0;
 
-            //Read file data and update in message digest
-            while ((bytesCount = fis.read(byteArray)) != -1) {
-                digest.update(byteArray, 0, bytesCount);
+                //Read file data and update in message digest
+                while ((bytesCount = fis.read(byteArray)) != -1) {
+                    digest.update(byteArray, 0, bytesCount);
+                }
+
+                //close the stream; We don't need it now.
+                fis.close();
+
+                //Get the hash's bytes
+                byte[] bytes = digest.digest();
+
+                //This bytes[] has bytes in decimal format;
+                //Convert it to hexadecimal format
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < bytes.length; i++) {
+                    sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
+                }
+
+                hashString = sb.toString();
             }
-
-            //close the stream; We don't need it now.
-            fis.close();
-
-            //Get the hash's bytes
-            byte[] bytes = digest.digest();
-
-            //This bytes[] has bytes in decimal format;
-            //Convert it to hexadecimal format
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < bytes.length; i++) {
-                sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
-            }
-
-            hashString = sb.toString();
 
         } catch (Exception ex) {
             ex.printStackTrace();

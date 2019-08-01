@@ -392,11 +392,11 @@ public class PluginAdmin {
 
                 if (checkFile.toFile().isFile()) {
 
-                    Manifest manifest = null;
 
-                    try {
+                    try (JarInputStream jarInputStream = new JarInputStream(new FileInputStream(checkFile.toFile()))) {
 
-                        manifest = new JarInputStream(new FileInputStream(checkFile.toFile())).getManifest();
+                        //Manifest manifest = new JarInputStream(new FileInputStream(checkFile.toFile())).getManifest();
+                        Manifest manifest = jarInputStream.getManifest();
 
                         Attributes mainAttributess = manifest.getMainAttributes();
                         String aName = mainAttributess.getValue("Bundle-SymbolicName");

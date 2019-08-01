@@ -715,57 +715,67 @@ public class GlobalExecutor implements Executor {
                 baseUrl = baseUrl + "/";
             }
 
+
             URL website = new URL(baseUrl + ce.getParam("agentcontroller"));
-            ReadableByteChannel rbc = Channels.newChannel(website.openStream());
 
-            File jarLocation = new File(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath());
-            String parentDirName = jarLocation.getParent(); // to get the parent dir name
-            String pluginDir = parentDirName + "/plugins";
-            //check if directory exist, if not create it
-            File pluginDirfile = new File(pluginDir);
-            if (!pluginDirfile.exists()) {
-                if (pluginDirfile.mkdir()) {
-                    logger.error("Directory " + pluginDir + " didn't exist and was created.");
+            try (ReadableByteChannel rbc = Channels.newChannel(website.openStream())) {
+                //ReadableByteChannel rbc = Channels.newChannel(website.openStream());
+
+
+                File jarLocation = new File(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath());
+                String parentDirName = jarLocation.getParent(); // to get the parent dir name
+                String pluginDir = parentDirName + "/plugins";
+                //check if directory exist, if not create it
+                File pluginDirfile = new File(pluginDir);
+                if (!pluginDirfile.exists()) {
+                    if (pluginDirfile.mkdir()) {
+                        logger.error("Directory " + pluginDir + " didn't exist and was created.");
+                    } else {
+                        logger.error("Directory " + pluginDir + " didn't exist and we failed to create it!");
+                    }
+                }
+                String pluginFile = parentDirName + "/plugins/" + ce.getParam("agentcontroller");
+                boolean forceDownload = false;
+                if (ce.getParam("forceplugindownload") != null) {
+                    forceDownload = true;
+                    logger.error("Forcing Plugin Download");
+                }
+
+                File pluginFileObject = new File(pluginFile);
+                if (!pluginFileObject.exists() || forceDownload) {
+
+                    try (FileOutputStream fos = new FileOutputStream(parentDirName + "/plugins/" + ce.getParam("agentcontroller"))) {
+
+                        fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
+                        if (pluginFileObject.exists()) {
+                            ce.setParam("hasplugin", ce.getParam("agentcontroller"));
+                            //ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
+                            logger.error("Downloaded Plugin:" + ce.getParam("agentcontroller"));
+                        } else {
+                            //ce.setMsgBody("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
+                            logger.error("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
+                        }
+                    } catch (Exception ex) {
+                        ce.setParam("error", ex.getMessage());
+                        ex.printStackTrace();
+                    }
+
                 } else {
-                    logger.error("Directory " + pluginDir + " didn't exist and we failed to create it!");
-                }
-            }
-            String pluginFile = parentDirName + "/plugins/" + ce.getParam("agentcontroller");
-            boolean forceDownload = false;
-            if(ce.getParam("forceplugindownload") != null)
-            {
-                forceDownload = true;
-                logger.error("Forcing Plugin Download");
-            }
-
-            File pluginFileObject = new File(pluginFile);
-            if (!pluginFileObject.exists() || forceDownload)
-            {
-                FileOutputStream fos = new FileOutputStream(parentDirName + "/plugins/" + ce.getParam("agentcontroller"));
-
-                fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
-                if(pluginFileObject.exists())
-                {
+                    //ce.setMsgBody("Plugin already exists:" + ce.getParam("agentcontroller"));
                     ce.setParam("hasplugin", ce.getParam("agentcontroller"));
-                    //ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
-                    logger.error("Downloaded Plugin:" + ce.getParam("agentcontroller"));
+                    logger.error("Plugin already exists:" + ce.getParam("agentcontroller"));
                 }
-                else
-                {
-                    //ce.setMsgBody("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
-                    logger.error("Problem Downloading Plugin:" + ce.getParam("agentcontroller"));
-                }
+            } catch (Exception ex) {
+                ce.setParam("error", ex.getMessage());
+                ex.printStackTrace();
             }
-            else
-            {
-                //ce.setMsgBody("Plugin already exists:" + ce.getParam("agentcontroller"));
-                ce.setParam("hasplugin", ce.getParam("agentcontroller"));
-                logger.error("Plugin already exists:" + ce.getParam("agentcontroller"));
-            }
+
+
 
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
+            ex.printStackTrace();
         }
 
         return ce;
@@ -971,13 +981,15 @@ public class GlobalExecutor implements Executor {
             //System.out.println("JARFILE:" + jarFile);
             //File file = new File(jarFile.substring(5, (jarFile.length() )));
             File file = new File(jarFile);
-            FileInputStream fis = new FileInputStream(file);
-            @SuppressWarnings("resource")
-            JarInputStream jarStream = new JarInputStream(fis);
-            Manifest mf = jarStream.getManifest();
+            try (FileInputStream fis = new FileInputStream(file)) {
 
-            Attributes mainAttribs = mf.getMainAttributes();
-            version = mainAttribs.getValue("artifactId");
+                try(JarInputStream jarStream = new JarInputStream(fis)) {
+                    Manifest mf = jarStream.getManifest();
+
+                    Attributes mainAttribs = mf.getMainAttributes();
+                    version = mainAttribs.getValue("artifactId");
+                }
+            }
         }
         catch(Exception ex)
         {
@@ -993,23 +1005,21 @@ public class GlobalExecutor implements Executor {
         try
         {
             phm = new HashMap<String,String>();
-            JarFile jarFile = new JarFile(jarFileName);
-            JarEntry je = jarFile.getJarEntry("agentcontroller.conf");
-            InputStream in = jarFile.getInputStream(je);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(in));
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                line = line.replaceAll("\\s+","");
-                String[] sline = line.split("=");
-                if((sline[0] != null) && (sline[1] != null))
-                {
-                    phm.put(sline[0], sline[1]);
+            try (JarFile jarFile = new JarFile(jarFileName)) {
+                JarEntry je = jarFile.getJarEntry("agentcontroller.conf");
+                InputStream in = jarFile.getInputStream(je);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.replaceAll("\\s+", "");
+                    String[] sline = line.split("=");
+                    if ((sline[0] != null) && (sline[1] != null)) {
+                        phm.put(sline[0], sline[1]);
+                    }
                 }
+                reader.close();
+                in.close();
             }
-            reader.close();
-            in.close();
-            jarFile.close();
         }
         catch (IOException e)
         {
@@ -1018,65 +1028,31 @@ public class GlobalExecutor implements Executor {
         return phm;
     }
 
-    public  String getPluginParams(String jarFileName) {
-        String params = "";
-        try
-        {
-            JarFile jarFile = new JarFile(jarFileName);
-            JarEntry je = jarFile.getJarEntry("agentcontroller.conf");
-            InputStream in = jarFile.getInputStream(je);
-            BufferedReader reader = new BufferedReader(new InputStreamReader(in));
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                line = line.replaceAll("\\s+","");
-                if(line.contains("="))
-                {
-                    String[] sline = line.split("=");
-                    if((sline[0] != null) && (sline[1] != null))
-                    {
-                        //phm.put(sline[0], sline[1]);
-                        if((sline[1].equals("required")) || sline[1].equals("optional"))
-                        {
-                            params = params + sline[0] + ":" + sline[1] + ",";
-                        }
-                    }
-                }
-            }
-            reader.close();
-            in.close();
-            jarFile.close();
-            if(params.length() == 0)
-            {
-                params = null;
-            }
-            else
-            {
-                params = params.substring(0,params.length() -1);
-            }
-        }
-        catch (IOException e)
-        {
-            params = null;
-            e.printStackTrace();
-        }
-        return params;
-    }
-
     public  String getPluginVersion(String jarFile) {
-        String version;
+        String version = "unknown";
         try{
-            //String jarFile = AgentEngine.class.getProtectionDomain().getCodeSource().getLocation().getPath();
-            //System.out.println("JARFILE:" + jarFile);
-            //File file = new File(jarFile.substring(5, (jarFile.length() )));
-            File file = new File(jarFile);
-            FileInputStream fis = new FileInputStream(file);
-            @SuppressWarnings("resource")
-            JarInputStream jarStream = new JarInputStream(fis);
-            Manifest mf = jarStream.getManifest();
 
-            Attributes mainAttribs = mf.getMainAttributes();
-            version = mainAttribs.getValue("Implementation-Version");
+            File file = new File(jarFile);
+            try {
+                FileInputStream fis = new FileInputStream(file);
+
+                try (JarInputStream jarStream = new JarInputStream(fis)) {
+                    Manifest mf = jarStream.getManifest();
+
+                    Attributes mainAttribs = mf.getMainAttributes();
+                    version = mainAttribs.getValue("Implementation-Version");
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                    String msg = "Unable to determine Plugin Version " + ex.toString();
+                    System.err.println(msg);
+                    version = "Unable to determine Version";
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+                String msg = "Unable to determine Plugin Version " + ex.toString();
+                System.err.println(msg);
+                version = "Unable to determine Version";
+            }
         }
         catch(Exception ex)
         {
