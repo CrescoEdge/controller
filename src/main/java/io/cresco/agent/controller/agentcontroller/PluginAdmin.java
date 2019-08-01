@@ -1172,7 +1172,7 @@ public class PluginAdmin {
 
                     for (ServiceReference sr : servRefs) {
 
-                        boolean assign = servRefs[0].isAssignableTo(context.getBundle(), PluginService.class.getName());
+                        boolean assign = sr.isAssignableTo(context.getBundle(), PluginService.class.getName());
 
                         if(assign) {
                             PluginService ps = (PluginService) context.getService(sr);
