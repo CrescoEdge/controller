@@ -18,7 +18,7 @@
         <siddhi.version>4.2.17</siddhi.version>
         <netty.version>4.1.33.Final</netty.version>
         <guava.version>18.0</guava.version>
-        <derby.version>10.15.1.3</derby.version>
+        <derby.version>10.14.2.0</derby.version>
     </properties>
 
 
