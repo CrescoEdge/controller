@@ -1068,7 +1068,6 @@ public class ControllerEngine {
             if(this.agentHealthWatcher != null) {
                 logger.trace("Agent HealthWatcher shutting down");
                 this.agentHealthWatcher.shutdown(true);
-                this.agentHealthWatcher.timer.cancel();
                 this.agentHealthWatcher = null;
                 logger.info("Agent HealthWatcher shutting down");
             }

@@ -436,7 +436,6 @@ public class PluginAdmin {
 
                     } catch (Exception e) {
                         logger.error("jarIsAbsolutePath()");
-                        e.printStackTrace();
                     } finally {
                      //do nothing null will return
                     }

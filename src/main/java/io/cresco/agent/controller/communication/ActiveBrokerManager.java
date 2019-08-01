@@ -140,7 +140,6 @@ public class ActiveBrokerManager implements Runnable  {
 			}
 			catch (Exception ex) {
 				logger.error("Run {}", ex.getMessage());
-                ex.printStackTrace();
 			}
 		}
 		timer.cancel();

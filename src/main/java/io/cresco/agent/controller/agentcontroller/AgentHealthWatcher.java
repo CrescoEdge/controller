@@ -12,7 +12,7 @@ import java.util.*;
 
 public class AgentHealthWatcher {
 
-	  public Timer timer;
+	  private Timer timer;
 	  private long startTS;
 	  private Map<String,String> wdMap;
 	  private boolean isRegistered = false;

@@ -64,7 +64,6 @@ public class ActiveClient {
             }
         } catch (Exception ex) {
             logger.error(ex.getMessage());
-            ex.printStackTrace();
         }
         return isActive;
     }
@@ -79,7 +78,7 @@ public class ActiveClient {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error(ex.getMessage());
         }
 
         return activeMQSession;
@@ -272,7 +271,7 @@ public class ActiveClient {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error(ex.getMessage());
         }
 
 
