@@ -6,7 +6,6 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.broker.SslBrokerService;
 import org.apache.activemq.broker.SslContext;
 import org.apache.activemq.broker.TransportConnector;
-import org.apache.activemq.broker.jmx.ManagementContext;
 import org.apache.activemq.broker.region.policy.PolicyEntry;
 import org.apache.activemq.broker.region.policy.PolicyMap;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
@@ -295,33 +294,7 @@ public class ActiveBroker {
 
 	}
 
-    public NetworkConnector AddNetworkConnectorURI(String URI, String brokerUserName, String brokerPassword) {
-        NetworkConnector bridge = null;
-        try {
-            logger.trace("URI: " + URI + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
-            bridge = broker.addNetworkConnector(new URI(URI));
-            //RandomString rs = new RandomString(5);
-            bridge.setUserName(brokerUserName);
-            bridge.setPassword(brokerPassword);
-            bridge.setName(java.util.UUID.randomUUID().toString());
-            bridge.setDuplex(true);
-            bridge.setDynamicOnly(true);
-            bridge.setPrefetchSize(1);
-
-        } catch(Exception ex) {
-            logger.error("AddNetworkConnector {}", ex.getMessage());
-        }
-        return bridge;
-    }
-
-    public List<ActiveMQDestination> getDest(String agentPath) {
-		List<ActiveMQDestination> dstList = new ArrayList<>();
-		ActiveMQDestination dst = ActiveMQDestination.createDestination("queue://" + agentPath, ActiveMQDestination.QUEUE_TYPE);
-		dstList.add(dst);
-		return dstList;
-	}
-
-	public NetworkConnector AddNetworkConnector(String URI, String brokerUserName, String brokerPassword, String agentPath) {
+	public NetworkConnector AddNetworkConnector(String URI, String brokerUserName, String brokerPassword) {
 		NetworkConnector bridge = null;
 		try {
 
@@ -348,18 +321,6 @@ public class ActiveBroker {
 			logger.error("AddNetworkConnector {}", ex.getMessage());
 		}
 		return bridge;
-	}
-
-	public void AddTransportConnector(String URI) {
-		try {
-			TransportConnector connector = new TransportConnector();
-			connector.setUri(new URI(URI));
-
-			this.broker.addConnector(connector);
-			this.broker.startTransportConnector(connector);
-		} catch(Exception ex) {
-			logger.error("AddTransportConnector {}", ex.getMessage());
-		}
 	}
 
 	public boolean portAvailable(int port) {

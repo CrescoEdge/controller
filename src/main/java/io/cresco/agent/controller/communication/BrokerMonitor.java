@@ -40,7 +40,7 @@ class BrokerMonitor implements Runnable {
 			if((InetAddress.getByName(brokerAddress) instanceof Inet6Address)) {
 				brokerAddress = "[" + brokerAddress + "]";
 			}
-			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerUserName, brokerPassword, agentPath);
+			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerUserName, brokerPassword);
 			bridge.start();
             logger.trace("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress);
 			int connect_count = 0;
