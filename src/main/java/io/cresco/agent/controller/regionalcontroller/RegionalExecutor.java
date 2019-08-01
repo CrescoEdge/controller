@@ -39,10 +39,11 @@ public class RegionalExecutor implements Executor {
             switch (incoming.getParam("action")) {
                 case "agent_disable":
                     logger.debug("CONFIG : AGENTDISCOVER REMOVE: " + incoming.printHeader());
+
                     if (controllerEngine.getGDB().removeNode(incoming)) {
                         incoming.setParam("is_unregistered",Boolean.TRUE.toString());
                     } else {
-                        incoming.setParam("is_unregistered",Boolean.TRUE.toString());
+                        incoming.setParam("is_unregistered",Boolean.FALSE.toString());
                     }
 
                     return incoming;

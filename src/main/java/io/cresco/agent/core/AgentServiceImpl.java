@@ -284,7 +284,9 @@ public class AgentServiceImpl implements AgentService {
                     break;
 
                 default:
-                    logger.error("INVALID MODE : " + controllerEngine.cstate.getControllerState());
+                    if(logger != null) {
+                        logger.error("INVALID MODE : " + controllerEngine.cstate.getControllerState());
+                    }
                     break;
             }
 

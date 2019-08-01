@@ -66,10 +66,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         gson = new Gson();
 
-
-        agentTopic = getSession().createTopic(getTopicName(TopicType.AGENT));
-        regionTopic = getSession().createTopic(getTopicName(TopicType.REGION));
-        globalTopic = getSession().createTopic(getTopicName(TopicType.GLOBAL));
+        agentTopic = getDestination(TopicType.AGENT);
+        regionTopic = getDestination(TopicType.REGION);
+        globalTopic = getDestination(TopicType.GLOBAL);
 
 
         String inputStreamName = "input1";
@@ -111,6 +110,24 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    private Destination getDestination(TopicType topicType) {
+        Destination destination = null;
+	    try {
+
+	        ActiveMQSession activeMQSession = getSession();
+	        String topicName = getTopicName(topicType);
+
+	        if((activeMQSession != null) && (topicName != null)) {
+	            destination = activeMQSession.createTopic(topicName);
+            }
+
+
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+	    return destination;
+    }
+
     private ActiveMQSession getSession() {
 	    try {
 
@@ -133,6 +150,29 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	    return activeMQSession;
     }
+    private MessageConsumer getConsumer(Destination destination) {
+	    return getConsumer(destination,null);
+    }
+    private MessageConsumer getConsumer(Destination destination, String selectorString) {
+	    MessageConsumer messageConsumer = null;
+	    try {
+
+            ActiveMQSession activeMQSession = getSession();
+
+            if((activeMQSession != null) && (destination != null)) {
+
+                if(selectorString == null) {
+                    messageConsumer = activeMQSession.createConsumer(destination);
+                } else {
+                    messageConsumer = activeMQSession.createConsumer(destination, selectorString);
+                }
+            }
+
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+	    return  messageConsumer;
+    }
 
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
 	    String listenerId = null;
@@ -143,31 +183,32 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             switch (topicType) {
                 case AGENT:
                     if(selectorString == null) {
-                        consumer = getSession().createConsumer(agentTopic);
+                        consumer = getConsumer(agentTopic);
                     } else {
-                        consumer = getSession().createConsumer(agentTopic, selectorString);
+                        consumer = getConsumer(agentTopic, selectorString);
                     }
                     break;
                 case REGION:
                     if(selectorString == null) {
-                        consumer = getSession().createConsumer(regionTopic);
+                        consumer = getConsumer(regionTopic);
                     } else {
-                        consumer = getSession().createConsumer(regionTopic, selectorString);
+                        consumer = getConsumer(regionTopic, selectorString);
                     }
                     break;
                 case GLOBAL:
                     if(selectorString == null) {
-                        consumer = getSession().createConsumer(globalTopic);
+                        consumer = getConsumer(globalTopic);
                     } else {
-                        consumer = getSession().createConsumer(globalTopic, selectorString);
+                        consumer = getConsumer(globalTopic, selectorString);
                     }
                     break;
             }
-
-            consumer.setMessageListener(messageListener);
-            listenerId = UUID.randomUUID().toString();
-            synchronized (lockMessage) {
-                messageConsumerMap.put(listenerId, consumer);
+            if(consumer != null) {
+                consumer.setMessageListener(messageListener);
+                listenerId = UUID.randomUUID().toString();
+                synchronized (lockMessage) {
+                    messageConsumerMap.put(listenerId, consumer);
+                }
             }
 
         } catch (Exception ex) {

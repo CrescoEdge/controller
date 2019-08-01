@@ -228,14 +228,16 @@ public class AgentConsumer {
 													//rebuild files on original MsgEvent
 													//List<String> msgEventFileList = new ArrayList<>();
 													//msgEventFileList.addAll(me.getFileList());
-													me.clearFileList();
-													for(String newfilePath : newFilePaths) {
-														me.addFile(newfilePath);
-													}
 
 													if(me == null) {
 														logger.error("groupcomplete: " + isGroupComplete + " message null");
 													} else {
+
+														me.clearFileList();
+														for(String newfilePath : newFilePaths) {
+															me.addFile(newfilePath);
+														}
+														
 														//logger.error("message != null " + me.getParams().toString());
 														//save message for cache removal of files
 														fileMsgEventCache.put(filegroup, me);

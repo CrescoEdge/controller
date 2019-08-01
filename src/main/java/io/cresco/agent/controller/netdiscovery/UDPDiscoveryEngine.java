@@ -214,7 +214,7 @@ public class UDPDiscoveryEngine implements Runnable {
         }
 
         private synchronized DatagramPacket sendPacket(DatagramPacket packet) {
-            synchronized (packet) {
+            synchronized (lockPacket) {
                 logger.trace("sendpacket 0");
                 Map<String, String> intAddr = getInterfaceAddresses();
                 InetAddress returnAddr = packet.getAddress();
@@ -227,8 +227,11 @@ public class UDPDiscoveryEngine implements Runnable {
                     isGlobal = !returnAddr.isSiteLocalAddress() && !returnAddr.isLinkLocalAddress();
                 logger.trace("sendpacket 1");
                 //logger.trace("Discovery packet from " + remoteAddress + " to " + sourceAddress);
+                String sourceAddress = null;
 
-                String sourceAddress = getSourceAddress(intAddr, remoteAddress); //determine send address
+                if((intAddr != null) && (remoteAddress != null)) {
+                    sourceAddress = getSourceAddress(intAddr, remoteAddress); //determine send address
+                }
                 //packet.getSocketAddress().
                 if(sourceAddress == null) {
                     logger.trace("No local interface subnet address found for " + remoteAddress);
