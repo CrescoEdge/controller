@@ -340,53 +340,55 @@ public class DBEngine {
     public void updateNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
-            String stmtString = null;
+            try (Statement stmt = conn.createStatement()) {
 
-            if(((region != null) && (agent != null) && (plugin != null)) || ((region == null) && (agent == null) && (plugin != null))) {
-                //add plugin metadata where it exist
+                String stmtString = null;
 
-                String pluginname = "unknown";
-                String jarfile = "unknown";
-                String version = "unknown";
-                String md5 = "unknown";
+                if (((region != null) && (agent != null) && (plugin != null)) || ((region == null) && (agent == null) && (plugin != null))) {
+                    //add plugin metadata where it exist
 
-                if(configparams != null) {
-                    Type type = new TypeToken<Map<String, String>>(){}.getType();
-                    Map<String,String> configMap = gson.fromJson(configparams, type);
+                    String pluginname = "unknown";
+                    String jarfile = "unknown";
+                    String version = "unknown";
+                    String md5 = "unknown";
 
-                    if(configMap.containsKey("pluginname")) {
-                        pluginname = configMap.get("pluginname");
+                    if (configparams != null) {
+                        Type type = new TypeToken<Map<String, String>>() {
+                        }.getType();
+                        Map<String, String> configMap = gson.fromJson(configparams, type);
+
+                        if (configMap.containsKey("pluginname")) {
+                            pluginname = configMap.get("pluginname");
+                        }
+                        if (configMap.containsKey("jarfile")) {
+                            jarfile = configMap.get("jarfile");
+                        }
+                        if (configMap.containsKey("version")) {
+                            version = configMap.get("version");
+                        }
+                        if (configMap.containsKey("md5")) {
+                            md5 = configMap.get("md5");
+                        }
+
                     }
-                    if(configMap.containsKey("jarfile")) {
-                        jarfile = configMap.get("jarfile");
-                    }
-                    if(configMap.containsKey("version")) {
-                        version = configMap.get("version");
-                    }
-                    if(configMap.containsKey("md5")) {
-                        md5 = configMap.get("md5");
-                    }
 
+                    stmtString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                            "WHERE plugin_id='" + plugin + "'";
+
+                } else if (((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
+                    stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                            "WHERE agent_id='" + agent + "'";
+
+                } else if ((region != null) && (agent == null) && (plugin == null)) {
+                    stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                            "WHERE region_id='" + region + "'";
                 }
 
-                stmtString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE plugin_id='" + plugin + "'";
-
-            } else if(((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
-                stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE agent_id='" + agent + "'";
-
-            } else if((region != null) && (agent == null) && (plugin == null)) {
-                stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE region_id='" + region + "'";
+                stmt.executeUpdate(stmtString);
             }
-
-            stmt.executeUpdate(stmtString);
-            stmt.close();
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -492,13 +494,13 @@ public class DBEngine {
     public void addCStateEvent(long config_ts, String current_mode, String current_desc, String global_region, String global_agent, String regional_region, String regional_agent, String local_region, String local_agent) {
 
         try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
-            String stmtString = null;
+            try (Statement stmt = conn.createStatement()) {
+                String stmtString = null;
 
-            stmtString = "INSERT INTO cstate values (" + config_ts + ",'" + current_mode + "','" + current_desc + "','" + global_region + "','" + global_agent + "','" + regional_region + "','" + regional_agent + "','" + local_region + "','" + local_agent + "')";
+                stmtString = "INSERT INTO cstate values (" + config_ts + ",'" + current_mode + "','" + current_desc + "','" + global_region + "','" + global_agent + "','" + regional_region + "','" + regional_agent + "','" + local_region + "','" + local_agent + "')";
 
-            stmt.executeUpdate(stmtString);
-            stmt.close();
+                stmt.executeUpdate(stmtString);
+            }
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -509,18 +511,17 @@ public class DBEngine {
     public void updateRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
-            String stmtString = null;
+            try (Statement stmt = conn.createStatement()) {
+                String stmtString = null;
 
 
-            stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                    ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                    "WHERE region_id='" + region + "'";
+                stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
+                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
+                        "WHERE region_id='" + region + "'";
 
 
-
-            stmt.executeUpdate(stmtString);
-            stmt.close();
+                stmt.executeUpdate(stmtString);
+            }
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -531,8 +532,8 @@ public class DBEngine {
     public void updateANode(String agent, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
-            String stmtString = null;
+            try (Statement stmt = conn.createStatement()) {
+                String stmtString = null;
 
 
                 stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
@@ -540,9 +541,8 @@ public class DBEngine {
                         "WHERE agent_id='" + agent + "'";
 
 
-
-            stmt.executeUpdate(stmtString);
-            stmt.close();
+                stmt.executeUpdate(stmtString);
+            }
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -561,19 +561,19 @@ public class DBEngine {
             queryString = "SELECT vnode_id FROM vnode WHERE resource_id='" + resourceId + "'";
 
             try (Connection conn = ds.getConnection()) {
-                Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-                ResultSet rs = stmt.executeQuery(queryString);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-                while (rs.next()) {
-                    String node = rs.getString(1);
-                    if (!inodeResourceList.contains(node)) {
-                        inodeResourceList.add(node);
+                    while (rs.next()) {
+                        String node = rs.getString(1);
+                        if (!inodeResourceList.contains(node)) {
+                            inodeResourceList.add(node);
+                        }
                     }
-                }
 
-                rs.close();
-                stmt.close();
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -593,19 +593,19 @@ public class DBEngine {
             queryString = "SELECT inode_id FROM inode WHERE resource_id='" + resourceId + "'";
 
             try (Connection conn = ds.getConnection()) {
-                Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-                ResultSet rs = stmt.executeQuery(queryString);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-                while (rs.next()) {
-                    String node = rs.getString(1);
-                    if (!inodeResourceList.contains(node)) {
-                        inodeResourceList.add(node);
+                    while (rs.next()) {
+                        String node = rs.getString(1);
+                        if (!inodeResourceList.contains(node)) {
+                            inodeResourceList.add(node);
+                        }
                     }
-                }
 
-                rs.close();
-                stmt.close();
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -624,15 +624,15 @@ public class DBEngine {
             queryString = "SELECT status_code FROM inode WHERE inode_id='" + inodeId + "'";
 
             try (Connection conn = ds.getConnection()) {
-                Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-                ResultSet rs = stmt.executeQuery(queryString);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-                rs.next();
-                status_code = rs.getInt(1);
+                    rs.next();
+                    status_code = rs.getInt(1);
 
-                rs.close();
-                stmt.close();
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -652,11 +652,11 @@ public class DBEngine {
 
 
             try (Connection conn = ds.getConnection()) {
-                Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-                queryReturn = stmt.executeUpdate(queryString);
+                    queryReturn = stmt.executeUpdate(queryString);
 
-                stmt.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -675,15 +675,16 @@ public class DBEngine {
                     "WHERE plugin_id='" + pluginId + "'";
 
             try (Connection conn = ds.getConnection()) {
-                Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-            ResultSet rs = stmt.executeQuery(queryString);
 
-            rs.next();
-            status_code = rs.getInt(1);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-            rs.close();
-            stmt.close();
+                    rs.next();
+                    status_code = rs.getInt(1);
+
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -704,25 +705,25 @@ public class DBEngine {
                     "WHERE plugin_id='" + pluginId + "'";
 
             try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-            ResultSet rs = stmt.executeQuery(queryString);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-            rs.next();
-            pNodeMap.put("plugin_id", rs.getString("plugin_id"));
-            pNodeMap.put("status_code", rs.getString("status_code"));
-            pNodeMap.put("status_desc", rs.getString("status_desc"));
-            pNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-            //pNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
-            pNodeMap.put("pluginname", rs.getString("pluginname"));
-            pNodeMap.put("version", rs.getString("version"));
-            pNodeMap.put("jarfile", rs.getString("jarfile"));
-            pNodeMap.put("md5", rs.getString("md5"));
-            pNodeMap.put("configparams", rs.getString("configparams"));
-            pNodeMap.put("persistence_code", rs.getString("persistence_code"));
+                    rs.next();
+                    pNodeMap.put("plugin_id", rs.getString("plugin_id"));
+                    pNodeMap.put("status_code", rs.getString("status_code"));
+                    pNodeMap.put("status_desc", rs.getString("status_desc"));
+                    pNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
+                    //pNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+                    pNodeMap.put("pluginname", rs.getString("pluginname"));
+                    pNodeMap.put("version", rs.getString("version"));
+                    pNodeMap.put("jarfile", rs.getString("jarfile"));
+                    pNodeMap.put("md5", rs.getString("md5"));
+                    pNodeMap.put("configparams", rs.getString("configparams"));
+                    pNodeMap.put("persistence_code", rs.getString("persistence_code"));
 
-            rs.close();
-            stmt.close();
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
@@ -743,20 +744,20 @@ public class DBEngine {
                     "WHERE region_id='" + regionId + "'";
 
             try (Connection conn = ds.getConnection()) {
-            Statement stmt = conn.createStatement();
+                try (Statement stmt = conn.createStatement()) {
 
-            ResultSet rs = stmt.executeQuery(queryString);
+                    ResultSet rs = stmt.executeQuery(queryString);
 
-            rs.next();
-            aNodeMap.put("region_id", rs.getString("region_id"));
-            aNodeMap.put("status_code", rs.getString("status_code"));
-            aNodeMap.put("status_desc", rs.getString("status_desc"));
-            aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
-            //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
-            aNodeMap.put("configparams", rs.getString("configparams"));
+                    rs.next();
+                    aNodeMap.put("region_id", rs.getString("region_id"));
+                    aNodeMap.put("status_code", rs.getString("status_code"));
+                    aNodeMap.put("status_desc", rs.getString("status_desc"));
+                    aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
+                    //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
+                    aNodeMap.put("configparams", rs.getString("configparams"));
 
-            rs.close();
-            stmt.close();
+                    rs.close();
+                }
             }
 
         } catch(Exception ex) {
