@@ -11,6 +11,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 class DiscoveryClientWorkerIPv4 {
     private ControllerEngine controllerEngine;
@@ -26,6 +27,8 @@ class DiscoveryClientWorkerIPv4 {
     private List<MsgEvent> discoveredList;
     private DiscoveryCrypto discoveryCrypto;
     private int discoveryPort;
+
+    private AtomicBoolean lockPacket = new AtomicBoolean();
 
     DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String broadCastNetwork) {
         this.controllerEngine = controllerEngine;
@@ -71,7 +74,7 @@ class DiscoveryClientWorkerIPv4 {
     }
 
     private synchronized void processIncoming(DatagramPacket packet) {
-        synchronized (packet) {
+        synchronized (lockPacket) {
             String json = new String(packet.getData()).trim();
             try {
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
@@ -96,10 +99,7 @@ class DiscoveryClientWorkerIPv4 {
                     if (disType == DiscoveryType.AGENT || disType == DiscoveryType.REGION || disType == DiscoveryType.GLOBAL) {
                         me.setParam("validated_authenication", ValidatedAuthenication(me));
                     }
-
                     discoveredList.add(me);
-
-
                 }
             } catch (Exception ex) {
                 logger.error("DiscoveryClientWorker in loop {}", ex.getMessage());

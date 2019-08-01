@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UDPDiscoveryEngine implements Runnable {
     private ControllerEngine controllerEngine;
@@ -25,6 +26,8 @@ public class UDPDiscoveryEngine implements Runnable {
     private Gson gson;
     private CLogger logger;
     private int discoveryPort;
+    private AtomicBoolean lockPacket = new AtomicBoolean();
+
 
     public UDPDiscoveryEngine(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;

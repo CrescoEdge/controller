@@ -157,7 +157,9 @@ class BrokerMonitor implements Runnable {
 			shutdown();
 		} catch(Exception ex) {
 			logger.error("Run {}", ex.getMessage());
-            logger.error(ex.getStackTrace().toString());
+			StringWriter errors = new StringWriter();
+			ex.printStackTrace(new PrintWriter(errors));
+			logger.error(errors.toString());
 		}
 	}
 }

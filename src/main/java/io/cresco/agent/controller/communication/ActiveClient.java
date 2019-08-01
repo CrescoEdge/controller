@@ -73,7 +73,10 @@ public class ActiveClient {
         ActiveMQSession activeMQSession = null;
         try {
 
-            activeMQSession = (ActiveMQSession)getConnection(URI).createSession(false, Session.AUTO_ACKNOWLEDGE);
+            ActiveMQConnection activeMQConnection = getConnection(URI);
+            if(activeMQConnection != null) {
+                activeMQSession = (ActiveMQSession)activeMQConnection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            }
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -84,8 +87,6 @@ public class ActiveClient {
 
     private ActiveMQConnection getConnection(String URI) {
         ActiveMQConnection activeMQConnection = null;
-
-
 
         try {
 
@@ -124,20 +125,21 @@ public class ActiveClient {
                     }
                 }
 
-                activeMQConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
-                logger.debug("Connection Created for URI: [" + URI + "]");
+                if(activeMQSslConnectionFactory != null) {
+                    activeMQConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
+                    logger.debug("Connection Created for URI: [" + URI + "]");
 
 
+                    activeMQConnection.start();
+                    while (!activeMQConnection.isStarted()) {
+                        logger.info("Waiting on connection to URI: [" + URI + "] to start.");
+                        Thread.sleep(1000);
+                    }
 
-                activeMQConnection.start();
-                while(!activeMQConnection.isStarted()) {
-                    logger.info("Waiting on connection to URI: [" + URI + "] to start." );
-                    Thread.sleep(1000);
-                }
+                    synchronized (lockConnectionMap) {
+                        connectionMap.put(URI, activeMQConnection);
 
-                synchronized (lockConnectionMap) {
-                    connectionMap.put(URI,activeMQConnection);
-
+                    }
                 }
 
             } else {
@@ -145,31 +147,6 @@ public class ActiveClient {
                 synchronized (lockConnectionMap) {
                     activeMQConnection = connectionMap.get(URI);
                  }
-
-                /*
-                boolean isActive = false;
-                synchronized (lockConnectionMap) {
-                    activeMQConnection = connectionMap.get(URI);
-                    if(activeMQConnection.isStarted()) {
-                       isActive = true;
-                    }
-                }
-
-                if(!isActive) {
-                    logger.error("Connection Failed for URI: [" + URI + "]");
-
-                    activeMQConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
-                    logger.error("Connection Created for URI: [" + URI + "]");
-
-
-                    activeMQConnection.start();
-                    while(!activeMQConnection.isStarted()) {
-                        logger.info("Waiting on connection to URI: [" + URI + "] to start." );
-                        Thread.sleep(1000);
-                    }
-
-                }
-                */
 
             }
 
@@ -200,19 +177,6 @@ public class ActiveClient {
         return  activeMQSslConnectionFactory;
     }
 
-    /*
-    private ActiveMQConnection initConnection(String URI) {
-        ActiveMQConnection activeMQConnection = null;
-        try {
-
-
-
-        } catch (Exception ex) {
-            logger.error("initConnection() " + ex.getMessage());
-        }
-        return activeMQConnection;
-    }
-    */
 
     public boolean initActiveAgentConsumer(String RXQueueName, String URI) {
 

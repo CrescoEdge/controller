@@ -136,10 +136,7 @@ public class ActiveBrokerManager implements Runnable  {
                             logger.trace("Not Adding Broker : " + agentPath + " remote_ip: " + agentIP);
                         }
 					}
-		  			//Thread.sleep(500); //allow HM to catch up
 			  	}
-			} catch(InterruptedException ex) {
-
 			}
 			catch (Exception ex) {
 				logger.error("Run {}", ex.getMessage());

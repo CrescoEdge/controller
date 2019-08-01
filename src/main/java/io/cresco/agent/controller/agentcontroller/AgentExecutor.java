@@ -142,8 +142,8 @@ public class AgentExecutor implements Executor {
 
                         try (InputStream inputStream = new FileInputStream(filePath.toFile())) {
                             byte[] databyte = new byte[partsize];
-                            inputStream.skip(skipLength);
-                            inputStream.read(databyte);
+                            long skipSize = inputStream.skip(skipLength);
+                            long readSize = inputStream.read(databyte);
                             inputStream.close();
                             ce.setCompressedDataParam("payload",databyte);
                             ce.setParam("status","10");

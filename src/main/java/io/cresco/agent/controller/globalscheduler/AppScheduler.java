@@ -132,17 +132,23 @@ public class AppScheduler implements IncomingApp {
                     assignedNodeList = schedulemaps.get("assigned");
                 }
 
-                if(assignedNodeList.size() == schedulemaps.get("assigned").size()) {
-                    //set DB as scheduled
-                    logger.debug("Submitting Resource Pipeline for Scheduling " + gpay.pipeline_id);
-                    controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id, "4", "Pipeline resources scheduled.");
-                    //addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, schedulemaps.get("assigned"), gpay.pipeline_id));
-                    addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, assignedNodeList, gpay.pipeline_id));
-                    logger.debug("Submitted Resource Pipeline for Scheduling");
-                    scheduleStatus = 4;
+                if(assignedNodeList != null) {
+
+                    if (assignedNodeList.size() == schedulemaps.get("assigned").size()) {
+                        //set DB as scheduled
+                        logger.debug("Submitting Resource Pipeline for Scheduling " + gpay.pipeline_id);
+                        controllerEngine.getGDB().setPipelineStatus(gpay.pipeline_id, "4", "Pipeline resources scheduled.");
+                        //addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, schedulemaps.get("assigned"), gpay.pipeline_id));
+                        addPipelineExecutor.execute(new PollAddPipeline(controllerEngine, assignedNodeList, gpay.pipeline_id));
+                        logger.debug("Submitted Resource Pipeline for Scheduling");
+                        scheduleStatus = 4;
+                    } else {
+                        scheduleStatus = 61;
+                    }
                 } else {
-                    scheduleStatus = 61;
+                    scheduleStatus = 62;
                 }
+
             } else {
                 scheduleStatus = 60;
             }

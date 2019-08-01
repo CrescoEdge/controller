@@ -37,16 +37,13 @@ public class GlobalHealthWatcher implements Runnable {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(GlobalHealthWatcher.class.getName(),CLogger.Level.Info);
 
-
-        //this.logger = new CLogger(GlobalHealthWatcher.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
-		//this.agentcontroller = agentcontroller;
         global_host_map = new HashMap<>();
         regionalUpdateTimer = new Timer();
         regionalUpdateTimer.scheduleAtFixedRate(new GlobalHealthWatcher.GlobalNodeStatusWatchDog(controllerEngine, logger), 500, 15000);//remote
         gCheckInterval = plugin.getConfig().getLongParam("watchdogtimer",5000L);
         SchedulerActive = false;
         AppSchedulerActive = false;
-        //controllerEngine.setResourceScheduleQueue(new LinkedBlockingQueue<MsgEvent>());
+
     }
 
 	public void shutdown() {
@@ -56,7 +53,6 @@ public class GlobalHealthWatcher implements Runnable {
         SchedulerActive = false;
         AppSchedulerActive = false;
 
-        //remove listner
         controllerEngine.getPerfControllerMonitor().removeKpiListener();
 
 
@@ -97,7 +93,9 @@ public class GlobalHealthWatcher implements Runnable {
 
 		} catch(Exception ex) {
 			logger.error("globalwatcher run() " + ex.getMessage());
-            logger.error(ex.getStackTrace().toString());
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
 		}
 	}
 
@@ -111,18 +109,7 @@ public class GlobalHealthWatcher implements Runnable {
                 if(controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
 
                     MsgEvent tick = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.WATCHDOG);
-                    /*
-                    MsgEvent tick = new MsgEvent(MsgEvent.Type.WATCHDOG, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "WatchDog timer tick. 0");
-                    tick.setParam("src_region", this.plugin.getRegion());
-                    tick.setParam("src_agent", this.plugin.getAgent());
-
-                    tick.setParam("dst_region",controllerEngine.cstate.getGlobalRegion());
-                    tick.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());
-                    */
-
                     tick.setParam("region_name",controllerEngine.cstate.getRegionalRegion());
-
-
                     tick.setParam("is_regional", Boolean.TRUE.toString());
                     tick.setParam("is_global", Boolean.TRUE.toString());
 
@@ -242,6 +229,10 @@ public class GlobalHealthWatcher implements Runnable {
                     controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host :" + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
                     List<MsgEvent> discoveryList = dynamicGlobalDiscovery();
 
+                    if(discoveryList == null) {
+                        discoveryList = new ArrayList<>();
+                    }
+
                     if(!discoveryList.isEmpty()) {
                         String[] globalController = connectToGlobal(dynamicGlobalDiscovery());
                         if(globalController == null) {
@@ -258,8 +249,6 @@ public class GlobalHealthWatcher implements Runnable {
                         logger.info("No Global Controller Found: Starting Global Services");
                         //start global stuff
                         //create globalscheduler queue
-                        //agentcontroller.setResourceScheduleQueue(new LinkedBlockingQueue<MsgEvent>());
-                        //controllerEngine.setAppScheduleQueue(new LinkedBlockingQueue<gPayload>());
                         startGlobalSchedulers();
                         //end global start
                         this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");

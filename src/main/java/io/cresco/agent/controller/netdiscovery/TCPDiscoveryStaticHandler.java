@@ -102,11 +102,12 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                 logger.trace("Discovery type unknown");
                 sme = null;
             }
-            //set for static discovery
-            sme.setParam("discovery_static_agent","true");
-
-            //set crypto message for discovery
-            sme.setParam("discovery_validator",generateValidateMessage(sme));
+            if(sme != null) {
+                //set for static discovery
+                sme.setParam("discovery_static_agent", "true");
+                //set crypto message for discovery
+                sme.setParam("discovery_validator", generateValidateMessage(sme));
+            }
 
         } catch (Exception ex) {
             logger.error("TCPDiscoveryStatic discover Error: " + ex.getMessage());

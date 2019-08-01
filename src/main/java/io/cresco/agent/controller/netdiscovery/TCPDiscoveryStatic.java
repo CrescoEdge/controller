@@ -15,9 +15,6 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
 import io.netty.handler.timeout.IdleStateHandler;
 
 import java.util.ArrayList;
@@ -40,9 +37,11 @@ public class TCPDiscoveryStatic {
 
         final List<MsgEvent> discoveredList = new ArrayList<>();
 
-        boolean isSSL = false;
+        //boolean isSSL = false;
         int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
 
+        //don't remove to allow for ssl discovery
+        /*
             final SslContext sslCtx;
             if (isSSL) {
                 sslCtx = SslContextBuilder.forClient()
@@ -50,7 +49,7 @@ public class TCPDiscoveryStatic {
             } else {
                 sslCtx = null;
             }
-
+        */
 
             EventLoopGroup group = new NioEventLoopGroup(1);
             try {
@@ -64,9 +63,13 @@ public class TCPDiscoveryStatic {
                                         //.addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
                                         //.addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
                                         .addLast(new IdleStateHandler(30,30,30));
+
+                                /*
                                 if (sslCtx != null) {
                                     p.addLast(sslCtx.newHandler(ch.alloc(), hostAddress, discoveryPort));
                                 }
+
+                                */
                                 p.addLast(
                                         new ObjectEncoder(),
                                         new ObjectDecoder(ClassResolvers.cacheDisabled(null)),

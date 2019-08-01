@@ -27,7 +27,6 @@ public class BrokeredAgent {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(BrokeredAgent.class.getName(),CLogger.Level.Info);
-		//this.logger = new CLogger(BrokeredAgent.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(),CLogger.Level.Trace);
 		logger.debug("Initializing: " + agentPath + " address: " + activeAddress);
 		this.plugin = plugin;
 		this.bm = new BrokerMonitor(controllerEngine, agentPath);
@@ -47,7 +46,7 @@ public class BrokeredAgent {
 		while(bm.MonitorActive) {
 			try {
 				Thread.sleep(1000);
-			} catch (InterruptedException e) {
+			} catch (Exception e) {
 				logger.error("setStop {}", e.getMessage());
 			}
 		}
@@ -67,7 +66,7 @@ public class BrokeredAgent {
 		while(!bm.MonitorActive) {
 			try {
 				Thread.sleep(1000);
-			} catch (InterruptedException e) {
+			} catch (Exception e) {
 				logger.error("setStarting {}", e.getMessage());
 			}
 		}

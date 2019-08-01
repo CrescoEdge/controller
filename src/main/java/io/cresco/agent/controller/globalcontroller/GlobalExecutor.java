@@ -529,14 +529,13 @@ public class GlobalExecutor implements Executor {
                         pluginList = pluginList + getPluginName(pluginPath) + "=" + getPluginVersion(pluginPath) + ",";
                     }
                 }
-                pluginList = pluginList.substring(0, pluginList.length() - 1);
-                ce.setParam("pluginlist", pluginList);
-                //
+
+                if(pluginList != null) {
+                    pluginList = pluginList.substring(0, pluginList.length() - 1);
+                    ce.setParam("pluginlist", pluginList);
+                }
             }
-            //else
-            //{
-            //    ce.setMsgBody("No agentcontroller directory exist to inventory");
-            //}
+
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());

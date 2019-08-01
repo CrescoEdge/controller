@@ -15,10 +15,7 @@ import org.apache.activemq.BlobMessage;
 
 import javax.jms.Queue;
 import javax.jms.*;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.IOException;
-import java.io.ObjectOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -81,15 +78,10 @@ public class AgentConsumer {
 		MessageConsumer consumer = sess.createConsumer(RXqueue);
 
 		Gson gson = new Gson();
-		//controllerEngine.setConsumerThreadActive(true);
 
 		consumer.setMessageListener(new MessageListener() {
 			public void onMessage(Message msg) {
 				try {
-
-					//long jmsTS = msg.getJMSTimestamp();
-					//int messageSize = getMessageSizeInBytes(msg);
-
 
 
 					if (msg instanceof TextMessage) {
@@ -104,11 +96,9 @@ public class AgentConsumer {
 
 							//check if message is for this agent
 							//check if message has file payload and needs to be registered
-							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstRegion().equals(plugin.getRegion()))) {
-								if(registerIncomingFiles(msgEventString, fileobjectString, filegroup)) {
-									//System.out.println("NEW FILE PAYLOAD REGISTERED");
-								} else {
-									//System.out.println("COULD NOT REGISTER NEW FILE PAYLOAD");
+							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstAgent().equals(plugin.getAgent()))) {
+								if(!registerIncomingFiles(msgEventString, fileobjectString, filegroup)) {
+									logger.error("Unable to register files!");
 								}
 								//don't forward message until files have arrived
 								return;
@@ -286,14 +276,6 @@ public class AgentConsumer {
 			}
 		});
 
-	}
-
-	private int getMessageSizeInBytes(Message message) throws IOException {
-		ByteArrayOutputStream baos = new ByteArrayOutputStream();
-		ObjectOutputStream oos = new ObjectOutputStream(baos);
-		oos.writeObject(message);
-		oos.close();
-		return baos.size();
 	}
 
 	private boolean registerIncomingFiles(String msgEventString, String fileobjectString, String fileGroup) {

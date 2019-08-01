@@ -529,9 +529,6 @@ public class ControllerEngine {
                         logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
                         discoveryList = null;
                     }
-                    if (discoveryList.isEmpty()) {
-                        discoveryList = null;
-                    }
 
                 } else {
                     discoveryList = null;

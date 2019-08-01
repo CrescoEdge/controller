@@ -11,6 +11,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DiscoveryClientWorkerIPv6 {
     private ControllerEngine controllerEngine;
@@ -26,6 +27,8 @@ public class DiscoveryClientWorkerIPv6 {
     private List<MsgEvent> discoveredList;
     private DiscoveryCrypto discoveryCrypto;
     private int discoveryPort;
+    private AtomicBoolean lockPacket = new AtomicBoolean();
+
 
     public DiscoveryClientWorkerIPv6(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String multiCastNetwork) {
         this.controllerEngine = controllerEngine;
@@ -67,7 +70,7 @@ public class DiscoveryClientWorkerIPv6 {
     }
 
     private synchronized void processIncoming(DatagramPacket packet) {
-        synchronized (packet) {
+        synchronized (lockPacket) {
             String json = new String(packet.getData()).trim();
             try {
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);

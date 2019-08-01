@@ -1026,7 +1026,6 @@ public class PluginAdmin {
                         if (addConfig(pluginID, map)) {
 
                             if (startBundle(bundleID, (String)map.get("pluginname"))) {
-                                if (pluginID != null) {
 
                                     PluginNode pluginNode = null;
                                     if (edges != null) {
@@ -1056,9 +1055,6 @@ public class PluginAdmin {
                                         logger.error("Could not start agentcontroller " + pluginID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
                                     }
 
-                                } else {
-                                    logger.error("Could not create config for " + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
-                                }
                             } else {
                                 logger.error("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
                                 logger.error("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
@@ -1482,7 +1478,7 @@ public class PluginAdmin {
 
                             }
 
-                        } else {
+                        } else if (pluginName != null) {
                             if (pluginName.equals(pluginNameLocal)) {
                                 isLocal = true;
                             }
@@ -1572,7 +1568,11 @@ public class PluginAdmin {
                                     logger.error("Jar " + pluginName + " failed MD5 Check");
                                 }
                             } else {
-                                logger.error("Jar " + pluginName + " Path: " + jarPath.toFile().getAbsolutePath() + " is not a file!");
+                                if(jarPath != null) {
+                                    logger.error("Jar " + pluginName + " Path: " + jarPath.toFile().getAbsolutePath() + " is not a file!");
+                                } else {
+                                    logger.error("Jar " + pluginName + " Path = NULL");
+                                }
                             }
                         } else {
                             logger.error("region: " + region + " agent: " + agent + " pluginId: " + pluginID + " responded without jar data");
