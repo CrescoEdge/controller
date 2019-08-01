@@ -238,6 +238,9 @@ public class UDPDiscoveryEngine implements Runnable {
                     logger.trace("SocketAddress " + packet.getSocketAddress().toString());
                 }
 
+                if(intAddr == null) {
+                    intAddr = new HashMap<>();
+                }
                 //if (!(intAddr.containsKey(remoteAddress)) && (isGlobal) && (sourceAddress != null)) {
                 if (!(intAddr.containsKey(remoteAddress)) && (isGlobal)) {
                         //Packet received
