@@ -66,9 +66,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         gson = new Gson();
 
-        agentTopic = getDestination(TopicType.AGENT);
-        regionTopic = getDestination(TopicType.REGION);
-        globalTopic = getDestination(TopicType.GLOBAL);
+        if(activeMQSession != null) {
+
+            agentTopic = getDestination(TopicType.AGENT);
+            regionTopic = getDestination(TopicType.REGION);
+            globalTopic = getDestination(TopicType.GLOBAL);
+
+        }
 
 
         String inputStreamName = "input1";
@@ -251,8 +255,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     Object inputObject = message.getObjectProperty("data_stream");
                     if(inputObject != null) {
                         InputStream inputStream = (InputStream) inputObject;
-                        BlobMessage blobMessage = getSession().createBlobMessage(inputStream);
-                        agentProducer.send(blobMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        ActiveMQSession activeMQSession = getSession();
+                        if(activeMQSession != null) {
+                            BlobMessage blobMessage = activeMQSession.createBlobMessage(inputStream);
+                            agentProducer.send(blobMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        }
                     } else {
                         agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
                     }
@@ -303,25 +310,29 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         MessageProducer messageProducer = null;
 
+        ActiveMQSession activeMQSession = getSession();
 
-        try {
-            switch (topicType) {
-                case AGENT:
-                    messageProducer = getSession().createProducer(agentTopic);
-                    break;
-                case REGION:
-                   messageProducer = getSession().createProducer(regionTopic);
-                     break;
-                case GLOBAL:
-                    messageProducer = getSession().createProducer(globalTopic);
-                    break;
+        if(activeMQSession != null) {
+
+            try {
+                switch (topicType) {
+                    case AGENT:
+                        messageProducer = activeMQSession.createProducer(agentTopic);
+                        break;
+                    case REGION:
+                        messageProducer = activeMQSession.createProducer(regionTopic);
+                        break;
+                    case GLOBAL:
+                        messageProducer = activeMQSession.createProducer(globalTopic);
+                        break;
+                }
+
+                messageProducer.setTimeToLive(300000L);
+                messageProducer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+
+            } catch (Exception ex) {
+                ex.printStackTrace();
             }
-
-            messageProducer.setTimeToLive(300000L);
-            messageProducer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
         }
 
         return messageProducer;
@@ -330,7 +341,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public BytesMessage createBytesMessage() {
         BytesMessage bytesMessage = null;
 	    try {
-            bytesMessage = getSession().createBytesMessage();
+	        ActiveMQSession activeMQSession = getSession();
+	        if(activeMQSession != null) {
+                bytesMessage = activeMQSession.createBytesMessage();
+            }
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
@@ -341,7 +355,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public MapMessage createMapMessage() {
         MapMessage mapMessage = null;
         try {
-            mapMessage = getSession().createMapMessage();
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                mapMessage = activeMQSession.createMapMessage();
+            }
 
         } catch (Exception ex){
             ex.printStackTrace();
@@ -352,8 +369,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public Message createMessage() {
 	    Message message = null;
 	    try {
-
-            message = getSession().createMessage();
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                message = activeMQSession.createMessage();
+            }
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
@@ -365,8 +384,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	    ObjectMessage objectMessage = null;
 
 	    try {
-            objectMessage = getSession().createObjectMessage();
-
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                objectMessage = getSession().createObjectMessage();
+            }
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
@@ -379,7 +400,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public BlobMessage createBlobMessage(URL url) {
 	    BlobMessage blobMessage = null;
 	    try {
-	        blobMessage = getSession().createBlobMessage(url);
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                blobMessage = getSession().createBlobMessage(url);
+            }
         } catch (Exception ex) {
 	        ex.printStackTrace();
         }
@@ -389,7 +413,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public BlobMessage createBlobMessage(File file) {
         BlobMessage blobMessage = null;
         try {
-            blobMessage = getSession().createBlobMessage(file);
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                blobMessage = getSession().createBlobMessage(file);
+            }
         } catch (Exception ex) {
             ex.printStackTrace();
         }
@@ -399,7 +426,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public BlobMessage createBlobMessage(InputStream inputStream) {
         BlobMessage blobMessage = null;
         try {
-            blobMessage = getSession().createBlobMessage(inputStream);
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                blobMessage = getSession().createBlobMessage(inputStream);
+            }
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -412,9 +442,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public StreamMessage createStreamMessage() {
 	    StreamMessage streamMessage = null;
 	    try{
-
-
-            streamMessage = getSession().createStreamMessage();
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                streamMessage = getSession().createStreamMessage();
+            }
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
@@ -425,8 +456,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public TextMessage createTextMessage() {
 	    TextMessage textMessage = null;
 	    try {
-
-            textMessage = getSession().createTextMessage();
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                textMessage = getSession().createTextMessage();
+            }
 
         } catch (Exception ex) {
 	        ex.printStackTrace();
