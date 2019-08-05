@@ -210,8 +210,11 @@ public class UDPDiscoveryEngine implements Runnable {
             } catch (Exception ex) {
                 logger.error("stripIPv6Address {}", ex.getMessage());
             }
+
             return intAddr;
         }
+
+
 
         private synchronized DatagramPacket sendPacket(DatagramPacket packet) {
             synchronized (lockPacket) {
