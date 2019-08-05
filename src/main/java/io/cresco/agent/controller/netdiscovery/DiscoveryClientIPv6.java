@@ -26,7 +26,6 @@ public class DiscoveryClientIPv6 {
         List<MsgEvent> discoveryList = new ArrayList<>();
         try {
 
-
             while (controllerEngine.isClientDiscoveryActiveIPv6()) {
                 logger.debug("Discovery already underway, waiting..");
                 Thread.sleep(2500);
