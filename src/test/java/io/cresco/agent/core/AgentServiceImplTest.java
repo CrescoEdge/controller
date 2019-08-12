@@ -37,6 +37,17 @@ class AgentServiceImplTest {
             MockBundleContext bundleContext = new MockBundleContext();
             AgentServiceImpl agentService = new AgentServiceImpl();
             agentService.activate(bundleContext);
+
+            String state = "unknown";
+            int i = 0;
+            while(!state.equals("GLOBAL")) {
+                state = agentService.getAgentState().getControllerState().name();
+                System.out.println("AGENT STATE: " + state);
+                Thread.sleep(1000);
+            }
+
+            agentService.deactivate(bundleContext);
+
         } catch (Exception ex) {
             ex.printStackTrace();
         }
