@@ -23,9 +23,7 @@ import org.osgi.framework.*;
 
 import java.io.File;
 import java.io.InputStream;
-import java.util.Collection;
-import java.util.Dictionary;
-import java.util.Properties;
+import java.util.*;
 
 
 /**
@@ -157,11 +155,14 @@ public class MockBundleContext implements BundleContext
     public Bundle[] getBundles()
     {
 
-        Bundle bundle = new MockBundle();
-        Bundle[] bundles = new Bundle[1];
-        bundles[0] = bundle;
-        return bundles;
+        List<Bundle> bundleList = new ArrayList<>();
+        bundleList.add(new MockBundle("io.cresco.controller","1.0-SNAPSHOT"));
+        bundleList.add(new MockBundle("io.cresco.repo","1.0-SNAPSHOT"));
+        bundleList.add(new MockBundle("io.cresco.dashboard","1.0-SNAPSHOT"));
+        bundleList.add(new MockBundle("io.cresco.cep","1.0-SNAPSHOT"));
+        bundleList.add(new MockBundle("io.cresco.sysinfo","1.0-SNAPSHOT"));
 
+        return (Bundle[])bundleList.toArray();
 
     }
 

@@ -34,8 +34,22 @@ import java.util.List;
 import java.util.Map;
 
 
-public class MockBundle implements Bundle
-{
+public class MockBundle implements Bundle {
+
+    /*
+                    String eBundleId = String.valueOf(b.getBundleId());
+                String eName = b.getSymbolicName();
+                String eVersion = b.getVersion().toString();
+
+     */
+
+    private String symbolicName;
+    private String version;
+
+    public MockBundle(String symbolicName, String version) {
+        this.symbolicName = symbolicName;
+        this.version = version;
+    }
 
     public Enumeration findEntries( String arg0, String arg1, boolean arg2 )
     {
@@ -55,7 +69,7 @@ public class MockBundle implements Bundle
 
     public Version getVersion()
     {
-        return null;
+        return new Version(version);
     }
 
     public <A> A adapt( Class<A> aClass )
@@ -143,8 +157,8 @@ public class MockBundle implements Bundle
 
     public String getSymbolicName()
     {
-        return "io.cresco.controller";
-
+        //return "io.cresco.controller";
+        return symbolicName;
     }
 
 
