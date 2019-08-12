@@ -25,7 +25,6 @@ public class StaticAgentLoader implements Runnable  {
         this.context = context;
     }
 
-
     public void run() {
 
             try {
