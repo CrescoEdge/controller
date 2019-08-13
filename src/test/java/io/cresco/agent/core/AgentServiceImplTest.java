@@ -75,6 +75,7 @@ class AgentServiceImplTest {
             agentService.activate(bundleContext);
             Map<String, Object> configParams = new HashMap<>();
             agentService.modified(bundleContext,configParams);
+            agentService.deactivate(bundleContext);
         } catch (Exception ex) {
             ex.printStackTrace();
         }
@@ -89,6 +90,7 @@ class AgentServiceImplTest {
             AgentServiceImpl agentService = new AgentServiceImpl();
             agentService.activate(bundleContext);
             agentService.setLogLevel("test", CLogger.Level.Info);
+            agentService.deactivate(bundleContext);
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -102,6 +104,7 @@ class AgentServiceImplTest {
         AgentServiceImpl agentService = new AgentServiceImpl();
         agentService.activate(bundleContext);
         agentService.getAgentState();
+        agentService.deactivate(bundleContext);
     }
 
     @Test

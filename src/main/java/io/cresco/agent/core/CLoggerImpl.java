@@ -43,8 +43,6 @@ public class CLoggerImpl implements CLogger {
 
         logService = LoggerFactory.getLogger(logIdent);
 
-
-
     }
 
     public void error(String logMessage) {
