@@ -4,16 +4,25 @@ import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import sun.security.tools.keytool.CertAndKeyGen;
-import sun.security.x509.*;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.asn1.x509.BasicConstraints;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.KeyUsage;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.joda.time.DateTime;
 
 import javax.net.ssl.*;
 import java.io.*;
+import java.math.BigInteger;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
+import java.util.Random;
 import java.util.UUID;
 
 public class CertificateManager {
@@ -22,9 +31,9 @@ public class CertificateManager {
     private KeyStore trustStore;
     private char[] keyStorePassword;
     private String keyStoreAlias;
-    private X509Certificate signingCertificate;
-    private PrivateKey signingKey;
-    private int YEARS_VALID = 2;
+    //private X509Certificate signingCertificate;
+    //private PrivateKey signingKey;
+    private int YEARS_VALID = 3;
     private X509Certificate[] chain;
     private CLogger logger;
 
@@ -41,11 +50,12 @@ public class CertificateManager {
             this.plugin = controllerEngine.getPluginBuilder();
             this.logger = plugin.getLogger(CertificateManager.class.getName(),CLogger.Level.Info);
 
+            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
 
             keySize = plugin.getConfig().getIntegerParam("messagekeysize",2048);
 
             this.keyStoreAlias = controllerEngine.cstate.getAgentPath();
-            
+
             //keyStoreAlias = UUID.randomUUID().toString();
             keyStorePassword = UUID.randomUUID().toString().toCharArray();
 
@@ -76,6 +86,7 @@ public class CertificateManager {
                 //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
                 //trustStore.setCertificateEntry(UUID.randomUUID().toString(),cert);
                 //.keyStore.setCertificateEntry(alias,cert);
+                logger.debug("ADDING ALIAS: " + alias + " to truststore");
                 trustStore.setCertificateEntry(alias,cert);
                 //logger.error(publicKeyString);
             }
@@ -91,85 +102,87 @@ public class CertificateManager {
         //return certs;
     }
 
-    public X509Certificate[] getCertificate(String alias) {
-        X509Certificate[] certChain = null;
-        try {
-            //Generate leaf certificate
-            CertAndKeyGen keyGen2=new CertAndKeyGen("RSA","SHA256WithRSA",null);
-            keyGen2.generate(keySize);
-            PrivateKey topPrivateKey=keyGen2.getPrivateKey();
-            X509Certificate topCertificate = keyGen2.getSelfCertificate(new X500Name("CN=TOP"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
-            Certificate cert = createSignedCertificate(topCertificate,signingCertificate,signingKey);
-            //keyStore.setCertificateEntry(alias,cert);
-            //trustStore.setCertificateEntry(alias,cert);
-
-
-
-            certChain = chain.clone();
-            certChain[0] = (X509Certificate)cert;
-
-            storeKeyAndCertificateChain(alias, keyStorePassword, topPrivateKey, certChain);
-
-
-        } catch(Exception ex) {
-            logger.error("getCertificate : error " + ex.getMessage());
-        }
-
-        return  certChain;
-    }
-
     private void generateCertChain() {
-        try{
+
+        try {
+            // Create self signed Root CA certificate
+
+            String agentName = "agent-" + UUID.randomUUID().toString();
+            String pluginName = "plugin-" + UUID.randomUUID().toString();
+            String functionName = "message-" + UUID.randomUUID().toString();
+
+            KeyPair rootCAKeyPair = generateKeyPair();
+
+            X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
+                    new X500Name("CN=rootCA-" + agentName), // issuer authority
+                    BigInteger.valueOf(new Random().nextInt()), //serial number of certificate
+                    DateTime.now().toDate(), // start of validity
+                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    //new DateTime(2025, 12, 31, 0, 0, 0, 0).toDate(), //end of certificate validity
+                    new X500Name("CN=rootCA-" + agentName), // subject name of certificate
+                    rootCAKeyPair.getPublic()); // public key of certificate
+            // key usage restrictions
+            builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
+            builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
+            X509Certificate rootCA = new JcaX509CertificateConverter().getCertificate(builder
+                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                            build(rootCAKeyPair.getPrivate()))); // private key of signing authority , here it is self signed
 
 
-            //Generate ROOT certificate
-            CertAndKeyGen keyGen=new CertAndKeyGen("RSA","SHA256WithRSA",null);
-            keyGen.generate(keySize);
-            PrivateKey rootPrivateKey=keyGen.getPrivateKey();
+            //create Intermediate CA cert signed by Root CA
+            KeyPair intermedCAKeyPair = generateKeyPair();
+            builder = new JcaX509v3CertificateBuilder(
+                    rootCA, // here rootCA is issuer authority
+                    BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
+                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    new X500Name("CN=IntermedCA-" + pluginName), intermedCAKeyPair.getPublic());
+            builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
+            builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
+            X509Certificate intermedCA = new JcaX509CertificateConverter().getCertificate(builder
+                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                            build(rootCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by rootCA
 
-            //X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
-            X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+            //create end user cert signed by Intermediate CA
+            KeyPair endUserCertKeyPair = generateKeyPair();
+            builder = new JcaX509v3CertificateBuilder(
+                    intermedCA, //here intermedCA is issuer authority
+                    BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
+                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    new X500Name("CN=endUserCert-" + functionName), endUserCertKeyPair.getPublic());
+            builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
+            builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
+            X509Certificate endUserCert = new JcaX509CertificateConverter().getCertificate(builder
+                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                            build(intermedCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by intermedCA
 
-            //Generate intermediate certificate
-            CertAndKeyGen keyGen1=new CertAndKeyGen("RSA","SHA256WithRSA",null);
-            keyGen1.generate(keySize);
-            PrivateKey middlePrivateKey=keyGen1.getPrivateKey();
-
-            X509Certificate middleCertificate = keyGen1.getSelfCertificate(new X500Name("CN=MIDDLE, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
-
-            //Generate leaf certificate
-            CertAndKeyGen keyGen2=new CertAndKeyGen("RSA","SHA256WithRSA",null);
-            keyGen2.generate(keySize);
-            PrivateKey topPrivateKey=keyGen2.getPrivateKey();
-
-            X509Certificate topCertificate = keyGen2.getSelfCertificate(new X500Name("CN=TOP, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
-
-
-            rootCertificate   = createSignedCertificate(rootCertificate,rootCertificate,rootPrivateKey);
-            middleCertificate = createSignedCertificate(middleCertificate,rootCertificate,rootPrivateKey);
-            topCertificate    = createSignedCertificate(topCertificate,middleCertificate,middlePrivateKey);
 
             chain = new X509Certificate[3];
-            chain[0]=topCertificate;
-            chain[1]=middleCertificate;
-            chain[2]=rootCertificate;
+            chain[0]=endUserCert;
+            chain[1]=intermedCA;
+            chain[2]=rootCA;
 
-            //String alias = "mykey";
-            //String keystore = "testkeys.jks";
 
             //Store the certificate chain
-            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, topPrivateKey, chain);
+            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, endUserCertKeyPair.getPrivate(), chain);
 
             //Reload the keystore and display key and certificate chain info
             //loadCertChain(alias, keyStorePassword, keystore);
             //Clear the keystore
             //clearKeyStore(alias, password, keystore);
-            signingCertificate = middleCertificate;
-            signingKey = middlePrivateKey;
+            //signingCertificate = intermedCA;
+            //signingKey = intermedCAKeyPair.getPrivate();
 
-        }catch(Exception ex){
+
+        } catch (Exception ex) {
             ex.printStackTrace();
         }
+
+    }
+
+    private KeyPair generateKeyPair() throws NoSuchAlgorithmException, NoSuchProviderException {
+        KeyPairGenerator kpGen = KeyPairGenerator.getInstance("RSA", "BC");
+        kpGen.initialize(keySize, new SecureRandom());
+        return kpGen.generateKeyPair();
     }
 
     public TrustManager[] getTrustManagers() {
@@ -212,44 +225,6 @@ public class CertificateManager {
         //TODO trying to to save
         //keyStore.store(new FileOutputStream(keystore),password);
 
-    }
-
-    private X509Certificate createSignedCertificate(X509Certificate cetrificate,X509Certificate issuerCertificate,PrivateKey issuerPrivateKey){
-        try{
-            Principal issuer = issuerCertificate.getSubjectDN();
-            String issuerSigAlg = issuerCertificate.getSigAlgName();
-
-            byte[] inCertBytes = cetrificate.getTBSCertificate();
-            X509CertInfo info = new X509CertInfo(inCertBytes);
-
-            //various versions of java work diff
-            try{
-                //info.set( X509CertInfo.SUBJECT, new CertificateSubjectName( owner ) );
-                info.set( X509CertInfo.ISSUER, new CertificateIssuerName( (X500Name) issuer ) );
-            } catch(Exception e){
-                //info.set( X509CertInfo.SUBJECT, owner );
-                info.set( X509CertInfo.ISSUER, issuer );
-            }
-
-
-            //info.set(X509CertInfo.ISSUER, new CertificateIssuerName((X500Name) issuer));
-
-            //No need to add the BasicContraint for leaf cert
-            if(!cetrificate.getSubjectDN().getName().equals("CN=TOP")){
-                CertificateExtensions exts=new CertificateExtensions();
-                BasicConstraintsExtension bce = new BasicConstraintsExtension(true, -1);
-                exts.set(BasicConstraintsExtension.NAME,new BasicConstraintsExtension(false, bce.getExtensionValue()));
-                info.set(X509CertInfo.EXTENSIONS, exts);
-            }
-
-            X509CertImpl outCert = new X509CertImpl(info);
-            outCert.sign(issuerPrivateKey, issuerSigAlg);
-
-            return outCert;
-        }catch(Exception ex){
-            ex.printStackTrace();
-        }
-        return null;
     }
 
     private String getStringFromCert(X509Certificate cert) {
@@ -327,6 +302,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         return certJson;
     }
 
+
+
     //unused
 
     public void updateSSL(X509Certificate[] cert, String alias) {
@@ -376,6 +353,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         }
     }
 
+    /*
     private void generateCertChain2() {
         try{
 
@@ -410,7 +388,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             ex.printStackTrace();
         }
     }
-
+*/
     public TrustManager getTrustManager() {
         TrustManager trustManager = null;
         try {
@@ -583,6 +561,135 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         keyStore.store(new FileOutputStream(keystore),password);
     }
 
+    /*
+    private X509Certificate createSignedCertificate(X509Certificate cetrificate,X509Certificate issuerCertificate,PrivateKey issuerPrivateKey){
+        try{
+            Principal issuer = issuerCertificate.getSubjectDN();
+            String issuerSigAlg = issuerCertificate.getSigAlgName();
+
+            byte[] inCertBytes = cetrificate.getTBSCertificate();
+            X509CertInfo info = new X509CertInfo(inCertBytes);
+
+            //various versions of java work diff
+            try{
+                //info.set( X509CertInfo.SUBJECT, new CertificateSubjectName( owner ) );
+                info.set( X509CertInfo.ISSUER, new CertificateIssuerName( (X500Name) issuer ) );
+            } catch(Exception e){
+                //info.set( X509CertInfo.SUBJECT, owner );
+                info.set( X509CertInfo.ISSUER, issuer );
+            }
+
+
+            //info.set(X509CertInfo.ISSUER, new CertificateIssuerName((X500Name) issuer));
+
+            //No need to add the BasicContraint for leaf cert
+            if(!cetrificate.getSubjectDN().getName().equals("CN=TOP")){
+                CertificateExtensions exts=new CertificateExtensions();
+                BasicConstraintsExtension bce = new BasicConstraintsExtension(true, -1);
+                exts.set(BasicConstraintsExtension.NAME,new BasicConstraintsExtension(false, bce.getExtensionValue()));
+                info.set(X509CertInfo.EXTENSIONS, exts);
+            }
+
+            X509CertImpl outCert = new X509CertImpl(info);
+            outCert.sign(issuerPrivateKey, issuerSigAlg);
+
+            return outCert;
+        }catch(Exception ex){
+            ex.printStackTrace();
+        }
+        return null;
+    }
+
+ */
+
+      /*
+    private void generateCertChain() {
+        try{
+
+            //Generate ROOT certificate
+            CertAndKeyGen keyGen=new CertAndKeyGen("RSA","SHA256WithRSA",null);
+            keyGen.generate(keySize);
+            PrivateKey rootPrivateKey=keyGen.getPrivateKey();
+
+            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+            gen.initialize(2048, SecureRandom.getInstance("SHA1PRNG"));
+            KeyPair keyPair = gen.generateKeyPair();
+
+            //X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+            X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+
+            //Generate intermediate certificate
+            CertAndKeyGen keyGen1=new CertAndKeyGen("RSA","SHA256WithRSA",null);
+            keyGen1.generate(keySize);
+            PrivateKey middlePrivateKey=keyGen1.getPrivateKey();
+
+            X509Certificate middleCertificate = keyGen1.getSelfCertificate(new X500Name("CN=MIDDLE, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+
+            //Generate leaf certificate
+            CertAndKeyGen keyGen2=new CertAndKeyGen("RSA","SHA256WithRSA",null);
+            keyGen2.generate(keySize);
+            PrivateKey topPrivateKey=keyGen2.getPrivateKey();
+
+            X509Certificate topCertificate = keyGen2.getSelfCertificate(new X500Name("CN=TOP, OU=myTeam, O=MyOrg, L=Lexington, ST=KY, C=US"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+
+
+            rootCertificate   = createSignedCertificate(rootCertificate,rootCertificate,rootPrivateKey);
+            middleCertificate = createSignedCertificate(middleCertificate,rootCertificate,rootPrivateKey);
+            topCertificate    = createSignedCertificate(topCertificate,middleCertificate,middlePrivateKey);
+
+            chain = new X509Certificate[3];
+            chain[0]=topCertificate;
+            chain[1]=middleCertificate;
+            chain[2]=rootCertificate;
+
+            //String alias = "mykey";
+            //String keystore = "testkeys.jks";
+
+            //Store the certificate chain
+            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, topPrivateKey, chain);
+
+            //Reload the keystore and display key and certificate chain info
+            //loadCertChain(alias, keyStorePassword, keystore);
+            //Clear the keystore
+            //clearKeyStore(alias, password, keystore);
+            signingCertificate = middleCertificate;
+            signingKey = middlePrivateKey;
+
+        }catch(Exception ex){
+            ex.printStackTrace();
+        }
+    }
+*/
+
+      /*
+    public X509Certificate[] getCertificate(String alias) {
+        X509Certificate[] certChain = null;
+        try {
+            //Generate leaf certificate
+            CertAndKeyGen keyGen2=new CertAndKeyGen("RSA","SHA256WithRSA",null);
+            keyGen2.generate(keySize);
+            PrivateKey topPrivateKey=keyGen2.getPrivateKey();
+            X509Certificate topCertificate = keyGen2.getSelfCertificate(new X500Name("CN=TOP"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
+            Certificate cert = createSignedCertificate(topCertificate,signingCertificate,signingKey);
+            //keyStore.setCertificateEntry(alias,cert);
+            //trustStore.setCertificateEntry(alias,cert);
+
+
+
+            certChain = chain.clone();
+            certChain[0] = (X509Certificate)cert;
+
+            storeKeyAndCertificateChain(alias, keyStorePassword, topPrivateKey, certChain);
+
+
+        } catch(Exception ex) {
+            logger.error("getCertificate : error " + ex.getMessage());
+        }
+
+        return  certChain;
+    }
+
+     */
 
 
 }

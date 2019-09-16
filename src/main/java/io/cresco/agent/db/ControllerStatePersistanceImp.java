@@ -498,7 +498,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                     if (re.paramsContains("is_registered")) {
 
                         isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
-                        logger.error("ISREG: " + isRegistered);
+                        logger.debug("ISREG: " + isRegistered);
 
                     } else {
                         logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
