@@ -6,6 +6,7 @@ addons:
       secure: pflDxYJMrssCG1Q3sudfF3Bw/KUnNcON/CIq5Bx/YkFcI6J55+pxXE/QDhNlcFc4vEV2/4rnM+8HIr1QKiRBft9GR/0a5/NKUQ/MiEDauRI8wdHm5K//xDPmTn2kpXaNlaDHF8puleg1uGy55LQ/+tpN83I5bZpbhFFo27FIa/NECVr0XSAzCJggMBEfKXqdVWm/bGc2LCrk9rwedMn0aCahybmVepX08JrFyL079KA2rQ/bvyL6viwXT8Ye5bFNC9rFwKsasvrpyVoXGJkzlsly2kxGorkaM5bFS6gkPtNmdwbDLKyDFXCaIavst4yzMgDjxgWUW8vgTDLr/2Gi3MnUqHbkq0Mtk/77tKLej4xaoLq0P/HH3A0IsQi5t7J3y7JpmQZbkyiJNH0EYHhhxkOEZ2nqfSyYwG5SQ4PaNnhtkAK2GgaKC8D51VYtWryWVyiJ2UuSYvWiRoK6a+nWqfJc6lFzRBrWou6UtE563RU7q7N7CRSLF9/pcX2YNKTtJLV964Fj1IxnzhFTZw0IdNT4uFC6g/JzIJwvwnyzGXTSmkneUPEPDEbEfJZzhg87mSGhv/xLy1seWNueBSec9NNqUk7Zn7tChbzjS1uUTzKQaNLarJ44Hp+umoh6DGa9m5n/ZzvYAoIX+Fml0ms7u8IqNgi/tnPa8JLJlJEewZ0=
 script:
 - mvn clean test org.jacoco:jacoco-maven-plugin:prepare-agent install sonar:sonar
+
 after_success:
 - mvn package bundle:bundle
 - mvn deploy:deploy-file -Dfile=target/controller-1.0-SNAPSHOT.jar -Durl=https://oss.sonatype.org/content/repositories/snapshots
