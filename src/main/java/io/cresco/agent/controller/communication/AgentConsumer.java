@@ -79,6 +79,9 @@ public class AgentConsumer {
 
 		Gson gson = new Gson();
 
+		String callIdKey = "callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID();
+
+
 		consumer.setMessageListener(new MessageListener() {
 			public void onMessage(Message msg) {
 				try {
@@ -92,7 +95,16 @@ public class AgentConsumer {
 
 						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 						if(me != null) {
+
+
+
 							logger.debug("Message: {}", me.getParams().toString());
+
+
+							//logger.info("TEST PLUG 0");
+							//logger.info("Q: " + RXQueueName);
+							//logger.info("TEST PLUG " + controllerEngine.cstate.getAgentPath());
+							//logger.info("TEST PLUG 1");
 
 							//check if message is for this agent
 							//check if message has file payload and needs to be registered
@@ -104,18 +116,23 @@ public class AgentConsumer {
 								return;
 							}
 
-
 							//start RPC checks
 							boolean isMyRPC = false;
+
 							if (me.getParams().keySet().contains("is_rpc")) {
+
 								//pick up self-rpc, unless ttl == 0
-								String callId = me.getParam(("callId-" + plugin.getRegion() + "-" +
-										plugin.getAgent() + "-" + plugin.getPluginID()));
+								//String callId = me.getParam(("callId-" + plugin.getRegion() + "-" +
+								//		plugin.getAgent() + "-" + plugin.getPluginID()));
+								String callId = me.getParam(callIdKey);
+
 
 								if (callId != null) {
+									logger.info("call id = " + callId);
 									isMyRPC = true;
 									plugin.receiveRPC(callId, me);
 								}
+
 							}
 
 							if(!isMyRPC) {
