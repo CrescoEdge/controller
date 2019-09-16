@@ -128,11 +128,9 @@ public class AgentConsumer {
 
 
 								if (callId != null) {
-									logger.info("call id = " + callId);
 									isMyRPC = true;
 									plugin.receiveRPC(callId, me);
 								}
-
 							}
 
 							if(!isMyRPC) {
