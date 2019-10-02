@@ -76,7 +76,7 @@ public class DBEngine {
             //ds = setupDataSource("jdbc:derby:demo;create=true");
 
             //Class.forName("com.mysql.cj.jdbc.Driver");
-            //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");
+            //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "nopassword");
 
             if (dbType == DBType.EMBEDDED) {
                 if (dbName.equals(defaultDBName)) {
@@ -117,7 +117,7 @@ public class DBEngine {
             //addResource("sysinfo_resource","Performance Metrics",0,0,"added by DBEngine by default", null);
 
             //Class.forName("com.mysql.cj.jdbc.Driver");
-            //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "codeman01");
+            //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "nopassword");
 
 
             /*
