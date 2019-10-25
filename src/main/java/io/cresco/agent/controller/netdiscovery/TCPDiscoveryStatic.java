@@ -51,6 +51,8 @@ public class TCPDiscoveryStatic {
             }
         */
 
+            int idleTimeout = (discoveryTimeout/1000) * 2;
+
             EventLoopGroup group = new NioEventLoopGroup(1);
             try {
                 Bootstrap b = new Bootstrap();
@@ -62,7 +64,7 @@ public class TCPDiscoveryStatic {
                                 ChannelPipeline p = ch.pipeline()
                                         //.addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
                                         //.addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
-                                        .addLast(new IdleStateHandler(30,30,30));
+                                        .addLast(new IdleStateHandler(idleTimeout,idleTimeout,idleTimeout));
 
                                 /*
                                 if (sslCtx != null) {
