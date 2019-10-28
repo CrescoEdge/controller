@@ -10,6 +10,7 @@ import org.apache.commons.pool2.impl.GenericObjectPool;
 import javax.sql.DataSource;
 import java.io.*;
 import java.lang.reflect.Type;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
 import java.util.zip.GZIPOutputStream;
@@ -90,7 +91,8 @@ public class DBEngine {
 
             if (dbType == DBType.EMBEDDED) {
                 if (dbName.equals(defaultDBName)) {
-                    File dbsource = new File(defaultDBName);
+                    File dbsource = Paths.get("cresco-data/derbydb-home/" + defaultDBName).toFile();
+                    //File dbsource = new File(defaultDBName);
                     if (dbsource.exists()) {
                         //delete(dbsource);
                     } else {
