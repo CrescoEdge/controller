@@ -19,8 +19,6 @@ import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.List;
 
 public class ActiveBroker {
 	private CLogger logger;
@@ -106,6 +104,18 @@ public class ActiveBroker {
 				PolicyMap map = new PolicyMap();
 		        map.setDefaultEntry(entry);
 
+		        //String jarPath = ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
+
+
+				//File jarLocation = new File(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath());
+				//String parentDirName = jarLocation.getParent(); // to get the parent dir name
+
+				///Users/vcbumg2/IdeaProjects/agent/target/agent-1.0-SNAPSHOT.jar!
+
+				//String agentJar = Paths.get(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath()).toFile().getParent();
+				//String dataDir = agentJar.substring(0,agentJar.lastIndexOf("/")) + "/cresco-data/";
+
+				System.setProperty("org.apache.activemq.default.directory.prefix", "cresco-data/");
 
 				broker = new SslBrokerService();
 				//broker.setUseShutdownHook(true);
@@ -119,6 +129,7 @@ public class ActiveBroker {
 				broker.setPopulateJMSXUserID(true);
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
 
+				//broker.getTempDataStore().setDirectory(Paths.get("cresco.data").toFile());
 				/*
 				By default, ActiveMQ uses a dedicated thread per destination. If there are large numbers of Destinations there will be a large number of threads and
 				their associated memory resource usage. ActiveMQ can be configured to use a thread pool through the use of the system property

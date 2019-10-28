@@ -47,7 +47,10 @@ public class DBEngine {
             this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
             }.getType();
 
-            String defaultDBName = "cresco-controller-db";
+            //to remove derby.log file
+            System.setProperty("derby.stream.error.field", "DerbyUtil.DEV_NULL");
+
+            String defaultDBName = "cresco-data/cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
 
             String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");
