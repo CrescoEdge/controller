@@ -107,7 +107,7 @@ public class AgentExecutor implements Executor {
     private MsgEvent getLog(MsgEvent ce) {
         try {
 
-            Path filePath = Paths.get("log/log.out");
+            Path filePath = Paths.get("cresco-data/cresco-logs/main.log");
             ce.addFile(filePath.toAbsolutePath().toString());
 
             return ce;
