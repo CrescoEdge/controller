@@ -1597,7 +1597,7 @@ public class PluginAdmin {
         Path repoDirPath = null;
         try {
 
-            String repoDirString =  plugin.getConfig().getStringParam("repo_cache_dir","repo-cache");
+            String repoDirString =  plugin.getConfig().getStringParam("repo_cache_dir","cresco-data/agent-repo-cache");
 
             repoDirPath = Paths.get(repoDirString);
 

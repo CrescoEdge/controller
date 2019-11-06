@@ -138,7 +138,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 									//bytesMessage.setStringProperty("JMSXGroupID", fileObject.getDataName());
 
-									String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("journal").toAbsolutePath().toString());
+									String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("cresco-data/producer-journal").toAbsolutePath().toString());
 									Path journalPath = Paths.get(journalDirPath);
 									Files.createDirectories(journalPath);
 

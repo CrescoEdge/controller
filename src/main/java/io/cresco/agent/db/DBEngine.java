@@ -10,9 +10,12 @@ import org.apache.commons.pool2.impl.GenericObjectPool;
 import javax.sql.DataSource;
 import java.io.*;
 import java.lang.reflect.Type;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
 import java.util.zip.GZIPOutputStream;
+
+
 
 public class DBEngine {
 
@@ -28,6 +31,12 @@ public class DBEngine {
     public DBEngine(PluginBuilder plugin) {
 
         try {
+
+            System.setProperty("derby.system.home", new File("cresco-data/derbydb-home/").getAbsolutePath());
+            //to remove derby.log file
+            //System.setProperty("derby.stream.error.field", "DerbyUtil.DEV_NULL");
+            //to set the location of the derby.log file
+            //System.setProperty("derby.stream.error.file","cresco-data/derby-log/derby.log");
 
             this.pluginBuilder = plugin;
 
@@ -46,6 +55,8 @@ public class DBEngine {
             this.gson = new Gson();
             this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
             }.getType();
+
+
 
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
@@ -80,7 +91,8 @@ public class DBEngine {
 
             if (dbType == DBType.EMBEDDED) {
                 if (dbName.equals(defaultDBName)) {
-                    File dbsource = new File(defaultDBName);
+                    File dbsource = Paths.get("cresco-data/derbydb-home/" + defaultDBName).toFile();
+                    //File dbsource = new File(defaultDBName);
                     if (dbsource.exists()) {
                         //delete(dbsource);
                     } else {
