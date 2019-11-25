@@ -556,6 +556,7 @@ public class PluginAdmin {
 
                 synchronized (lockJarRepoSync) {
                     if (jarRepoSyncMap.containsKey(requestedName)) {
+
                         if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
                             repoSyncActive = true;
 
