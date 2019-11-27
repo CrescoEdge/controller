@@ -122,6 +122,7 @@ public class CLoggerImpl implements CLogger {
                 if (pluginBuilder.getAgentService().getAgentState().isActive()) {
 
                     TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
+                    textMessage.setStringProperty("event","logger");
                     textMessage.setStringProperty("pluginname",pluginBuilder.getConfig().getStringParam("pluginname"));
                     textMessage.setStringProperty("region_id",pluginBuilder.getRegion());
                     textMessage.setStringProperty("agent_id",pluginBuilder.getAgent());
