@@ -111,7 +111,7 @@ public class CLoggerImpl implements CLogger {
                 break;
         }
 
-        logToDataPlane(levelString, messageBody);
+        logToDataPlane(levelString, logMessage);
 
     }
 
