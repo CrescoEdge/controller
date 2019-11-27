@@ -1,10 +1,13 @@
 package io.cresco.agent.core;
 
 
+import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import javax.jms.TextMessage;
 
 
 /**
@@ -107,6 +110,35 @@ public class CLoggerImpl implements CLogger {
             default: logService.error(logMessage);
                 break;
         }
+
+        logToDataPlane(levelString, messageBody);
+
+    }
+
+    private void logToDataPlane(String loglevel, String message) {
+        try {
+
+            if(pluginBuilder.getAgentService().getAgentState() != null) {
+                if (pluginBuilder.getAgentService().getAgentState().isActive()) {
+
+                    TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
+                    textMessage.setStringProperty("pluginname",pluginBuilder.getConfig().getStringParam("pluginname"));
+                    textMessage.setStringProperty("region_id",pluginBuilder.getRegion());
+                    textMessage.setStringProperty("agent_id",pluginBuilder.getAgent());
+                    textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
+                    textMessage.setStringProperty("loglevel", loglevel);
+                    textMessage.setText(message);
+
+                    pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                }
+            }
+
+
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
 
     }
 
