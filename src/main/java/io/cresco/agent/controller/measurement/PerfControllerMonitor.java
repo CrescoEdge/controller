@@ -190,7 +190,13 @@ public class PerfControllerMonitor {
                             if(regionId.equals(region) && agentId.equals(agent)) {
 
                             //logger.error("SEND :" + region + " " + agent + " " + pluginID + " data");
-
+                                /*
+                                MsgEvent benchInfoRequest = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pluginID);
+                                benchInfoRequest.setParam("action", "getbenchmark");
+                                MsgEvent benchInfoResponse = plugin.sendRPC(benchInfoRequest);
+                                String benchString = benchInfoResponse.getCompressedParam("bench");
+                                logger.error(benchString);
+                            */
                             MsgEvent sysInfoRequest = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pluginID);
                             sysInfoRequest.setParam("action", "getsysinfo");
 
