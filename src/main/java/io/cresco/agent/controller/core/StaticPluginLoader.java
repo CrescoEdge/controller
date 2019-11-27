@@ -142,7 +142,7 @@ public class StaticPluginLoader implements Runnable  {
 
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo
-                            if (plugin.getConfig().getBooleanParam("enable_sysinfo", false)) {
+                            if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
                                 logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
 
                                 Map<String, Object> map = new HashMap<>();

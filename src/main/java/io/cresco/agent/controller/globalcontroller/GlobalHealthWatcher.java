@@ -53,7 +53,7 @@ public class GlobalHealthWatcher implements Runnable {
         SchedulerActive = false;
         AppSchedulerActive = false;
 
-        controllerEngine.getPerfControllerMonitor().removeKpiListener();
+        //controllerEngine.getPerfControllerMonitor().removeKpiListener();
 
 
         if(!controllerEngine.cstate.isGlobalController()) {
@@ -278,7 +278,7 @@ public class GlobalHealthWatcher implements Runnable {
             controllerEngine.setAppScheduler(appScheduler);
 
             //we also need to start collecting KPI information
-            controllerEngine.getPerfControllerMonitor().setKpiListener();
+            //controllerEngine.getPerfControllerMonitor().setKpiListener();
 
             isStarted = true;
         }

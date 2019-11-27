@@ -1089,9 +1089,9 @@ public class ControllerEngine {
 
             this.DiscoveryActive = false;
 
-            if(this.perfControllerMonitor != null) {
-                this.perfControllerMonitor.stop();
-            }
+            //if(this.perfControllerMonitor != null) {
+            //    this.perfControllerMonitor.stop();
+            //}
 
             if(this.measurementEngine != null) {
                 this.measurementEngine.shutdown();
