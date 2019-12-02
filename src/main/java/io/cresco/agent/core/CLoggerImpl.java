@@ -42,11 +42,13 @@ public class CLoggerImpl implements CLogger {
         logIdent = source  + ":" + issuingClassName;
         logIdent = logIdent.toLowerCase();
 
-        setLogLevel(level);
+        //setLogLevel(level);
 
         logService = LoggerFactory.getLogger(logIdent);
 
+
     }
+
 
     public void error(String logMessage) {
         log(logMessage, Level.Error);
@@ -85,6 +87,8 @@ public class CLoggerImpl implements CLogger {
     public void trace(String logMessage, Object ... params) {
         trace(replaceBrackets(logMessage, params));
     }
+
+
 
     public void log(String messageBody, Level level) {
 

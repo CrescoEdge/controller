@@ -167,6 +167,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                     } else {
                         logger.error("Could not set Trust");
                     }
+
                 } else {
                     logger.debug("processIncoming() : no cert found");
                 }
@@ -216,6 +217,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         } catch(Exception ex) {
             logger.error("configureCertTrust Error " + ex.getMessage());
+            logger.debug("configureCertTrust Error " + ex.getMessage());
         }
         return isSet;
     }
