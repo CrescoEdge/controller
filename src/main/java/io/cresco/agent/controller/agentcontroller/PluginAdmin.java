@@ -55,6 +55,8 @@ public class PluginAdmin {
     private AtomicBoolean lockBundle = new AtomicBoolean();
     private AtomicBoolean lockJarRepoSync = new AtomicBoolean();
 
+    private AtomicBoolean repoSyncActive = new AtomicBoolean();
+
     private long lastRepoUpdate = 0;
 
     private Cache<String, List<pNode>> repoCache;
@@ -548,34 +550,33 @@ public class PluginAdmin {
                 requestedMD5 = "null";
             }
 
-            boolean repoSyncActive = true;
 
             //check if download is in progress
 
-            while (repoSyncActive) {
+            while (repoSyncActive.get()) {
 
                 synchronized (lockJarRepoSync) {
                     if (jarRepoSyncMap.containsKey(requestedName)) {
 
                         if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
-                            repoSyncActive = true;
+                            repoSyncActive.set(true);
 
 
                         } else {
                             jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                            repoSyncActive = false;
+                            repoSyncActive.set(false);
                             logger.debug("SET LOCK ON EXISTING PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
                         }
 
                     } else {
                         jarRepoSyncMap.put(requestedName, new ArrayList<>());
                         jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                        repoSyncActive = false;
+                        repoSyncActive.set(false);
                         logger.debug("SET LOCK ON NEW PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
                     }
                 }
 
-                if(repoSyncActive) {
+                if(repoSyncActive.get()) {
                     logger.info("Waiting on repoSync to complete for pluginName: " + requestedName + " MD5: " + requestedMD5);
                     Thread.sleep(1000);
                 }
