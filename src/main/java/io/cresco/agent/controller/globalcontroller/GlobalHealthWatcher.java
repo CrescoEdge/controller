@@ -17,16 +17,19 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.*;
 
-public class GlobalHealthWatcher implements Runnable {
+public class GlobalHealthWatcher  {
     private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
 	private CLogger logger;
 	private Map<String,String> global_host_map;
-    private Timer regionalUpdateTimer;
+    private Timer communicationsHealthTimer;
+    private Timer globalUpdateTimer;
     private Long gCheckInterval;
     private String lastDBUpdateRegions;
     private String lastDBUpdateAgents;
     private String lastDBUpdatePlugins;
+    private long startTS;
+    private int wdTimer;
 
 
     public Boolean SchedulerActive;
@@ -38,17 +41,39 @@ public class GlobalHealthWatcher implements Runnable {
         this.logger = plugin.getLogger(GlobalHealthWatcher.class.getName(),CLogger.Level.Info);
 
         global_host_map = new HashMap<>();
-        regionalUpdateTimer = new Timer();
-        regionalUpdateTimer.scheduleAtFixedRate(new GlobalHealthWatcher.GlobalNodeStatusWatchDog(controllerEngine, logger), 500, 15000);//remote
+
+        communicationsHealthTimer = new Timer();
+        communicationsHealthTimer.scheduleAtFixedRate(new GlobalHealthWatcher.GlobalHealthWatchTask(controllerEngine, logger), 5000, 3000);
+
+        globalUpdateTimer = new Timer();
+        globalUpdateTimer.scheduleAtFixedRate(new GlobalHealthWatcher.GlobalNodeStatusWatchDog(controllerEngine, logger), 500, 15000);//remote
         gCheckInterval = plugin.getConfig().getLongParam("watchdogtimer",5000L);
         SchedulerActive = false;
         AppSchedulerActive = false;
+
+        try {
+            while (!controllerEngine.getActiveClient().hasActiveProducer()) {
+                logger.trace("GlobalHealthWatcher waiting on Active Producer.");
+                Thread.sleep(2500);
+            }
+
+            logger.trace("Initial gCheck");
+
+            gCheck(); //do initial check
+
+            controllerEngine.setGlobalControllerManagerActive(true);
+
+
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
 
     }
 
 	public void shutdown() {
 
-        regionalUpdateTimer.cancel();
+        globalUpdateTimer.cancel();
+        communicationsHealthTimer.cancel();
 
         SchedulerActive = false;
         AppSchedulerActive = false;
@@ -67,36 +92,6 @@ public class GlobalHealthWatcher implements Runnable {
                 plugin.msgOut(le);
             }
         }
-	}
-
-	public void run() {
-		try {
-
-            while(!controllerEngine.getActiveClient().hasActiveProducer()) {
-                logger.trace("GlobalHealthWatcher waiting on Active Producer.");
-                Thread.sleep(2500);
-            }
-
-            logger.trace("Initial gCheck");
-
-                gCheck(); //do initial check
-
-                controllerEngine.setGlobalControllerManagerActive(true);
-
-                while (controllerEngine.isGlobalControllerManagerActive()) {
-                    Thread.sleep(gCheckInterval);
-                    gCheck();
-                    gNotify();
-                }
-                logger.info("Starting Global Shutdown");
-                shutdown();
-
-		} catch(Exception ex) {
-			logger.error("globalwatcher run() " + ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
-		}
 	}
 
 	private void gNotify() {
@@ -361,79 +356,6 @@ public class GlobalHealthWatcher implements Runnable {
         return globalController;
     }
 
-    /*
-    private Boolean isGlobalWatchDogRegister(String globalRegion, String globalAgent) {
-        boolean isGlobalReg = false;
-        try {
-
-            if(controllerEngine.isReachableAgent(globalRegion + "_" + globalAgent)) {
-
-                MsgEvent le  = new MsgEvent(MsgEvent.Type.CONFIG, controllerEngine.cstate.getRegion(),controllerEngine.cstate.getAgent(),null,globalRegion,globalAgent,null,true,true);
-
-
-                le.setParam("region_name",controllerEngine.cstate.getRegion());
-
-                //le.setParam("dst_region", gPath[0]);
-                le.setParam("is_active", Boolean.TRUE.toString());
-                le.setParam("action", "region_enable");
-                //le.setParam("globalcmd", Boolean.TRUE.toString());
-                le.setParam("watchdogtimer", String.valueOf(plugin.getConfig().getLongParam("watchdogtimer", 5000L)));
-                //this should be RPC, but routing needs to be fixed route 16 -> 32 -> regionsend -> 16 -> 32 -> regionsend (goes to region, not rpc)
-                le.setParam("source","sendGlobalWatchDogRegister()");
-                MsgEvent re = plugin.sendRPC(le);
-                if(re != null) {
-                    isGlobalReg = true;
-                }
-            } else {
-                logger.info("Candidate Global Controller not reachable!");
-            }
-        }
-        catch(Exception ex) {
-            logger.info("sendGlobalWatchDogRegister() " + ex.getMessage());
-            ex.printStackTrace();
-        }
-        return isGlobalReg;
-    }
-    */
-
-
-    /*
-    private void sendGlobalWatchDogRegister() {
-
-	    try {
-            //if(!controllerEngine.cstate.isGlobalController()) {
-                //is the global controller reachable
-
-            while(!plugin.isActive()) {
-                Thread.sleep(1000);
-            }
-
-                if(controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
-                    MsgEvent le = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
-
-
-                    le.setParam("region_name",controllerEngine.cstate.getRegionalRegion());
-
-                    //le.setParam("dst_region", gPath[0]);
-                    le.setParam("is_active", Boolean.TRUE.toString());
-                    le.setParam("action", "region_enable");
-                    //le.setParam("globalcmd", Boolean.TRUE.toString());
-                    le.setParam("watchdogtimer", String.valueOf(plugin.getConfig().getLongParam("watchdogtimer", 5000L)));
-                    //this should be RPC, but routing needs to be fixed route 16 -> 32 -> regionsend -> 16 -> 32 -> regionsend (goes to region, not rpc)
-                    le.setParam("source","sendGlobalWatchDogRegister()");
-
-                    plugin.msgOut(le);
-                }
-            //}
-        }
-        catch(Exception ex) {
-	        logger.error("sendGlobalWatchDogRegister() " + ex.getMessage());
-        }
-
-    }
-    */
-
-
 
     private List<MsgEvent> dynamicGlobalDiscovery() {
         List<MsgEvent> discoveryList = null;
@@ -466,7 +388,7 @@ public class GlobalHealthWatcher implements Runnable {
                 logger.info("Static Region Connection to Global Controller : " + plugin.getConfig().getStringParam("global_controller_host",null));
                 TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
                 discoveryList.addAll(ds.discover(DiscoveryType.GLOBAL, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), plugin.getConfig().getStringParam("global_controller_host",null)));
-                logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+                logger.debug("staticGlobalDiscovery() Static Agent Connection count = " + discoveryList.size());
                 if (discoveryList.size() == 0) {
                     logger.info("Static Region Connection to Global Controller : " + plugin.getConfig().getStringParam("global_controller_host",null) + " failed! - Restarting Global Discovery");
                 } else {
@@ -565,6 +487,39 @@ public class GlobalHealthWatcher implements Runnable {
         return me;
     }
 
+    class GlobalHealthWatchTask extends TimerTask {
+        private ControllerEngine controllerEngine;
+        private CLogger logger;
+        private PluginBuilder plugin;
+        public GlobalHealthWatchTask(ControllerEngine controllerEngine, CLogger logger) {
+            this.controllerEngine = controllerEngine;
+            this.plugin = controllerEngine.getPluginBuilder();
+            this.logger = logger;
+
+        }
+
+        public void run() {
+            try {
+
+
+                //while (controllerEngine.isGlobalControllerManagerActive()) {
+                //    Thread.sleep(gCheckInterval);
+                    gCheck();
+                    gNotify();
+                //}
+                //logger.info("Starting Global Shutdown");
+                //shutdown();
+
+            } catch(Exception ex) {
+                logger.error("globalwatcher run() " + ex.getMessage());
+                StringWriter errors = new StringWriter();
+                ex.printStackTrace(new PrintWriter(errors));
+                logger.error(errors.toString());
+            }
+        }
+
+    }
+
     class GlobalNodeStatusWatchDog extends TimerTask {
         private ControllerEngine controllerEngine;
         private CLogger logger;
@@ -579,7 +534,7 @@ public class GlobalHealthWatcher implements Runnable {
         public void run() {
 
             if (controllerEngine.cstate.isGlobalController()) { //only run if node is global controller
-                logger.debug("RegionalNodeStatusWatchDog");
+                logger.debug("GlobalNodeStatusWatchDog");
 
                 Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(null, null, null);
 

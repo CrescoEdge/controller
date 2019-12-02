@@ -73,6 +73,7 @@ public class ControllerEngine {
     private DBInterfaceImpl gdb;
     private AgentHealthWatcher agentHealthWatcher;
     private RegionHealthWatcher regionHealthWatcher;
+    private GlobalHealthWatcher globalHealthWatcher;
     private ExecutorService msgInProcessQueue;
     private PluginAdmin pluginAdmin;
     private AgentExecutor executor;
@@ -83,7 +84,7 @@ public class ControllerEngine {
     private ResourceScheduler resourceScheduler;
 
     private Thread activeBrokerManagerThread;
-    private Thread globalControllerManagerThread;
+    //private Thread globalControllerManagerThread;
     private Thread discoveryUDPEngineThread;
     private Thread discoveryTCPEngineThread;
     private Thread DBManagerThread;
@@ -524,7 +525,7 @@ public class ControllerEngine {
                 if(discoveryListTmp != null) {
                     discoveryList.addAll(discoveryListTmp);
 
-                    logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+                    logger.debug("initAgentStatic() Static Agent Connection count = " + discoveryList.size());
                     if (discoveryList.size() == 0) {
                         logger.info("Static Agent Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
                         discoveryList = null;
@@ -666,7 +667,7 @@ public class ControllerEngine {
             logger.info("Static Region Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host"));
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
             discoveryList.addAll(ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), plugin.getConfig().getStringParam("regional_controller_host")));
-            logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+            logger.debug("initRegionStatic() Static Agent Connection count = " + discoveryList.size());
             if(discoveryList.size() == 0) {
                 logger.info("Static Region Connection to Regional Controller : " + plugin.getConfig().getStringParam("regional_controller_host") + " failed! - Restarting Discovery!");
             }
@@ -713,7 +714,7 @@ public class ControllerEngine {
             logger.info("Static Region Connection to Global Controller : " + plugin.getConfig().getStringParam("global_controller_host"));
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
             discoveryList.addAll(ds.discover(DiscoveryType.GLOBAL, plugin.getConfig().getIntegerParam("discovery_static_global_timeout",10000), plugin.getConfig().getStringParam("global_controller_host")));
-            logger.debug("Static Agent Connection count = {}" + discoveryList.size());
+            logger.debug("initGlobalStatic() Static Agent Connection count = " + discoveryList.size());
             if(discoveryList.size() == 0) {
                 logger.info("Static Region Connection to Global Controller : " + plugin.getConfig().getStringParam("global_controller_host") + " failed! - Restarting Discovery!");
             }
@@ -735,8 +736,9 @@ public class ControllerEngine {
             if(cstate.isRegionalController()) {
 
                 //do global discovery here
-                this.globalControllerManagerThread = new Thread(new GlobalHealthWatcher(this));
-                this.globalControllerManagerThread.start();
+                //this.globalControllerManagerThread = new Thread(new GlobalHealthWatcher(this));
+                //this.globalControllerManagerThread.start();
+                globalHealthWatcher = new GlobalHealthWatcher(this);
 
                 while (!this.GlobalControllerManagerActive) {
                     Thread.sleep(1000);
@@ -1102,12 +1104,10 @@ public class ControllerEngine {
             }
 
             this.GlobalControllerManagerActive = false;
-            if (this.globalControllerManagerThread!= null) {
+            if (this.globalHealthWatcher != null) {
                 logger.trace("Global HealthWatcher shutting down");
-                this.regionHealthWatcher.communicationsHealthTimer.cancel();
-                this.regionHealthWatcher.regionalUpdateTimer.cancel();
-                this.globalControllerManagerThread.join();
-                this.globalControllerManagerThread = null;
+                this.globalHealthWatcher.shutdown();
+                this.globalHealthWatcher = null;
                 logger.info("Global HealthWatcher shutting down");
 
             }
@@ -1115,8 +1115,7 @@ public class ControllerEngine {
             if (this.regionHealthWatcher != null) {
                 logger.trace("Region HealthWatcher shutting down");
                 //in case its not canceled as part of global
-                this.regionHealthWatcher.communicationsHealthTimer.cancel();
-                this.regionHealthWatcher.regionalUpdateTimer.cancel();
+                this.regionHealthWatcher.shutdown();
                 this.regionHealthWatcher = null;
                 logger.info("Region HealthWatcher shutting down");
 
@@ -1239,6 +1238,8 @@ public class ControllerEngine {
     }
 
     public RegionHealthWatcher getRegionHealthWatcher() {return this.regionHealthWatcher;}
+
+    public GlobalHealthWatcher getGlobalHealthWatcher() {return this.globalHealthWatcher;}
 
     public void msgIn(MsgEvent msg) {
 

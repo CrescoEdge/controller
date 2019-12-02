@@ -40,7 +40,7 @@ public class AgentConsumer {
 	public AgentConsumer(ControllerEngine controllerEngine, String RXQueueName, String URI) throws JMSException {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
-		this.logger = plugin.getLogger(AgentConsumer.class.getName(),CLogger.Level.Info);
+		this.logger = plugin.getLogger(AgentConsumer.class.getName(),CLogger.Level.Trace);
 
 		this.gson = new Gson();
 
@@ -98,7 +98,7 @@ public class AgentConsumer {
 
 
 
-							logger.debug("Message: {}", me.getParams().toString());
+
 
 
 							//logger.info("TEST PLUG 0");
@@ -116,6 +116,8 @@ public class AgentConsumer {
 								return;
 							}
 
+
+
 							//start RPC checks
 							boolean isMyRPC = false;
 
@@ -129,11 +131,13 @@ public class AgentConsumer {
 
 								if (callId != null) {
 									isMyRPC = true;
+									logger.trace("RPC Text Message: {}", me.getParams().toString());
 									plugin.receiveRPC(callId, me);
 								}
 							}
 
 							if(!isMyRPC) {
+								logger.trace("Text Message: {}", me.getParams().toString());
 								//create new thread service for incoming messages
 								controllerEngine.msgInThreaded(me);
 							}
@@ -150,6 +154,9 @@ public class AgentConsumer {
 						String dstAgent = msg.getStringProperty("dst_agent");
 						String dataName = msg.getStringProperty("dataname");
 						String dataPart = msg.getStringProperty("datapart");
+
+
+						logger.debug("Byte Message: dst_region: " + dstRegion + " dst_agent: " + dstAgent);
 
 						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)) {
 

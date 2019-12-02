@@ -15,7 +15,7 @@ public class MsgRouter {
     public MsgRouter(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
-        this.logger = plugin.getLogger(MsgRouter.class.getName(),CLogger.Level.Info);
+        this.logger = plugin.getLogger(MsgRouter.class.getName(),CLogger.Level.Trace);
     }
 
     private void forwardToLocalAgent(MsgEvent rm) {
@@ -89,6 +89,7 @@ public class MsgRouter {
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
                 //logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
+
 
                 switch (routePath) {
 

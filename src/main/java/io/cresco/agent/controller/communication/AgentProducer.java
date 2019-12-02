@@ -74,6 +74,7 @@ public class AgentProducer {
     public boolean sendMessage(MsgEvent sm) {
 
         logger.debug("sendMessage() SEND MESSAGE: " + sm.printHeader());
+
         boolean isSent = false;
         try {
             ActiveProducerWorker apw = null;

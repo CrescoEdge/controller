@@ -43,7 +43,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private MessageProducer regionProducer;
     private MessageProducer globalProducer;
 
-
     private Map<String,MessageConsumer> messageConsumerMap;
     private final AtomicBoolean lockMessage = new AtomicBoolean();
 
@@ -117,6 +116,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error(sStackTrace);
         }
 
+    }
+
+    public boolean isFaultURIActive() {
+        return controllerEngine.getActiveClient().isFaultURIActive();
     }
 
     private Destination getDestination(TopicType topicType) {
@@ -270,6 +273,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             while(!controllerEngine.cstate.isActive()) {
                 Thread.sleep(1000);
+                logger.debug("!controllerEngine.cstate.isActive() SLEEPING 1s");
             }
 
             switch (topicType) {

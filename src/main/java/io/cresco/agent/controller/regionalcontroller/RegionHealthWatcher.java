@@ -35,10 +35,10 @@ public class RegionHealthWatcher {
 
         logger.debug("RegionHealthWatcher Initializing");
         this.plugin = plugin;
-        wdTimer = 1000;
+        wdTimer = 3000;
         startTS = System.currentTimeMillis();
         communicationsHealthTimer = new Timer();
-        communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 1000, wdTimer);
+        communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 5000, wdTimer);
 
 
         long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3l);
@@ -180,8 +180,8 @@ public class RegionHealthWatcher {
                     }
 
                     if (!isHealthy) {
-                        controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
                         logger.info("System has become unhealthy, rebooting services");
+                        controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
                         controllerEngine.setRestartOnShutdown(true);
                         controllerEngine.closeCommunications();
                     }

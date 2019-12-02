@@ -489,7 +489,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                 enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
 
-                //logger.error("SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
+                logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
 
                 MsgEvent re = plugin.sendRPC(enableMsg);
 
@@ -504,7 +504,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
                         logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
                     }
                 } else {
-                    logger.error("RETURN = NULL");
+                    logger.error("registerAgent : RETURN = NULL");
                 }
 
                 if (isRegistered) {

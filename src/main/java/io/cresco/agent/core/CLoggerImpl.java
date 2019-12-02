@@ -27,11 +27,10 @@ public class CLoggerImpl implements CLogger {
     private String logIdent;
 
 
-    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, Level level) {
+    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName) {
         this.pluginBuilder = pluginBuilder;
         this.baseClassName = baseClassName;
         this.issuingClassName = issuingClassName.substring(baseClassName.length() +1) ;
-        this.level = level;
 
         if(pluginBuilder.getPluginID() != null) {
             source = pluginBuilder.getPluginID();
@@ -124,17 +123,18 @@ public class CLoggerImpl implements CLogger {
 
             if(pluginBuilder.getAgentService().getAgentState() != null) {
                 if (pluginBuilder.getAgentService().getAgentState().isActive()) {
+                    if(pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
+                        TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
+                        textMessage.setStringProperty("event", "logger");
+                        textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
+                        textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
+                        textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
+                        textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
+                        textMessage.setStringProperty("loglevel", loglevel);
+                        textMessage.setText(message);
 
-                    TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
-                    textMessage.setStringProperty("event","logger");
-                    textMessage.setStringProperty("pluginname",pluginBuilder.getConfig().getStringParam("pluginname"));
-                    textMessage.setStringProperty("region_id",pluginBuilder.getRegion());
-                    textMessage.setStringProperty("agent_id",pluginBuilder.getAgent());
-                    textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
-                    textMessage.setStringProperty("loglevel", loglevel);
-                    textMessage.setText(message);
-
-                    pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                        pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                    }
                 }
             }
 

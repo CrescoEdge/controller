@@ -118,6 +118,9 @@ public class ActiveProducerWorker {
 				producer.setTimeToLive(300000L);
 				producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
 */
+				logger.trace("MESSAGE= [" + se.getParams() + "]");
+
+
 				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
 				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
 				isSent = true;

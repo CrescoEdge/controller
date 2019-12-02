@@ -45,6 +45,7 @@ public class CertificateManager {
     public CertificateManager(ControllerEngine controllerEngine) {
 
         try {
+            long startTime = System.currentTimeMillis();
 
             this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
@@ -70,6 +71,8 @@ public class CertificateManager {
 
             //trust self
             addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+
+            logger.info("CertificateManager Init: " + (System.currentTimeMillis() - startTime) + " ms");
 
 
         } catch(Exception ex) {

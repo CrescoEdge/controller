@@ -170,6 +170,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
                 } else {
                     logger.debug("processIncoming() : no cert found");
+                    logger.debug("processIncoming() [" + me.getParams() + "]");
                 }
                 //sme.setParam("public_cert", agentcontroller.getCertificateManager().getJsonFromCerts(agentcontroller.getCertificateManager().getPublicCertificate()));
 
@@ -217,7 +218,6 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         } catch(Exception ex) {
             logger.error("configureCertTrust Error " + ex.getMessage());
-            logger.debug("configureCertTrust Error " + ex.getMessage());
         }
         return isSet;
     }
