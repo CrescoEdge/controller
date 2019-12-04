@@ -55,8 +55,6 @@ public class PluginAdmin {
     private AtomicBoolean lockBundle = new AtomicBoolean();
     private AtomicBoolean lockJarRepoSync = new AtomicBoolean();
 
-    private AtomicBoolean repoSyncActive = new AtomicBoolean(false);
-
     private long lastRepoUpdate = 0;
 
     private Cache<String, List<pNode>> repoCache;
@@ -550,32 +548,25 @@ public class PluginAdmin {
                 requestedMD5 = "null";
             }
 
+            boolean repoSyncActive = true;
 
             //check if download is in progress
-            while (repoSyncActive.get()) {
+            while (repoSyncActive) {
 
                 synchronized (lockJarRepoSync) {
                     if (jarRepoSyncMap.containsKey(requestedName)) {
 
                         if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
-                            repoSyncActive.set(true);
-
-
+                            repoSyncActive = true;
                         } else {
-                            jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                            repoSyncActive.set(false);
-                            logger.debug("SET LOCK ON EXISTING PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                            repoSyncActive = false;
                         }
-
                     } else {
-                        jarRepoSyncMap.put(requestedName, new ArrayList<>());
-                        jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                        repoSyncActive.set(false);
-                        logger.debug("SET LOCK ON NEW PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                        repoSyncActive = false;
                     }
                 }
 
-                if(repoSyncActive.get()) {
+                if(repoSyncActive) {
                     logger.info("Waiting on repoSync to complete for pluginName: " + requestedName + " MD5: " + requestedMD5);
                     Thread.sleep(1000);
                 }
@@ -606,6 +597,25 @@ public class PluginAdmin {
             if(validatedMap != null) {
                 return validatedMap;
             } else {
+
+                synchronized (lockJarRepoSync) {
+                    if (jarRepoSyncMap.containsKey(requestedName)) {
+
+                        if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
+                            logger.error("LOCK SHOULD ALREADY BE SET FOR PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                        } else {
+                            jarRepoSyncMap.get(requestedName).add(requestedMD5);
+                            logger.debug("SET LOCK ON EXISTING PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                        }
+
+                    } else {
+                        jarRepoSyncMap.put(requestedName, new ArrayList<>());
+                        jarRepoSyncMap.get(requestedName).add(requestedMD5);
+                        logger.debug("SET LOCK ON NEW PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                    }
+
+                }
+
                 validatedMap = getJarFromRepo(map);
 
                 synchronized (lockJarRepoSync) {
@@ -614,6 +624,8 @@ public class PluginAdmin {
                         if(jarRepoSyncMap.get(requestedName).size() == 0) {
                             jarRepoSyncMap.remove(requestedName);
                         }
+                    } else {
+                        logger.error("NAME SHOULD EXIST IN jarRepoSyncMap : PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
                     }
                 }
 
