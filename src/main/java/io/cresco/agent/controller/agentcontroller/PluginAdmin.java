@@ -55,7 +55,7 @@ public class PluginAdmin {
     private AtomicBoolean lockBundle = new AtomicBoolean();
     private AtomicBoolean lockJarRepoSync = new AtomicBoolean();
 
-    private AtomicBoolean repoSyncActive = new AtomicBoolean();
+    private AtomicBoolean repoSyncActive = new AtomicBoolean(false);
 
     private long lastRepoUpdate = 0;
 
@@ -552,7 +552,6 @@ public class PluginAdmin {
 
 
             //check if download is in progress
-
             while (repoSyncActive.get()) {
 
                 synchronized (lockJarRepoSync) {
@@ -608,16 +607,18 @@ public class PluginAdmin {
                 return validatedMap;
             } else {
                 validatedMap = getJarFromRepo(map);
-            }
 
-            synchronized (lockJarRepoSync) {
-                if (jarRepoSyncMap.containsKey(requestedName)) {
-                    jarRepoSyncMap.get(requestedName).remove(requestedMD5);
-                    if(jarRepoSyncMap.get(requestedName).size() == 0) {
-                        jarRepoSyncMap.remove(requestedName);
+                synchronized (lockJarRepoSync) {
+                    if (jarRepoSyncMap.containsKey(requestedName)) {
+                        jarRepoSyncMap.get(requestedName).remove(requestedMD5);
+                        if(jarRepoSyncMap.get(requestedName).size() == 0) {
+                            jarRepoSyncMap.remove(requestedName);
+                        }
                     }
                 }
+
             }
+
 
         } catch(Exception ex) {
             logger.error("validatePluginMap()");
