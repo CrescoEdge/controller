@@ -1215,6 +1215,8 @@ public class PluginAdmin {
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);;
             }
+        } else {
+            logger.error("PLUGIN LIMIT REACHED! PLUGIN COUNT= " + pluginCount());
         }
         return returnPluginID;
     }
