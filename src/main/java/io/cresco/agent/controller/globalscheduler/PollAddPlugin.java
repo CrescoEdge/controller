@@ -39,7 +39,8 @@ public class PollAddPlugin implements Runnable {
                 int count = 0;
 	        	String edge_id = null;
 
-	        	MsgEvent re = plugin.sendRPC(me);
+	        	//double default RPC timeout
+	        	MsgEvent re = plugin.sendRPC(me,6000);
 
 				if(re != null) {
 					//info returned from agent

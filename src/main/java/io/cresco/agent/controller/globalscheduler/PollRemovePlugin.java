@@ -41,7 +41,8 @@ public class PollRemovePlugin implements Runnable {
                 if((region != null) && (agent != null) && (pluginId != null)) {
 
                     MsgEvent me = removePlugin(region, agent, pluginId);
-                    MsgEvent re = plugin.sendRPC(me);
+                    //double default RPC timeout
+                    MsgEvent re = plugin.sendRPC(me,6000);
 
                     if (re != null) {
                         int statusCode = Integer.parseInt(re.getParam("status_code"));
