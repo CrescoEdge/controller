@@ -37,7 +37,7 @@ public class PluginAdmin {
     private DBInterfaceImpl gdb;
     private PluginBuilder plugin;
 
-    private int PLUGINLIMIT = 900;
+    private int PLUGINLIMIT = 10000;
     private int TRYCOUNT = 300;
 
     private BundleContext context;

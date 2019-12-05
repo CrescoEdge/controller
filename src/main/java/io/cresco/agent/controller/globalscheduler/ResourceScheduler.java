@@ -35,7 +35,7 @@ public class ResourceScheduler implements IncomingResource {
 		this.ghw = ghw;
 
         //this should be a configurable parameter
-        //addPipelineExecutor = Executors.newFixedThreadPool(100);
+        //addPluginExecutor = Executors.newFixedThreadPool(100);
         addPluginExecutor = Executors.newCachedThreadPool();
 
 

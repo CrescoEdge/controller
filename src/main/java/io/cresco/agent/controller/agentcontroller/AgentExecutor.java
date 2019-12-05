@@ -273,11 +273,14 @@ public class AgentExecutor implements Executor {
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
+
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
 
 
         }
