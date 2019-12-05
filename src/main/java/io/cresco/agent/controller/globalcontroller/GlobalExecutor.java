@@ -793,22 +793,6 @@ public class GlobalExecutor implements Executor {
                     if(pipelinString != null) {
                         logger.trace("removePipelineExecutor.execute(new PollRemovePipeline(agentcontroller, pipelineId));");
                         removePipelineExecutor.execute(new PollRemovePipeline(controllerEngine, pipelineId));
-                                /*
-                                List<String> iNodeList = controllerEngine.getGDB().dba.getresourceNodeList(pipelineId,null);
-
-                                for(String iNodeId : iNodeList) {
-
-                                    logger.info("removing iNode " + iNodeId);
-                                    MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, null, null, null, "add application node");
-
-                                    me.setParam("globalcmd", "removeplugin");
-                                    me.setParam("inode_id", iNodeId);
-                                    me.setParam("resource_id", pipelineId);
-                                    //ghw.resourceScheduleQueue.add(me);
-                                    agentcontroller.getResourceScheduleQueue().add(me);
-
-                                }
-                                */
 
                         ce.setParam("success", Boolean.TRUE.toString());
                     } else {

@@ -548,49 +548,57 @@ public class DBInterfaceImpl implements DBInterface {
         {
             List<String> repoList = getPluginListRepoInventory();
 
-            logger.debug("getPluginListRepoInventory() SIZE " + repoList.size());
+            if(repoList != null) {
 
-            pluginRepoMap = new HashMap<>();
+                logger.debug("getPluginListRepoInventory() SIZE " + repoList.size());
 
-            for(String repoJSON : repoList) {
-                Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
-                List<Map<String,String>> tmpPluginsList = myRepoMap.get("plugins");
-                List<Map<String,String>> tmpServerList = myRepoMap.get("server");
+                pluginRepoMap = new HashMap<>();
 
+                for (String repoJSON : repoList) {
+                    Map<String, List<Map<String, String>>> myRepoMap = gson.fromJson(repoJSON, type);
+                    List<Map<String, String>> tmpPluginsList = myRepoMap.get("plugins");
+                    List<Map<String, String>> tmpServerList = myRepoMap.get("server");
 
-                for(Map<String,String> plugin : tmpPluginsList) {
-                    String name = plugin.get("pluginname");
-                    String jarfile = plugin.get("jarfile");
-                    String md5 = plugin.get("md5");
-                    String version = plugin.get("version");
+                    if(tmpPluginsList != null) {
 
-                    synchronized (lockRepoList) {
+                        for (Map<String, String> plugin : tmpPluginsList) {
+                            String name = plugin.get("pluginname");
+                            String jarfile = plugin.get("jarfile");
+                            String md5 = plugin.get("md5");
+                            String version = plugin.get("version");
 
-                        if (!pluginRepoMap.containsKey(name)) {
-                            List<pNode> nodeList = new ArrayList<>();
-                            pNode node = new pNode(name, jarfile, md5, version, tmpServerList);
-                            nodeList.add(node);
-                            pluginRepoMap.put(name, nodeList);
-                        } else {
-                            List<pNode> nodeList = new ArrayList<>();
-                            nodeList.addAll(pluginRepoMap.get(name));
+                            synchronized (lockRepoList) {
 
-                            for (Iterator<pNode> iterator = pluginRepoMap.get(name).iterator(); iterator.hasNext();) {
-                                pNode node = iterator.next();
-                                if (node.isEqual(name, jarfile, md5, version)) {
-                                    nodeList.get(nodeList.indexOf(node)).addRepos(tmpServerList);
+                                if (!pluginRepoMap.containsKey(name)) {
+                                    List<pNode> nodeList = new ArrayList<>();
+                                    pNode node = new pNode(name, jarfile, md5, version, tmpServerList);
+                                    nodeList.add(node);
+                                    pluginRepoMap.put(name, nodeList);
                                 } else {
-                                    pNode newnode = new pNode(name, jarfile, md5, version, tmpServerList);
-                                    nodeList.add(newnode);
-                                }
-                            }
+                                    List<pNode> nodeList = new ArrayList<>();
+                                    nodeList.addAll(pluginRepoMap.get(name));
 
-                            pluginRepoMap.put(name, nodeList);
+                                    for (Iterator<pNode> iterator = pluginRepoMap.get(name).iterator(); iterator.hasNext(); ) {
+                                        pNode node = iterator.next();
+                                        if (node.isEqual(name, jarfile, md5, version)) {
+                                            nodeList.get(nodeList.indexOf(node)).addRepos(tmpServerList);
+                                        } else {
+                                            pNode newnode = new pNode(name, jarfile, md5, version, tmpServerList);
+                                            nodeList.add(newnode);
+                                        }
+                                    }
+
+                                    pluginRepoMap.put(name, nodeList);
+                                }
+
+                            }
                         }
 
                     }
+
                 }
             }
+
         }
         catch(Exception ex)
         {

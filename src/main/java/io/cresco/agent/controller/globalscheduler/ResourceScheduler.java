@@ -11,6 +11,8 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 
 public class ResourceScheduler implements IncomingResource {
@@ -19,7 +21,7 @@ public class ResourceScheduler implements IncomingResource {
 	private PluginBuilder plugin;
 	private GlobalHealthWatcher ghw;
 	private CLogger logger;
-
+    private ExecutorService addPluginExecutor;
 
     private Gson gson;
 
@@ -32,6 +34,9 @@ public class ResourceScheduler implements IncomingResource {
         gson = new Gson();
 		this.ghw = ghw;
 
+        //this should be a configurable parameter
+        //addPipelineExecutor = Executors.newFixedThreadPool(100);
+        addPluginExecutor = Executors.newCachedThreadPool();
 
 
     }
@@ -68,13 +73,15 @@ public class ResourceScheduler implements IncomingResource {
 
                     logger.debug("pluginadd message: " + me.getParams().toString());
 
-                    new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
+                    //new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
+                    addPluginExecutor.execute(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me));
 
                 }
                 else if(ce.getParam("globalcmd").equals("removeplugin"))
                 {
                     logger.debug("Incoming Remove Request : resource_id: " + ce.getParam("resource_id") + " inode_id: " + ce.getParam("inode_id"));
-                    new Thread(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id"))).start();
+                    //new Thread(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id"))).start();
+                    addPluginExecutor.execute(new PollRemovePlugin(controllerEngine,  ce.getParam("resource_id"),ce.getParam("inode_id")));
                 }
             } else
             {

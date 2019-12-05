@@ -506,6 +506,39 @@ public class PluginAdmin {
         return returnMap;
     }
 
+    public boolean getJarFromRepo(Map<String,Object> map)  {
+        boolean isFound = false;
+        try {
+
+            pNode node = getPnode(map);
+            if(node != null) {
+                Path jarPath = getPlugin(node);
+                if(jarPath != null) {
+                    if (jarPath.toFile().isFile()) {
+                        isFound = true;
+                    } else {
+                        logger.error("pnode ! file");
+                    }
+                } else {
+                    logger.error("Unable to retreve pnode from repo!");
+                }
+            } else {
+                logger.error("Unable to find pnode in repo(s)!");
+            }
+
+        } catch (Exception ex) {
+            logger.error("getJarFromRepo()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);;
+        }
+
+        return isFound;
+    }
+
+    /*
     public Map<String,Object> getJarFromRepo(Map<String,Object> map)  {
         Map<String,Object> returnMap = null;
         try {
@@ -537,40 +570,38 @@ public class PluginAdmin {
 
         return returnMap;
     }
+     */
+
+
 
     public Map<String,Object> validatePluginMap(Map<String,Object> map) {
         Map<String,Object> validatedMap = null;
         try {
 
-            String requestedName = (String) map.get("pluginname");
-            String requestedMD5 = (String) map.get("md5");
-            if (requestedMD5 == null) {
-                requestedMD5 = "null";
+            //check if plugin exist locally
+            validatedMap = localPluginMap(map);
+            if(validatedMap != null) {
+                return validatedMap;
+            } else {
+                //plugin does not exist, we should try and download it
+                validatedMap = remotePluginMap(map);
             }
 
-            boolean repoSyncActive = true;
 
-            //check if download is in progress
-            while (repoSyncActive) {
+        } catch(Exception ex) {
+            logger.error("validatePluginMap()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);;
+        }
+        return validatedMap;
+    }
 
-                synchronized (lockJarRepoSync) {
-                    if (jarRepoSyncMap.containsKey(requestedName)) {
-
-                        if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
-                            repoSyncActive = true;
-                        } else {
-                            repoSyncActive = false;
-                        }
-                    } else {
-                        repoSyncActive = false;
-                    }
-                }
-
-                if(repoSyncActive) {
-                    logger.info("Waiting on repoSync to complete for pluginName: " + requestedName + " MD5: " + requestedMD5);
-                    Thread.sleep(1000);
-                }
-            }
+    public Map<String,Object> localPluginMap(Map<String,Object> map) {
+        Map<String,Object> validatedMap = null;
+        try {
 
             //see if config is currently running
             validatedMap = jarIsBundle(map);
@@ -594,46 +625,82 @@ public class PluginAdmin {
                 validatedMap = jarIsEmbedded(map);
             }
 
-            if(validatedMap != null) {
-                return validatedMap;
-            } else {
 
-                synchronized (lockJarRepoSync) {
-                    if (jarRepoSyncMap.containsKey(requestedName)) {
+        } catch(Exception ex) {
+            logger.error("localPluginMap()");
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);;
+        }
+        return validatedMap;
+    }
 
-                        if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
-                            logger.error("LOCK SHOULD ALREADY BE SET FOR PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
-                        } else {
-                            jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                            logger.debug("SET LOCK ON EXISTING PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
-                        }
+    public Map<String,Object> remotePluginMap(Map<String,Object> map) {
+        Map<String,Object> validatedMap = null;
+        try {
 
+            String requestedName = (String) map.get("pluginname");
+            String requestedMD5 = (String) map.get("md5");
+            if (requestedMD5 == null) {
+                requestedMD5 = "null";
+            }
+
+            boolean repoSyncActive = false;
+
+            synchronized (lockJarRepoSync) {
+                if (jarRepoSyncMap.containsKey(requestedName)) {
+                    if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
+                        repoSyncActive = true;
                     } else {
-                        jarRepoSyncMap.put(requestedName, new ArrayList<>());
                         jarRepoSyncMap.get(requestedName).add(requestedMD5);
-                        logger.debug("SET LOCK ON NEW PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                        logger.debug("SET LOCK ON EXISTING PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
                     }
-
+                } else {
+                    jarRepoSyncMap.put(requestedName, new ArrayList<>());
+                    jarRepoSyncMap.get(requestedName).add(requestedMD5);
+                    logger.debug("SET LOCK ON NEW PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
                 }
+            }
 
-                validatedMap = getJarFromRepo(map);
+            //check if download is in progress
+            while (repoSyncActive) {
 
                 synchronized (lockJarRepoSync) {
                     if (jarRepoSyncMap.containsKey(requestedName)) {
-                        jarRepoSyncMap.get(requestedName).remove(requestedMD5);
-                        if(jarRepoSyncMap.get(requestedName).size() == 0) {
-                            jarRepoSyncMap.remove(requestedName);
+                        if (jarRepoSyncMap.get(requestedName).contains(requestedMD5)) {
+                            logger.info("Waiting on repoSync to complete for pluginName: " + requestedName + " MD5: " + requestedMD5);
+                        } else {
+                            repoSyncActive = false;
                         }
                     } else {
-                        logger.error("NAME SHOULD EXIST IN jarRepoSyncMap : PLUGIN NAME: " + requestedName + " MD5: " + requestedMD5);
+                        repoSyncActive = false;
                     }
                 }
+                Thread.sleep(1000);
+            }
 
+            validatedMap = getJarFromLocalCache(map);
+            if(validatedMap == null) {
+                if (getJarFromRepo(map)) {
+                    validatedMap = getJarFromLocalCache(map);
+                }
+            }
+
+            synchronized (lockJarRepoSync) {
+                if (jarRepoSyncMap.containsKey(requestedName)) {
+                    jarRepoSyncMap.get(requestedName).remove(requestedMD5);
+                    if(jarRepoSyncMap.get(requestedName).size() == 0) {
+                        jarRepoSyncMap.remove(requestedName);
+                    }
+                }
             }
 
 
+
         } catch(Exception ex) {
-            logger.error("validatePluginMap()");
+            logger.error("remotePluginMap()");
            StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -1239,7 +1306,8 @@ public class PluginAdmin {
                 //System.out.println("REFS : " + servRefs.length);
                 if (servRefs == null || servRefs.length == 0) {
 
-                    System.out.println("NULL FOUND NOTHING!");
+                    //System.out.println("NULL FOUND NOTHING!");
+                    logger.debug("No service reference found for pluginID=" + pluginID);
 
                 } else {
                     //System.out.println("Running Service Count: " + servRefs.length);
@@ -1289,6 +1357,9 @@ public class PluginAdmin {
             }
             if(servRefs == null) {
                 logger.error("startPlugin : COULD NOT START PLUGIN COULD NOT GET SERVICE");
+            }
+            if(!isStarted) {
+                logger.error("startPlugin : Start plugin timeout");
             }
         } catch (Exception ex) {
            StringWriter sw = new StringWriter();
@@ -1721,8 +1792,11 @@ public class PluginAdmin {
             repoCache.cleanUp();
 
             if((System.currentTimeMillis() - lastRepoUpdate) > 5000) {
-                repoCache.putAll(gdb.getPluginListRepoSet());
-                lastRepoUpdate = System.currentTimeMillis();
+                Map<String,List<pNode>> repoSet = gdb.getPluginListRepoSet();
+                if(repoSet != null) {
+                    repoCache.putAll(gdb.getPluginListRepoSet());
+                    lastRepoUpdate = System.currentTimeMillis();
+                }
             }
 
             List<pNode> nodeList = repoCache.getIfPresent(requestedName);

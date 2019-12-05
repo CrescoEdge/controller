@@ -38,7 +38,6 @@ public class PollRemovePipeline implements Runnable {
 
                     controllerEngine.getGDB().setPipelineStatus(pipelineId, "9", "Pipeline Scheduled for Removal");
 
-
 					gpay = controllerEngine.getGDB().getPipelineObj(pipelineId);
 
                     if (pipelineId.equals(gpay.pipeline_id)) {

@@ -35,6 +35,7 @@ public class AppScheduler implements IncomingApp {
         this.logger = plugin.getLogger(AppScheduler.class.getName(),CLogger.Level.Info);
 
         this.ghw = ghw;
+        //this should be a configurable parameter
         //addPipelineExecutor = Executors.newFixedThreadPool(100);
         addPipelineExecutor = Executors.newCachedThreadPool();
         gson = new Gson();
