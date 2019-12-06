@@ -39,23 +39,50 @@ public class ActiveProducerWorker {
 			this.TXQueueName = TXQueueName;
 			gson = new Gson();
 
-			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-
-			destination = sess.createQueue(TXQueueName);
-
-
-			producer = sess.createProducer(destination);
-			producer.setTimeToLive(300000L);
-			producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-
-
-			isActive = true;
+			if(isInit()) {
+				isActive = true;
+			} else {
+				logger.error("Unable to init");
+			}
 			logger.debug("Initialized", TXQueueName);
 		} catch (Exception e) {
 			logger.error("Constructor {}", e.getMessage());
 		}
 	}
-	//BDB\em{?}
+
+	public boolean isInit() {
+		boolean isInit = false;
+		try {
+
+			if(producer != null) {
+				producer.close();
+				producer = null;
+			}
+
+			if(destination != null) {
+				destination = null;
+			}
+
+			if(sess != null) {
+				sess.close();
+				sess = null;
+			}
+
+			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+			destination = sess.createQueue(TXQueueName);
+
+			producer = sess.createProducer(destination);
+			producer.setTimeToLive(300000L);
+			producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+
+			isInit = true;
+
+		} catch (Exception ex) {
+			logger.error("isInit: " + ex.getMessage());
+		}
+		return isInit;
+	}
+
 	public boolean shutdown() {
 		boolean isShutdown = false;
 		try {
@@ -120,6 +147,11 @@ public class ActiveProducerWorker {
 */
 				logger.trace("MESSAGE= [" + se.getParams() + "]");
 
+				if(sess.isClosed()) {
+					logger.error("Session closed! for queue: " + TXQueueName + " URI: " + URI);
+					logger.error("Calling isInit()");
+					isInit();
+				}
 
 				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
 				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);

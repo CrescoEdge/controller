@@ -97,6 +97,8 @@ public class ActiveClient {
             }
 
             ActiveMQSslConnectionFactory activeMQSslConnectionFactory = null;
+            //PooledConnectionFactory pooledConnectionFactory = new PooledConnectionFactory();
+
 
             if(!hasConnection) {
 
