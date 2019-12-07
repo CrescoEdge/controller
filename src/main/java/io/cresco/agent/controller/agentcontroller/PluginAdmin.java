@@ -5,6 +5,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.db.DBInterfaceImpl;
+import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.app.pNode;
@@ -12,6 +13,7 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
 import io.cresco.library.utilities.CLogger;
+import org.apache.commons.io.FileUtils;
 import org.osgi.framework.*;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
@@ -40,6 +42,7 @@ public class PluginAdmin {
     private int PLUGINLIMIT = 10000;
     private int TRYCOUNT = 300;
 
+    private AgentService agentService;
     private BundleContext context;
     private ConfigurationAdmin confAdmin;
     private Map<String,Configuration> configMap;
@@ -67,7 +70,8 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
+    public PluginAdmin(AgentService agentService, PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
+        this.agentService = agentService;
         this.plugin = plugin;
         this.gdb = gdb;
         this.gson = new Gson();
@@ -950,12 +954,12 @@ public class PluginAdmin {
         }
 
         for(String pid : keys) {
-            stopPlugin(pid);
+            stopPlugin(pid, false);
         }
 
     }
 
-    public boolean stopPlugin(String pluginId) {
+    public boolean stopPlugin(String pluginId, boolean removeData) {
         boolean isStopped = false;
         try {
 
@@ -1033,6 +1037,10 @@ public class PluginAdmin {
                         //remove from database
                         gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
 
+                        if(removeData) {
+                            //remove any data from old plugin
+                            FileUtils.deleteDirectory(new File(agentService.getAgentDataDirectory() + "plugin-data" + "/" + pluginId));
+                        }
                         isStopped = true;
                     }
                 }

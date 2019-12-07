@@ -19,6 +19,7 @@ import org.osgi.service.component.annotations.*;
 
 import java.io.File;
 import java.net.InetAddress;
+import java.nio.file.FileSystems;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -177,6 +178,23 @@ public class AgentServiceImpl implements AgentService {
         return configParams;
     }
 
+    @Override
+    public String getAgentDataDirectory() {
+        String agentDataDirectory = null;
+        try {
+            if(plugin != null) {
+                agentDataDirectory = plugin.getConfig().getStringParam("agent_data_directory", FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString());
+            } else {
+                agentDataDirectory = FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString();
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            if(logger != null) {
+                logger.error(ex.getMessage());
+            }
+        }
+        return agentDataDirectory;
+    }
 
     @Activate
     void activate(BundleContext context) {
@@ -188,7 +206,7 @@ public class AgentServiceImpl implements AgentService {
         //create plugin
         plugin = new PluginBuilder(this, this.getClass().getName(), context, configParams);
 
-
+        //starting database
         dbe = new DBEngine(plugin);
 
         //create controller database implementation
@@ -204,7 +222,7 @@ public class AgentServiceImpl implements AgentService {
         agentState = new AgentState(controllerState);
 
         //create admin
-        pluginAdmin = new PluginAdmin(plugin, agentState, gdb, context);
+        pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context);
 
         logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
         pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);

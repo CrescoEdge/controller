@@ -59,6 +59,7 @@ public class DBEngine {
 
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
+            String dbPath = plugin.getPluginDataDirectory() + "/derbydb-home/" + dbName;
 
             String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");
             //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
@@ -67,9 +68,8 @@ public class DBEngine {
             }
 
 
-            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc", "jdbc:derby:" + dbName + ";create=true");
+            String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc", "jdbc:derby:" + dbPath + ";create=true");
             //String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc","jdbc:hsqldb:" + "database/" + dbName + ";create=true");
-
 
             String dbUserName = plugin.getConfig().getStringParam("db_username");
             String dbPassword = plugin.getConfig().getStringParam("db_password");
@@ -90,7 +90,7 @@ public class DBEngine {
 
             if (dbType == DBType.EMBEDDED) {
                 if (dbName.equals(defaultDBName)) {
-                    File dbsource = Paths.get("cresco-data/derbydb-home/" + defaultDBName).toFile();
+                    File dbsource = Paths.get(dbPath).toFile();
                     //File dbsource = new File(defaultDBName);
                     if (dbsource.exists()) {
                         //delete(dbsource);
