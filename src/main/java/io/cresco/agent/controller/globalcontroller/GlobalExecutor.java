@@ -477,7 +477,9 @@ public class GlobalExecutor implements Executor {
     private MsgEvent getINodeStatus(MsgEvent ce) {
         try
         {
-            if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null))
+            //inodes should be unique, not sure why that was required
+            //if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null))
+            if(ce.getParam("inode_id") != null)
             {
                 String status_code = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_code");
                 String status_desc = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_desc");
