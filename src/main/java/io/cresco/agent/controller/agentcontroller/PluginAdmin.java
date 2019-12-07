@@ -1118,12 +1118,12 @@ public class PluginAdmin {
         String pluginID = msg.getDstPlugin();
         synchronized (lockPlugin) {
             if (pluginMap.containsKey(pluginID)) {
-                //remove requirement for plugin to be active in order to send it a message
-                //if(pluginMap.get(pluginID).getActive()) {
+
+                if(pluginMap.get(pluginID).getActive()) {
                     pluginMap.get(pluginID).getPluginService().inMsg(msg);
-                //} else {
-                //    logger.error("MESSAGE SENT TO INACTIVE PLUGIN");
-                //}
+                } else {
+                    logger.error("MESSAGE SENT TO INACTIVE PLUGIN");
+                }
             }
         }
 
