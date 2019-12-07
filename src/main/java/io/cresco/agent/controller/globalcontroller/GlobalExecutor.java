@@ -481,6 +481,12 @@ public class GlobalExecutor implements Executor {
             //if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null))
             if(ce.getParam("inode_id") != null)
             {
+                Map<String,String> inodeMap = controllerEngine.getGDB().getInodeMap(ce.getParam("inode_id"));
+                if(inodeMap != null) {
+                    Gson gson = new Gson();
+                    String iNodeMapString = gson.toJson(inodeMap);
+                    ce.setCompressedParam("inodemap",iNodeMapString);
+                /*
                 String status_code = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_code");
                 String status_desc = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_desc");
                 if((status_code != null) && (status_desc != null))
@@ -492,7 +498,7 @@ public class GlobalExecutor implements Executor {
                     Gson gson = new Gson();
                     String pNodeMapString = gson.toJson(nodeMap);
                     ce.setCompressedParam("pnode",pNodeMapString);
-
+                */
                 }
                 else
                 {
