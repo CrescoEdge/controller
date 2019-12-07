@@ -30,7 +30,6 @@ public class GlobalExecutor implements Executor {
     private CLogger logger;
     private ExecutorService removePipelineExecutor;
 
-
     public GlobalExecutor(ControllerEngine controllerEngine) {
 
         this.controllerEngine = controllerEngine;

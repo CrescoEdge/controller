@@ -168,7 +168,7 @@ public class RegionalExecutor implements Executor {
 
     public void sendGlobalMsg(MsgEvent incoming) {
 
-        try {
+     try {
 
                 if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
 
@@ -205,7 +205,6 @@ public class RegionalExecutor implements Executor {
 
                     if ((retMsg != null) && (retMsg.getParams().keySet().contains("is_rpc"))) {
                         retMsg.setReturn();
-
                         //pick up RPC from local agent
                         String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +
                                 plugin.getAgent() + "-" + plugin.getPluginID()));
@@ -216,6 +215,8 @@ public class RegionalExecutor implements Executor {
                         }
 
                     }
+                } else {
+                    logger.error("MESSAGE SHOULD NOT BE DELIVERED HERE");
                 }
 
         } catch(Exception ex) {

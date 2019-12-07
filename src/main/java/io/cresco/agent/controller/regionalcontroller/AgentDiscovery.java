@@ -13,7 +13,7 @@ public class AgentDiscovery {
     private PluginBuilder plugin;
     private CLogger logger;
     private RPC rpc;
-    private GlobalExecutor gce;
+    //private GlobalExecutor gce;
 
     public AgentDiscovery(ControllerEngine controllerEngine) {
         //this.agentcontroller = agentcontroller;
@@ -23,7 +23,7 @@ public class AgentDiscovery {
         this.logger = plugin.getLogger(AgentDiscovery.class.getName(),CLogger.Level.Info);
 
 
-        gce = new GlobalExecutor(controllerEngine);
+        //gce = new GlobalExecutor(controllerEngine);
         //rpc = new RPC(agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), null);
     }
 

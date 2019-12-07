@@ -88,7 +88,9 @@ public class MsgRouter {
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
-                //logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
+                if(rm.paramsContains("inodemap")) {
+                    logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
+                }
 
 
                 switch (routePath) {
@@ -468,7 +470,7 @@ public class MsgRouter {
                         break;
 
                     case 29663:
-                        logger.debug("Local regional or local global controller 29663 sending message back to plugin");
+                        logger.debug("Local regional or local global controller sending message back to plugin 29663");
                         logger.trace(rm.getParams().toString());
                         forwardToLocalPlugin(rm);
                         break;
