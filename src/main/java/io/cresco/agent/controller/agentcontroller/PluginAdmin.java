@@ -1039,7 +1039,9 @@ public class PluginAdmin {
 
                         if(removeData) {
                             //remove any data from old plugin
-                            FileUtils.deleteDirectory(new File(agentService.getAgentDataDirectory() + "plugin-data" + "/" + pluginId));
+                            String dir = agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId;
+                            logger.trace("REMOVE DIR: " + dir);
+                            FileUtils.deleteDirectory(new File(dir));
                         }
                         isStopped = true;
                     }
