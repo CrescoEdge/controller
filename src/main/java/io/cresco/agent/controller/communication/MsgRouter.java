@@ -88,9 +88,9 @@ public class MsgRouter {
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
-                if(rm.paramsContains("inodemap")) {
-                    logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
-                }
+                //if(rm.paramsContains("inodemap")) {
+                //    logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
+                //}
 
 
                 switch (routePath) {

@@ -1346,8 +1346,10 @@ public class PluginAdmin {
 
                             synchronized (lockPlugin) {
                                 if (pluginMap.containsKey(pluginID)) {
-                                    pluginMap.get(pluginID).setPluginService((PluginService) context.getService(sr));
+                                    PluginService pluginService = (PluginService) context.getService(sr);
+                                    pluginMap.get(pluginID).setPluginService(pluginService);
                                     pluginMap.get(pluginID).setStatus(statusCode, statusDesc);
+                                    pluginService.setIsActive(true);
                                 } else {
                                     logger.error("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " elements " + pluginMap.hashCode() + " thread:" + Thread.currentThread().getName());
                                 }
