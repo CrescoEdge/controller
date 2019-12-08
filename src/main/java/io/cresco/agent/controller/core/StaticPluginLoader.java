@@ -281,10 +281,11 @@ public class StaticPluginLoader implements Runnable  {
     private Map<String, Object> getPluginConfigMap(String pluginId) {
         Map<String, Object> configMap = null;
         try {
-
-            String configParams = controllerEngine.getGDB().getPluginInfo(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId);
-            if (configParams != null) {
-               configMap = gson.fromJson(configParams, hashMaptype);
+            if(controllerEngine.getGDB().nodeExist(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId)) {
+                String configParams = controllerEngine.getGDB().getPluginInfo(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent(), pluginId);
+                if (configParams != null) {
+                    configMap = gson.fromJson(configParams, hashMaptype);
+                }
             }
         } catch (Exception ex) {
             logger.error(ex.getMessage());
