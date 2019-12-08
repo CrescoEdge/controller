@@ -1044,7 +1044,7 @@ public class PluginAdmin {
                         gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
 
                         try {
-                            if (gdb.getPNodePersistenceCode(pluginId) <= 9) {
+                            if (pluginPersistenceCode <= 9) {
                                 String pluginDataDirectory = agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId;
                                 File folder = new File(pluginDataDirectory);
                                 if (folder.exists()) {

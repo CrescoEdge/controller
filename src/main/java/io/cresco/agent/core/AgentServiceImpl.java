@@ -292,6 +292,8 @@ public class AgentServiceImpl implements AgentService {
             logger.info("Starting Controller Shutdown");
         }
 
+        pluginAdmin.stopAllPlugins();
+
         if(controllerEngine != null) {
             //controllerEngine.closeCommunications();
 
@@ -329,8 +331,6 @@ public class AgentServiceImpl implements AgentService {
         if(gdb != null) {
             gdb.shutdown();
         }
-
-        pluginAdmin.stopAllPlugins();
 
         if(logger != null) {
             logger.info("Controller Shutdown Completed");
