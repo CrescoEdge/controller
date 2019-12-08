@@ -101,9 +101,6 @@ public class StaticPluginLoader implements Runnable  {
                         } else {
                             //why not load this sucker here...
                             logger.debug("No plugin config!");
-                            logger.error("pre map");
-                            getPluginConfigMapByType(systemPluginConfigList, "dupe");
-                            logger.error("post map");
 
                             if(controllerEngine.cstate.isGlobalController()) {
 
@@ -259,23 +256,6 @@ public class StaticPluginLoader implements Runnable  {
                 logger.error(sw.toString());
             }
 
-    }
-
-    private Map<String, Object> getPluginConfigMapByType(List<Map<String,Object>> systemPluginConfigList, String pluginType) {
-        Map<String, Object> configMap = null;
-        try {
-            //pluginname=io.cresco.repo
-            //String pluginID = (String)map.get("inode_id");
-            for(Map<String,Object> pluginConfig : systemPluginConfigList) {
-                if((pluginConfig.containsKey("pluginname")) && (pluginConfig.containsKey("inode"))) {
-
-                }
-            }
-
-        } catch (Exception ex) {
-            logger.error(ex.getMessage());
-        }
-        return configMap;
     }
 
     private Map<String, Object> getPluginConfigMap(String pluginId) {
