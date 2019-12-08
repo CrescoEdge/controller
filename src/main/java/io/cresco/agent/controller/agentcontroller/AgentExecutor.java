@@ -299,7 +299,7 @@ public class AgentExecutor implements Executor {
 
             } else {
                 logger.info("disabling plugin : " + pluginId);
-                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(pluginId, true);
+                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(pluginId);
 
                 if (isDisabled) {
 

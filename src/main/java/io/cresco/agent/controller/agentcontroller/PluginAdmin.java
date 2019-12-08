@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
+import java.util.stream.Collectors;
 
 public class PluginAdmin {
 
@@ -950,16 +951,18 @@ public class PluginAdmin {
 
         Set<String> keys = null;
         synchronized (lockConfig) {
-            keys = pluginMap.keySet();
+
+            //keys = pluginMap.keySet();
+            keys = pluginMap.keySet().stream().collect(Collectors.toSet());
         }
 
         for(String pid : keys) {
-            stopPlugin(pid, false);
+            stopPlugin(pid);
         }
 
     }
 
-    public boolean stopPlugin(String pluginId, boolean removeData) {
+    public boolean stopPlugin(String pluginId) {
         boolean isStopped = false;
         try {
 
@@ -1034,15 +1037,27 @@ public class PluginAdmin {
                         synchronized (lockConfig) {
                             configMap.remove(pluginId);
                         }
+
+                        int pluginPersistenceCode = gdb.getPNodePersistenceCode(pluginId);
+
                         //remove from database
                         gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
 
-                        if(removeData) {
-                            //remove any data from old plugin
-                            String dir = agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId;
-                            logger.trace("REMOVE DIR: " + dir);
-                            FileUtils.deleteDirectory(new File(dir));
+                        try {
+                            if (gdb.getPNodePersistenceCode(pluginId) <= 9) {
+                                String pluginDataDirectory = agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId;
+                                File folder = new File(pluginDataDirectory);
+                                if (folder.exists()) {
+                                    if (folder.isDirectory()) {
+                                        FileUtils.deleteDirectory(folder);
+                                        logger.info("Removing stale plugin-data: " + folder.getName());
+                                    }
+                                }
+                            }
+                        } catch (Exception ex) {
+                            logger.error(ex.getMessage());
                         }
+
                         isStopped = true;
                     }
                 }

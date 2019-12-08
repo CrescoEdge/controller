@@ -22,6 +22,7 @@ import java.net.InetAddress;
 import java.nio.file.FileSystems;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 @Component(
@@ -40,6 +41,8 @@ public class AgentServiceImpl implements AgentService {
     private DBEngine dbe;
     private DBInterfaceImpl gdb;
     private CLogger logger;
+    //keep list of dataplane logging options
+    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
 
     //this needs to be pulled from Config
     private String ENV_PREFIX = "CRESCO_";
@@ -47,18 +50,19 @@ public class AgentServiceImpl implements AgentService {
 
     public AgentServiceImpl() {
 
+        loggerMap = new ConcurrentHashMap<>();
 
     }
 
 
     public CLogger getCLogger(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, CLogger.Level level) {
-        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName);
+        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, loggerMap);
 
 
     }
 
     public CLogger getCLogger(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName) {
-        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName);
+        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, loggerMap);
 
     }
 
@@ -225,7 +229,8 @@ public class AgentServiceImpl implements AgentService {
         pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context);
 
         logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
-        pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
+        setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
+        //pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
 
         logger.info("");
         logger.info("       ________   _______      ________   ________   ________   ________");
@@ -325,6 +330,8 @@ public class AgentServiceImpl implements AgentService {
             gdb.shutdown();
         }
 
+        pluginAdmin.stopAllPlugins();
+
         if(logger != null) {
             logger.info("Controller Shutdown Completed");
         }
@@ -339,6 +346,10 @@ public class AgentServiceImpl implements AgentService {
     @Override
     public void setLogLevel(String logId, CLogger.Level level) {
 
+        //set log level for DP
+        loggerMap.put(logId,level);
+
+        //set log level for files
         if(pluginAdmin != null) {
             pluginAdmin.setLogLevel(logId, level);
         }

@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.jms.TextMessage;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -18,19 +19,21 @@ import javax.jms.TextMessage;
  */
 public class CLoggerImpl implements CLogger {
 
-    private Level level;
+    //private Level level;
     private String issuingClassName;
     private String baseClassName;
     private PluginBuilder pluginBuilder;
     private Logger logService;
     private String source;
     private String logIdent;
+    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
 
 
-    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName) {
+    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, ConcurrentHashMap<String, Level> loggerMap) {
         this.pluginBuilder = pluginBuilder;
         this.baseClassName = baseClassName;
         this.issuingClassName = issuingClassName.substring(baseClassName.length() +1) ;
+        this.loggerMap = loggerMap;
 
         if(pluginBuilder.getPluginID() != null) {
             source = pluginBuilder.getPluginID();
@@ -96,7 +99,6 @@ public class CLoggerImpl implements CLogger {
             logMessage = logMessage + "[" + formatClassName(issuingClassName) + "]";
         logMessage = logMessage + " " + messageBody;
 
-
         String levelString = level.name();
 
         switch (levelString) {
@@ -114,31 +116,36 @@ public class CLoggerImpl implements CLogger {
                 break;
         }
 
-        logToDataPlane(levelString, logMessage);
+        logToDataPlane(level, logMessage);
 
     }
 
-    private void logToDataPlane(String loglevel, String message) {
+    private void logToDataPlane(Level level, String message) {
         try {
+            boolean logDP = false;
 
-            if(pluginBuilder.getAgentService().getAgentState() != null) {
-                if (pluginBuilder.getAgentService().getAgentState().isActive()) {
-                    if(pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
-                        TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
-                        textMessage.setStringProperty("event", "logger");
-                        textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
-                        textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
-                        textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
-                        textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
-                        textMessage.setStringProperty("loglevel", loglevel);
-                        textMessage.setText(message);
+            if(level.getValue() <= getLogLevel().getValue()) {
+                logDP = true;
+            }
 
-                        pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+            if(logDP) {
+                if (pluginBuilder.getAgentService().getAgentState() != null) {
+                    if (pluginBuilder.getAgentService().getAgentState().isActive()) {
+                        if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
+                            TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
+                            textMessage.setStringProperty("event", "logger");
+                            textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
+                            textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
+                            textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
+                            textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
+                            textMessage.setStringProperty("loglevel", level.name());
+                            textMessage.setText(message);
+
+                            pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                        }
                     }
                 }
             }
-
-
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -160,7 +167,11 @@ public class CLoggerImpl implements CLogger {
     }
 
     public Level getLogLevel() {
-        return level;
+        if(loggerMap.contains(logIdent)) {
+            return loggerMap.get(logIdent);
+        } else {
+            return Level.Info;
+        }
     }
 
     public void setLogLevel(Level level) {

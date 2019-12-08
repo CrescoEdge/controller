@@ -5,6 +5,7 @@ import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.core.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.PrintWriter;
@@ -20,7 +21,6 @@ public class StaticPluginLoader implements Runnable  {
     private Config config;
     private Type hashMaptype;
     private Gson gson;
-
 
     public StaticPluginLoader(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -110,7 +110,6 @@ public class StaticPluginLoader implements Runnable  {
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
 
-
                             } else {
 
                                 //load repo if requested
@@ -181,6 +180,8 @@ public class StaticPluginLoader implements Runnable  {
 
                             }
 
+                            //if plugin is not running remove data
+                       // String pluginDataDirectory = controllerEngine.getPluginBuilder().getAgentService().getAgentDataDirectory() + "/plugin-data/";
 
 
                     } else {
