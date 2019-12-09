@@ -26,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.Attributes;
@@ -59,6 +60,8 @@ public class PluginAdmin {
     private AtomicBoolean lockBundle = new AtomicBoolean();
     private AtomicBoolean lockJarRepoSync = new AtomicBoolean();
 
+    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
+
     private long lastRepoUpdate = 0;
 
     private Cache<String, List<pNode>> repoCache;
@@ -71,7 +74,7 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(AgentService agentService, PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context) {
+    public PluginAdmin(AgentService agentService, PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context, ConcurrentHashMap<String, CLogger.Level> loggerMap) {
         this.agentService = agentService;
         this.plugin = plugin;
         this.gdb = gdb;
@@ -82,9 +85,9 @@ public class PluginAdmin {
         this.jarRepoSyncMap = Collections.synchronizedMap(new HashMap<>());
 
         this.context = context;
-        logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
+        this.logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
 
-
+        this.loggerMap = loggerMap;
 
         repoCache = CacheBuilder.newBuilder()
                 .concurrencyLevel(4)
@@ -114,16 +117,24 @@ public class PluginAdmin {
 
     }
 
-    public void setLogLevel(String logId, CLogger.Level level) {
-
+    public boolean setLogLevel(String logId, CLogger.Level level) {
+        boolean isSet = false;
         try {
 
+            //set log level for DP
+            loggerMap.put(logId,level);
+
+            //set log level for file
             Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
             log4jProps.put("log4j.logger." + logId, level.name().toUpperCase());
 
             logConfig.updateIfDifferent(log4jProps);
+            isSet = true;
+
+            logger.info("Set loglevel: " + level.name()  + " for log_id : " + logId);
+
 
         } catch (Exception ex) {
             logger.error("setLogLevel() " + ex.getMessage());
@@ -133,7 +144,7 @@ public class PluginAdmin {
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
         }
-
+        return isSet;
     }
 
     public void setLogLevels(Map<String,String> logMap) {

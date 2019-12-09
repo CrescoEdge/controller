@@ -141,7 +141,7 @@ public class AgentProducer {
                 }
                 isSent = true;
             } else {
-                logger.error("apw is null");
+                logger.error("apw is null, does node exist? " + sm.getParams());
             }
         } catch (Exception ex) {
             logger.error("ActiveProducer : sendMessage Error " + ex.toString());

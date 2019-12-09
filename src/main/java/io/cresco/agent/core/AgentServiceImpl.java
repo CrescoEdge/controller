@@ -20,8 +20,7 @@ import org.osgi.service.component.annotations.*;
 import java.io.File;
 import java.net.InetAddress;
 import java.nio.file.FileSystems;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 
@@ -42,7 +41,8 @@ public class AgentServiceImpl implements AgentService {
     private DBInterfaceImpl gdb;
     private CLogger logger;
     //keep list of dataplane logging options
-    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
+    private static ConcurrentHashMap<String, CLogger.Level> loggerMap;
+    //private static NavigableMap<String, CLogger.Level> loggerMap;
 
     //this needs to be pulled from Config
     private String ENV_PREFIX = "CRESCO_";
@@ -51,6 +51,7 @@ public class AgentServiceImpl implements AgentService {
     public AgentServiceImpl() {
 
         loggerMap = new ConcurrentHashMap<>();
+
 
     }
 
@@ -226,7 +227,7 @@ public class AgentServiceImpl implements AgentService {
         agentState = new AgentState(controllerState);
 
         //create admin
-        pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context);
+        pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, loggerMap);
 
         logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
         setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
@@ -345,9 +346,6 @@ public class AgentServiceImpl implements AgentService {
 
     @Override
     public void setLogLevel(String logId, CLogger.Level level) {
-
-        //set log level for DP
-        loggerMap.put(logId,level);
 
         //set log level for files
         if(pluginAdmin != null) {

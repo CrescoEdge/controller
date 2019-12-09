@@ -44,6 +44,9 @@ public class AgentExecutor implements Executor {
             case "pluginremove":
                 return pluginRemove(incoming);
 
+            case "setloglevel":
+                return setLogLevel(incoming);
+
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
                 logger.error(incoming.getParams().toString());
@@ -316,6 +319,39 @@ public class AgentExecutor implements Executor {
             logger.error("pluginremove Error: " + ex.getMessage());
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Removed Exception");
+        }
+        return ce;
+    }
+
+    private MsgEvent setLogLevel(MsgEvent ce) {
+
+        try {
+            String baseClassName = ce.getParam("baseclassname");
+            String loglevelString = ce.getParam("loglevel");
+            CLogger.Level loglevel = CLogger.Level.valueOf(loglevelString);
+            if(baseClassName == null) {
+
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "baseClassName NULL");
+
+            } else {
+                boolean isSet = controllerEngine.getPluginAdmin().setLogLevel(baseClassName,loglevel);
+
+                if (isSet) {
+
+                    ce.setParam("status_code", "7");
+                    ce.setParam("status_desc", "LogLevel Set");
+
+                } else {
+                    ce.setParam("status_code", "9");
+                    ce.setParam("status_desc", "LogLevel Could Not Be Set");
+                }
+            }
+
+        } catch(Exception ex) {
+            logger.error("setLogLevel Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "baseClassName LogLevel Could Not Be Set Exception");
         }
         return ce;
     }

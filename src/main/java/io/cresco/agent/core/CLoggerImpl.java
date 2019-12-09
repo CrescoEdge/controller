@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.jms.TextMessage;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 
@@ -128,6 +129,7 @@ public class CLoggerImpl implements CLogger {
                 logDP = true;
             }
 
+
             if(logDP) {
                 if (pluginBuilder.getAgentService().getAgentState() != null) {
                     if (pluginBuilder.getAgentService().getAgentState().isActive()) {
@@ -167,7 +169,8 @@ public class CLoggerImpl implements CLogger {
     }
 
     public Level getLogLevel() {
-        if(loggerMap.contains(logIdent)) {
+
+        if(loggerMap.containsKey(logIdent)) {
             return loggerMap.get(logIdent);
         } else {
             return Level.Info;
