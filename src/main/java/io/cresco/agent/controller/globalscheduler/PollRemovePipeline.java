@@ -69,6 +69,20 @@ public class PollRemovePipeline implements Runnable {
                         while(isScheduling)
                         {
                             List<gNode> checkList = new ArrayList<>(pipelineNodes);
+                            /*
+                            status_code = 3; //agentcontroller init
+                            status_code = 7; //Plugin instance could not be started
+                            status_code = 8; //agentcontroller disabled
+                            status_code = 9; //Plugin Bundle could not be installed or started
+                            status_code = 10; //started and working
+                            status_code = 40; //WATCHDOG check STALE
+                            status_code = 41; //Missing status parameter
+                            status_code = 50; //WATCHDOG check LOST
+                            status_code = 80; //failed to start
+                            status_code = 90; //Exception on timeout shutdown
+                            status_code = 91; //Exception on timeout verification to confirm down
+                            status_code = 92; //timeout on disable verification
+                            */
 
                             if(checkList.isEmpty()) {
                                 isScheduling = false;
@@ -76,16 +90,15 @@ public class PollRemovePipeline implements Runnable {
 
                             for(gNode gnode : checkList) {
                                 int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
-                                if (statusCode != 9) {
+                                if (statusCode != 10) {
                                     if(statusCode == 8) {
-                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id);
+                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                         pipelineNodes.remove(gnode);
                                     }
-                                    if(statusCode > 19) {
+                                    else {
                                         errorList.add(gnode);
                                         pipelineNodes.remove(gnode);
-                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id);
-
+                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                     }
                                 }
                             }
@@ -94,6 +107,9 @@ public class PollRemovePipeline implements Runnable {
 
                         }
                         //end watch loop
+                        controllerEngine.getGDB().removePipeline(pipelineId);
+                        logger.debug("pipelineid " + pipelineId + " removed!");
+                        /*
                         if(errorList.isEmpty()) {
                             controllerEngine.getGDB().removePipeline(pipelineId);
                             logger.debug("pipelineid " + pipelineId + " removed!");
@@ -101,6 +117,8 @@ public class PollRemovePipeline implements Runnable {
                             controllerEngine.getGDB().setPipelineStatus(pipelineId, "80", "Pipeline Failed Removal");
                             logger.error("PipelineID: " + pipelineId + " Removal Failed!");
                         }
+                         */
+
                     }
 				//}
 
