@@ -318,7 +318,7 @@ public class AgentExecutor implements Executor {
         } catch(Exception ex) {
             logger.error("pluginremove Error: " + ex.getMessage());
             ce.setParam("status_code", "9");
-            ce.setParam("status_desc", "Plugin Could Not Be Removed Exception");
+            ce.setParam("status_desc", "Plugin Could Not Be Removed Exception [" + ex.getMessage() + "]");
         }
         return ce;
     }
