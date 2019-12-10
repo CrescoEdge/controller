@@ -111,6 +111,15 @@ public class DataPlaneLogger {
 
     }
 
+    public void removeLogLevel(String logId) {
+        synchronized (lockMap) {
+            if(loggerMap.containsKey(logId)) {
+                logger.info("LogDP: Removing LogId: " + logId);
+                loggerMap.remove(logId);
+            }
+        }
+    }
+
     public void setLogLevel(String logId, CLogger.Level level) {
 
         if(logId.replace(" ","").length() == 0) {

@@ -379,6 +379,39 @@ public class AgentExecutor implements Executor {
         return ce;
     }
 
+    private MsgEvent removeLogLevel(MsgEvent ce) {
+
+        try {
+            String baseClassName = ce.getParam("baseclassname");
+
+            if(baseClassName == null) {
+
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "baseClassName NULL");
+
+            } else {
+
+                boolean isSet = controllerEngine.getPluginAdmin().removeLogLevel(baseClassName);
+
+                if (isSet) {
+
+                    ce.setParam("status_code", "7");
+                    ce.setParam("status_desc", "LogLevel Removed");
+
+                } else {
+                    ce.setParam("status_code", "9");
+                    ce.setParam("status_desc", "LogLevel Could Not Be Removed");
+                }
+            }
+
+        } catch(Exception ex) {
+            logger.error("setLogLevel Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "baseClassName LogLevel Could Not Be Removed Exception");
+        }
+        return ce;
+    }
+
     private MsgEvent setLogLevel(MsgEvent ce) {
 
         try {

@@ -190,6 +190,42 @@ public class PluginAdmin {
         return isSet;
     }
 
+    public boolean removeLogLevel(String logId) {
+        boolean isSet = false;
+        try {
+
+            //set log level for DP
+            if(dataPlaneLogger != null) {
+                dataPlaneLogger.removeLogLevel(logId);
+            }
+
+            //set log level for file
+            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+
+            Dictionary<String, Object> log4jProps = logConfig.getProperties();
+
+            List<String> keys = Collections.list(log4jProps.keys());
+            String canidateKey = "log4j.logger." + logId;
+            if(keys.contains(canidateKey)) {
+                log4jProps.remove(canidateKey);
+                logConfig.updateIfDifferent(log4jProps);
+            }
+
+            isSet = true;
+
+            logger.info("Log for log_id : " + logId + " removed.");
+
+        } catch (Exception ex) {
+            logger.error("removeLogLevel " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return isSet;
+    }
+
     public void setLogLevels(Map<String,String> logMap) {
 
         try {
