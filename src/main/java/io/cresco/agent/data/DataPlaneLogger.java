@@ -34,6 +34,8 @@ public class DataPlaneLogger {
 
     }
 
+    private CLogger.Level defaultLogLevel = CLogger.Level.Info;
+
     public void setIsEnabled(boolean isEnabledSet) {
         isEnabled.set(isEnabledSet);
     }
@@ -105,16 +107,19 @@ public class DataPlaneLogger {
             }
         }
 
-        return CLogger.Level.Info;
+        return defaultLogLevel;
 
     }
 
     public void setLogLevel(String logId, CLogger.Level level) {
-        synchronized (lockMap) {
-            if((loggerMap.containsKey(logId)) && (level == CLogger.Level.Info)) {
-                loggerMap.remove(logId);
-            } else {
-                loggerMap.put(logId, level);
+
+        if(logId.replace(" ","").length() == 0) {
+            logger.info("LogDP: Setting defaultLogLevel to " + level.name());
+            defaultLogLevel = level;
+        } else {
+            synchronized (lockMap) {
+                    logger.info("LogDP: Setting LogLevel to " + level.name() + " for LogId: " + logId);
+                    loggerMap.put(logId, level);
             }
         }
     }
