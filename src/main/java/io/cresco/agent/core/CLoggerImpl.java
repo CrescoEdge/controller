@@ -1,15 +1,13 @@
 package io.cresco.agent.core;
 
 
-import io.cresco.library.data.TopicType;
+import io.cresco.agent.data.DataPlaneLogger;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.jms.TextMessage;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 
 /**
@@ -27,14 +25,14 @@ public class CLoggerImpl implements CLogger {
     private Logger logService;
     private String source;
     private String logIdent;
-    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
+    private DataPlaneLogger dataPlaneLogger;
 
 
-    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, ConcurrentHashMap<String, Level> loggerMap) {
+    public CLoggerImpl(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, DataPlaneLogger dataPlaneLogger) {
         this.pluginBuilder = pluginBuilder;
         this.baseClassName = baseClassName;
         this.issuingClassName = issuingClassName.substring(baseClassName.length() +1) ;
-        this.loggerMap = loggerMap;
+        this.dataPlaneLogger = dataPlaneLogger;
 
         if(pluginBuilder.getPluginID() != null) {
             source = pluginBuilder.getPluginID();
@@ -44,8 +42,6 @@ public class CLoggerImpl implements CLogger {
 
         logIdent = source  + ":" + issuingClassName;
         logIdent = logIdent.toLowerCase();
-
-        //setLogLevel(level);
 
         logService = LoggerFactory.getLogger(logIdent);
 
@@ -117,42 +113,9 @@ public class CLoggerImpl implements CLogger {
                 break;
         }
 
-        logToDataPlane(level, logMessage);
-
-    }
-
-    private void logToDataPlane(Level level, String message) {
-        try {
-            boolean logDP = false;
-
-            if(level.getValue() <= getLogLevel().getValue()) {
-                logDP = true;
-            }
-
-
-            if(logDP) {
-                if (pluginBuilder.getAgentService().getAgentState() != null) {
-                    if (pluginBuilder.getAgentService().getAgentState().isActive()) {
-                        if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
-                            TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
-                            textMessage.setStringProperty("event", "logger");
-                            textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
-                            textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
-                            textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
-                            textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
-                            textMessage.setStringProperty("loglevel", level.name());
-                            textMessage.setText(message);
-
-                            pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
-                        }
-                    }
-                }
-            }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
+        if(dataPlaneLogger != null) {
+            dataPlaneLogger.logToDataPlane(level, logIdent, messageBody);
         }
-
 
     }
 
@@ -168,14 +131,6 @@ public class CLoggerImpl implements CLogger {
         return newName + className.substring(lastIndex);
     }
 
-    public Level getLogLevel() {
-
-        if(loggerMap.containsKey(logIdent)) {
-            return loggerMap.get(logIdent);
-        } else {
-            return Level.Info;
-        }
-    }
 
     public void setLogLevel(Level level) {
         //this.level = level;

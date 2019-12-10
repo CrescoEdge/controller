@@ -4,6 +4,7 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import io.cresco.agent.data.DataPlaneLogger;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
@@ -60,7 +61,7 @@ public class PluginAdmin {
     private AtomicBoolean lockBundle = new AtomicBoolean();
     private AtomicBoolean lockJarRepoSync = new AtomicBoolean();
 
-    private ConcurrentHashMap<String, CLogger.Level> loggerMap;
+    private DataPlaneLogger dataPlaneLogger;
 
     private long lastRepoUpdate = 0;
 
@@ -74,7 +75,7 @@ public class PluginAdmin {
     }
 
 
-    public PluginAdmin(AgentService agentService, PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context, ConcurrentHashMap<String, CLogger.Level> loggerMap) {
+    public PluginAdmin(AgentService agentService, PluginBuilder plugin, AgentState agentState, DBInterfaceImpl gdb, BundleContext context, DataPlaneLogger dataPlaneLogger) {
         this.agentService = agentService;
         this.plugin = plugin;
         this.gdb = gdb;
@@ -87,7 +88,7 @@ public class PluginAdmin {
         this.context = context;
         this.logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
 
-        this.loggerMap = loggerMap;
+        this.dataPlaneLogger = dataPlaneLogger;
 
         repoCache = CacheBuilder.newBuilder()
                 .concurrencyLevel(4)
@@ -117,12 +118,55 @@ public class PluginAdmin {
 
     }
 
+    public boolean logDPSetEnabled(boolean isEnabled) {
+        boolean isSet = false;
+        try {
+
+            //set log level for DP
+            if(dataPlaneLogger != null) {
+                dataPlaneLogger.setIsEnabled(isEnabled);
+                isSet = true;
+            }
+
+        } catch (Exception ex) {
+            logger.error("logDPSetEnabled() " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return isSet;
+    }
+
+    public boolean logDPIsEnabled() {
+        boolean isSet = false;
+        try {
+
+            //set log level for DP
+            if(dataPlaneLogger != null) {
+                isSet = dataPlaneLogger.getIsEnabled();
+            }
+
+        } catch (Exception ex) {
+            logger.error("logDPIsEnabled() " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return isSet;
+    }
+
     public boolean setLogLevel(String logId, CLogger.Level level) {
         boolean isSet = false;
         try {
 
             //set log level for DP
-            loggerMap.put(logId,level);
+            if(dataPlaneLogger != null) {
+                dataPlaneLogger.setLogLevel(logId, level);
+            }
 
             //set log level for file
             Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
@@ -134,7 +178,6 @@ public class PluginAdmin {
             isSet = true;
 
             logger.info("Set loglevel: " + level.name()  + " for log_id : " + logId);
-
 
         } catch (Exception ex) {
             logger.error("setLogLevel() " + ex.getMessage());

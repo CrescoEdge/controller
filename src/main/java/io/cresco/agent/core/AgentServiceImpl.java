@@ -3,6 +3,7 @@ package io.cresco.agent.core;
 
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.data.DataPlaneLogger;
 import io.cresco.agent.db.ControllerStatePersistanceImp;
 import io.cresco.agent.db.DBEngine;
 import io.cresco.agent.db.DBInterfaceImpl;
@@ -40,9 +41,7 @@ public class AgentServiceImpl implements AgentService {
     private DBEngine dbe;
     private DBInterfaceImpl gdb;
     private CLogger logger;
-    //keep list of dataplane logging options
-    private static ConcurrentHashMap<String, CLogger.Level> loggerMap;
-    //private static NavigableMap<String, CLogger.Level> loggerMap;
+    private DataPlaneLogger dataPlaneLogger;
 
     //this needs to be pulled from Config
     private String ENV_PREFIX = "CRESCO_";
@@ -50,20 +49,18 @@ public class AgentServiceImpl implements AgentService {
 
     public AgentServiceImpl() {
 
-        loggerMap = new ConcurrentHashMap<>();
-
 
     }
 
 
     public CLogger getCLogger(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName, CLogger.Level level) {
-        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, loggerMap);
+        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, dataPlaneLogger);
 
 
     }
 
     public CLogger getCLogger(PluginBuilder pluginBuilder, String baseClassName, String issuingClassName) {
-        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, loggerMap);
+        return new CLoggerImpl(pluginBuilder,baseClassName,issuingClassName, dataPlaneLogger);
 
     }
 
@@ -211,6 +208,9 @@ public class AgentServiceImpl implements AgentService {
         //create plugin
         plugin = new PluginBuilder(this, this.getClass().getName(), context, configParams);
 
+        //create dataplane logger
+        dataPlaneLogger = new DataPlaneLogger(plugin);
+
         //starting database
         dbe = new DBEngine(plugin);
 
@@ -227,7 +227,7 @@ public class AgentServiceImpl implements AgentService {
         agentState = new AgentState(controllerState);
 
         //create admin
-        pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, loggerMap);
+        pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, dataPlaneLogger);
 
         logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
         //setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);

@@ -47,6 +47,12 @@ public class AgentExecutor implements Executor {
             case "setloglevel":
                 return setLogLevel(incoming);
 
+            case "getislogdp":
+                return getDPLogIsEnabled(incoming);
+
+            case "setlogdp":
+                return  setDPLogIsEnabled(incoming);
+
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
                 logger.error(incoming.getParams().toString());
@@ -323,11 +329,62 @@ public class AgentExecutor implements Executor {
         return ce;
     }
 
+    private MsgEvent getDPLogIsEnabled(MsgEvent ce) {
+
+        try {
+                boolean isSet = controllerEngine.getPluginAdmin().logDPIsEnabled();
+                ce.setParam("islogdp", String.valueOf(isSet));
+                ce.setParam("status_code", "7");
+                ce.setParam("status_desc", "islogDP Get");
+
+        } catch(Exception ex) {
+            logger.error("getDPLogIsEnabled Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "logDP Could Not Get Exception");
+        }
+        return ce;
+    }
+
+    private MsgEvent setDPLogIsEnabled(MsgEvent ce) {
+
+        try {
+            String logDPString = ce.getParam("setlogdp");
+
+            if(logDPString == null) {
+
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "setlogdp NULL");
+
+            } else {
+
+                boolean logDP = Boolean.parseBoolean(logDPString);
+                boolean isSet = controllerEngine.getPluginAdmin().logDPSetEnabled(logDP);
+
+                if (isSet) {
+
+                    ce.setParam("status_code", "7");
+                    ce.setParam("status_desc", "logDP Set");
+
+                } else {
+                    ce.setParam("status_code", "9");
+                    ce.setParam("status_desc", "logDP Could Not Be Set");
+                }
+            }
+
+        } catch(Exception ex) {
+            logger.error("setDPLogIsEnabled Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "logDP Could Not Be Set Exception");
+        }
+        return ce;
+    }
+
     private MsgEvent setLogLevel(MsgEvent ce) {
 
         try {
             String baseClassName = ce.getParam("baseclassname");
             String loglevelString = ce.getParam("loglevel");
+
             CLogger.Level loglevel = CLogger.Level.valueOf(loglevelString);
             if(baseClassName == null) {
 
@@ -335,6 +392,7 @@ public class AgentExecutor implements Executor {
                 ce.setParam("status_desc", "baseClassName NULL");
 
             } else {
+
                 boolean isSet = controllerEngine.getPluginAdmin().setLogLevel(baseClassName,loglevel);
 
                 if (isSet) {
