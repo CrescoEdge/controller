@@ -57,6 +57,8 @@ public class DataPlaneLogger {
                                 textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
                                 textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
                                 textMessage.setStringProperty("loglevel", level.name());
+                                textMessage.setStringProperty("logid", logIdent);
+
                                 textMessage.setText(message);
 
                                 pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
