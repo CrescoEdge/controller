@@ -98,7 +98,10 @@ public class DataPlaneLogger {
         if(searchmap != null) {
 
             if(searchmap.size() > 0) {
-                return searchmap.get(searchmap.lastKey());
+                String canidateKey = searchmap.lastKey();
+                if(logId.startsWith(canidateKey)) {
+                    return searchmap.get(canidateKey);
+                }
             }
         }
 
