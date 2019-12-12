@@ -332,10 +332,17 @@ public class AgentExecutor implements Executor {
     private MsgEvent getDPLogIsEnabled(MsgEvent ce) {
 
         try {
-                boolean isSet = controllerEngine.getPluginAdmin().logDPIsEnabled();
+            String sessionId = ce.getParam("session_id");
+            if(sessionId == null) {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "islogDP session_id NULL");
+            } else {
+                boolean isSet = controllerEngine.getPluginAdmin().logDPIsEnabled(sessionId);
                 ce.setParam("islogdp", String.valueOf(isSet));
                 ce.setParam("status_code", "7");
                 ce.setParam("status_desc", "islogDP Get");
+            }
+
 
         } catch(Exception ex) {
             logger.error("getDPLogIsEnabled Error: " + ex.getMessage());
@@ -349,16 +356,17 @@ public class AgentExecutor implements Executor {
 
         try {
             String logDPString = ce.getParam("setlogdp");
+            String sessionId = ce.getParam("session_id");
 
-            if(logDPString == null) {
+            if((logDPString == null) || (sessionId == null)) {
 
                 ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "setlogdp NULL");
+                ce.setParam("status_desc", "setlogdp NULL OR session_id NULL");
 
             } else {
 
                 boolean logDP = Boolean.parseBoolean(logDPString);
-                boolean isSet = controllerEngine.getPluginAdmin().logDPSetEnabled(logDP);
+                boolean isSet = controllerEngine.getPluginAdmin().logDPSetEnabled(sessionId,logDP);
 
                 if (isSet) {
 
@@ -383,15 +391,16 @@ public class AgentExecutor implements Executor {
 
         try {
             String baseClassName = ce.getParam("baseclassname");
+            String sessionId = ce.getParam("session_id");
 
-            if(baseClassName == null) {
+            if((baseClassName == null) || (sessionId == null)) {
 
                 ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "baseClassName NULL");
+                ce.setParam("status_desc", "baseClassName NULL OR session_id NULL");
 
             } else {
 
-                boolean isSet = controllerEngine.getPluginAdmin().removeLogLevel(baseClassName);
+                boolean isSet = controllerEngine.getPluginAdmin().removeLogLevel(sessionId, baseClassName);
 
                 if (isSet) {
 
@@ -417,16 +426,17 @@ public class AgentExecutor implements Executor {
         try {
             String baseClassName = ce.getParam("baseclassname");
             String loglevelString = ce.getParam("loglevel");
+            String sessionId = ce.getParam("session_id");
 
             CLogger.Level loglevel = CLogger.Level.valueOf(loglevelString);
-            if(baseClassName == null) {
+            if((baseClassName == null) || (sessionId == null)) {
 
                 ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "baseClassName NULL");
+                ce.setParam("status_desc", "baseClassName NULL OR session_id NULL");
 
             } else {
 
-                boolean isSet = controllerEngine.getPluginAdmin().setLogLevel(baseClassName,loglevel);
+                boolean isSet = controllerEngine.getPluginAdmin().setDPLogLevel(sessionId, baseClassName,loglevel);
 
                 if (isSet) {
 

@@ -18,11 +18,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class DataPlaneLogger {
 
-    private NavigableMap<String, CLogger.Level> loggerMap;
+    //private NavigableMap<String, CLogger.Level> loggerMap;
+
+
+    private Map<String,NavigableMap<String, CLogger.Level>> loggerMap;
+    private Map<String,CLogger.Level> defaultLoggerMap;
+    private Map<String,Boolean> loggerEnabledMap;
 
     private AtomicBoolean lockMap = new AtomicBoolean();
-
-    private AtomicBoolean isEnabled = new AtomicBoolean(false);
 
     private PluginBuilder pluginBuilder;
     private CLogger logger;
@@ -30,40 +33,73 @@ public class DataPlaneLogger {
     public DataPlaneLogger(PluginBuilder pluginBuilder) {
         this.pluginBuilder = pluginBuilder;
         logger = pluginBuilder.getLogger(DataPlaneLogger.class.getName(),CLogger.Level.Info);
-        loggerMap = Collections.synchronizedNavigableMap(new TreeMap<>());
-
+        //loggerMap = Collections.synchronizedNavigableMap(new TreeMap<>());
+        this.loggerMap = Collections.synchronizedMap(new HashMap<>());
+        this.loggerEnabledMap = Collections.synchronizedMap(new HashMap<>());
+        this.defaultLoggerMap = Collections.synchronizedMap(new HashMap<>());
     }
 
     private CLogger.Level defaultLogLevel = CLogger.Level.Info;
 
-    public void setIsEnabled(boolean isEnabledSet) {
-        isEnabled.set(isEnabledSet);
+    public void setIsEnabled(String sessionId, boolean isEnabledSet) {
+        synchronized (lockMap) {
+            if(isEnabledSet) {
+                //create if needed
+                loggerEnabledMap.put(sessionId,isEnabledSet);
+            } else {
+                //remove if needed
+                if(loggerEnabledMap.containsKey(sessionId)) {
+                    loggerEnabledMap.remove(sessionId);
+                }
+                if(loggerMap.containsKey(sessionId)) {
+                    loggerMap.remove(sessionId);
+                }
+            }
+        }
     }
 
-    public boolean getIsEnabled() {
-        return isEnabled.get();
+    public boolean getIsEnabled(String sessionId) {
+        synchronized (lockMap) {
+            if(loggerEnabledMap.containsKey(sessionId)) {
+                return loggerEnabledMap.get(sessionId);
+            }
+        }
+        return false;
     }
 
     public void logToDataPlane(CLogger.Level level, String logIdent, String message) {
-        if(isEnabled.get()) {
+        boolean isEnabled = false;
+
+        synchronized (lockMap) {
+            if(loggerEnabledMap.size() > 0) {
+                isEnabled = true;
+            }
+        }
+
+        if(isEnabled) {
             try {
                 if (pluginBuilder.getAgentService().getAgentState() != null) {
                     if (pluginBuilder.getAgentService().getAgentState().isActive()) {
                         if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
                             //we can sent do dataplane
-                            if (level.getValue() <= getLogLevel(logIdent).getValue()) {
-                                TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
-                                textMessage.setStringProperty("event", "logger");
-                                textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
-                                textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
-                                textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
-                                textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
-                                textMessage.setStringProperty("loglevel", level.name());
-                                textMessage.setStringProperty("logid", logIdent);
+                            //go over each session
+                            List<String> activeSessions = getActiveSessions();
+                            for(String sessionId : activeSessions) {
+                                if (level.getValue() <= getLogLevel(sessionId,logIdent).getValue()) {
 
-                                textMessage.setText(message);
+                                    TextMessage textMessage = pluginBuilder.getAgentService().getDataPlaneService().createTextMessage();
+                                    textMessage.setStringProperty("event", "logger");
+                                    textMessage.setStringProperty("pluginname", pluginBuilder.getConfig().getStringParam("pluginname"));
+                                    textMessage.setStringProperty("region_id", pluginBuilder.getRegion());
+                                    textMessage.setStringProperty("agent_id", pluginBuilder.getAgent());
+                                    textMessage.setStringProperty("plugin_id", pluginBuilder.getPluginID());
+                                    textMessage.setStringProperty("loglevel", level.name());
+                                    textMessage.setStringProperty("logid", logIdent);
+                                    textMessage.setStringProperty("session_id", sessionId);
+                                    textMessage.setText(message);
 
-                                pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                                    pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
+                                }
                             }
                         }
                     }
@@ -75,26 +111,57 @@ public class DataPlaneLogger {
         }
     }
 
-    public CLogger.Level getLogLevel(String logId) {
+    public List<String> getActiveSessions() {
+
+        List<String> enabledSessions = new ArrayList<>();
+        try {
+            synchronized (lockMap) {
+                for (Map.Entry<String, Boolean> entry : loggerEnabledMap.entrySet()) {
+                    String sessionId = entry.getKey();
+                    boolean isEnabled = entry.getValue();
+                    if (entry.getValue()) {
+                        enabledSessions.add(sessionId);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error(ex.getMessage());
+        }
+
+        return enabledSessions;
+    }
+
+    public CLogger.Level getLogLevel(String sessionId, String logId) {
 
         SortedMap<String, CLogger.Level> searchmap = null;
+        CLogger.Level sessionDefault = defaultLogLevel;
 
         synchronized (lockMap) {
 
-            if (loggerMap.containsKey(logId)) {
-                //direct hit
-                return loggerMap.get(logId);
-            } else {
+            if(loggerMap.containsKey(sessionId)) {
 
-                String prefix = "";
-                if(logId.contains(":")) {
-                    //limit search key to location
-                    prefix = logId.split(":")[0];
+                if (loggerMap.get(sessionId).containsKey(logId)) {
+                    //direct hit
+                    return loggerMap.get(sessionId).get(logId);
+                } else {
+
+                    String prefix = "";
+                    if(logId.contains(":")) {
+                        //limit search key to location
+                        prefix = logId.split(":")[0];
+                    }
+
+                    //build search map
+                    searchmap = loggerMap.get(sessionId).subMap(prefix, logId);
+
                 }
 
-                //build search map
-                searchmap = loggerMap.subMap(prefix, logId);
+            } else {
+                if(defaultLoggerMap.containsKey(sessionId)) {
+                    sessionDefault = defaultLoggerMap.get(sessionId);
+                }
             }
+
         }
 
         if(searchmap != null) {
@@ -107,30 +174,45 @@ public class DataPlaneLogger {
             }
         }
 
-        return defaultLogLevel;
+        return sessionDefault;
 
     }
 
-    public void removeLogLevel(String logId) {
+    public void removeLogLevel(String sessionId, String logId) {
         synchronized (lockMap) {
-            if(loggerMap.containsKey(logId)) {
-                logger.info("LogDP: Removing LogId: " + logId);
-                loggerMap.remove(logId);
+            if(loggerMap.containsKey(sessionId)) {
+                if (loggerMap.get(sessionId).containsKey(logId)) {
+                    logger.info("LogDP: Removing LogId: " + logId);
+                    loggerMap.remove(logId);
+                }
             }
         }
     }
 
-    public void setLogLevel(String logId, CLogger.Level level) {
+    public boolean setLogLevel(String sessionId, String logId, CLogger.Level level) {
+            boolean isSet = false;
+            try {
+                synchronized (lockMap) {
 
-        if(logId.replace(" ","").length() == 0) {
-            logger.info("LogDP: Setting defaultLogLevel to " + level.name());
-            defaultLogLevel = level;
-        } else {
-            synchronized (lockMap) {
-                    logger.info("LogDP: Setting LogLevel to " + level.name() + " for LogId: " + logId);
-                    loggerMap.put(logId, level);
+                    if (logId.replace(" ", "").length() == 0) {
+                        logger.info("LogDP: Setting defaultLogLevel to " + level.name() + " for session: " + sessionId);
+                        if (loggerEnabledMap.containsKey(sessionId)) {
+                            defaultLoggerMap.put(sessionId, level);
+                            isSet = true;
+                        }
+                    } else {
+                        if (loggerEnabledMap.containsKey(sessionId)) {
+                            logger.info("LogDP: Setting LogLevel to " + level.name() + " for LogId: " + logId + " for session: " + sessionId);
+                            loggerMap.get(sessionId).put(logId, level);
+                            isSet = true;
+                        }
+                    }
+
+                }
+            } catch (Exception ex) {
+                logger.error(ex.getMessage());
             }
-        }
+        return isSet;
     }
 
 }

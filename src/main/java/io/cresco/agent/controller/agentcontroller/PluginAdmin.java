@@ -27,7 +27,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.Attributes;
@@ -118,13 +117,13 @@ public class PluginAdmin {
 
     }
 
-    public boolean logDPSetEnabled(boolean isEnabled) {
+    public boolean logDPSetEnabled(String sessionId, boolean isEnabled) {
         boolean isSet = false;
         try {
 
             //set log level for DP
             if(dataPlaneLogger != null) {
-                dataPlaneLogger.setIsEnabled(isEnabled);
+                dataPlaneLogger.setIsEnabled(sessionId, isEnabled);
                 isSet = true;
             }
 
@@ -139,13 +138,13 @@ public class PluginAdmin {
         return isSet;
     }
 
-    public boolean logDPIsEnabled() {
+    public boolean logDPIsEnabled(String sessionId) {
         boolean isSet = false;
         try {
 
             //set log level for DP
             if(dataPlaneLogger != null) {
-                isSet = dataPlaneLogger.getIsEnabled();
+                isSet = dataPlaneLogger.getIsEnabled(sessionId);
             }
 
         } catch (Exception ex) {
@@ -159,14 +158,30 @@ public class PluginAdmin {
         return isSet;
     }
 
-    public boolean setLogLevel(String logId, CLogger.Level level) {
+    public boolean setDPLogLevel(String sessionId, String logId, CLogger.Level level) {
         boolean isSet = false;
         try {
 
             //set log level for DP
             if(dataPlaneLogger != null) {
-                dataPlaneLogger.setLogLevel(logId, level);
+                isSet = dataPlaneLogger.setLogLevel(sessionId, logId, level);
             }
+
+        } catch (Exception ex) {
+            logger.error("setDPLogLevel " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return isSet;
+    }
+
+    public boolean setLogLevel(String logId, CLogger.Level level) {
+        boolean isSet = false;
+        try {
+
 
             //set log level for file
             Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
@@ -190,13 +205,13 @@ public class PluginAdmin {
         return isSet;
     }
 
-    public boolean removeLogLevel(String logId) {
+    public boolean removeLogLevel(String sessionId, String logId) {
         boolean isSet = false;
         try {
 
             //set log level for DP
             if(dataPlaneLogger != null) {
-                dataPlaneLogger.removeLogLevel(logId);
+                dataPlaneLogger.removeLogLevel(sessionId, logId);
             }
 
             //set log level for file
