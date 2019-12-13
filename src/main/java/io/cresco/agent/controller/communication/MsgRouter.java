@@ -483,7 +483,7 @@ public class MsgRouter {
 
                     default:
                         //System.out.println("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
-                        logger.error("DEFAULT ROUTE CASE " + routePath + " " + rm.getParam("desc") + rm.getParams());
+                        logger.error("DEFAULT ROUTE CASE " + routePath + " " + rm.printHeader() + " [" + rm.getParams() + "]");
                         break;
                 }
 
