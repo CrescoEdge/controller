@@ -571,10 +571,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private String getCEPPluginId() {
 	    String pluginId = null;
 	    try {
-            List<Map<String, String>> configMapList = controllerEngine.getGDB().getPluginListMapByType("pluginname", "io.cresco.cdp");
+            List<Map<String, String>> configMapList = controllerEngine.getGDB().getPluginListMapByType("pluginname", "io.cresco.cep");
             if(configMapList.size() > 1) {
                 logger.error("CEP Plugin Count (" + configMapList.size() + ") > 1 not allowed");
             }
+
             for (Map<String, String> configMap : configMapList) {
                 if ((configMap.get("region").equals(plugin.getRegion())) && (configMap.get("agent").equals(plugin.getAgent()))) {
                     pluginId = configMap.get("pluginid");
@@ -591,9 +592,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return pluginId;
     }
 
-    public String createCEP(String inputRecordSchemaString, String inputStreamName, String outputStreamName, String outputStreamAttributesString,String queryString) {
+    public String createCEP(String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
 
-        String pluginId = getCEPPluginId();
+	    String pluginId = getCEPPluginId();
         String cepId = null;
 
         if(pluginId != null) {
@@ -603,36 +604,50 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             MsgEvent createQuery = plugin.getPluginMsgEvent(MsgEvent.Type.CONFIG, pluginId);
             createQuery.setParam("action", "queryadd");
 
-            createQuery.setCompressedParam("input_schema", inputRecordSchemaString);
             createQuery.setParam("input_stream_name", inputStreamName);
+            createQuery.setParam("input_stream_definition", inputStreamDefinition);
             createQuery.setParam("output_stream_name", outputStreamName);
-            createQuery.setParam("output_stream_attributes", outputStreamAttributesString);
+            createQuery.setParam("output_stream_definition", outputStreamDefinition);
             createQuery.setParam("query_id", cepId);
             createQuery.setParam("query", queryString);
 
             MsgEvent response = plugin.sendRPC(createQuery);
+            if(response != null) {
+                if(response.paramsContains("status_code")) {
+                    int statusCode = Integer.parseInt(response.getParam("status_code"));
+                    if(statusCode != 10) {
+                        logger.error("Unable to create CEP Instance status_code: " + statusCode + " status_desc: " + response.getParam("status_desc"));
+                        return null;
+                    }
+                } else {
+                    logger.error("Unable to create CEP Instance no status_code ");
+                    return null;
+                }
+            } else {
+                logger.error("Unable to create CEP Instance RPC message was null ");
+                return null;
+            }
 
+        } else {
+            logger.error("No CEP Engine found on agent!");
         }
-
         return cepId;
 
     }
 
-    public void input(String cepId, String streamName, String jsonPayload) {
+    public void inputCEP(String streamName, String jsonPayload) {
 
-	    String pluginId = getCEPPluginId();
+	    try {
+            TextMessage tickle = createTextMessage();
+            tickle.setText(jsonPayload);
+            tickle.setStringProperty("stream_name", streamName);
 
-        if(pluginId != null) {
+            plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, tickle);
 
-            MsgEvent inputMsg = plugin.getPluginMsgEvent(MsgEvent.Type.EXEC, pluginId);
-            inputMsg.setParam("action", "queryinput");
-            inputMsg.setParam("query_id", cepId);
-            inputMsg.setParam("input_stream_name", streamName);
-            inputMsg.setCompressedParam("input_stream_payload", jsonPayload);
-
-            plugin.msgOut(inputMsg);
-
+        } catch (Exception ex) {
+	        logger.error("inputCEP Error: " + ex.getMessage());
         }
+
     }
 
     public boolean removeCEP(String cepId) {
