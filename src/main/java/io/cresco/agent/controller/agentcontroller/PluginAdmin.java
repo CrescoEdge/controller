@@ -1091,7 +1091,7 @@ public class PluginAdmin {
             }
 
             logger.debug("stopPlugin jarfilePath: " + jarFilePath);
-            logger.debug("stopPlugin ispluginstipped: " + isPluginStopped);
+            logger.debug("stopPlugin ispluginstopped: " + isPluginStopped);
             logger.debug("stopPlugin bundleId: " + bundleID);
 
             synchronized (lockConfig) {
@@ -1162,11 +1162,13 @@ public class PluginAdmin {
                                 }
                             }
                         } catch (Exception ex) {
-                            logger.error(ex.getMessage());
+                            logger.error("stopPlugin DB ERROR ON REMOVE " +  ex.getMessage());
                         }
 
                         isStopped = true;
                     }
+                } else {
+                    logger.error("jarfilePath =" + jarFilePath + " or pid = " + pid + " is NULL");
                 }
             } else {
                 logger.error("stopPlugin() could not stop plugin!");

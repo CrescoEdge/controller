@@ -58,7 +58,6 @@ public class PollRemovePlugin implements Runnable {
                                 logger.error("pollRemovePlugin : unable to verify iNode deactivation! " + inode_id);
                                 controllerEngine.getGDB().setINodeStatusCode(inode_id,90,"iNode unable to verify iNode deactivation!");
                             }
-
                         }
                     } else {
                         controllerEngine.getGDB().setINodeStatusCode(inode_id,91,"iNode unable to verify iNode deactivation!");

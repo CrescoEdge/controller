@@ -90,18 +90,40 @@ public class PollRemovePipeline implements Runnable {
 
                             for(gNode gnode : checkList) {
                                 int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
+                                if (statusCode != 9) {
+                                    if(statusCode == 8) {
+                                        logger.debug("8 PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        pipelineNodes.remove(gnode);
+                                    } else if(statusCode > 19) {
+                                        errorList.add(gnode);
+                                        pipelineNodes.remove(gnode);
+                                        logger.error("19 PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                    } else {
+                                        logger.error("Other PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        pipelineNodes.remove(gnode);
+                                    }
+                                }
+                            }
+
+                            /*
+                            for(gNode gnode : checkList) {
+                                int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
+
                                 if (statusCode != 10) {
                                     if(statusCode == 8) {
-                                        logger.debug("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        logger.info("Info PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                         pipelineNodes.remove(gnode);
                                     }
                                     else {
                                         errorList.add(gnode);
                                         pipelineNodes.remove(gnode);
-                                        logger.error("PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        logger.error("error PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                     }
+                                } else {
+                                    logger.error("Status Code for Inode = " + gnode.node_id);
                                 }
                             }
+                             */
 
                             Thread.sleep(500);
 

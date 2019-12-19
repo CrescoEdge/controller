@@ -99,7 +99,7 @@ public class GlobalHealthWatcher  {
         try {
             //if there is a remote global controller and it is reachable
             if(controllerEngine.cstate.isRegionalController()) {
-                logger.debug("gNotify !Global Controller Message");
+                logger.trace("gNotify !Global Controller Message");
                 //is the global controller reachable
                 if(controllerEngine.isReachableAgent(controllerEngine.cstate.getGlobalControllerPath())) {
 
@@ -136,7 +136,7 @@ public class GlobalHealthWatcher  {
             }
 
             else {
-                logger.debug("gNotify : Why and I here!");
+                logger.trace("gNotify : Why and I here!");
             }
 
         }
@@ -215,7 +215,7 @@ public class GlobalHealthWatcher  {
                     //if(this.controllerEngine.cstate.getGlobalControllerPath() != null) {
 
                         if (controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath())) {
-                        logger.debug("Dynamic Global Path : " + this.controllerEngine.cstate.getGlobalControllerPath() + " reachable :" + controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath()));
+                        logger.trace("Dynamic Global Path : " + this.controllerEngine.cstate.getGlobalControllerPath() + " reachable :" + controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath()));
                         return;
                     }
                 }
@@ -236,7 +236,7 @@ public class GlobalHealthWatcher  {
                         }
                         else {
                             controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0],globalController[1], "gCheck : Dyanmic Global Host :" + globalController[0] + "_" + globalController[1] + " connected." );
-                            logger.info("Static Global Controller Dynamic" + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                            logger.info("Static Global Controller Dynamic " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
                         }
                     }
                     else {
@@ -534,7 +534,7 @@ public class GlobalHealthWatcher  {
         public void run() {
 
             if (controllerEngine.cstate.isGlobalController()) { //only run if node is global controller
-                logger.debug("GlobalNodeStatusWatchDog");
+                logger.trace("GlobalNodeStatusWatchDog");
 
                 Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(null, null, null);
 
@@ -542,7 +542,7 @@ public class GlobalHealthWatcher  {
 
                     if (!plugin.getRegion().equals(entry.getKey())) {
 
-                        logger.debug("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                        logger.trace("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
                         if (entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
                             logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
