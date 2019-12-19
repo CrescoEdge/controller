@@ -229,14 +229,33 @@ public class GlobalHealthWatcher  {
                     }
 
                     if(!discoveryList.isEmpty()) {
+
+                        /*
+                        {dst_region=region-2742c227-5467-4ec2-b3fe-f1e727717884, dst_agent=agent-0bd88dd6-196f-4128-b600-be6b6fb7a2b6, discovery_type=GLOBAL, broadcast_ts=1576788694283, dst_port=32005, src_agent=tester, src_region=test, dst_ip=172.17.0.3, agent_count=2, validated_authenication=7b8a0bdd-8998-4e6d-be32-c64e20be3ccc,e01c630a-b3ec-48fb-a342-8ab67c5c4783,global, broadcast_latency=3, src_ip=172.17.0.2, src_port=49659}
+                         */
+
                         String[] globalController = connectToGlobal(dynamicGlobalDiscovery());
                         if(globalController == null) {
                             logger.error("Failed to connect to Global Controller Host : [unnown]");
                             controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host [unknown] failed to connect.");
                         }
                         else {
-                            controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0],globalController[1], "gCheck : Dyanmic Global Host :" + globalController[0] + "_" + globalController[1] + " connected." );
-                            logger.info("Static Global Controller Dynamic " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+
+                            boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                            if(isRegistered) {
+                                //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                                logger.info("Static Global Controller Static Host: " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                                global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
+
+                                //register with global controller
+                                //sendGlobalWatchDogRegister();
+                            } else {
+                                controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
+                            }
+
+                            //logger.info("Static Global Controller Dynamic " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                            //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0],globalController[1], "gCheck : Dyanmic Global Host :" + globalController[0] + "_" + globalController[1] + " connected." );
+                            //global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
                         }
                     }
                     else {
@@ -316,6 +335,7 @@ public class GlobalHealthWatcher  {
                 }
 
             }
+
             //if we have a canadate, check to see if we are already connected a regions
             if(cme != null) {
 
@@ -337,12 +357,15 @@ public class GlobalHealthWatcher  {
                             globalController = new String[2];
                             globalController[0] = cme.getParam("dst_region");
                             globalController[1] = cme.getParam("dst_agent");
+                            globalController[2] = cme.getParam("dst_ip");
+
                         }
                     }
                     else {
                         globalController = new String[2];
                         globalController[0] = cme.getParam("dst_region");
                         globalController[1] = cme.getParam("dst_agent");
+                        globalController[2] = cme.getParam("dst_ip");
                     }
                 }
 
