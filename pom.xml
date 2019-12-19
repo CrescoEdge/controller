@@ -370,13 +370,6 @@
         </dependency>
 
         <dependency>
-            <groupId>io.cresco</groupId>
-            <artifactId>library</artifactId>
-            <version>1.0-SNAPSHOT</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j-impl</artifactId>
             <version>2.11.2</version>
@@ -418,13 +411,12 @@
             <version>2.10.3</version>
         </dependency>
 
-        <!--
-                <dependency>
-                    <groupId>javax.xml.bind</groupId>
-                    <artifactId>jaxb-api</artifactId>
-                    <version>2.2.2</version>
-                </dependency>
-        -->
+        <dependency>
+            <groupId>io.cresco</groupId>
+            <artifactId>library</artifactId>
+            <version>1.0-SNAPSHOT</version>
+            <scope>provided</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>

@@ -23,6 +23,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     private Gson gson;
     private Timer stateUpdateTimer;
 
+
     String regionalListener = null;
     String globalListener = null;
 
@@ -502,6 +503,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
                     } else {
                         logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
+                        logger.error("[" + re.getParams() + "]");
                     }
                 } else {
                     logger.error("registerAgent : RETURN = NULL");

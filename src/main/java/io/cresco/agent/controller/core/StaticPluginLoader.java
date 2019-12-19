@@ -164,6 +164,7 @@ public class StaticPluginLoader implements Runnable  {
                             isStaticInit = true;
                         }
 
+                        /*
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.cdp")) {
                             //load cep plugin
                             if (plugin.getConfig().getBooleanParam("enable_cep", true)) {
@@ -185,6 +186,7 @@ public class StaticPluginLoader implements Runnable  {
 
                             }
                         }
+                         */
 
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo

@@ -30,6 +30,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	private CLogger logger;
 	private ControllerEngine controllerEngine;
 
+	private CEPEngine cepEngine;
+
     private ActiveMQSession activeMQSession;
 
     private Destination agentTopic;
@@ -57,6 +59,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(DataPlaneServiceImpl.class.getName(),CLogger.Level.Info);
+
+        this.cepEngine = new CEPEngine(plugin);
+
 
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
 
@@ -568,6 +573,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return textMessage;
     }
 
+    /*
     private String getCEPPluginId() {
 	    String pluginId = null;
 	    try {
@@ -591,8 +597,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
         return pluginId;
     }
+     */
 
     public String createCEP(String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
+        String cepId = UUID.randomUUID().toString();
+        if(cepEngine.createCEP(cepId,inputStreamName,inputStreamDefinition,outputStreamName,outputStreamDefinition,queryString)) {
+            return cepId;
+        } else {
+            return null;
+        }
+	}
+
+	/*
+    public String createCEP2(String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
 
 	    String pluginId = getCEPPluginId();
         String cepId = null;
@@ -634,6 +651,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return cepId;
 
     }
+    */
 
     public void inputCEP(String streamName, String jsonPayload) {
 
@@ -650,6 +668,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    public boolean removeCEP(String cepId) {
+        return cepEngine.removeCEP(cepId);
+    }
+
+    /*
     public boolean removeCEP(String cepId) {
 
 	    boolean isRemoved = false;
@@ -671,6 +694,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
         return isRemoved;
     }
+     */
 
     public Path getJournalPath() {
 	    return journalPath;

@@ -435,12 +435,11 @@ public class ControllerEngine {
                         TCPDiscoveryStatic ds = new TCPDiscoveryStatic(this);
                         List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), pcbrokerAddress, true);
 
-                        logger.info("Message: " + certDiscovery.get(0).getParams().toString());
+                        //logger.debug("Message: " + certDiscovery.get(0).getParams().toString());
                         String cbrokerAddress = certDiscovery.get(0).getParam("dst_ip");
                         String cbrokerValidatedAuthenication = certDiscovery.get(0).getParam("validated_authenication");
                         String cRegion = certDiscovery.get(0).getParam("dst_region");
                         String cAgent = certDiscovery.get(0).getParam("dst_agent");
-
 
                         if ((cbrokerAddress != null) && (cbrokerValidatedAuthenication != null)) {
 
@@ -465,16 +464,16 @@ public class ControllerEngine {
 
                             this.brokerAddressAgent = cbrokerAddress;
 
-                            logger.info("Assigned regionid=" + cstate.getRegion());
+                            //logger.info("Assigned regionid=" + cstate.getRegion());
                             logger.debug("AgentPath=" + cstate.getAgentPath());
 
                             if(initIOChannels()) {
                                 logger.debug("initIOChannels Success");
                                 //agent name not set on core init
-                                this.cstate.setAgentSuccess(cRegion, cstate.getAgent(), "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
+                                this.cstate.setAgentSuccess(cRegion, cAgent, "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected.");
                                 isInit = true;
                             } else {
-                                this.cstate.setAgentFailed(cRegion, cstate.getAgent(), "Agent() Dynamic Regional Host: " + cbrokerAddress + " failed.");
+                                this.cstate.setAgentFailed(cRegion, cAgent, "Agent() Dynamic Regional Host: " + cbrokerAddress + " failed.");
                                 logger.error("initIOChannels Failed");
                             }
                         }
