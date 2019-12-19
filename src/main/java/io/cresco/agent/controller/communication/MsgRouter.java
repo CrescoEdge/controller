@@ -49,7 +49,8 @@ public class MsgRouter {
 
     }
 
-    private void forwardToLocalGlobal(MsgEvent rm) {
+    private void forwardToLocalGlobal2(MsgEvent rm) {
+        logger.error("forwardToLocalGlobal() " + rm.getParams());
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
             if(rm.getParam("desc").startsWith("to-global")) {
@@ -63,7 +64,14 @@ public class MsgRouter {
        
     }
 
-    private void forwardToRemoteGlobal(MsgEvent rm) {
+    private void forwardToLocalGlobal(MsgEvent rm) {
+        logger.error("forwardToLocalGlobal() " + rm.getParams());
+        forwardToLocalRegion(rm);
+    }
+
+    private void forwardToRemoteGlobal2(MsgEvent rm) {
+        logger.error("forwardToRemoteGlobal() " + rm.getParams());
+
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
             if(rm.getParam("desc").startsWith("to-global")) {
@@ -75,6 +83,13 @@ public class MsgRouter {
             logger.error("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
+
+    private void forwardToRemoteGlobal(MsgEvent rm) {
+        logger.error("forwardToRemoteGlobal() " + rm.getParams());
+        forwardToRemoteRegion(rm);
+    }
+
+
 
     public void route(MsgEvent rm) {
         long messageTimeStamp = System.nanoTime();
@@ -193,6 +208,12 @@ public class MsgRouter {
 
                     case 1023:
                         logger.debug("Local agentcontroller sending message to local agentcontroller 1023");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalPlugin(rm);
+                        break;
+
+                    case 4447:
+                        logger.debug("Remote globalcontroller sending message to local agentcontroller plugin 4447");
                         logger.trace(rm.getParams().toString());
                         forwardToLocalPlugin(rm);
                         break;
@@ -598,7 +619,6 @@ public class MsgRouter {
 
         return routePath;
     }
-
 
     private MsgEvent getTTL(MsgEvent rm) {
 

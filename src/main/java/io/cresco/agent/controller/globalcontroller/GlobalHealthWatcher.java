@@ -168,7 +168,7 @@ public class GlobalHealthWatcher  {
                         return;
                     }
                     else {
-                        logger.trace("Static Global Controller Check " + global_controller_host + " Failed.");
+                        logger.error("Static Global Controller Check " + global_controller_host + " Failed.");
                         controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + global_controller_host + " not reachable.");
                         global_host_map.remove(global_controller_host);
                     }
@@ -188,6 +188,7 @@ public class GlobalHealthWatcher  {
                         //register with global controller
                         //sendGlobalWatchDogRegister();
                     } else {
+                        logger.error("Failed to register with Global Controller Host :" + global_controller_host);
                         controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
                     }
                 }
@@ -221,7 +222,8 @@ public class GlobalHealthWatcher  {
                 }
                 else {
                     //global controller is not reachable, start dynamic discovery
-                    controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host :" + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
+                    //why is this here?
+                    //controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host :" + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
                     List<MsgEvent> discoveryList = dynamicGlobalDiscovery();
 
                     if(discoveryList == null) {
@@ -250,6 +252,7 @@ public class GlobalHealthWatcher  {
                                 //register with global controller
                                 //sendGlobalWatchDogRegister();
                             } else {
+                                logger.error("Failed to register with Global Controller Host :" + global_controller_host);
                                 controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
                             }
 
@@ -273,7 +276,11 @@ public class GlobalHealthWatcher  {
 
         }
         catch(Exception ex) {
-            logger.error("gCheck() " +ex.getMessage());
+            logger.error("gCheck() Error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
         logger.trace("gCheck End");
 
@@ -339,6 +346,8 @@ public class GlobalHealthWatcher  {
             //if we have a canadate, check to see if we are already connected a regions
             if(cme != null) {
 
+                logger.error("CME INPUT: " + cme.getParams());
+
                 if((cme.getParam("dst_region") != null) && (cme.getParam("dst_agent")) !=null) {
 
                     String cGlobalPath = cme.getParam("dst_region") + "_" + (cme.getParam("dst_agent"));
@@ -354,7 +363,7 @@ public class GlobalHealthWatcher  {
                             Thread.sleep(1000);
                         }
                         if(controllerEngine.isReachableAgent(cGlobalPath)) {
-                            globalController = new String[2];
+                            globalController = new String[3];
                             globalController[0] = cme.getParam("dst_region");
                             globalController[1] = cme.getParam("dst_agent");
                             globalController[2] = cme.getParam("dst_ip");
@@ -362,7 +371,7 @@ public class GlobalHealthWatcher  {
                         }
                     }
                     else {
-                        globalController = new String[2];
+                        globalController = new String[3];
                         globalController[0] = cme.getParam("dst_region");
                         globalController[1] = cme.getParam("dst_agent");
                         globalController[2] = cme.getParam("dst_ip");
@@ -373,7 +382,11 @@ public class GlobalHealthWatcher  {
 
         }
         catch(Exception ex) {
-            logger.error("connectToGlobal()" + ex.getMessage());
+            logger.error("connectToGlobal() Error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
         }
 
         return globalController;
