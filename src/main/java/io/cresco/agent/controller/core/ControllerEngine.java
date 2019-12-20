@@ -12,9 +12,10 @@ import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.measurement.PerfControllerMonitor;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
+import io.cresco.agent.core.ControllerStateImp;
 import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.agent.db.DBInterfaceImpl;
-import io.cresco.library.agent.ControllerState;
+import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -39,7 +40,7 @@ public class ControllerEngine {
 
 
     private PluginBuilder plugin;
-    public ControllerState cstate;
+    public ControllerStateImp cstate;
     private CLogger logger;
 
     //manager for all certificates
@@ -90,10 +91,10 @@ public class ControllerEngine {
     private Thread DBManagerThread;
 
 
-    public ControllerEngine(ControllerState controllerState, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
+    public ControllerEngine(ControllerStateImp cstate, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
 
         this.plugin = pluginBuilder;
-        this.cstate = controllerState;
+        this.cstate = cstate;
         this.logger = pluginBuilder.getLogger(ControllerEngine.class.getName(), CLogger.Level.Info);
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
@@ -171,7 +172,7 @@ public class ControllerEngine {
                 if(plugin.getConfig().getStringParam("regional_controller_host") == null) {
 
                     discoveryList = initAgentDiscovery();
-                    while((discoveryList == null) && cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT)) {
+                    while((discoveryList == null) && cstate.getControllerState().equals(ControllerMode.AGENT_INIT)) {
                         discoveryList = initAgentDiscovery();
                     }
                     isRegionalController = false;
@@ -180,7 +181,7 @@ public class ControllerEngine {
                     //agent with static region
                     discoveryList = initAgentStatic();
 
-                    while((discoveryList == null) && (cstate.getControllerState().equals(ControllerState.Mode.AGENT_INIT) || cstate.getControllerState().equals(ControllerState.Mode.STANDALONE_INIT))) {
+                    while((discoveryList == null) && (cstate.getControllerState().equals(ControllerMode.AGENT_INIT) || cstate.getControllerState().equals(ControllerMode.STANDALONE_INIT))) {
                         discoveryList = initAgentStatic();
                         Thread.sleep(1000);
                     }

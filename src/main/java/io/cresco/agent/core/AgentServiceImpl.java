@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AgentServiceImpl implements AgentService {
 
     private ControllerEngine controllerEngine;
-    private ControllerState controllerState;
+    private ControllerStateImp cstate;
     private AgentState agentState;
     private PluginBuilder plugin;
     private PluginAdmin pluginAdmin;
@@ -221,10 +221,10 @@ public class AgentServiceImpl implements AgentService {
         ControllerStatePersistanceImp controllerStatePersistanceImp = new ControllerStatePersistanceImp(plugin,dbe);
 
         //control state
-        controllerState = new ControllerState(controllerStatePersistanceImp);
+        cstate = new ControllerStateImp(controllerStatePersistanceImp);
 
         //agent state
-        agentState = new AgentState(controllerState);
+        agentState = new AgentState(cstate);
 
         //create admin
         pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, dataPlaneLogger);
@@ -247,7 +247,7 @@ public class AgentServiceImpl implements AgentService {
 
         logger.info("Controller Starting Init");
 
-        controllerEngine = new ControllerEngine(controllerState, plugin, pluginAdmin, gdb);
+        controllerEngine = new ControllerEngine(cstate, plugin, pluginAdmin, gdb);
 
         (new Thread() {
         public void run() {
@@ -301,19 +301,19 @@ public class AgentServiceImpl implements AgentService {
             switch (controllerEngine.cstate.getControllerState()) {
 
                 case STANDALONE_INIT:
-                    controllerEngine.cstate.setStandaloneShutdown("Shutdown Called");
+                    cstate.setStandaloneShutdown("Shutdown Called");
                     break;
                 case STANDALONE:
-                    controllerEngine.cstate.setStandaloneShutdown("Shutdown Called");
+                    cstate.setStandaloneShutdown("Shutdown Called");
                     break;
                 case AGENT:
-                    controllerEngine.cstate.setAgentShutdown("Shutdown Called");
+                    cstate.setAgentShutdown("Shutdown Called");
                     break;
                 case REGION_GLOBAL:
-                    controllerEngine.cstate.setRegionShutdown("Shutdown Called");
+                    cstate.setRegionShutdown("Shutdown Called");
                     break;
                 case GLOBAL:
-                    controllerEngine.cstate.setGlobalShutdown("Shutdown Called");
+                    cstate.setGlobalShutdown("Shutdown Called");
                     break;
 
                 default:

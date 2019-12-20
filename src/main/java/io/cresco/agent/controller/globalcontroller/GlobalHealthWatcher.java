@@ -9,7 +9,7 @@ import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv6;
 import io.cresco.agent.controller.netdiscovery.DiscoveryType;
 import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
 import io.cresco.agent.db.NodeStatusType;
-import io.cresco.library.agent.ControllerState;
+import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -227,7 +227,7 @@ public class GlobalHealthWatcher  {
                     //controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host :" + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
 
                     //you are connected, just maks sure you are still connected
-                    if(controllerEngine.cstate.getControllerState() == ControllerState.Mode.REGION_GLOBAL) {
+                    if(controllerEngine.cstate.getControllerState() == ControllerMode.REGION_GLOBAL) {
                         if(global_host_map.containsKey(activeGlobalControllerIP)) {
                             if(controllerEngine.isReachableAgent(global_host_map.get(activeGlobalControllerIP))) {
                                 logger.info("I AM A REGIONAL CONTROLLER CONNECTED TO A GLOBAL AND HAPPY: GLOBAL: " + controllerEngine.cstate.getControllerState());

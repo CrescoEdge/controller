@@ -1,8 +1,8 @@
 package io.cresco.agent.db;
 
 import com.google.gson.Gson;
-import io.cresco.library.agent.ControllerState;
-import io.cresco.library.agent.ControllerStatePersistance;
+import io.cresco.agent.core.ControllerStatePersistance;
+import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -37,7 +37,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
     }
 
-    public boolean setControllerState(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean setControllerState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         //logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
 
@@ -86,7 +86,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return false;
     }
 
-    public boolean preInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
+    public boolean preInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
 
         boolean returnState = false;
         try {
@@ -117,7 +117,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean standAloneInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean standAloneInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -147,7 +147,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean standAloneSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean standAloneSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -178,7 +178,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean agentInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean agentInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -212,7 +212,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
     }
 
 
-    public boolean agentSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean agentSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -248,7 +248,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean regionInit(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean regionInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -281,7 +281,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean regionSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean regionSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -314,7 +314,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean regionGlobalSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean regionGlobalSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
@@ -350,7 +350,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
         return returnState;
     }
 
-    public boolean globalSuccess(ControllerState.Mode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+    public boolean globalSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
         try {
