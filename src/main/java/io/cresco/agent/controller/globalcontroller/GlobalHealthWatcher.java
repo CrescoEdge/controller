@@ -220,6 +220,7 @@ public class GlobalHealthWatcher  {
                         logger.trace("Dynamic Global Controller Check [dynamic host] Ok.");
                         return;
                         }
+
                 }
                 else {
                     //global controller is not reachable, start dynamic discovery
