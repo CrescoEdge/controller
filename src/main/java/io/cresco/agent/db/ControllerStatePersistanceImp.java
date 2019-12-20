@@ -449,7 +449,7 @@ public class ControllerStatePersistanceImp implements ControllerStatePersistance
 
             if (re != null) {
 
-                if (re.paramsContains("is_registered")) {
+                if (re.paramsContains("is_unregistered")) {
 
                     isRegistered = Boolean.parseBoolean(re.getParam("is_unregistered"));
 

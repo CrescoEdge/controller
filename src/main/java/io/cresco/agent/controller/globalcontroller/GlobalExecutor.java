@@ -639,7 +639,7 @@ public class GlobalExecutor implements Executor {
 
     private MsgEvent globalEnable(MsgEvent ce) {
         try {
-            logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getParam("src_region") + " Agent:" + ce.getParam("src_agent"));
+            logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getSrcRegion() + " Agent:" + ce.getSrcAgent());
             logger.trace("Message Body [" + ce.getParams().toString() + "]");
             controllerEngine.getGDB().nodeUpdate(ce);
 

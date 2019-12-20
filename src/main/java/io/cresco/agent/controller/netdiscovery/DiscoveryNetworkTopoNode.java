@@ -1,7 +1,7 @@
 package io.cresco.agent.controller.netdiscovery;
 
 
-public class DiscoveryNode {
+public class DiscoveryNetworkTopoNode {
 
 	  public String src_ip;
 	  public String src_port;
@@ -15,7 +15,7 @@ public class DiscoveryNode {
 	  public String broadcast_latency;
 	  public String agent_count;
 
-	  public DiscoveryNode(String src_ip, String src_port, String src_region, String src_agent, String dst_ip, String dst_port, String dst_region, String dst_agent, String broadcast_ts, String broadcast_latency, String agent_count)
+	  public DiscoveryNetworkTopoNode(String src_ip, String src_port, String src_region, String src_agent, String dst_ip, String dst_port, String dst_region, String dst_agent, String broadcast_ts, String broadcast_latency, String agent_count)
 	  {
 		 this.src_ip = src_ip;
 		 this.src_port = src_port;

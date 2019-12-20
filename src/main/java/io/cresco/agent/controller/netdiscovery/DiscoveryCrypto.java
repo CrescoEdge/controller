@@ -72,9 +72,10 @@ public class DiscoveryCrypto {
             logger.debug("dec: [" + decryptedValue + "] key:[" + secretKey + "]");
 
         } catch(javax.crypto.BadPaddingException bx) {
-            logger.debug(bx.getMessage() + " bad password error");
-            bx.printStackTrace();
-            logger.info("bad!");
+            logger.debug("Secret key [{}] cannot decrypt encrypted value [{}]", secretKey, encryptedValue);
+            //logger.debug(bx.getMessage() + " bad password error");
+            //bx.printStackTrace();
+            //logger.info("bad!");
         }
         catch(Exception ex) {
             logger.error(ex.getMessage());

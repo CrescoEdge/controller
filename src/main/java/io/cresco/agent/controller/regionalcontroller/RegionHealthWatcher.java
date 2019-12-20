@@ -222,7 +222,7 @@ public class RegionHealthWatcher {
 
                     if (!plugin.getAgent().equals(entry.getKey())) {
 
-                        logger.info("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                        logger.trace("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
                         if (entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
                             logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());

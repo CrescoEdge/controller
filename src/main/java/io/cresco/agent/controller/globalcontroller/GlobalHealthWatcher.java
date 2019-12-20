@@ -9,6 +9,7 @@ import io.cresco.agent.controller.netdiscovery.DiscoveryClientIPv6;
 import io.cresco.agent.controller.netdiscovery.DiscoveryType;
 import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
 import io.cresco.agent.db.NodeStatusType;
+import io.cresco.library.agent.ControllerState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -30,6 +31,7 @@ public class GlobalHealthWatcher  {
     private String lastDBUpdatePlugins;
     private long startTS;
     private int wdTimer;
+    private String activeGlobalControllerIP;
 
 
     public Boolean SchedulerActive;
@@ -136,7 +138,7 @@ public class GlobalHealthWatcher  {
             }
 
             else {
-                logger.trace("gNotify : Why and I here!");
+                logger.error("gNotify : Why and I here!");
             }
 
         }
@@ -164,7 +166,7 @@ public class GlobalHealthWatcher  {
                 logger.trace("Starting Static Global Controller Check on " + global_controller_host);
                 if(global_host_map.containsKey(global_controller_host)) {
                     if(controllerEngine.isReachableAgent(global_host_map.get(global_controller_host))) {
-                        logger.trace("Static Global Controller Check " + global_controller_host + " Ok.");
+                        logger.trace("Static Global Controller Check [static host] " + global_controller_host + " Ok.");
                         return;
                     }
                     else {
@@ -173,103 +175,136 @@ public class GlobalHealthWatcher  {
                         global_host_map.remove(global_controller_host);
                     }
                 }
-                String[] globalController = connectToGlobal(staticGlobalDiscovery());
-                if(globalController == null) {
-                    logger.error("Failed to connect to Global Controller Host :" + global_controller_host);
-                    controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + global_controller_host + " failed to connect.");
-                }
-                else {
-                    boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
-                    if(isRegistered) {
-                        //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
-                        logger.info("Static Global Controller Static Host: " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
-                        global_host_map.put(global_controller_host, controllerEngine.cstate.getGlobalControllerPath());
-
-                        //register with global controller
-                        //sendGlobalWatchDogRegister();
+                //if everything checked out ok it should have returned already
+                    String[] globalController = connectToGlobal(staticGlobalDiscovery());
+                    if (globalController == null) {
+                        logger.error("Failed to connect to Global Controller Host :" + global_controller_host);
+                        controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + global_controller_host + " failed to connect.");
                     } else {
-                        logger.error("Failed to register with Global Controller Host :" + global_controller_host);
-                        controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
+                        boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                        if (isRegistered) {
+                            //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                            logger.info("Static Global Controller Static Host: " + global_controller_host + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                            global_host_map.put(global_controller_host, controllerEngine.cstate.getGlobalControllerPath());
+
+                            //register with global controller
+                            //sendGlobalWatchDogRegister();
+                        } else {
+                            logger.error("Failed to register with Global Controller Host :" + global_controller_host);
+                            controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
+                        }
                     }
-                }
+
             }
             else if(plugin.getConfig().getBooleanParam("is_global",false)) {
                 //Do nothing if already controller, will reinit on regional restart
-                logger.trace("Starting Local Global Controller Check");
+                logger.trace("Starting isGlobal Local Global Controller Check");
 
                 //if not global controller start it
                 if(!this.controllerEngine.cstate.isGlobalController()) {
                     this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");
-                    logger.info("Global: " + this.controllerEngine.cstate.getRegionalRegion() + " Agent: " + this.controllerEngine.cstate.getRegionalAgent());
-
+                    logger.info("isGlobal: " + this.controllerEngine.cstate.getRegionalRegion() + " Agent: " + this.controllerEngine.cstate.getRegionalAgent());
                     if (controllerEngine.getAppScheduler() == null) {
                         startGlobalSchedulers();
                     }
                 }
-
-
             }
             else {
                 logger.trace("Starting Dynamic Global Controller Check");
                 //Check if the global controller path exist
                 if(this.controllerEngine.cstate.isGlobalController()) {
                     //if(this.controllerEngine.cstate.getGlobalControllerPath() != null) {
-
+                        logger.info("I AM A GLOBAL CONTROLLER AND HAPPY: " + controllerEngine.cstate.getControllerState());
                         if (controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath())) {
                         logger.trace("Dynamic Global Path : " + this.controllerEngine.cstate.getGlobalControllerPath() + " reachable :" + controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath()));
+                        logger.trace("Dynamic Global Controller Check [dynamic host] Ok.");
                         return;
-                    }
+                        }
                 }
                 else {
                     //global controller is not reachable, start dynamic discovery
                     //why is this here?
                     //controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host :" + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
-                    List<MsgEvent> discoveryList = dynamicGlobalDiscovery();
 
-                    if(discoveryList == null) {
-                        discoveryList = new ArrayList<>();
+                    //you are connected, just maks sure you are still connected
+                    if(controllerEngine.cstate.getControllerState() == ControllerState.Mode.REGION_GLOBAL) {
+                        if(global_host_map.containsKey(activeGlobalControllerIP)) {
+                            if(controllerEngine.isReachableAgent(global_host_map.get(activeGlobalControllerIP))) {
+                                logger.info("I AM A REGIONAL CONTROLLER CONNECTED TO A GLOBAL AND HAPPY: GLOBAL: " + controllerEngine.cstate.getControllerState());
+                                logger.trace("Static Global Controller Check [static host] " + activeGlobalControllerIP + " Ok.");
+                                return;
+                            }
+                            else {
+                                logger.error("Static Global Controller Check " + global_controller_host + " Failed.");
+                                controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + activeGlobalControllerIP + " not reachable.");
+                                global_host_map.remove(activeGlobalControllerIP);
+                                activeGlobalControllerIP = null;
+                            }
+                        }
                     }
+                    else {
 
-                    if(!discoveryList.isEmpty()) {
+                        logger.info("Starting Dynamic Global Discovery");
+                        List<MsgEvent> discoveryList = dynamicGlobalDiscovery();
 
+                        if (discoveryList == null) {
+                            discoveryList = new ArrayList<>();
+                        }
+
+                        if (!discoveryList.isEmpty()) {
+                            logger.info("Dynamic Global Discovery : " + discoveryList.size() + " canidate host found.");
                         /*
                         {dst_region=region-2742c227-5467-4ec2-b3fe-f1e727717884, dst_agent=agent-0bd88dd6-196f-4128-b600-be6b6fb7a2b6, discovery_type=GLOBAL, broadcast_ts=1576788694283, dst_port=32005, src_agent=tester, src_region=test, dst_ip=172.17.0.3, agent_count=2, validated_authenication=7b8a0bdd-8998-4e6d-be32-c64e20be3ccc,e01c630a-b3ec-48fb-a342-8ab67c5c4783,global, broadcast_latency=3, src_ip=172.17.0.2, src_port=49659}
                          */
 
-                        String[] globalController = connectToGlobal(dynamicGlobalDiscovery());
-                        if(globalController == null) {
-                            logger.error("Failed to connect to Global Controller Host : [unnown]");
-                            controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host [unknown] failed to connect.");
-                        }
-                        else {
-
-                            boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
-                            if(isRegistered) {
-                                //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
-                                logger.info("Static Global Controller Static Host: " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
-                                global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
-
-                                //register with global controller
-                                //sendGlobalWatchDogRegister();
+                            //String[] globalController = connectToGlobal(dynamicGlobalDiscovery());
+                            String[] globalController = connectToGlobal(discoveryList);
+                            if (globalController == null) {
+                                logger.error("Failed to connect to Global Controller Host : [unnown]");
+                                controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Dynamic Global Host [unknown] failed to connect.");
                             } else {
-                                logger.error("Failed to register with Global Controller Host :" + global_controller_host);
-                                controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
-                            }
+                                if (global_host_map.containsKey(globalController[2])) {
+                                    if (controllerEngine.isReachableAgent(global_host_map.get(globalController[2]))) {
+                                        logger.trace("Static Global Controller Check [dynamic host] " + globalController[2] + " Ok.");
+                                        return;
+                                    } else {
+                                        logger.error("Static Global Controller Check " + globalController[2] + " Failed.");
+                                        controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host :" + globalController[2] + " not reachable.");
+                                        global_host_map.remove(globalController[2]);
+                                        activeGlobalControllerIP = null;
+                                    }
+                                }
+                                boolean isRegistered = controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                                if (isRegistered) {
+                                    //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0], globalController[1], "gCheck : Static Global Host :" + global_controller_host + " connected.");
+                                    logger.info("Static Global Controller Static Host: " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                                    global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
+                                    activeGlobalControllerIP = globalController[2];
+                                    //register with global controller
+                                    //sendGlobalWatchDogRegister();
+                                } else {
+                                    logger.error("Failed to register with Global Controller Host :" + global_controller_host);
+                                    controllerEngine.cstate.setRegionalGlobalFailed("gCheck : Static Global Host : " + this.controllerEngine.cstate.getGlobalControllerPath() + " is not reachable.");
+                                }
 
-                            //logger.info("Static Global Controller Dynamic " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
-                            //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0],globalController[1], "gCheck : Dyanmic Global Host :" + globalController[0] + "_" + globalController[1] + " connected." );
-                            //global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
+                                //logger.info("Static Global Controller Dynamic " + globalController[2] + " Connect with path: " + controllerEngine.cstate.getGlobalControllerPath());
+                                //controllerEngine.cstate.setRegionalGlobalSuccess(globalController[0],globalController[1], "gCheck : Dyanmic Global Host :" + globalController[0] + "_" + globalController[1] + " connected." );
+                                //global_host_map.put(globalController[2], controllerEngine.cstate.getGlobalControllerPath());
+                            }
+                        } else {
+
+                            if(!plugin.getConfig().getBooleanParam("is_region",false)) {
+
+                                //No global controller found, starting global services
+                                logger.info("No Global Controller Found: Starting Global Services");
+                                //start global stuff
+                                //create globalscheduler queue
+                                startGlobalSchedulers();
+                                //end global start
+                                this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");
+                                logger.info("Global: " + this.controllerEngine.cstate.getRegionalRegion() + " Agent: " + this.controllerEngine.cstate.getRegionalAgent());
+                            }
                         }
-                    }
-                    else {
-                        //No global controller found, starting global services
-                        logger.info("No Global Controller Found: Starting Global Services");
-                        //start global stuff
-                        //create globalscheduler queue
-                        startGlobalSchedulers();
-                        //end global start
-                        this.controllerEngine.cstate.setGlobalSuccess("gCheck : Creating Global Host");
-                        logger.info("Global: " + this.controllerEngine.cstate.getRegionalRegion() + " Agent: " + this.controllerEngine.cstate.getRegionalAgent());
                     }
                 }
             }
@@ -283,7 +318,6 @@ public class GlobalHealthWatcher  {
             logger.error(sw.toString());
         }
         logger.trace("gCheck End");
-
     }
 
     private Boolean startGlobalSchedulers() {
@@ -346,7 +380,7 @@ public class GlobalHealthWatcher  {
             //if we have a canadate, check to see if we are already connected a regions
             if(cme != null) {
 
-                logger.error("CME INPUT: " + cme.getParams());
+                //logger.error("CME INPUT: " + cme.getParams());
 
                 if((cme.getParam("dst_region") != null) && (cme.getParam("dst_agent")) !=null) {
 

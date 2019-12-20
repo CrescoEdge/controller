@@ -19,7 +19,7 @@ public class PerfMonitorNet {
     private boolean running = false;
     private Gson gson;
     private boolean polling = false;
-    private List<DiscoveryNode> dnListStatic;
+    private List<DiscoveryNetworkTopoNode> dnListStatic;
 
     private DiscoveryClientIPv4 ip4dc;
     private DiscoveryClientIPv6 ip6dc;
@@ -80,9 +80,9 @@ public class PerfMonitorNet {
                 discoveryList.addAll(ds.discover(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), ip));
             }
 
-            List<DiscoveryNode> dnList = new ArrayList<>();
+            List<DiscoveryNetworkTopoNode> dnList = new ArrayList<>();
             for(MsgEvent me : discoveryList) {
-                dnList.add(new DiscoveryNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
+                dnList.add(new DiscoveryNetworkTopoNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
             }
 
             dnListStatic.addAll(dnList);
@@ -162,9 +162,9 @@ public class PerfMonitorNet {
                 tick.setParam("inode_id", plugin.getConfig().getStringParam("inode_id", "netdiscovery_inode"));
 
                     List<MsgEvent> discoveryList = getNetworkDiscoveryList();
-                    List<DiscoveryNode> dnList = new ArrayList<>();
+                    List<DiscoveryNetworkTopoNode> dnList = new ArrayList<>();
                     for(MsgEvent me : discoveryList) {
-                        dnList.add(new DiscoveryNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
+                        dnList.add(new DiscoveryNetworkTopoNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
                     }
 
                     //include any static entries
