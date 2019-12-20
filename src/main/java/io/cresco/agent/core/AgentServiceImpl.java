@@ -4,12 +4,10 @@ package io.cresco.agent.core;
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.data.DataPlaneLogger;
-import io.cresco.agent.db.ControllerStatePersistanceImp;
 import io.cresco.agent.db.DBEngine;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
-import io.cresco.library.agent.ControllerState;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
@@ -22,7 +20,6 @@ import java.io.File;
 import java.net.InetAddress;
 import java.nio.file.FileSystems;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 
 @Component(
@@ -217,11 +214,8 @@ public class AgentServiceImpl implements AgentService {
         //create controller database implementation
         gdb = new DBInterfaceImpl(plugin, dbe);
 
-        //create controller state persistance
-        ControllerStatePersistanceImp controllerStatePersistanceImp = new ControllerStatePersistanceImp(plugin,dbe);
-
         //control state
-        cstate = new ControllerStateImp(controllerStatePersistanceImp);
+        cstate = new ControllerStateImp(plugin, dbe);
 
         //agent state
         agentState = new AgentState(cstate);

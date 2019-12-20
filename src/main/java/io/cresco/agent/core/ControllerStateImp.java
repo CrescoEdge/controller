@@ -1,12 +1,18 @@
 package io.cresco.agent.core;
 
 
+import io.cresco.agent.db.DBEngine;
 import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.agent.ControllerState;
+import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.utilities.CLogger;
 
 import java.util.Map;
 
 public class ControllerStateImp implements ControllerState {
+
+	private PluginBuilder plugin;
+	private CLogger logger;
 
 	private ControllerMode currentMode = ControllerMode.PRE_INIT;
 	private String localRegion;
@@ -19,8 +25,12 @@ public class ControllerStateImp implements ControllerState {
 
 	private ControllerStatePersistance controllerStatePersistance;
 
-	public ControllerStateImp(ControllerStatePersistance controllerStatePersistance) {
-		this.controllerStatePersistance = controllerStatePersistance;
+	public ControllerStateImp(PluginBuilder plugin, DBEngine dbe) {
+		this.plugin = plugin;
+		this.logger = plugin.getLogger(ControllerStatePersistance.class.getName(), CLogger.Level.Info);
+
+		this.controllerStatePersistance = new ControllerStatePersistance(plugin,dbe);
+
 		setPreInit();
 	}
 
@@ -402,38 +412,6 @@ public class ControllerStateImp implements ControllerState {
 			return true;
 		} else {
 			return false;
-		}
-	}
-
-
-	public enum Mode {
-		PRE_INIT,
-
-		STANDALONE_INIT,
-		STANDALONE,
-		STANDALONE_FAILED,
-		STANDALONE_SHUTDOWN,
-
-		AGENT_INIT,
-		AGENT,
-		AGENT_FAILED,
-		AGENT_SHUTDOWN,
-
-		REGION_INIT,
-		REGION_FAILED,
-		REGION,
-		REGION_GLOBAL_INIT,
-		REGION_GLOBAL_FAILED,
-		REGION_GLOBAL,
-		REGION_SHUTDOWN,
-
-		GLOBAL_INIT,
-		GLOBAL,
-		GLOBAL_FAILED,
-		GLOBAL_SHUTDOWN;
-
-		Mode() {
-
 		}
 	}
 

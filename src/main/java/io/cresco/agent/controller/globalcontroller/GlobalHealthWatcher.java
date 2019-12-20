@@ -214,7 +214,7 @@ public class GlobalHealthWatcher  {
                 //Check if the global controller path exist
                 if(this.controllerEngine.cstate.isGlobalController()) {
                     //if(this.controllerEngine.cstate.getGlobalControllerPath() != null) {
-                        logger.info("I AM A GLOBAL CONTROLLER AND HAPPY: " + controllerEngine.cstate.getControllerState());
+                        //logger.info("I AM A GLOBAL CONTROLLER AND HAPPY: " + controllerEngine.cstate.getControllerState());
                         if (controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath())) {
                         logger.trace("Dynamic Global Path : " + this.controllerEngine.cstate.getGlobalControllerPath() + " reachable :" + controllerEngine.isReachableAgent(this.controllerEngine.cstate.getGlobalControllerPath()));
                         logger.trace("Dynamic Global Controller Check [dynamic host] Ok.");
@@ -230,7 +230,7 @@ public class GlobalHealthWatcher  {
                     if(controllerEngine.cstate.getControllerState() == ControllerMode.REGION_GLOBAL) {
                         if(global_host_map.containsKey(activeGlobalControllerIP)) {
                             if(controllerEngine.isReachableAgent(global_host_map.get(activeGlobalControllerIP))) {
-                                logger.info("I AM A REGIONAL CONTROLLER CONNECTED TO A GLOBAL AND HAPPY: GLOBAL: " + controllerEngine.cstate.getControllerState());
+                                //logger.info("I AM A REGIONAL CONTROLLER CONNECTED TO A GLOBAL AND HAPPY: GLOBAL: " + controllerEngine.cstate.getControllerState());
                                 logger.trace("Static Global Controller Check [static host] " + activeGlobalControllerIP + " Ok.");
                                 return;
                             }

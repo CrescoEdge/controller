@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ControllerEngine {
 
-
     private PluginBuilder plugin;
     public ControllerStateImp cstate;
     private CLogger logger;
@@ -854,12 +853,15 @@ public class ControllerEngine {
     public void setIncomingCanidateBrokers(BlockingQueue<MsgEvent> incomingCanidateBrokers) {
         this.incomingCanidateBrokers = incomingCanidateBrokers;
     }
+
     public ActiveBroker getBroker() {
         return broker;
     }
+
     public void setBroker(ActiveBroker broker) {
         this.broker = broker;
     }
+
     public boolean isLocal(String checkAddress) {
         boolean isLocal = false;
         if (checkAddress.contains("%")) {
@@ -874,6 +876,7 @@ public class ControllerEngine {
         }
         return isLocal;
     }
+
     public List<String> localAddresses() {
         List<String> localAddressList = new ArrayList<>();
         try {
@@ -896,6 +899,7 @@ public class ControllerEngine {
         }
         return localAddressList;
     }
+
     public boolean isIPv6() {
         boolean isIPv6 = false;
         try {
