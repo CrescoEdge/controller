@@ -5,7 +5,6 @@ import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.core.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.PrintWriter;
@@ -73,11 +72,7 @@ public class StaticPluginLoader implements Runnable  {
                             }
                         }
 
-                        /*
-                        logger.error("WAITING 30 SEC to LOAD STATICS");
-                        Thread.sleep(30000);
-                        logger.error("STARTING to LOAD STATICS");
-                        */
+
 
                         if (config != null) {
 
@@ -109,15 +104,19 @@ public class StaticPluginLoader implements Runnable  {
 
                                     String pluginName = "io.cresco.repo";
 
-                                    Map<String, Object> map = null;
-                                    map = getPluginConfigMap(pluginName);
+                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
 
                                     if(map == null) {
-                                        map = new HashMap<>();
-                                        map.put("pluginname", pluginName);
-                                        map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
-                                        map.put("persistence_code", "20");
-                                        map.put("inode_id", pluginName);
+
+                                        map = getPluginConfigMap(pluginName);
+
+                                        if (map == null) {
+                                            map = new HashMap<>();
+                                            map.put("pluginname", pluginName);
+                                            map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
+                                            map.put("persistence_code", "20");
+                                            map.put("inode_id", generatePluginId(pluginName));
+                                        }
                                     }
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
@@ -127,15 +126,19 @@ public class StaticPluginLoader implements Runnable  {
 
                                     String pluginName = "io.cresco.dashboard";
 
-                                    Map<String, Object> map = null;
-                                    map = getPluginConfigMap(pluginName);
+                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
 
                                     if(map == null) {
-                                        map = new HashMap<>();
-                                        map.put("pluginname", pluginName);
-                                        map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
-                                        map.put("persistence_code", "20");
-                                        map.put("inode_id", pluginName);
+
+                                        map = getPluginConfigMap(pluginName);
+
+                                        if (map == null) {
+                                            map = new HashMap<>();
+                                            map.put("pluginname", pluginName);
+                                            map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
+                                            map.put("persistence_code", "20");
+                                            map.put("inode_id", generatePluginId(pluginName));
+                                        }
                                     }
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
@@ -147,16 +150,21 @@ public class StaticPluginLoader implements Runnable  {
 
                                     String pluginName = "io.cresco.repo";
 
-                                    Map<String, Object> map = null;
-                                    map = getPluginConfigMap(pluginName);
+                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
 
                                     if(map == null) {
-                                        map = new HashMap<>();
-                                        map.put("pluginname", pluginName);
-                                        map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
-                                        map.put("persistence_code", "20");
-                                        map.put("inode_id", pluginName);
+
+                                        map = getPluginConfigMap(pluginName);
+
+                                        if (map == null) {
+                                            map = new HashMap<>();
+                                            map.put("pluginname", pluginName);
+                                            map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
+                                            map.put("persistence_code", "20");
+                                            map.put("inode_id", generatePluginId(pluginName));
+                                        }
                                     }
+
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
 
@@ -196,16 +204,20 @@ public class StaticPluginLoader implements Runnable  {
 
                                 String pluginName = "io.cresco.sysinfo";
 
-                                Map<String, Object> map = null;
-                                map = getPluginConfigMap(pluginName);
+                                Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
 
                                 if(map == null) {
 
-                                    map = new HashMap<>();
-                                    map.put("pluginname", pluginName);
-                                    map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
-                                    map.put("persistence_code", "20");
-                                    map.put("inode_id", pluginName);
+                                    map = getPluginConfigMap(pluginName);
+
+                                    if (map == null) {
+
+                                        map = new HashMap<>();
+                                        map.put("pluginname", pluginName);
+                                        map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
+                                        map.put("persistence_code", "20");
+                                        map.put("inode_id", generatePluginId(pluginName));
+                                    }
                                 }
                                 String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
 
@@ -258,6 +270,30 @@ public class StaticPluginLoader implements Runnable  {
                 logger.error(sw.toString());
             }
 
+    }
+
+    private Map<String, Object> getPluginConfigMapbyName(List<Map<String,Object>> systemPluginConfigList, String pluginName) {
+        Map<String, Object> configMap = null;
+        try {
+            for(Map<String,Object> tmpConfigMap: systemPluginConfigList) {
+                String tmpPluginName = (String)tmpConfigMap.get("pluginname");
+
+                if(tmpPluginName.equals(pluginName)) {
+                    configMap = tmpConfigMap;
+                    break;
+                }
+            }
+
+
+        } catch (Exception ex) {
+            logger.error("getPluginConfigMapbyName() " + ex.getMessage());
+        }
+
+        return configMap;
+    }
+
+    private String generatePluginId(String pluginName) {
+        return "system-" + UUID.randomUUID().toString();
     }
 
     private Map<String, Object> getPluginConfigMap(String pluginId) {

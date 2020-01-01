@@ -29,7 +29,7 @@ public class AgentConsumer {
 	private Queue RXqueue;
 	private ActiveMQSession sess;
 	private ControllerEngine controllerEngine;
-
+    private MessageConsumer consumer;
 	private Gson gson;
 
 	private AtomicBoolean lockGroupMap = new AtomicBoolean();
@@ -75,7 +75,7 @@ public class AgentConsumer {
 		sess = controllerEngine.getActiveClient().createSession(URI,false, Session.AUTO_ACKNOWLEDGE);
 
 		RXqueue = sess.createQueue(RXQueueName);
-		MessageConsumer consumer = sess.createConsumer(RXqueue);
+		consumer = sess.createConsumer(RXqueue);
 
 		Gson gson = new Gson();
 
@@ -121,7 +121,7 @@ public class AgentConsumer {
 							//start RPC checks
 							boolean isMyRPC = false;
 
-							if (me.getParams().keySet().contains("is_rpc")) {
+							if (me.getParams().containsKey("is_rpc")) {
 
 								//pick up self-rpc, unless ttl == 0
 								//String callId = me.getParam(("callId-" + plugin.getRegion() + "-" +
@@ -328,6 +328,14 @@ public class AgentConsumer {
 			logger.error("Failure to Register File Message");
 		}
 		return isRegistered;
+	}
+
+	public void shutdown() {
+		try {
+			consumer.close();
+		} catch (Exception ex) {
+			logger.error("Consumer Shutdown Error: " + ex.getMessage());
+		}
 	}
 
 }

@@ -1,7 +1,6 @@
 package io.cresco.agent.controller.netdiscovery;
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import io.netty.bootstrap.Bootstrap;
@@ -32,13 +31,17 @@ public class TCPDiscoveryStatic {
         this.logger = plugin.getLogger(TCPDiscoveryStatic.class.getName(),CLogger.Level.Info);
     }
 
-    public List<MsgEvent> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, Boolean sendCert) throws Exception  {
+    public List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, boolean sendCert) throws Exception {
+        int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
+        return discover(disType, discoveryTimeout, hostAddress, discoveryPort, sendCert);
+    }
+
+    public List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, Boolean sendCert) throws Exception  {
         // Configure SSL.
 
-        final List<MsgEvent> discoveredList = new ArrayList<>();
+        final List<DiscoveryNode> discoveredList = new ArrayList<>();
 
         //boolean isSSL = false;
-        int discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
 
         //don't remove to allow for ssl discovery
         /*
@@ -92,8 +95,8 @@ public class TCPDiscoveryStatic {
         return discoveredList;
     }
 
-    public List<MsgEvent> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress) {
-        List<MsgEvent> dList = null;
+    public List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress) {
+        List<DiscoveryNode> dList = null;
         try {
 
             dList = discover(disType, discoveryTimeout, hostAddress, false);

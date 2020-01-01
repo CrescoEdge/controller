@@ -203,7 +203,7 @@ public class RegionalExecutor implements Executor {
                             break;
                     }
 
-                    if ((retMsg != null) && (retMsg.getParams().keySet().contains("is_rpc"))) {
+                    if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
                         retMsg.setReturn();
                         //pick up RPC from local agent
                         String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +

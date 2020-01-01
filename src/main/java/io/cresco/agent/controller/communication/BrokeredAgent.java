@@ -1,6 +1,8 @@
 package io.cresco.agent.controller.communication;
 
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
+import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
@@ -10,58 +12,90 @@ import java.util.Map;
 
 public class BrokeredAgent {
 	public Map<String,BrokerStatusType> addressMap;
-	public BrokerStatusType brokerStatus;
-	public String activeAddress;
-	public String agentPath;
+	private BrokerStatusType brokerStatus;
 
-    public String URI;
-    public String brokerUsername;
-    public String brokerPassword;
+	public DiscoveryNode brokerNode;
+	public String URI;
 
 	public BrokerMonitor bm;
 	private PluginBuilder plugin;
 	private CLogger logger;
 	private ControllerEngine controllerEngine;
 
-	public BrokeredAgent(ControllerEngine controllerEngine, String agentPath, String activeAddress, String brokerUsername, String brokerPassword) {
+	public BrokeredAgent(ControllerEngine controllerEngine, DiscoveryNode brokerNode) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(BrokeredAgent.class.getName(),CLogger.Level.Info);
-		logger.debug("Initializing: " + agentPath + " address: " + activeAddress);
-		this.plugin = plugin;
-		this.bm = new BrokerMonitor(controllerEngine, agentPath);
-		this.activeAddress = activeAddress;
-		this.agentPath = agentPath;
-        this.brokerUsername = brokerUsername;
-        this.brokerPassword = brokerPassword;
+		this.brokerNode = brokerNode;
+		logger.debug("Initializing: " + brokerNode.getDiscoveredPath() + " address: " + brokerNode.discovered_ip);
+		this.bm = new BrokerMonitor(controllerEngine, brokerNode.getDiscoveredPath());
 		this.brokerStatus = BrokerStatusType.INIT;
 		this.addressMap = new HashMap<>();
-		this.addressMap.put(activeAddress, BrokerStatusType.INIT);
+		this.addressMap.put(brokerNode.discovered_ip, BrokerStatusType.INIT);
 	}
 
-	public void setStop() {
-		if(bm.MonitorActive) {
-			bm.shutdown();
-		}
-		while(bm.MonitorActive) {
-			try {
-				Thread.sleep(1000);
-			} catch (Exception e) {
-				logger.error("setStop {}", e.getMessage());
-			}
-		}
-		brokerStatus = BrokerStatusType.STOPPED;
-		logger.debug("setStop : Broker STOP");
+	public String getActiveAddress() {
+		return brokerNode.discovered_ip;
 	}
 
-	public void setStarting() {
-		brokerStatus = BrokerStatusType.STARTING;
-		addressMap.put(activeAddress, BrokerStatusType.STARTING);
+	public void setActiveAddress(String aciveAddress) {
+		this.brokerNode.discovered_ip = aciveAddress;
+	}
+
+	public String getPath() {
+		return this.brokerNode.getDiscoveredPath();
+	}
+
+
+	public BrokerStatusType getBrokerStatus() {
+		return this.brokerStatus;
+	}
+
+	public void setBrokerStatus(BrokerStatusType brokerStatus) {
+
+		switch (brokerStatus) {
+
+			case INIT:
+				logger.info("BROKER STATUS = INIT");
+				this.brokerStatus = BrokerStatusType.INIT;
+				break;
+			case STARTING:
+				logger.info("BROKER STATUS = STARTING");
+				this.brokerStatus = BrokerStatusType.STARTING;
+				addressMap.put(brokerNode.discovered_ip, BrokerStatusType.STARTING);
+				setStarting();
+				break;
+			case ACTIVE:
+				logger.info("BROKER STATUS = ACTIVE");
+				this.brokerStatus = BrokerStatusType.ACTIVE;
+				addressMap.put(brokerNode.discovered_ip, BrokerStatusType.ACTIVE);
+				break;
+			case STOPPED:
+				logger.info("BROKER STATUS = STOPPED");
+				setStopped();
+				this.brokerStatus = BrokerStatusType.STOPPED;
+				logger.debug("setStop : Broker STOP");
+				break;
+			case FAILED:
+				logger.info("BROKER STATUS = FAILED");
+				this.brokerStatus = BrokerStatusType.FAILED;
+				setStopped();
+				checkIfGlobal();
+				break;
+
+			default:
+				logger.error("BROKER STATUS = " + brokerStatus);
+				break;
+		}
+
+	}
+
+	private void setStarting() {
 		if(bm.MonitorActive) {
 			bm.shutdown();
-            logger.error("bm.MonitorActive : shutting down.. activeAddress: " + activeAddress);
+			logger.error("bm.MonitorActive : shutting down.. activeAddress: " + brokerNode.discovered_ip);
 		}
-		bm = new BrokerMonitor(controllerEngine, agentPath);
+		bm = new BrokerMonitor(controllerEngine, brokerNode.getDiscoveredPath());
 		new Thread(bm).start();
 		while(!bm.MonitorActive) {
 			try {
@@ -72,8 +106,28 @@ public class BrokeredAgent {
 		}
 	}
 
-	public void setActive() {
-		brokerStatus = BrokerStatusType.ACTIVE;
-		addressMap.put(activeAddress, BrokerStatusType.ACTIVE);
+	private void setStopped() {
+		if(bm.MonitorActive) {
+			bm.shutdown();
+		}
+		while(bm.MonitorActive) {
+			try {
+				Thread.sleep(1000);
+			} catch (Exception e) {
+				logger.error("setStop {}", e.getMessage());
+			}
+		}
 	}
+
+	private void checkIfGlobal() {
+
+		if(controllerEngine.cstate.getControllerState() == ControllerMode.REGION_GLOBAL) {
+			if (controllerEngine.cstate.getGlobalControllerPath().equals(getPath())) {
+				logger.info("Global Controller Path Lost: " + getPath() + " alerting ControllerSM");
+				controllerEngine.getControllerSM().globalControllerLost("BrokeredAgent: " + getPath() + " lost");
+			}
+		}
+
+	}
+
 }

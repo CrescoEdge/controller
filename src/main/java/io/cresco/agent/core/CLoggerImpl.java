@@ -7,8 +7,6 @@ import io.cresco.library.utilities.CLogger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.jms.TextMessage;
-
 
 /**
  * Cresco logger
@@ -120,11 +118,11 @@ public class CLoggerImpl implements CLogger {
     }
 
     private String formatClassName(String className) {
-        String newName = "";
+        StringBuilder newName = new StringBuilder();
         int lastIndex = 0;
         int nextIndex = className.indexOf(".", lastIndex + 1);
         while (nextIndex != -1) {
-            newName = newName + className.substring(lastIndex, lastIndex + 1) + ".";
+            newName.append(className.substring(lastIndex, lastIndex + 1)).append(".");
             lastIndex = nextIndex + 1;
             nextIndex = className.indexOf(".", lastIndex + 1);
         }

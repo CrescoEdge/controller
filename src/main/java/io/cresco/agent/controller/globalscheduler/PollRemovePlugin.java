@@ -2,7 +2,6 @@ package io.cresco.agent.controller.globalscheduler;
 
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -16,7 +15,6 @@ public class PollRemovePlugin implements Runnable {
 	private String inode_id = null;
 	private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
-	private GlobalHealthWatcher ghw;
 	private CLogger logger;
 
 	public PollRemovePlugin(ControllerEngine controllerEngine, String resource_id, String inode_id)

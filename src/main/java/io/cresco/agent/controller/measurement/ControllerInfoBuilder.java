@@ -61,7 +61,7 @@ class ControllerInfoBuilder {
             Iterator<ObjectInstance> iterator = instances.iterator();
             while (iterator.hasNext()) {
                 ObjectInstance instance = iterator.next();
-                sb.append(instance.getObjectName() + "\n");
+                sb.append(instance.getObjectName()).append("\n");
                 if(instance.getObjectName().toString().contains("agent-")) {
                     try {
 

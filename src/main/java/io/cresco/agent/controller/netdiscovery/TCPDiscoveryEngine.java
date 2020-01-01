@@ -43,6 +43,7 @@ public class TCPDiscoveryEngine implements Runnable {
         //enable when client supports
         isSSL = false;
         discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
+        logger.error("Started DiscoveryTCPEngine");
     }
 
     public void run() {

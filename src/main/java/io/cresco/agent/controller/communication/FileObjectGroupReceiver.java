@@ -116,8 +116,9 @@ public class FileObjectGroupReceiver {
 
                 boolean isFault = false;
                 for (String key : fileObjectMap.keySet()) {
-                    if(!fileCompleteList.contains(key)) {
+                    if (!fileCompleteList.contains(key)) {
                         isFault = true;
+                        break;
                     }
                 }
 

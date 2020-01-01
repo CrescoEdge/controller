@@ -8,67 +8,50 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+//job of the agentwatcher is to update region with changes
 
 public class AgentHealthWatcher {
 
-	  private Timer timer;
-	  private long startTS;
-	  private Map<String,String> wdMap;
-	  private boolean isRegistered = false;
-	  private boolean isRegistering = false;
+     public Timer communicationsHealthTimer;
 
-	  private String agentExport = "";
-	  private String pluginExport = "";
+     private long startTS;
+     private Map<String,String> wdMap;
 
-	  private String watchDogTimerString;
+     private String agentExport = "";
+     private String pluginExport = "";
 
-	  private ControllerEngine controllerEngine;
-	  private PluginBuilder plugin;
-	  private CLogger logger;
-	  private Gson gson;
+     private String watchDogTimerString;
 
-	  public AgentHealthWatcher(ControllerEngine controllerEngine) {
+     private ControllerEngine controllerEngine;
+     private PluginBuilder plugin;
+     private CLogger logger;
+     private Gson gson;
+     private int wdTimer;
+     private AtomicBoolean communicationsHealthTimerActive = new AtomicBoolean();
+
+    public AgentHealthWatcher(ControllerEngine controllerEngine) {
 	  	this.controllerEngine = controllerEngine;
 	  	this.plugin = controllerEngine.getPluginBuilder();
 	  	this.logger = plugin.getLogger(AgentHealthWatcher.class.getName(),CLogger.Level.Info);
 
-		  startTS = System.currentTimeMillis();
-		  timer = new Timer();
+	  	this.wdTimer = 3000;
+	  	this.startTS = System.currentTimeMillis();
+	  	this.communicationsHealthTimer = new Timer();
+	  	this.communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 5000, wdTimer);
 
-		  gson = new Gson();
+	  	this.gson = new Gson();
+	  	this.watchDogTimerString = plugin.getConfig().getStringParam("watchdogtimer","5000");
 
-		  watchDogTimerString = plugin.getConfig().getStringParam("watchdogtimer","5000");
-
-
-	      timer.scheduleAtFixedRate(new WatchDogTask(), 500, Long.parseLong(watchDogTimerString));
-	      wdMap = new HashMap<>(); //for sending future WD messages
-
-          if((controllerEngine.cstate.isActive()) && (plugin.isActive())) {
-              //isRegistered = enable(true);
-          }
       }
 
-      public void shutdown(boolean unregister) {
-          if(!controllerEngine.cstate.isRegionalController() && unregister) {
+    public void shutdown() {
+        communicationsHealthTimer.cancel();
+        logger.info("Shutdown AgentWatcher");
+    }
 
-              /*
-              MsgEvent disableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
-              disableMsg.setParam("region_name",plugin.getRegion());
-              disableMsg.setParam("agent_name",plugin.getAgent());
-              disableMsg.setParam("desc","to-rc-agent");
-			  disableMsg.setParam("action", "agent_disable");
-              plugin.msgOut(disableMsg);
-              */
-			  //le.setParam("watchdogtimer", watchDogTimerString);
-			  //AgentEngine.msgInQueue.add(le);
-              //MsgEvent re = new RPCCall().call(le);
-              //System.out.println("RPC DISABLE: " + re.getMsgBody() + " [" + re.getParams().toString() + "]");
-          }
-          timer.cancel();
-      }
-
-      public void sendUpdate() {
+    public void sendUpdate() {
 
           if((!controllerEngine.cstate.isRegionalController()) || (!controllerEngine.cstate.isGlobalController()) ) {
               long runTime = System.currentTimeMillis() - startTS;
@@ -115,25 +98,30 @@ public class AgentHealthWatcher {
           }
       }
 
-	class WatchDogTask extends TimerTask {
-	    public void run() 
-	    {
-	    	if(controllerEngine.cstate.isActive())
-	    	{
-                //sendUpdate();
-	    	    /*
-	    	    if((!isRegistered) && (controllerEngine.cstate.isActive())) {
-	    	        if(!isRegistering) {
-	    	            isRegistering = true;
-                        //isRegistered = enable(true);
-                        isRegistering = false;
-                    }
-                } else {
-	    	        sendUpdate();
-                }
-                */
+    class CommunicationHealthWatcherTask extends TimerTask {
+        public void run() {
+            try {
 
-	    	}
-	    }
-      }
+                if(controllerEngine.cstate.isActive()) {
+                    if (!communicationsHealthTimerActive.get()) {
+                        communicationsHealthTimerActive.set(true);
+                        if (!controllerEngine.getActiveClient().isFaultURIActive()) {
+                            logger.info("Agent Consumer shutdown detected");
+                            controllerEngine.getControllerSM().regionalControllerLost("AgentHealthWatcher: Agent Consumer shutdown detected");
+                        }
+                        communicationsHealthTimerActive.set(false);
+                    }
+                }
+
+            } catch (Exception ex) {
+                if(communicationsHealthTimerActive.get()) {
+                    communicationsHealthTimerActive.set(false);
+                }
+                logger.error("Run {}", ex.getMessage());
+                ex.printStackTrace();
+            }
+
+        }
+    }
+
 }

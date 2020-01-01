@@ -1,7 +1,6 @@
 package io.cresco.agent.controller.globalcontroller;
 
 import com.google.gson.Gson;
-import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalscheduler.PollRemovePipeline;
 import io.cresco.library.app.gPayload;
@@ -11,7 +10,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.*;
-import java.lang.reflect.Type;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
@@ -377,10 +375,19 @@ public class GlobalExecutor implements Executor {
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
+            logger.error("resourceInfo() " + ex.getMessage());
+            logger.error(getStringFromError(ex));
         }
 
         return ce;
     }
+
+    public String getStringFromError(Exception ex) {
+        StringWriter errors = new StringWriter();
+        ex.printStackTrace(new PrintWriter(errors));
+        return errors.toString();
+    }
+
 
     private MsgEvent getGPipelineStatus(MsgEvent ce) {
 
@@ -526,18 +533,19 @@ public class GlobalExecutor implements Executor {
 
             if(pluginFiles != null)
             {
-                String pluginList = null;
+                StringBuilder pluginListBuilder = null;
                 for (String pluginPath : pluginFiles)
                 {
-                    if(pluginList == null)
+                    if(pluginListBuilder == null)
                     {
-                        pluginList = getPluginName(pluginPath) + "=" + getPluginVersion(pluginPath) + ",";
+                        pluginListBuilder = new StringBuilder(getPluginName(pluginPath) + "=" + getPluginVersion(pluginPath) + ",");
                     }
                     else
                     {
-                        pluginList = pluginList + getPluginName(pluginPath) + "=" + getPluginVersion(pluginPath) + ",";
+                        pluginListBuilder.append(getPluginName(pluginPath)).append("=").append(getPluginVersion(pluginPath)).append(",");
                     }
                 }
+                String pluginList = pluginListBuilder.toString();
 
                 if(pluginList != null) {
                     pluginList = pluginList.substring(0, pluginList.length() - 1);
@@ -1112,7 +1120,7 @@ public class GlobalExecutor implements Executor {
 
             String line = "";
             while ((line = reader.readLine())!= null) {
-                output.append(line + "\n");
+                output.append(line).append("\n");
             }
 
         } catch (Exception e) {

@@ -26,10 +26,7 @@ public class PollAddPipeline implements Runnable {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PollAddPipeline.class.getName(),CLogger.Level.Info);
 
-        //this.logger = new CLogger(PollAddPipeline.class, agentcontroller.getMsgOutQueue(), agentcontroller.getRegion(), agentcontroller.getAgent(), agentcontroller.getPluginID(), CLogger.Level.Info);
-		//this.agentcontroller = agentcontroller;
-		//this.assignedNodes = assignedNodes;
-		this.pipelineId = pipelineId;
+        this.pipelineId = pipelineId;
         pipelineNodes = new ArrayList<>(assignedNodes);
         gson = new Gson();
 	}

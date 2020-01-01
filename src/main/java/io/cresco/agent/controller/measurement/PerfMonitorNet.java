@@ -77,7 +77,7 @@ public class PerfMonitorNet {
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
 
             for(String ip : iplist) {
-                discoveryList.addAll(ds.discover(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), ip));
+                //discoveryList.addAll(ds.discover(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout",10000), ip));
             }
 
             List<DiscoveryNetworkTopoNode> dnList = new ArrayList<>();
@@ -116,7 +116,7 @@ public class PerfMonitorNet {
                 ip4dc = new DiscoveryClientIPv4(controllerEngine);
             }
             logger.debug("Broker Search (IPv4)...");
-            discoveryList.addAll(ip4dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 10000)));
+            //discoveryList.addAll(ip4dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 10000)));
             logger.debug("Broker count = {} " + discoveryList.size());
 
             //for (MsgEvent me : discoveryList) {

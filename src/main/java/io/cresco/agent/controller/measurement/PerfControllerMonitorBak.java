@@ -406,7 +406,7 @@ public class PerfControllerMonitorBak {
     }
 
 
-    private class CleanUpTask extends TimerTask {
+    private static class CleanUpTask extends TimerTask {
         private PluginBuilder plugin;
         private CLogger logger;
         private Cache<String, String> sysInfoCache;

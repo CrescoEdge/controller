@@ -2,7 +2,6 @@ package io.cresco.agent.controller.globalscheduler;
 
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -19,20 +18,18 @@ public class ResourceScheduler implements IncomingResource {
 
     private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
-	private GlobalHealthWatcher ghw;
 	private CLogger logger;
     private ExecutorService addPluginExecutor;
 
     private Gson gson;
 
-    public ResourceScheduler(ControllerEngine controllerEngine, GlobalHealthWatcher ghw) {
+    public ResourceScheduler(ControllerEngine controllerEngine) {
 
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(ResourceScheduler.class.getName(),CLogger.Level.Info);
 
         gson = new Gson();
-		this.ghw = ghw;
 
         //this should be a configurable parameter
         //addPluginExecutor = Executors.newFixedThreadPool(100);

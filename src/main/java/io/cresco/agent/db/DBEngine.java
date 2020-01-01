@@ -2114,6 +2114,8 @@ public class DBEngine {
 
     public boolean removeNode(String regionId, String agentId, String pluginId) {
 
+        //System.out.println("regionId: " + regionId + " agentId: " + agentId + " pluginId:c" + pluginId);
+
         boolean isRemoved = false;
         try {
             try(Connection conn = ds.getConnection()) {
@@ -2238,17 +2240,19 @@ public class DBEngine {
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID " +
-                        "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID " +
+                        "AND P.STATUS_CODE = 10";
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
                 queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
-                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID ";
+                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
+                        + "AND A.STATUS_CODE = 10";
 
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
-                queryString = "SELECT region_id FROM rnode ";
+                queryString = "SELECT region_id FROM rnode WHERE STATUS_CODE = 10";
             }
 
             if(queryString != null) {
@@ -2329,22 +2333,23 @@ public class DBEngine {
 
     public Map<String,Integer> getNodeStatusCodeMap(String regionId, String agentId) {
 
+        String queryString = null;
 
         Map<String,Integer> nodeMap = null;
         try {
 
             nodeMap = new HashMap<>();
-            String queryString = null;
+
 
             if((regionId != null) && (agentId != null)) {
                 //agent
 
-                queryString = "SELECT P.PLUGIN_ID, P.status_code FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO" +
+                queryString = "SELECT P.PLUGIN_ID, P.status_code FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
                         "WHERE R.REGION_ID ='" + regionId + "'" +
                         "AND A.AGENT_ID = '" + agentId + "'" +
-                        "AND R.REGION_ID = AO.REGION_ID" +
-                        "AND AO.AGENT_ID = A.AGENT_ID" +
-                        "AND A.AGENT_ID = PO.AGENT_ID";
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID ";
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
@@ -2375,6 +2380,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
+            System.out.println("QUERY STRING: [" + queryString + "]");
             ex.printStackTrace();
         }
         return nodeMap;
@@ -2392,12 +2398,12 @@ public class DBEngine {
             if((regionId != null) && (agentId != null)) {
                 //agent
 
-                queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO" +
-                        "WHERE R.REGION_ID ='" + regionId + "'" +
-                        "AND A.AGENT_ID = '" + agentId + "'" +
-                        "AND R.REGION_ID = AO.REGION_ID" +
-                        "AND AO.AGENT_ID = A.AGENT_ID" +
-                        "AND A.AGENT_ID = PO.AGENT_ID" +
+                queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
                         "AND P.status_code=10 and ((" + System.currentTimeMillis() + " - P.watchdog_ts) > (P.watchdog_period *  " + periodMultiplier + "))";
 
             } else if((regionId != null) && (agentId == null)) {

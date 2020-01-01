@@ -33,14 +33,14 @@ class BrokerMonitor implements Runnable {
 		MonitorActive = false;
 	}
 
-	public boolean connectToBroker(String brokerAddress, String brokerUserName, String brokerPassword, String agentPath) {
-	    logger.trace("BrokerAddress: " + brokerAddress + " brokerUserName: " + brokerUserName + " brokerPassword:" + brokerPassword);
+	public boolean connectToBroker(String brokerAddress, String agentPath) {
+	    logger.trace("BrokerAddress: " + brokerAddress);
 		boolean isConnected = false;
 		try {
 			if((InetAddress.getByName(brokerAddress) instanceof Inet6Address)) {
 				brokerAddress = "[" + brokerAddress + "]";
 			}
-			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerUserName, brokerPassword);
+			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress);
 			bridge.start();
             logger.trace("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress);
 			int connect_count = 0;
@@ -106,7 +106,7 @@ class BrokerMonitor implements Runnable {
 		} catch (Exception e) {
 			logger.error("stopBridge {}", e.getMessage());
 		}
-		controllerEngine.getBrokeredAgents().get(agentPath).brokerStatus = BrokerStatusType.FAILED;
+		controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);
 	}
 	  
 	public void run() {
@@ -125,17 +125,15 @@ class BrokerMonitor implements Runnable {
 			}
             */
 
-            String brokerAddress = controllerEngine.getBrokeredAgents().get(agentPath).activeAddress;
-            String brokerUsername = controllerEngine.getBrokeredAgents().get(agentPath).brokerUsername;
-            String brokerPassword = controllerEngine.getBrokeredAgents().get(agentPath).brokerPassword;
+            String brokerAddress = controllerEngine.getBrokeredAgents().get(agentPath).getActiveAddress();
 
-            logger.trace("Connecting to brokerAddress: " + brokerAddress + " brokerUserName: " + brokerUsername + " brokerPassword: " + brokerPassword);
+            logger.trace("Connecting to brokerAddress: " + brokerAddress);
 
-            if (connectToBroker(brokerAddress,brokerUsername,brokerPassword, agentPath)) { //connect to broker
+            if (connectToBroker(brokerAddress, agentPath)) { //connect to broker
                 MonitorActive = true;
                 //this.agentcontroller.getBrokeredAgents().get(agentPath).brokerStatus = BrokerStatusType.ACTIVE;
-				controllerEngine.getBrokeredAgents().get(agentPath).setActive();
-                logger.trace("Connected to brokerAddress: " + brokerAddress + " brokerUserName: " + brokerUsername + " brokerPassword: " + brokerPassword);
+				controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.ACTIVE);
+                logger.trace("Connected to brokerAddress: " + brokerAddress);
 
 			}
 

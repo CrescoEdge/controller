@@ -14,8 +14,6 @@ import javax.jms.MessageListener;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.UUID;
 
 public class ControllerStatePersistance {
@@ -24,29 +22,21 @@ public class ControllerStatePersistance {
     private CLogger logger;
     private DBEngine dbe;
     private Gson gson;
-    private Timer stateUpdateTimer;
 
 
     String regionalListener = null;
     String globalListener = null;
-
-    private ControllerStateMachineTest controllerStateMachineTest;
 
     public ControllerStatePersistance(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(ControllerStatePersistance.class.getName(),CLogger.Level.Info);
         this.dbe = dbe;
         this.gson = new Gson();
-        this.stateUpdateTimer = new Timer();
-        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), 500, 5000l);
-        controllerStateMachineTest = new ControllerStateMachineTest(plugin);
     }
 
     public boolean setControllerState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
-
-        logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
-        logger.error("STATE ID: [" + controllerStateMachineTest.getState() + "]");
+        //logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
 
         switch (currentMode) {
             case PRE_INIT:
@@ -56,7 +46,7 @@ public class ControllerStatePersistance {
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_SHUTDOWN:
-                logger.error("STANDALONE_SHUTDOWN: NOT IMPLEMENTED");
+                logger.error("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
@@ -71,23 +61,23 @@ public class ControllerStatePersistance {
             case REGION_SHUTDOWN:
                 return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
-                logger.error("REGION_FAILED: NOT IMPLEMENTED");
+                logger.error("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case REGION_GLOBAL_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_FAILED:
-                logger.error("GLOBAL_FAILED: NOT IMPLEMENTED");
+                logger.error("REGION_GLOBAL_FAILED: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case REGION_GLOBAL:
                 return regionGlobalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL:
                 return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
-                logger.error("GLOBAL_SHUTDOWN: NOT IMPLEMENTED");
+                logger.error("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
 
             default:
-                logger.error("INVALID MODE : " + currentMode.name());
+                logger.error("setControllerState() INVALID MODE : " + currentMode.name() + " DESC: " + currentDesc);
                 break;
         }
         return false;
@@ -510,6 +500,7 @@ public class ControllerStatePersistance {
 
                     } else {
                         logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
+                        logger.error("[" + re.printHeader() + "]");
                         logger.error("[" + re.getParams() + "]");
                     }
                 } else {
@@ -632,70 +623,6 @@ public class ControllerStatePersistance {
             ex.printStackTrace();
         }
         return lid;
-    }
-
-    class stateUpdateTask extends TimerTask {
-        public void run() {
-            if (plugin != null) {
-                if (plugin.isActive()) {
-
-                    switch (plugin.getAgentService().getAgentState().getControllerState()) {
-
-                        case STANDALONE:
-                            break;
-                        case AGENT:
-
-                            try {
-                                Map<String, String> exportMap = dbe.getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
-
-                                MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
-                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
-
-                                updateMap.setStringProperty("update_mode", "AGENT");
-                                updateMap.setStringProperty("region_id", plugin.getRegion());
-                                updateMap.setStringProperty("agent_id", plugin.getAgent());
-
-                                //logger.error("SENDING AGENT UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
-
-                            } catch (Exception ex) {
-                                ex.printStackTrace();
-                            }
-
-                            break;
-                        case REGION_GLOBAL:
-
-                            try {
-                                Map<String, String> exportMap = dbe.getDBExport(true, true, true, plugin.getRegion(), null, null);
-
-                                MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
-                                updateMap.setString("regionconfigs", exportMap.get("regionconfigs"));
-                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
-
-                                updateMap.setStringProperty("update_mode", "REGION");
-                                updateMap.setStringProperty("region_id", plugin.getRegion());
-
-                                //logger.error("SENDING REGIONAL UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
-
-                            } catch (Exception ex) {
-                                ex.printStackTrace();
-                            }
-
-                            break;
-                        case GLOBAL:
-                            break;
-
-                        default:
-                            logger.error("INVALID MODE : " + plugin.getAgentService().getAgentState().getControllerState());
-                            break;
-                    }
-
-                }
-            }
-        }
     }
 
 }

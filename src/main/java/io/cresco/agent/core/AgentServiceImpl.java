@@ -248,19 +248,21 @@ public class AgentServiceImpl implements AgentService {
             try {
 
                 //core init needs to go here
-                if(controllerEngine.coreInit()) {
-                    logger.info("Controller Completed Core-Init");
+                if(controllerEngine.start()) {
+                    logger.info("Controller Completed Startup");
                 } else {
-                    logger.error("Controlled Failed Core-Init : Exiting");
+                    logger.error("Controlled Failed Startup : Exiting");
                 }
 
                 //setup role init
+/*
                 if(controllerEngine.commInit()) {
                     logger.info("Controller Completed Init");
 
                 } else {
                     logger.error("Controlled Failed Init");
                 }
+*/
 
                 while(!controllerEngine.cstate.isActive()) {
                     logger.info("Waiting for controller to become active...");
@@ -287,44 +289,12 @@ public class AgentServiceImpl implements AgentService {
             logger.info("Starting Controller Shutdown");
         }
 
-        pluginAdmin.stopAllPlugins();
-
         if(controllerEngine != null) {
-            //controllerEngine.closeCommunications();
 
-            switch (controllerEngine.cstate.getControllerState()) {
-
-                case STANDALONE_INIT:
-                    cstate.setStandaloneShutdown("Shutdown Called");
-                    break;
-                case STANDALONE:
-                    cstate.setStandaloneShutdown("Shutdown Called");
-                    break;
-                case AGENT:
-                    cstate.setAgentShutdown("Shutdown Called");
-                    break;
-                case REGION_GLOBAL:
-                    cstate.setRegionShutdown("Shutdown Called");
-                    break;
-                case GLOBAL:
-                    cstate.setGlobalShutdown("Shutdown Called");
-                    break;
-
-                default:
-                    if(logger != null) {
-                        logger.error("INVALID MODE : " + controllerEngine.cstate.getControllerState());
-                    }
-                    break;
+            if(!controllerEngine.stop()) {
+                logger.error("deactivate() ControllerEngine stop() was dirty!");
             }
 
-        }
-
-        if(plugin != null) {
-            plugin.setIsActive(false);
-        }
-
-        if(gdb != null) {
-            gdb.shutdown();
         }
 
         if(logger != null) {

@@ -1,13 +1,12 @@
 package io.cresco.agent.controller.communication;
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.netdiscovery.DiscoveryType;
-import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
-import io.cresco.library.messaging.MsgEvent;
+import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.util.List;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Map.Entry;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -26,7 +25,7 @@ public class ActiveBrokerManager implements Runnable  {
 		logger.debug("Active Broker Manger initialized");
 		this.plugin = plugin;
 		timer = new Timer();
-		timer.scheduleAtFixedRate(new BrokerWatchDog(logger), 500, 15000);//remote
+		timer.scheduleAtFixedRate(new BrokerWatchDog(logger), 500, 5000);//remote
 	}
 	  
 	public void shutdown() {
@@ -36,9 +35,9 @@ public class ActiveBrokerManager implements Runnable  {
 	public void addBroker(String agentPath) {
 		BrokeredAgent ba = controllerEngine.getBrokeredAgents().get(agentPath);
 		//logger.error("addBroker: agentPath = " + agentPath + " status 0 = " + ba.brokerStatus.toString());
-		if(ba.brokerStatus == BrokerStatusType.INIT) {
+		if(ba.getBrokerStatus() == BrokerStatusType.INIT) {
 			//Fire up new thread.
-			ba.setStarting();
+			ba.setBrokerStatus(BrokerStatusType.STARTING);
 		}
 		/*
 		logger.error("addBroker: agentPath = " + agentPath + " status 1 = " + ba.brokerStatus.toString());
@@ -48,98 +47,80 @@ public class ActiveBrokerManager implements Runnable  {
 		logger.error("addBroker: agentPath = " + agentPath + " status 2 = " + ba.brokerStatus.toString());
 		*/
 	}
+
 	public void run() {
 		logger.info("Initialized");
 		controllerEngine.setActiveBrokerManagerActive(true);
 		while(controllerEngine.isActiveBrokerManagerActive()) {
 			try {
-				MsgEvent cb = controllerEngine.getIncomingCanidateBrokers().take();
+				DiscoveryNode discoveryNode = controllerEngine.getIncomingCanidateBrokers().take();
 
-				if(cb != null) {
+				if(discoveryNode != null) {
 
 
-					String agentIP = cb.getParam("dst_ip");
-					if((!controllerEngine.isLocal(agentIP)) || (agentIP.equals("127.0.0.1")) || (agentIP.equals("localhost"))) { //ignore local responses
+					//String agentIP = cb.getParam("dst_ip");
+
+					if((!controllerEngine.isLocal(discoveryNode.discovered_ip)) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost"))) { //ignore local responses
 
 
 						boolean addBroker = false;
-						String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");
-						logger.info("Trying to connect to: " + agentPath);
+						//String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");
+						logger.info("Trying to connect to: " + discoveryNode.getDiscoveredPath());
 						//logger.trace(getClass().getName() + ">>> canidate boker :" + agentPath + " canidate ip:" + agentIP) ;
 	 		      
 						BrokeredAgent ba = null;
-						if(controllerEngine.getBrokeredAgents().containsKey(agentPath)) {
-							logger.error("brokered agents contains key for " + agentPath);
-							ba = controllerEngine.getBrokeredAgents().get(agentPath);
+						if(controllerEngine.getBrokeredAgents().containsKey(discoveryNode.getDiscoveredPath())) {
+							logger.error("brokered agents contains key for " + discoveryNode.getDiscoveredPath());
+							ba = controllerEngine.getBrokeredAgents().get(discoveryNode.getDiscoveredPath());
 							//add ip to possible list
-							if(!ba.addressMap.containsKey(agentIP)) {
-								ba.addressMap.put(agentIP,BrokerStatusType.INIT);
+							if(!ba.addressMap.containsKey(discoveryNode.discovered_ip)) {
+								ba.addressMap.put(discoveryNode.discovered_ip,BrokerStatusType.INIT);
 							}
 							//reset status if needed
-							if((ba.brokerStatus.equals(BrokerStatusType.FAILED) || (ba.brokerStatus.equals(BrokerStatusType.STOPPED)))) {
-								ba.activeAddress = agentIP;
-								ba.brokerStatus = BrokerStatusType.INIT;
+							if((ba.getBrokerStatus() == BrokerStatusType.FAILED) || (ba.getBrokerStatus() == BrokerStatusType.STOPPED)) {
+								ba.setActiveAddress(discoveryNode.discovered_ip);
+								ba.setBrokerStatus(BrokerStatusType.INIT);
 								addBroker = true;
-								logger.trace("BA EXIST ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
+								logger.info("BA EXIST ADDING agentPath: " + discoveryNode.discovered_ip + " remote_ip: " + discoveryNode.discovered_ip);
 							}
-							logger.trace("BA EXIST ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
+							logger.info("BA EXIST ADDING agentPath: " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip);
 
 						} else {
 
-							logger.error("brokered agents does not contains key for " + agentPath);
-						    //This might not work everwhere
-                            String cbrokerAddress = null;
-                            String cbrokerValidatedAuthenication = null;
-                            cbrokerAddress = cb.getParam("dst_ip");
-                            cbrokerValidatedAuthenication = cb.getParam("validated_authenication");
+							logger.error("brokered agents does not contains key for " + discoveryNode.getDiscoveredPath());
 
-							if(cbrokerValidatedAuthenication != null) {
-
-								TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-								List<MsgEvent> certDiscovery = ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("discovery_static_region_timeout", 10000), cbrokerAddress, true);
-                				for(MsgEvent cme : certDiscovery) {
-                					if(cbrokerAddress.equals(cme.getParam("dst_ip"))) {
-										String[] tmpAuth = cbrokerValidatedAuthenication.split(",");
-										ba = new BrokeredAgent(controllerEngine, agentPath, cbrokerAddress, tmpAuth[0], tmpAuth[1]);
-										controllerEngine.getBrokeredAgents().put(agentPath, ba);
-										addBroker = true;
-										logger.trace("BA NEW ADDING agentPath: " + agentPath + " remote_ip: " + agentIP);
-									}
-								}
-
-							}
+							ba = new BrokeredAgent(controllerEngine, discoveryNode);
+							controllerEngine.getBrokeredAgents().put(discoveryNode.getDiscoveredPath(), ba);
+							addBroker = true;
+							logger.trace("BA NEW ADDING agentPath: " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.getDiscoveredPath());
+							addBroker = true;
 						}
 						//try and connect
-						if(addBroker && !controllerEngine.isReachableAgent(agentPath)) {
-                            addBroker(agentPath);
+						if(addBroker && !controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
+                            addBroker(discoveryNode.getDiscoveredPath());
                             int count = 0;
-                            //while(!this.agentcontroller.isReachableAgent(agentPath)) {
 
-                            	/*
-                            	MsgEvent sme = new MsgEvent(MsgEvent.Type.DISCOVER, this.agentcontroller.getRegion(), this.agentcontroller.getAgent(), this.agentcontroller.getPluginID(), "Discovery request.");
-								sme.setParam("src_region", this.agentcontroller.getRegion());
-								sme.setParam("src_agent", this.agentcontroller.getAgent());
-								String[] regionAgent = agentPath.split("_");
-								sme.setParam("dst_region",regionAgent[0]);
-								sme.setParam("dst_agent",regionAgent[1]);
-								agentcontroller.sendMsgEvent(sme);
-								*/
-
-								logger.trace("Waiting on Broker : " + agentPath + " remote_ip: " + agentIP + " count:" + count);
-								logger.trace("Status : " + ba.brokerStatus.toString() + " URI : " + ba.URI + " Address : " + ba.activeAddress);
-								logger.trace("isReachable : " + controllerEngine.isReachableAgent(agentPath));
+								logger.trace("Waiting on Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip + " count:" + count);
+								logger.trace("Status : " + ba.getBrokerStatus().toString() + " URI : " + ba.URI + " Address : " + ba.getActiveAddress());
+								logger.trace("isReachable : " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
 								Thread.sleep(1000);
                                 count++;
-                            //}
+
 						}
 						else {
-                            logger.trace("Not Adding Broker : " + agentPath + " remote_ip: " + agentIP);
+                            logger.info("Not Adding Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip);
                         }
+					} else {
+						logger.error("LOCAL DISCOVERY FOR BROKER");
 					}
 			  	}
 			}
 			catch (Exception ex) {
 				logger.error("Run {}", ex.getMessage());
+				StringWriter sw = new StringWriter();
+				PrintWriter pw = new PrintWriter(sw);
+				ex.printStackTrace(pw);
+				logger.error(sw.toString());
 			}
 		}
 		timer.cancel();
@@ -154,23 +135,17 @@ public class ActiveBrokerManager implements Runnable  {
             this.logger = logger;
         }
 		public void run() {
+
 		    for (Entry<String, BrokeredAgent> entry : controllerEngine.getBrokeredAgents().entrySet()) {
 				//logger.trace(entry.getKey() + "/" + entry.getValue());
 				BrokeredAgent ba = entry.getValue();
-				if(ba.brokerStatus == BrokerStatusType.FAILED) {
-					//logger.trace("stopping agentPath: " + ba.agentPath);
-		    		ba.setStop();
-		    		logger.info("Cleared agentPath: " + ba.agentPath);
-
-		    		if((controllerEngine.cstate.getGlobalControllerPath()) != null && (controllerEngine.cstate.getGlobalControllerPath().equals(ba.agentPath))) {
-                        logger.info("Clearing Global Controller Path " +ba.agentPath);
-                        //agentcontroller.setGlobalController(null,null);
-						controllerEngine.cstate.setRegionalGlobalFailed("BrokerWatchDog: BrokerStatusType.FAILED : BrokerPath: " +ba.agentPath);
-                    }
-
-                    controllerEngine.getBrokeredAgents().remove(entry.getKey());//remove agent
+				if(ba.getBrokerStatus() == BrokerStatusType.FAILED) {
+					if (!controllerEngine.cstate.getGlobalControllerPath().equals(ba.getPath())) {
+						logger.info("Controller Path Lost: " + ba.getPath() + " removing path");
+						controllerEngine.getBrokeredAgents().remove(entry.getKey());//remove agent
+					}
 				}
-                logger.trace("Brokered Agents: " + ba.agentPath);
+                logger.trace("Brokered Agents: " + ba.getPath());
 			}
 		}
 	}

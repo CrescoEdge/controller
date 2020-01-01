@@ -48,12 +48,8 @@ public class DataPlaneLogger {
                 loggerEnabledMap.put(sessionId,isEnabledSet);
             } else {
                 //remove if needed
-                if(loggerEnabledMap.containsKey(sessionId)) {
-                    loggerEnabledMap.remove(sessionId);
-                }
-                if(loggerMap.containsKey(sessionId)) {
-                    loggerMap.remove(sessionId);
-                }
+                loggerEnabledMap.remove(sessionId);
+                loggerMap.remove(sessionId);
             }
         }
     }

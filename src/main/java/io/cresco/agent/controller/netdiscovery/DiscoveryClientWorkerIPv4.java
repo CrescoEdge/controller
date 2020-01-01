@@ -5,7 +5,6 @@ import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -24,39 +23,37 @@ class DiscoveryClientWorkerIPv4 {
     private String broadCastNetwork;
     private DiscoveryType disType;
     private boolean timerActive = false;
-    private List<MsgEvent> discoveredList;
+    private List<DiscoveryNode> discoveredList;
     private DiscoveryCrypto discoveryCrypto;
-    private int discoveryPort;
-
+    private int broadcast_rec_port;
+    private DiscoveryProcessor discoveryProcessor;
     private AtomicBoolean lockPacket = new AtomicBoolean();
 
     DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String broadCastNetwork) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientWorkerIPv4.class.getName(),CLogger.Level.Info);
-        gson = new Gson();
+        this.gson = new Gson();
         this.discoveryTimeout = discoveryTimeout;
         this.broadCastNetwork = broadCastNetwork;
         this.disType = disType;
-        discoveryCrypto = new DiscoveryCrypto(controllerEngine);
-        this.discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
+        this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
+        this.broadcast_rec_port = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
+        this.discoveryProcessor = new DiscoveryProcessor(controllerEngine);
     }
 
     DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String broadCastNetwork, int discoveryPort) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientWorkerIPv4.class.getName(),CLogger.Level.Info);
-
-
-        gson = new Gson();
+        this.gson = new Gson();
         this.discoveryTimeout = discoveryTimeout;
         this.broadCastNetwork = broadCastNetwork;
         this.disType = disType;
-        discoveryCrypto = new DiscoveryCrypto(controllerEngine);
-        this.discoveryPort = discoveryPort;
+        this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
+        this.broadcast_rec_port = discoveryPort;
+
     }
-
-
 
     private class StopListenerTask extends TimerTask {
         public void run() {
@@ -78,28 +75,39 @@ class DiscoveryClientWorkerIPv4 {
             String json = new String(packet.getData()).trim();
             try {
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
+                DiscoveryNode discoveryNode = null;
                 if (me != null) {
 
-                    me.setParam("broadcast_latency", String.valueOf(System.currentTimeMillis()-Long.parseLong(me.getParam("broadcast_ts"))));
+                    if(me.paramsContains("discovery_node")) {
+                        discoveryNode = gson.fromJson(me.getCompressedParam("discovery_node"), DiscoveryNode.class);
 
-                    String remoteAddress = packet.getAddress().getHostAddress();
-                    if (remoteAddress.contains("%")) {
-                        String[] remoteScope = remoteAddress.split("%");
-                        remoteAddress = remoteScope[0];
+
+                        if(discoveryNode != null) {
+                            logger.info("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
+
+                            String remoteAddress = packet.getAddress().getHostAddress();
+                            if (remoteAddress.contains("%")) {
+                                String[] remoteScope = remoteAddress.split("%");
+                                remoteAddress = remoteScope[0];
+                            }
+
+                            if(discoveryNode.discovered_ip.equals(remoteAddress)) {
+
+                                if(discoveryProcessor.isValidatedAuthenication(discoveryNode)) {
+                                    discoveredList.add(discoveryNode);
+                                }
+
+                            } else {
+                                logger.error("discoveryNode.discovered_ip: " + discoveryNode.discovered_ip + " != remoteAddress: " + remoteAddress);
+                            }
+                        } else {
+                            logger.error("discoveryNode == null");
+                        }
+
+                    } else {
+                        logger.error("NO DISCOVERY NODE");
                     }
-                    logger.trace("Processing packet for {} {}_{}", remoteAddress, me.getParam("src_region"), me.getParam("src_agent"));
-                    me.setParam("src_ip", me.getParam("dst_ip"));
-                    me.setParam("src_port", me.getParam("dst_port"));
-                    me.setParam("dst_ip", remoteAddress);
-                    me.setParam("dst_port", String.valueOf(packet.getPort()));
-                    me.setParam("dst_region", me.getParam("src_region"));
-                    me.setParam("dst_agent", me.getParam("src_agent"));
-                    me.setParam("src_region", plugin.getRegion());
-                    me.setParam("src_agent", plugin.getAgent());
-                    if (disType == DiscoveryType.AGENT || disType == DiscoveryType.REGION || disType == DiscoveryType.GLOBAL) {
-                        me.setParam("validated_authenication", ValidatedAuthenication(me));
-                    }
-                    discoveredList.add(me);
+
                 }
             } catch (Exception ex) {
                 logger.error("DiscoveryClientWorker in loop {}", ex.getMessage());
@@ -107,7 +115,7 @@ class DiscoveryClientWorkerIPv4 {
         }
     }
 
-    List<MsgEvent> discover() {
+    public List<DiscoveryNode> discover() {
         // Find the server using UDP broadcast
         logger.debug(disType.toString() + " Discovery (IPv4) started ");
         try {
@@ -147,51 +155,35 @@ class DiscoveryClientWorkerIPv4 {
                         timerActive = true;
 
                         MsgEvent sme = new MsgEvent(MsgEvent.Type.DISCOVER, this.plugin.getRegion(), this.plugin.getAgent(), this.plugin.getPluginID(), "Discovery request.");
-                        sme.setParam("broadcast_ip", broadCastNetwork);
-                        sme.setParam("broadcast_interface", networkInterface.getDisplayName());
-                        sme.setParam("broadcast_ts", String.valueOf(System.currentTimeMillis()));
-                        sme.setParam("src_region", this.plugin.getRegion());
-                        sme.setParam("src_agent", this.plugin.getAgent());
 
+                        DiscoveryNode discoveryNode = discoveryProcessor.generateBroadCastDiscovery(disType,false);
 
-                        if (disType == DiscoveryType.AGENT || disType == DiscoveryType.REGION || disType == DiscoveryType.GLOBAL) {
-                            logger.trace("Discovery Type = {}", disType.name());
-                            sme.setParam("discovery_type", disType.name());
-                            //set crypto message for discovery
-                            sme.setParam("discovery_validator",generateValidateMessage(sme));
-                        } else if(disType == DiscoveryType.NETWORK) {
-                            sme.setParam("discovery_type", disType.name());
-                            logger.trace("Discovery Type = {}", disType.name());
-                        } else {
-                            logger.trace("Discovery type unknown");
-                            sme = null;
-                        }
+                        if(discoveryNode != null) {
 
-
-                        if (sme != null) {
+                            sme.setCompressedParam("discovery_node", gson.toJson(discoveryNode));
                             logger.trace("Building sendPacket for {}", inAddr.toString());
                             String sendJson = gson.toJson(sme);
                             byte[] sendData = sendJson.getBytes();
-                            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, Inet4Address.getByName(broadCastNetwork), discoveryPort);
+                            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, Inet4Address.getByName(broadCastNetwork), broadcast_rec_port);
                             synchronized (c) {
                                 c.send(sendPacket);
-                                logger.trace("Sent sendPacket via {}", inAddr.toString());
+                                logger.info("Sent sendPacket via {}", inAddr.toString());
                             }
                             while (!c.isClosed()) {
-                                logger.trace("Listening " +  inAddr.toString() + " Timeout: " + discoveryTimeout + " SysTime: " + System.currentTimeMillis());
+                                logger.info("Listening " + inAddr.toString() + " Timeout: " + discoveryTimeout + " SysTime: " + System.currentTimeMillis());
                                 try {
                                     byte[] recvBuf = new byte[15000];
                                     DatagramPacket receivePacket = new DatagramPacket(recvBuf, recvBuf.length);
                                     synchronized (c) {
                                         c.receive(receivePacket);
-                                        logger.trace("Received packet");
+                                        logger.info("Received packet");
                                         if (timerActive) {
                                             logger.trace("Restarting listening timer");
                                             timer.schedule(new StopListenerTask(), discoveryTimeout);
                                         }
                                     }
                                     synchronized (receivePacket) {
-                                            processIncoming(receivePacket);
+                                        processIncoming(receivePacket);
                                     }
                                 } catch (SocketException se) {
                                     // Eat the message, this is normal
@@ -199,7 +191,11 @@ class DiscoveryClientWorkerIPv4 {
                                     logger.error("discovery {}", e.getMessage());
                                 }
                             }
+
+                        } else {
+                            logger.error("discover() discoveryNode == null");
                         }
+
                     } catch (SocketException se) {
                         logger.error("getDiscoveryMap : SocketException {}", se.getMessage());
                     } catch (IOException ie) {
@@ -220,55 +216,4 @@ class DiscoveryClientWorkerIPv4 {
         return discoveredList;
     }
 
-    private String ValidatedAuthenication(MsgEvent rme) {
-        String decryptedString = null;
-        try {
-
-            String discoverySecret = null;
-            if (rme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
-            } else if (rme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
-            } else if (rme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
-            }
-            if(rme.getParam("validated_authenication") != null) {
-                decryptedString = discoveryCrypto.decrypt(rme.getParam("validated_authenication"), discoverySecret);
-            }
-            else {
-                logger.error("[validated_authenication] record not found!");
-                logger.error(rme.getParams().toString());
-            }
-
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
-
-        return decryptedString;
-    }
-
-    private String generateValidateMessage(MsgEvent sme) {
-        String encryptedString = null;
-        try {
-
-            String discoverySecret = null;
-            if (sme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
-            } else if (sme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
-            } else if (sme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
-            }
-
-            String verifyMessage = "DISCOVERY_MESSAGE_VERIFIED";
-            encryptedString = discoveryCrypto.encrypt(verifyMessage,discoverySecret);
-
-        }
-        catch(Exception ex) {
-            logger.error(ex.getMessage());
-        }
-
-        return encryptedString;
-    }
 }

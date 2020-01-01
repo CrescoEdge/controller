@@ -27,7 +27,7 @@ public class Config {
             final Object key = it.next();
             final String value = sObj.getString(key.toString());
             //result.put(key.toString(),value);
-            sb.append(key.toString() + "=" + value + ",");
+            sb.append(key.toString()).append("=").append(value).append(",");
 
         }
         return sb.toString().substring(0, sb.length() - 1);

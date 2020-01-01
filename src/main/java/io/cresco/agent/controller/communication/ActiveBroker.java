@@ -29,7 +29,7 @@ public class ActiveBroker {
 	private PluginBuilder plugin;
 	private SslBrokerService broker;
 
-	public ActiveBroker(ControllerEngine controllerEngine, String brokerName, String brokerUserNameAgent, String brokerPasswordAgent) {
+	public ActiveBroker(ControllerEngine controllerEngine, String brokerName) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveBroker.class.getName(),CLogger.Level.Info);
@@ -37,9 +37,9 @@ public class ActiveBroker {
 
 		try {
 
-			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
+			int brokerPort = getBrokerPort();
 
-			if(portAvailable(discoveryPort)) {
+			if(portAvailable(brokerPort)) {
 
 
 				/*
@@ -169,11 +169,11 @@ public class ActiveBroker {
 
 				if (plugin.isIPv6())
 					//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://[::]:"+ discoveryPort + "?daemon=true"));
+					connector.setUri(new URI("nio+ssl://[::]:"+ brokerPort + "?daemon=true"));
 
 				else
 					//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ discoveryPort + "?daemon=true"));
+					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ brokerPort + "?daemon=true"));
 
 
                 /*
@@ -197,7 +197,7 @@ public class ActiveBroker {
 
 			} else {
 				//In the future we might need to figure out some way to run more than one agent per instance if needed
-				logger.error("Constructor : portAvailable("+ discoveryPort +") == false");
+				logger.error("Constructor : portAvailable("+ brokerPort +") == false");
 				logger.error("Shutting down!");
 				System.exit(0);
 			}
@@ -207,6 +207,9 @@ public class ActiveBroker {
 		}
 	}
 
+	public int getBrokerPort() {
+		return plugin.getConfig().getIntegerParam("broker_port",32010);
+	}
 
 	public ActiveMQDestination[] getBrokerDestinations() {
 		ActiveMQDestination[] destinations = null;
@@ -329,7 +332,7 @@ public class ActiveBroker {
 
 	}
 
-	public NetworkConnector AddNetworkConnector(String URI, String brokerUserName, String brokerPassword) {
+	public NetworkConnector AddNetworkConnector(String URI) {
 		NetworkConnector bridge = null;
 		try {
 
@@ -339,15 +342,15 @@ public class ActiveBroker {
 
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 			logger.info("Added Network Connector to Broker URI: static:nio+ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
-			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort + " brokerUserName: " + brokerUserName + " brokerPassword: " + brokerPassword);
+			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort);
 			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
 			bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false"));
 
 			//bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
 
 
-			bridge.setUserName(brokerUserName);
-            bridge.setPassword(brokerPassword);
+			//bridge.setUserName(brokerUserName);
+            //bridge.setPassword(brokerPassword);
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
 			updateTrustManager();

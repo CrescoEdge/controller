@@ -58,6 +58,7 @@ public class ActiveClient {
             if(faultTriggerURI != null) {
                 synchronized (lockConnectionMap) {
                     if(connectionMap.containsKey(faultTriggerURI)) {
+                        logger.trace("URI: " + faultTriggerURI + " Status Started:" + connectionMap.get(faultTriggerURI).isStarted());
                         isActive = connectionMap.get(faultTriggerURI).isStarted();
                     }
                 }
@@ -78,10 +79,17 @@ public class ActiveClient {
             }
 
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
+            logger.error("createSession: " + ex.getMessage());
+            logger.error(getStringFromError(ex));
         }
 
         return activeMQSession;
+    }
+
+    public String getStringFromError(Exception ex) {
+        StringWriter errors = new StringWriter();
+        ex.printStackTrace(new PrintWriter(errors));
+        return errors.toString();
     }
 
     private ActiveMQConnection getConnection(String URI) {
@@ -186,6 +194,7 @@ public class ActiveClient {
 
             this.agentConsumer = new AgentConsumer(controllerEngine, RXQueueName, URI);
             isInit = true;
+            logger.error("IN initActiveAgentConsumer setting URI:" + URI + " fault URI");
             setFaultTriggerURI(URI);
 
         } catch(Exception ex) {
@@ -247,18 +256,22 @@ public class ActiveClient {
 
     public void shutdown() {
 
+        logger.info("ActiveClient shutting down");
+
         if(this.agentProducer != null) {
-            logger.trace("Producer shutting down");
+            logger.info("Producer shutting down");
             this.agentProducer.shutdown();
             this.agentProducer = null;
-            logger.info("Producer shutting down");
+
+            logger.info("Consumer shutting down");
+            this.agentConsumer.shutdown();
+            this.agentConsumer = null;
         }
 
         try {
             synchronized (lockConnectionMap) {
                 for (Map.Entry<String, ActiveMQConnection> entry : connectionMap.entrySet()) {
                     ActiveMQConnection value = entry.getValue();
-
                     value.close();
                 }
                 connectionMap.clear();

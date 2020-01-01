@@ -68,7 +68,7 @@ public class DBManager implements Runnable  {
 		logger.debug("Broker Manager has shutdown");
 	}
 
-	class DBWatchDog extends TimerTask {
+	static class DBWatchDog extends TimerTask {
 		//private final Logger logger = LoggerFactory.getLogger(BrokerWatchDog.class);
         private CLogger logger;
 

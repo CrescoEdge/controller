@@ -575,8 +575,7 @@ public class DBInterfaceImpl implements DBInterface {
                                     nodeList.add(node);
                                     pluginRepoMap.put(name, nodeList);
                                 } else {
-                                    List<pNode> nodeList = new ArrayList<>();
-                                    nodeList.addAll(pluginRepoMap.get(name));
+                                    List<pNode> nodeList = new ArrayList<>(pluginRepoMap.get(name));
 
                                     for (Iterator<pNode> iterator = pluginRepoMap.get(name).iterator(); iterator.hasNext(); ) {
                                         pNode node = iterator.next();
@@ -933,8 +932,7 @@ public class DBInterfaceImpl implements DBInterface {
                 gpay.status_code = pipeStatMap.get("status_code");
                 gpay.status_desc = pipeStatMap.get("status_desc");
 
-                List<gNode> nodes = new ArrayList<>();
-                nodes.addAll(gpay.nodes);
+                List<gNode> nodes = new ArrayList<>(gpay.nodes);
                 gpay.nodes.clear();
 
                 for(gNode node : nodes) {

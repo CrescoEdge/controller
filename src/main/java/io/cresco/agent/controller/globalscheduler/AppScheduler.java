@@ -3,7 +3,6 @@ package io.cresco.agent.controller.globalscheduler;
 
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.app.gNode;
 import io.cresco.library.app.gPayload;
@@ -25,16 +24,15 @@ public class AppScheduler implements IncomingApp {
     private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
 	private CLogger logger;
-    private GlobalHealthWatcher ghw;
+
     private ExecutorService addPipelineExecutor;
     private Gson gson;
 
-    public AppScheduler(ControllerEngine controllerEngine, GlobalHealthWatcher ghw) {
+    public AppScheduler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(AppScheduler.class.getName(),CLogger.Level.Info);
 
-        this.ghw = ghw;
         //this should be a configurable parameter
         //addPipelineExecutor = Executors.newFixedThreadPool(100);
         addPipelineExecutor = Executors.newCachedThreadPool();

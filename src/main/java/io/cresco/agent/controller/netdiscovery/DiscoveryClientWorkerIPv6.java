@@ -34,7 +34,7 @@ public class DiscoveryClientWorkerIPv6 {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientWorkerIPv6.class.getName(),CLogger.Level.Info);
-        gson = new Gson();
+        this.gson = new Gson();
         this.discoveryTimeout = discoveryTimeout;
         this.multiCastNetwork = multiCastNetwork;
         this.disType = disType;

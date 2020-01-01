@@ -7,9 +7,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.jms.MapMessage;
-import javax.jms.Message;
-import javax.jms.MessageListener;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -30,7 +27,6 @@ public class RegionHealthWatcher {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(RegionHealthWatcher.class.getName(),CLogger.Level.Info);
-
         this.regionalExecutor = new RegionalExecutor(controllerEngine);
 
         logger.debug("RegionHealthWatcher Initializing");
@@ -43,35 +39,9 @@ public class RegionHealthWatcher {
 
         long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3l);
         regionalUpdateTimer = new Timer();
-        regionalUpdateTimer.scheduleAtFixedRate(new RegionHealthWatcher.RegionalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
+        regionalUpdateTimer.scheduleAtFixedRate(new RegionalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
+
         logger.info("Initialized");
-
-
-        MessageListener ml = new MessageListener() {
-            public void onMessage(Message msg) {
-                try {
-
-                    if (msg instanceof MapMessage) {
-
-                        MapMessage mapMessage = (MapMessage)msg;
-                        logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
-
-                        String pluginconfigs = mapMessage.getString("pluginconfigs");
-                        logger.error(pluginconfigs);
-
-
-                    }
-                } catch(Exception ex) {
-
-                    ex.printStackTrace();
-                }
-            }
-        };
-
-        //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
-        //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
-
-
     }
 
     public void shutdown() {
@@ -126,7 +96,7 @@ public class RegionHealthWatcher {
                 }
 
 
-                if ((retMsg != null) && (retMsg.getParams().keySet().contains("is_rpc"))) {
+                if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
                     retMsg.setReturn();
 
                     //pick up RPC from local agent
@@ -153,12 +123,19 @@ public class RegionHealthWatcher {
             boolean isHealthy = true;
             try {
 
+                logger.trace("CommunicationHealthWatcherTask() Update Own Controller");
+
+                MsgEvent tick = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.WATCHDOG);
+                //tick.setParam("region_name",controllerEngine.cstate.getRegionalRegion());
+                //tick.setParam("watchdog_ts", String.valueOf(System.currentTimeMillis()));
+                //tick.setParam("watchdogtimer", String.valueOf(wdTimer));
+                tick.setParam("region_watchdog_update",controllerEngine.cstate.getRegion());
+                tick.setParam("mode","REGION");
+                controllerEngine.getGDB().nodeUpdate(tick);
+
                 if(!communicationsHealthTimerActive.get()) {
                     communicationsHealthTimerActive.set(true);
-                    if (!controllerEngine.getActiveClient().isFaultURIActive()) {
-                        isHealthy = false;
-                        logger.info("Agent Consumer shutdown detected");
-                    }
+
 
                     if (controllerEngine.cstate.isRegionalController()) {
                         //disabled to allow discovery to be started after regional init
@@ -181,9 +158,8 @@ public class RegionHealthWatcher {
 
                     if (!isHealthy) {
                         logger.info("System has become unhealthy, rebooting services");
-                        controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
-                        controllerEngine.setRestartOnShutdown(true);
-                        controllerEngine.closeCommunications();
+                        //controllerEngine.cstate.setRegionFailed("Regional CommunicationHealthWatcherTask Unhealthy Region");
+                        controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher : !isHealthy");
                     }
                     communicationsHealthTimerActive.set(false);
                 }
@@ -198,8 +174,7 @@ public class RegionHealthWatcher {
         }
     }
 
-
-    class RegionalNodeStatusWatchDog extends TimerTask {
+    static class RegionalNodeStatusWatchDog extends TimerTask {
         private ControllerEngine controllerEngine;
         private CLogger logger;
         private PluginBuilder plugin;
@@ -225,21 +200,32 @@ public class RegionHealthWatcher {
                         logger.trace("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
 
                         if (entry.getValue() == NodeStatusType.PENDINGSTALE) { //will include more items once nodes update correctly
-                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            logger.warn("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
                             controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 40, "set STALE by regional controller health watcher");
 
                         } else if (entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
-                            logger.error("NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString());
+                            logger.error("Agent NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString() + " SETTING LOST");
                             controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 50, "set LOST by regional controller health watcher");
-
+                            setPluginsLost(entry.getKey());
+                            //set plugins lost
                         } else if (entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
-
+                            logger.error("NODE IS IN ERROR");
                         }
 
                     }
                 }
             }
         }
+
+        private void setPluginsLost(String agentName) {
+            Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(plugin.getRegion(), agentName, null);
+
+            for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {
+                logger.error("Agent NodeID : " + agentName + " Plugin NodeID : " + entry.getKey() + " SETTING LOST");
+                controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), agentName, entry.getKey(), 50, "set LOST by regional controller health watcher");
+            }
+        }
+
     }
 
 }

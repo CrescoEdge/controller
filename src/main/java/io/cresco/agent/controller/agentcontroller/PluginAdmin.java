@@ -308,7 +308,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return exists;
     }
@@ -327,7 +327,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return exists;
     }
@@ -368,8 +368,7 @@ public class PluginAdmin {
 
                                 if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
 
-                                    returnMap = new HashMap<>();
-                                    returnMap.putAll(map);
+                                    returnMap = new HashMap<>(map);
                                     returnMap.put("jarstatus", "bundle");
                                     returnMap.put("bundle_id", eBundleId);
                                 }
@@ -380,8 +379,7 @@ public class PluginAdmin {
 
                             if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
 
-                                returnMap = new HashMap<>();
-                                returnMap.putAll(map);
+                                returnMap = new HashMap<>(map);
                                 returnMap.put("jarstatus", "bundle");
                                 returnMap.put("bundle_id", eBundleId);
                             }
@@ -389,8 +387,7 @@ public class PluginAdmin {
                     } else {
                         if (eName.equals(requestedName)) {
 
-                            returnMap = new HashMap<>();
-                            returnMap.putAll(map);
+                            returnMap = new HashMap<>(map);
                             returnMap.put("version", eVersion);
                             returnMap.put("jarstatus", "bundle");
                             returnMap.put("bundle_id", eBundleId);
@@ -471,14 +468,12 @@ public class PluginAdmin {
                                 String requestedMD5 = (String) map.get("md5");
 
                                 if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) && (eMD5.equals(requestedMD5)))) {
-                                    returnMap = new HashMap<>();
-                                    returnMap.putAll(map);
+                                    returnMap = new HashMap<>(map);
                                     returnMap.put("jarstatus", "embedded");
                                 }
                             } else {
                                 if (eName.equals(requestedName)) {
-                                    returnMap = new HashMap<>();
-                                    returnMap.putAll(map);
+                                    returnMap = new HashMap<>(map);
                                     returnMap.put("version", eVersion);
                                     returnMap.put("md5", eMD5);
                                     returnMap.put("jarstatus", "embedded");
@@ -497,7 +492,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return returnMap;
     }
@@ -530,14 +525,12 @@ public class PluginAdmin {
                             String requestedVersion = (String) map.get("version");
                             String requestedMD5 = (String) map.get("md5");
                             if ((aName.equals(requestedName) && (aVersion.equals(requestedVersion)) && (aMD5.equals(requestedMD5)))) {
-                                returnMap = new HashMap<>();
-                                returnMap.putAll(map);
+                                returnMap = new HashMap<>(map);
                                 returnMap.put("jarstatus", "absolutepath");
                             }
                         } else {
                             if (aName.equals(requestedName)) {
-                                returnMap = new HashMap<>();
-                                returnMap.putAll(map);
+                                returnMap = new HashMap<>(map);
                                 returnMap.put("version", aVersion);
                                 returnMap.put("md5", aMD5);
                                 returnMap.put("jarstatus", "absolutepath");
@@ -558,7 +551,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return returnMap;
     }
@@ -583,16 +576,14 @@ public class PluginAdmin {
                             String requestedMD5 = (String) map.get("md5");
 
                             if((lName.equals(requestedName) && (lVersion.equals(requestedVersion)) && (lMD5.equals(requestedMD5)))) {
-                                returnMap = new HashMap<>();
-                                returnMap.putAll(map);
+                                returnMap = new HashMap<>(map);
                                 returnMap.put("jarfile",params.get("jarfile"));
                                 returnMap.put("jarstatus","localcache");
                             }
                         } else {
 
                             if(lName.equals(requestedName)) {
-                                returnMap = new HashMap<>();
-                                returnMap.putAll(map);
+                                returnMap = new HashMap<>(map);
                                 returnMap.put("jarfile",params.get("jarfile"));
                                 returnMap.put("version",lVersion);
                                 returnMap.put("md5",lMD5);
@@ -610,7 +601,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
         return returnMap;
@@ -642,7 +633,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
         return isFound;
@@ -704,7 +695,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return validatedMap;
     }
@@ -742,7 +733,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return validatedMap;
     }
@@ -815,7 +806,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return validatedMap;
     }
@@ -896,7 +887,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return bundleID;
     }
@@ -1017,7 +1008,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return  isStarted;
     }
@@ -1032,7 +1023,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return  isStopped;
     }
@@ -1047,7 +1038,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return  isRemoved;
     }
@@ -1350,7 +1341,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
             }
         } else {
             logger.error("PLUGIN LIMIT REACHED! PLUGIN COUNT= " + pluginCount());
@@ -1369,7 +1360,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
     }
@@ -1421,7 +1412,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
         return isAdded;
@@ -1475,7 +1466,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
                             }
 
                             synchronized (lockPlugin) {
@@ -1507,7 +1498,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return isStarted;
     }
@@ -1528,7 +1519,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
 
@@ -1558,7 +1549,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return statusMap;
     }
@@ -1690,7 +1681,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return isStarted;
     }
@@ -1714,7 +1705,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
         if(installedBundle == null) {
@@ -1813,7 +1804,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
 
         return jarFilePath;
@@ -1838,7 +1829,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return repoDirPath;
     }
@@ -1915,7 +1906,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         //return isFound;
         return jarPath;
@@ -1966,7 +1957,7 @@ public class PluginAdmin {
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
+            logger.error(sStackTrace);
         }
         return pNode;
     }
