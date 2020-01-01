@@ -923,7 +923,12 @@ public class ControllerSMHandler {
                     discoveryNodeCanidate = tmpDiscoveryNode;
                 }
             }
-            logger.info("Found canidate: " + discoveryNodeCanidate.discovered_ip);
+            if(discoveryNodeCanidate != null) {
+                logger.info("Found canidate: " + discoveryNodeCanidate.discovered_ip);
+            } else {
+                logger.info("No canidate found ");
+            }
+
             //see if we can exchange keys with the canidate host
             discoveryNode = exchangeKeyWithBroker(discoveryNodeCanidate.discovery_type, discoveryNodeCanidate.discovered_ip, discoveryNodeCanidate.discovered_port);
             if(discoveryNode != null) {

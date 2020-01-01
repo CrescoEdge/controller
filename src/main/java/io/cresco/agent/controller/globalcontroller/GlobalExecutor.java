@@ -545,7 +545,11 @@ public class GlobalExecutor implements Executor {
                         pluginListBuilder.append(getPluginName(pluginPath)).append("=").append(getPluginVersion(pluginPath)).append(",");
                     }
                 }
-                String pluginList = pluginListBuilder.toString();
+                String pluginList = null;
+
+                if(pluginListBuilder != null) {
+                    pluginList = pluginListBuilder.toString();
+                }
 
                 if(pluginList != null) {
                     pluginList = pluginList.substring(0, pluginList.length() - 1);

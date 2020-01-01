@@ -292,7 +292,9 @@ public class AgentServiceImpl implements AgentService {
         if(controllerEngine != null) {
 
             if(!controllerEngine.stop()) {
-                logger.error("deactivate() ControllerEngine stop() was dirty!");
+                if(logger != null) {
+                    logger.error("deactivate() ControllerEngine stop() was dirty!");
+                }
             }
 
         }
