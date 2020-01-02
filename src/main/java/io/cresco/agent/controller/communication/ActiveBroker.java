@@ -12,12 +12,15 @@ import org.apache.activemq.broker.util.LoggingBrokerPlugin;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.NetworkConnector;
 import org.apache.activemq.util.ServiceStopper;
+import org.apache.commons.io.FileUtils;
 
 import javax.net.ssl.SSLContext;
+import java.io.File;
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.file.Paths;
 import java.security.SecureRandom;
 
 public class ActiveBroker {
@@ -59,6 +62,8 @@ public class ActiveBroker {
 				PolicyEntry entry = new PolicyEntry();
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
+
+
 		        //entry.setOptimizedDispatch(true);
 
 				//ManagementContext mc = new ManagementContext();
@@ -114,6 +119,8 @@ public class ActiveBroker {
 
 				//String agentJar = Paths.get(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath()).toFile().getParent();
 				//String dataDir = agentJar.substring(0,agentJar.lastIndexOf("/")) + "/cresco-data/";
+
+				FileUtils.deleteDirectory(Paths.get("cresco-data/activemq-data").toFile());
 
 				System.setProperty("org.apache.activemq.default.directory.prefix", "cresco-data/");
 

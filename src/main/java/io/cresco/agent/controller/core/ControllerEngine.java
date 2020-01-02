@@ -233,12 +233,13 @@ public class ControllerEngine {
         if (this.cstate.isRegionalController()) {
             try {
                 ActiveMQDestination[] er = this.broker.getBrokerDestinations();
+
                 for (ActiveMQDestination des : er) {
 
                     if (des.isQueue()) {
                         String testPath = des.getPhysicalName();
 
-                        logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        logger.info("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
                         if (testPath.equals(remoteAgentPath)) {
                             isReachableAgent = true;
                         }
@@ -253,7 +254,7 @@ public class ControllerEngine {
 
                     if (des.isQueue()) {
                         String testPath = des.getPhysicalName();
-                        logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        logger.info("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
                         if (testPath.equals(remoteAgentPath)) {
                             isReachableAgent = true;
                         }

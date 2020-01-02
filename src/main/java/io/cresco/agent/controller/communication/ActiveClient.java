@@ -41,6 +41,7 @@ public class ActiveClient {
         this.logger = plugin.getLogger(ActiveClient.class.getName(), CLogger.Level.Info);
         connectionFactoryMap = Collections.synchronizedMap(new HashMap<>());
         connectionMap = Collections.synchronizedMap(new HashMap<>());
+
     }
 
 

@@ -608,6 +608,10 @@ public class ControllerSMHandler {
                     timeout++;
                     Thread.sleep(1000);
                 }
+            } else {
+                logger.error("HOW IS THIS THING DISCOVERABLE? ");
+                logger.error("getDiscoveredPath() " + discoveryNode.getDiscoveredPath());
+                logger.error("is Reachable: " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
             }
 
             if(controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
