@@ -220,6 +220,7 @@ public class AgentServiceImpl implements AgentService {
         //agent state
         agentState = new AgentState(cstate);
 
+
         //create admin
         pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, dataPlaneLogger);
 
