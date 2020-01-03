@@ -3,9 +3,13 @@ package io.cresco.agent.core;
 import com.google.gson.Gson;
 import io.cresco.agent.db.DBEngine;
 import io.cresco.library.agent.ControllerMode;
+import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
+import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageListener;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Map;
@@ -16,6 +20,9 @@ public class ControllerStatePersistance {
     private CLogger logger;
     private DBEngine dbe;
     private Gson gson;
+
+    private String regionalListener = null;
+    private String globalListener = null;
 
     public ControllerStatePersistance(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
@@ -325,7 +332,7 @@ public class ControllerStatePersistance {
             //if(registerRegion(localRegion, globalRegion)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            //    regionalListener = registerRegionalListener();
+                regionalListener = registerRegionalListener();
                 returnState = true;
             //}
 
@@ -381,166 +388,6 @@ public class ControllerStatePersistance {
         return stateMap;
     }
 
-
-    /*
-    public boolean registerRegion(String localRegion, String globalRegion) {
-        boolean isRegistered = false;
-
-        try {
-
-            MsgEvent enableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
-            enableMsg.setParam("action", "region_enable");
-            enableMsg.setParam("req-seq", UUID.randomUUID().toString());
-            enableMsg.setParam("region_name", localRegion);
-            enableMsg.setParam("desc", "to-gc-region");
-            enableMsg.setParam("mode","REGION");
-
-            Map<String, String> exportMap = dbe.getDBExport(true, true, false, plugin.getRegion(), plugin.getAgent(), null);
-
-            enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
-            enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
-
-            MsgEvent re = plugin.sendRPC(enableMsg);
-
-            if (re != null) {
-
-                if (re.paramsContains("is_registered")) {
-
-                    isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
-
-                }
-            }
-
-            if(isRegistered) {
-                logger.info("Region: " + localRegion + " registered with Global: " + globalRegion);
-            } else {
-                logger.error("Region: " + localRegion + " failed to register with Global: " + globalRegion + "!");
-            }
-
-        } catch (Exception ex) {
-            logger.error("Exception during Agent: " + localRegion + " registration with Region: " + globalRegion + "! " + ex.getMessage());
-        }
-
-        return isRegistered;
-    }
-
-    public boolean unregisterRegion(String localRegion, String globalRegion) {
-        boolean isRegistered = false;
-
-        try {
-
-            MsgEvent disableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
-            disableMsg.setParam("unregister_region_id",plugin.getRegion());
-            disableMsg.setParam("desc","to-gc-region");
-            disableMsg.setParam("action", "region_disable");
-
-
-
-            MsgEvent re = plugin.sendRPC(disableMsg,3000);
-
-            if (re != null) {
-
-                if (re.paramsContains("is_unregistered")) {
-
-                    isRegistered = Boolean.parseBoolean(re.getParam("is_unregistered"));
-
-                }
-            }
-
-            if (isRegistered) {
-                logger.info("Region: " + localRegion + " unregistered from Global: " + globalRegion);
-                isRegistered = true;
-            } else {
-                logger.error("Region: " + localRegion + " failed to unregister with Global: " + globalRegion + "!");
-            }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage());
-        }
-
-        return isRegistered;
-    }
-
-    public boolean registerAgent(String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
-        boolean isRegistered = false;
-
-            try {
-
-                MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
-                //MsgEvent enableMsg = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG,regionalRegion,regionalAgent);
-                enableMsg.setParam("action", "agent_enable");
-                enableMsg.setParam("req-seq", UUID.randomUUID().toString());
-                enableMsg.setParam("region_name", localRegion);
-                enableMsg.setParam("agent_name", localAgent);
-                enableMsg.setParam("desc", "to-rc-agent");
-                enableMsg.setParam("mode","AGENT");
-
-                Map<String, String> exportMap = dbe.getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
-
-                enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
-
-                logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
-
-                MsgEvent re = plugin.sendRPC(enableMsg);
-
-                if (re != null) {
-
-                    if (re.paramsContains("is_registered")) {
-
-                        isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
-                        logger.debug("ISREG: " + isRegistered);
-
-                    } else {
-                        logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
-                        logger.error("[" + re.printHeader() + "]");
-                        logger.error("[" + re.getParams() + "]");
-                    }
-                } else {
-                    logger.error("registerAgent : RETURN = NULL");
-                }
-
-                if (isRegistered) {
-                    logger.info("Agent: " + localAgent + " registered with Region: " + localRegion);
-
-                } else {
-                    logger.error("Agent: " + localAgent + " failed to register with Region: " + localRegion + "!");
-                }
-
-            } catch (Exception ex) {
-                logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
-            }
-
-            return isRegistered;
-        }
-
-    public boolean unregisterAgent(String localRegion, String localAgent) {
-        boolean isRegistered = false;
-
-        try {
-
-            MsgEvent disableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
-            disableMsg.setParam("unregister_region_id",plugin.getRegion());
-            disableMsg.setParam("unregister_agent_id",plugin.getAgent());
-            disableMsg.setParam("desc","to-rc-agent");
-            disableMsg.setParam("action", "agent_disable");
-
-            MsgEvent re = plugin.sendRPC(disableMsg, 2000);
-
-            if (re != null) {
-                logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);
-                isRegistered = true;
-            } else {
-                logger.error("Agent: " + localAgent + " failed to unregister with Region: " + localRegion + "!");
-            }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
-        }
-
-        return isRegistered;
-    }
 
     public String registerRegionalListener() {
         String lid = null;
@@ -618,8 +465,6 @@ public class ControllerStatePersistance {
         return lid;
     }
 
-
-    */
 
 }
 
