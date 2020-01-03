@@ -30,7 +30,6 @@ public class DBInterfaceImpl implements DBInterface {
 
     public BlockingQueue<String> importQueue;
 
-
     public DBInterfaceImpl(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
@@ -45,7 +44,6 @@ public class DBInterfaceImpl implements DBInterface {
         mapType = new TypeToken<Map<String, String>>(){}.getType();
 
     }
-
 
     public Map<String,String> getInodeMap(String inodeId) {
         return dbe.getInodeMap(inodeId);

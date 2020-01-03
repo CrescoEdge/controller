@@ -17,6 +17,7 @@ import io.cresco.agent.core.ControllerStateImp;
 import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.data.TopicType;
+import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.mina.statemachine.annotation.State;
@@ -33,6 +34,7 @@ import java.net.InetAddress;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ControllerSMHandler {
 
@@ -60,11 +62,13 @@ public class ControllerSMHandler {
     @State(ROOT) public static final String GLOBAL_FAILED = "GLOBAL_FAILED";
     @State(ROOT) public static final String GLOBAL_SHUTDOWN = "GLOBAL_SHUTDOWN";
 
+
     private ControllerEngine controllerEngine;
     private ControllerStateImp cstate;
     private PluginBuilder plugin;
     private CLogger logger;
     private StateContext stateContext;
+
     private Timer stateUpdateTimer;
     private Collection<org.apache.mina.statemachine.State> stateCollection = null;
 
@@ -77,6 +81,7 @@ public class ControllerSMHandler {
     private String localRegion = null;
     private String localAgent = null;
 
+    private AtomicBoolean forceShutdown = new AtomicBoolean(false);
 
     public ControllerSMHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -156,8 +161,18 @@ public class ControllerSMHandler {
             @Transition(on = "stop", in = AGENT_FAILED, next = EMPTY)
     })
     public void stopAgent() {
-        logger.error("STOP CALLED AGENT");
+
+        //don't try to unregister if agent has failed
+        if(cstate.getControllerState() != ControllerMode.AGENT_FAILED) {
+            unregisterAgent(cstate.getRegion(), cstate.getAgent());
+        }
+
+        if(!isAgentShutdown()) {
+            logger.error("!isAgentShutdown() Dirty Shutdown!");
+        }
+
         cstate.setAgentShutdown("Shutdown Called");
+
     }
 
     @Transitions({
@@ -182,6 +197,10 @@ public class ControllerSMHandler {
     public void stopGlobal() {
         logger.error("STOP CALLED GLOBAL");
         cstate.setGlobalShutdown("Shutdown Called");
+    }
+
+    public void shutdown() {
+        forceShutdown.set(true);
     }
 
 
@@ -219,15 +238,15 @@ public class ControllerSMHandler {
                     break;
 
                 case 2:
-                    logger.info("is_agent : 2");
+                    logger.info("is_agent : 2 : STATE : " + getCurrentState());
 
                     //setting certificate manager if does not exist
                     if(controllerEngine.getCertificateManager() == null) {
                         controllerEngine.setCertificateManager(new CertificateManager(controllerEngine));
                     }
-
                     //stay in loop until something happens
-                    while(cstate.getControllerState() != ControllerMode.AGENT) {
+                    while((cstate.getControllerState() != ControllerMode.AGENT) && (!forceShutdown.get())) {
+
                         //try and discover REGIONS that will accept agents
                         List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.AGENT);
                         DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
@@ -235,7 +254,7 @@ public class ControllerSMHandler {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT_INIT)); //1
                             cstate.setAgentInit(discoveryNode.discovered_region, cstate.getAgent(), "stateInit() : Case 2"); //2
                             //try and do a static connection, if successful set agent
-                            isAgent(discoveryNode);
+                            isStateInit = isAgent(discoveryNode);
                         } else {
                             logger.error("No agents discovered.");
                         }
@@ -244,30 +263,33 @@ public class ControllerSMHandler {
                     break;
 
                 case 6:
-                    logger.info("is_agent /w regional_controller_host : 6");
+                    logger.info("is_agent /w regional_controller_host : 6 : STATE : " + getCurrentState());
 
                     //setting certificate manager if does not exist
                     if(controllerEngine.getCertificateManager() == null) {
                         controllerEngine.setCertificateManager(new CertificateManager(controllerEngine));
                     }
 
-                    while(cstate.getControllerState() != ControllerMode.AGENT) {
-                        String regionalControllerIP = plugin.getConfig().getStringParam("regional_controller_host");
-                        //try and discover REGIONS that will accept agents
-                        List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.AGENT);
-                        //DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
+                    while((cstate.getControllerState() != ControllerMode.AGENT) && (!forceShutdown.get())) {
+
+                        //manually create the discoveryNode when host is specified
                         DiscoveryNode discoveryNode = null;
-                        for(DiscoveryNode tmpDiscoveryNode : discoveryNodeList) {
-                            if(tmpDiscoveryNode.discovered_ip.equals(regionalControllerIP)) {
-                                discoveryNode = tmpDiscoveryNode;
-                                break;
-                            }
+                        String discoveryIP = plugin.getConfig().getStringParam("regional_controller_host");
+                        int discoveryPort = plugin.getConfig().getIntegerParam("regional_controller_port",32005);
+                        try {
+                            TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
+                            List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), discoveryIP, discoveryPort, false);
+                            discoveryNode = certDiscovery.get(0);
+                        } catch (Exception ex) {
+                            logger.error("Discovery Failed: " + ex.getMessage());
+                            logger.debug(getStringFromError(ex));
                         }
+
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT_INIT)); //1
                             cstate.setAgentInit(discoveryNode.discovered_region, cstate.getAgent(), "stateInit() : Case 2"); //2
                             //try and do a static connection, if successful set agent
-                            isAgent(discoveryNode);
+                            isStateInit = isAgent(discoveryNode);
                         } else {
                             logger.error("No agents discovered.");
                         }
@@ -289,13 +311,13 @@ public class ControllerSMHandler {
                     }
                     //next try and connect to global controller
 
-                    while(cstate.getControllerState() != ControllerMode.REGION_GLOBAL) {
+                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
                         List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.GLOBAL);
                         DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
                             cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
-                            isRegionGlobal(discoveryNode);
+                            isStateInit = isRegionGlobal(discoveryNode);
                         } else {
                             logger.error("No agents discovered.");
                         }
@@ -321,14 +343,14 @@ public class ControllerSMHandler {
                     }
                     //next try and connect to global controller
 
-                    while(cstate.getControllerState() != ControllerMode.REGION_GLOBAL) {
+                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
 
                         DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), 32005);
 
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
                             cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
-                            isRegionGlobal(discoveryNode);
+                            isStateInit = isRegionGlobal(discoveryNode);
                         } else {
                             logger.error("No agents discovered.");
                         }
@@ -353,7 +375,7 @@ public class ControllerSMHandler {
                     while(cstate.getControllerState() != ControllerMode.GLOBAL) {
                         stateContext.setCurrentState(getStateByEnum(ControllerMode.GLOBAL_INIT)); //1
                         cstate.setGlobalInit("globalInit() : Case 32"); //2
-                        globalInit();
+                        isStateInit = globalInit();
                     }
 
                     //discovery engine
@@ -369,27 +391,34 @@ public class ControllerSMHandler {
                     logger.error("UNKNOWN CONFIG MODE " + configMode);
                     break;
             }
+
+            if(!forceShutdown.get()) {
             //enable this here to avoid nu,, perfControllerMonitor on global controller start
-            if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
-                //enable measurements
-                controllerEngine.setMeasurementEngine(new MeasurementEngine(controllerEngine));
-                logger.info("MeasurementEngine initialized");
+                if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
+                    //enable measurements
+                    controllerEngine.setMeasurementEngine(new MeasurementEngine(controllerEngine));
+                    logger.info("MeasurementEngine initialized");
 
-                //send measurement info out
-                controllerEngine.setPerfControllerMonitor(new PerfControllerMonitor(controllerEngine));
-                //don't start this yet, otherwise agents will be listening for all KPIs
-                //perfControllerMonitor.setKpiListener();
-                logger.info("Performance Controller monitoring initialized");
+                    //send measurement info out
+                    controllerEngine.setPerfControllerMonitor(new PerfControllerMonitor(controllerEngine));
+                    //don't start this yet, otherwise agents will be listening for all KPIs
+                    //perfControllerMonitor.setKpiListener();
+                    logger.info("Performance Controller monitoring initialized");
 
-                /*
-                PerfMonitorNet perfMonitorNet = new PerfMonitorNet(this);
-            perfMonitorNet.start();
-            logger.info("Performance Network monitoring initialized");
+                    /*
+                    PerfMonitorNet perfMonitorNet = new PerfMonitorNet(this);
+                    perfMonitorNet.start();
+                    logger.info("Performance Network monitoring initialized");
                  */
+                }
+
+
             }
 
         } catch (Exception ex) {
             logger.error("statInit() " + ex.getMessage());
+            logger.error(getStringFromError(ex));
+
         }
         return isStateInit;
     }
@@ -459,20 +488,24 @@ public class ControllerSMHandler {
                     cbrokerAddress = "[" + cbrokerAddress + "]";
                 }
 
-                logger.error("Broker Addres: " + cbrokerAddress);
+                logger.error("Broker Address: " + cbrokerAddress);
                 //this.brokerAddressAgent = cbrokerAddress;
 
                 logger.info("AgentPath=" + cstate.getAgentPath());
 
-
                 if(initIOChannels(cbrokerAddress)) {
+
                     logger.info("initIOChannels Success");
                     //agent name not set on core init
                     stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT)); //1
                     cstate.setAgentSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected."); //2
-                    controllerEngine.setAgentHealthWatcher(new AgentHealthWatcher(controllerEngine));
-                    isInit = true;
-                } else {
+                    if(registerAgent(discoveryNode.discovered_region,cstate.getAgent())) {
+                        controllerEngine.setAgentHealthWatcher(new AgentHealthWatcher(controllerEngine));
+                        isInit = true;
+                    }
+                }
+
+                if(!isInit) {
                     stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT_FAILED)); //1
                     cstate.setAgentFailed("Agent() Dynamic Regional Host: " + cbrokerAddress + " failed.");
                     logger.error("initIOChannels Failed");
@@ -506,6 +539,7 @@ public class ControllerSMHandler {
             } else {
                 logger.error("controllerEngine.getAgentHealthWatcher() == null");
             }
+
             if(controllerEngine.getActiveClient() != null) {
                 controllerEngine.getActiveClient().shutdown();
             } else {
@@ -648,6 +682,8 @@ public class ControllerSMHandler {
             controllerEngine.getRegionHealthWatcher().shutdown();
             controllerEngine.setRegionHealthWatcher(null);
             //controllerEngine.getActiveClient().shutdown();
+
+            unregisterRegion(cstate.getRegion(),cstate.getGlobalRegion());
 
             isShutdown = true;
         } catch (Exception ex) {
@@ -1141,6 +1177,7 @@ public class ControllerSMHandler {
         this.stateCollection = stateCollection;
     }
 
+
     private org.apache.mina.statemachine.State getStateByString(String stateId) {
         org.apache.mina.statemachine.State state = null;
 
@@ -1237,6 +1274,171 @@ public class ControllerSMHandler {
         }
     }
 
+    //persistence functions
+
+    private boolean registerRegion(String localRegion, String globalRegion) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent enableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            enableMsg.setParam("action", "region_enable");
+            enableMsg.setParam("req-seq", UUID.randomUUID().toString());
+            enableMsg.setParam("region_name", localRegion);
+            enableMsg.setParam("desc", "to-gc-region");
+            enableMsg.setParam("mode","REGION");
+            //todo fix export
+            /*
+            Map<String, String> exportMap = dbe.getDBExport(true, true, false, plugin.getRegion(), plugin.getAgent(), null);
+
+            enableMsg.setCompressedParam("regionconfigs",exportMap.get("regionconfigs"));
+            enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
+
+             */
+            MsgEvent re = plugin.sendRPC(enableMsg);
+
+            if (re != null) {
+
+                if (re.paramsContains("is_registered")) {
+
+                    isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
+
+                }
+            }
+
+            if(isRegistered) {
+                logger.info("Region: " + localRegion + " registered with Global: " + globalRegion);
+            } else {
+                logger.error("Region: " + localRegion + " failed to register with Global: " + globalRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            logger.error("Exception during Agent: " + localRegion + " registration with Region: " + globalRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
+    private boolean unregisterRegion(String localRegion, String globalRegion) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent disableMsg = plugin.getGlobalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            disableMsg.setParam("unregister_region_id",plugin.getRegion());
+            disableMsg.setParam("desc","to-gc-region");
+            disableMsg.setParam("action", "region_disable");
+
+
+
+            MsgEvent re = plugin.sendRPC(disableMsg,3000);
+
+            if (re != null) {
+
+                if (re.paramsContains("is_unregistered")) {
+
+                    isRegistered = Boolean.parseBoolean(re.getParam("is_unregistered"));
+
+                }
+            }
+
+            if (isRegistered) {
+                logger.info("Region: " + localRegion + " unregistered from Global: " + globalRegion);
+                isRegistered = true;
+            } else {
+                logger.error("Region: " + localRegion + " failed to unregister with Global: " + globalRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
+    private boolean registerAgent(String localRegion, String localAgent) {
+        boolean isRegistered = false;
+
+        try {
+
+            MsgEvent enableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+            //MsgEvent enableMsg = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG,regionalRegion,regionalAgent);
+            enableMsg.setParam("action", "agent_enable");
+            enableMsg.setParam("req-seq", UUID.randomUUID().toString());
+            enableMsg.setParam("region_name", localRegion);
+            enableMsg.setParam("agent_name", localAgent);
+            enableMsg.setParam("desc", "to-rc-agent");
+            enableMsg.setParam("mode","AGENT");
+
+            Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
+            enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
+
+            logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
+
+            MsgEvent re = plugin.sendRPC(enableMsg);
+
+            if (re != null) {
+
+                if (re.paramsContains("is_registered")) {
+
+                    isRegistered = Boolean.parseBoolean(re.getParam("is_registered"));
+                    logger.debug("ISREG: " + isRegistered);
+
+                } else {
+                    logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
+                    logger.error("[" + re.printHeader() + "]");
+                    logger.error("[" + re.getParams() + "]");
+                }
+            } else {
+                logger.error("registerAgent : RETURN = NULL");
+            }
+
+            if (isRegistered) {
+                logger.info("Agent: " + localAgent + " registered with Region: " + localRegion);
+
+            } else {
+                logger.error("Agent: " + localAgent + " failed to register with Region: " + localRegion + "!");
+            }
+
+        } catch (Exception ex) {
+            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
+
+    private boolean unregisterAgent(String localRegion, String localAgent) {
+        boolean isRegistered = false;
+
+        try {
+
+            if(controllerEngine.getActiveClient().isFaultURIActive()) {
+                MsgEvent disableMsg = plugin.getRegionalControllerMsgEvent(MsgEvent.Type.CONFIG);
+                disableMsg.setParam("unregister_region_id", plugin.getRegion());
+                disableMsg.setParam("unregister_agent_id", plugin.getAgent());
+                disableMsg.setParam("desc", "to-rc-agent");
+                disableMsg.setParam("action", "agent_disable");
+
+                MsgEvent re = plugin.sendRPC(disableMsg, 2000);
+
+                if (re != null) {
+                    logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);
+                    isRegistered = true;
+                } else {
+                    logger.error("Agent: " + localAgent + " failed to unregister with Region: " + localRegion + "!");
+                }
+            } else {
+                logger.error("Agent: " + localAgent + " failed to unregister with Region: " + localRegion + "! isFaultURIActive()");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
+        }
+
+        return isRegistered;
+    }
 
 }
 

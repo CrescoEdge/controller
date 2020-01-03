@@ -79,6 +79,8 @@ public class ControllerEngine {
     private Thread discoveryTCPEngineThread;
     private Thread DBManagerThread;
 
+    private ControllerSMHandler controllerSMHandler;
+
 
     public ControllerEngine(ControllerStateImp cstate, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
 
@@ -107,7 +109,7 @@ public class ControllerEngine {
         boolean isStarted = false;
         try {
 
-            ControllerSMHandler controllerSMHandler = new ControllerSMHandler(this);
+            controllerSMHandler = new ControllerSMHandler(this);
             StateMachine sm = StateMachineFactory.getInstance(Transition.class).create(ControllerSMHandler.EMPTY, controllerSMHandler);
             //provide the state list back to the handler
 
@@ -131,12 +133,15 @@ public class ControllerEngine {
 
             pluginAdmin.stopAllPlugins();
 
-            if(plugin != null) {
-                plugin.setIsActive(false);
+            if(controllerSM != null) {
+                //if in STANDALONE_INIT startup was interupted in the middle of a state transition, must force interupt
+                controllerSMHandler.shutdown();
+
+                controllerSM.stop();
             }
 
-            if(controllerSM != null) {
-                controllerSM.stop();
+            if(plugin != null) {
+                plugin.setIsActive(false);
             }
 
             if(gdb != null) {
@@ -239,7 +244,7 @@ public class ControllerEngine {
                     if (des.isQueue()) {
                         String testPath = des.getPhysicalName();
 
-                        logger.info("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
                         if (testPath.equals(remoteAgentPath)) {
                             isReachableAgent = true;
                         }
@@ -254,7 +259,7 @@ public class ControllerEngine {
 
                     if (des.isQueue()) {
                         String testPath = des.getPhysicalName();
-                        logger.info("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
+                        logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
                         if (testPath.equals(remoteAgentPath)) {
                             isReachableAgent = true;
                         }
@@ -458,8 +463,6 @@ public class ControllerEngine {
         logger.error(ex.getMessage());
         ex.printStackTrace();
         }
-
-
     }
 
     public void msgInThreaded(MsgEvent msg) {

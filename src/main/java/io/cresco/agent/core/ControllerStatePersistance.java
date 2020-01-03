@@ -3,18 +3,12 @@ package io.cresco.agent.core;
 import com.google.gson.Gson;
 import io.cresco.agent.db.DBEngine;
 import io.cresco.library.agent.ControllerMode;
-import io.cresco.library.data.TopicType;
-import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.jms.MapMessage;
-import javax.jms.Message;
-import javax.jms.MessageListener;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Map;
-import java.util.UUID;
 
 public class ControllerStatePersistance {
 
@@ -22,10 +16,6 @@ public class ControllerStatePersistance {
     private CLogger logger;
     private DBEngine dbe;
     private Gson gson;
-
-
-    String regionalListener = null;
-    String globalListener = null;
 
     public ControllerStatePersistance(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
@@ -53,13 +43,15 @@ public class ControllerStatePersistance {
             case AGENT:
                 return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_SHUTDOWN:
-                return unregisterAgent(localRegion, localAgent);
+                logger.error("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                //return unregisterAgent(localRegion, localAgent);
             case REGION_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION:
                 return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
-                return unregisterRegion(localRegion,globalRegion);
+                logger.error("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                //return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
                 logger.error("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
                 break;
@@ -208,7 +200,6 @@ public class ControllerStatePersistance {
         return returnState;
     }
 
-
     public boolean agentSuccess(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         boolean returnState = false;
@@ -229,11 +220,11 @@ public class ControllerStatePersistance {
             }
 
             //send information to remote
-            if(registerAgent(regionalRegion, regionalAgent, localRegion, localAgent)) {
+            //if(registerAgent(regionalRegion, regionalAgent, localRegion, localAgent)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
                 returnState = true;
-            }
+            //}
 
         } catch (Exception ex) {
             logger.error("agentSuccess()");
@@ -330,12 +321,13 @@ public class ControllerStatePersistance {
                 dbe.assoicateANodetoRNode(localRegion, localAgent);
             }
 
-            if(registerRegion(localRegion, globalRegion)) {
+
+            //if(registerRegion(localRegion, globalRegion)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                regionalListener = registerRegionalListener();
+            //    regionalListener = registerRegionalListener();
                 returnState = true;
-            }
+            //}
 
         } catch (Exception ex) {
             logger.error("regionInit()");
@@ -368,8 +360,8 @@ public class ControllerStatePersistance {
 
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            regionalListener = registerRegionalListener();
-            globalListener = registerGlobalListener();
+            //regionalListener = registerRegionalListener();
+            //globalListener = registerGlobalListener();
             returnState = true;
 
         } catch (Exception ex) {
@@ -382,12 +374,15 @@ public class ControllerStatePersistance {
         return returnState;
     }
 
+
     public Map<String,String> getStateMap() {
 
         Map<String,String> stateMap = dbe.getCSTATE(null);
         return stateMap;
     }
 
+
+    /*
     public boolean registerRegion(String localRegion, String globalRegion) {
         boolean isRegistered = false;
 
@@ -429,7 +424,6 @@ public class ControllerStatePersistance {
         return isRegistered;
     }
 
-
     public boolean unregisterRegion(String localRegion, String globalRegion) {
         boolean isRegistered = false;
 
@@ -467,7 +461,6 @@ public class ControllerStatePersistance {
 
         return isRegistered;
     }
-
 
     public boolean registerAgent(String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
         boolean isRegistered = false;
@@ -624,6 +617,9 @@ public class ControllerStatePersistance {
         }
         return lid;
     }
+
+
+    */
 
 }
 
