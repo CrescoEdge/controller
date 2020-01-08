@@ -367,8 +367,8 @@ public class ControllerStatePersistance {
 
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            //regionalListener = registerRegionalListener();
-            //globalListener = registerGlobalListener();
+            regionalListener = registerRegionalListener();
+            globalListener = registerGlobalListener();
             returnState = true;
 
         } catch (Exception ex) {
