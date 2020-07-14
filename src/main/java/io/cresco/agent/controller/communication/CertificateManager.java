@@ -17,8 +17,11 @@ import org.joda.time.DateTime;
 import javax.net.ssl.*;
 import java.io.*;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
@@ -30,6 +33,9 @@ public class CertificateManager {
     private KeyStore keyStore;
     private KeyStore trustStore;
     private char[] keyStorePassword;
+    private String keyStoreFilePath;
+    private char[] trustStorePassword;
+    private String trustStoreFilePath;
     private String keyStoreAlias;
     //private X509Certificate signingCertificate;
     //private PrivateKey signingKey;
@@ -55,27 +61,62 @@ public class CertificateManager {
 
             keySize = plugin.getConfig().getIntegerParam("messagekeysize",2048);
 
+
             this.keyStoreAlias = controllerEngine.cstate.getAgentPath();
 
-            //keyStoreAlias = UUID.randomUUID().toString();
-            keyStorePassword = UUID.randomUUID().toString().toCharArray();
+            String keyStorePasswordStr = plugin.getConfig().getStringParam("keystorepwd");
+            keyStoreFilePath = plugin.getConfig().getStringParam("keystorefile");
+            String trustStorePasswordStr = plugin.getConfig().getStringParam("truststorepwd");
+            trustStoreFilePath = plugin.getConfig().getStringParam("truststorefile");
+            if (keyStorePasswordStr != null && keyStoreFilePath != null &&
+                    trustStorePasswordStr != null && trustStoreFilePath != null &&
+                    !keyStoreFilePath.equals(trustStoreFilePath)) {
+                logger.info("keyStorePasswordStr: {}", keyStorePasswordStr);
+                logger.info("keyStoreFilePath: {}", keyStoreFilePath);
+                logger.info("trustStorePasswordStr: {}", trustStorePasswordStr);
+                logger.info("trustStoreFilePath: {}", trustStoreFilePath);
+                keyStorePassword = keyStorePasswordStr.toCharArray();
+                trustStorePassword = trustStorePasswordStr.toCharArray();
+                if (Files.exists(Paths.get(keyStoreFilePath)) &&
+                        Files.exists(Paths.get(trustStoreFilePath)) &&
+                        loadKeyAndTrustStore()) {
+                    logger.info("Key Store and Trust Store loaded");
+                } else {
+                    logger.info("Key Store or Trust Store do not exists, (re)creating");
+                    keyStore = KeyStore.getInstance("jks");
+                    keyStore.load(null, null);
 
-            keyStore = KeyStore.getInstance("jks");
-            keyStore.load(null, null);
+
+                    trustStore = KeyStore.getInstance("jks");
+                    trustStore.load(null, null);
+
+                    generateCertChain();
+
+                    //trust self
+                    addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+                }
+            } else {
+                //keyStoreAlias = UUID.randomUUID().toString();
+                keyStorePassword = UUID.randomUUID().toString().toCharArray();
+
+                keyStore = KeyStore.getInstance("jks");
+                keyStore.load(null, null);
 
 
-            trustStore = KeyStore.getInstance("jks");
-            trustStore.load(null, null);
+                trustStore = KeyStore.getInstance("jks");
+                trustStore.load(null, null);
 
-            generateCertChain();
+                generateCertChain();
 
-            //trust self
-            addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+                //trust self
+                addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            }
 
             logger.info("CertificateManager Init: " + (System.currentTimeMillis() - startTime) + " ms");
 
 
         } catch(Exception ex) {
+            ex.printStackTrace();
             logger.error("CertificateChainGeneration() Error: " + ex.getMessage());
         }
 
@@ -93,6 +134,7 @@ public class CertificateManager {
                 trustStore.setCertificateEntry(alias,cert);
                 //logger.error(publicKeyString);
             }
+            saveKeyAndTrustStore();
         } catch (Exception ex) {
             logger.error("addCertificatesToTrustStore() : error " + ex.getMessage());
         }
@@ -236,7 +278,10 @@ public class CertificateManager {
             certString = Base64.getEncoder().encodeToString(cert.getEncoded());
 
         } catch(Exception ex) {
-            logger.error("getStringFromCert() : error " + ex.getMessage());
+            logger.error("getStringfromCert : error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            ex.printStackTrace(new PrintWriter(sw));
+            logger.error(sw.toString());
         }
         return certString;
     }
@@ -252,7 +297,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             InputStream inputStream = new ByteArrayInputStream(Base64.getDecoder().decode(certString));
             cert = (X509Certificate)certificateFactory.generateCertificate(inputStream);
         } catch(Exception ex) {
-            logger.error("getCertfromString : error " + ex.getMessage());
+            logger.error("getCertsfromString : error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            ex.printStackTrace(new PrintWriter(sw));
+            logger.error(sw.toString());
         }
         return cert;
     }
@@ -287,7 +335,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
 
         } catch(Exception ex) {
-            logger.error("getStringFromCerts() : error " + ex.getMessage());
+            logger.error("getStringsfromCerts : error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            ex.printStackTrace(new PrintWriter(sw));
+            logger.error(sw.toString());
         }
         return certStrings;
     }
@@ -300,12 +351,65 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             certJson = gc.toJson(certArray);
 
         } catch(Exception ex) {
-            logger.error("getJsonFromCerts() : error " + ex.getMessage());
+            logger.error("getJsonFromCerts : error " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            ex.printStackTrace(new PrintWriter(sw));
+            logger.error(sw.toString());
         }
         return certJson;
     }
 
+    public void saveKeyAndTrustStore() {
+        if (keyStoreFilePath == null || trustStoreFilePath == null || keyStoreFilePath.equals(trustStoreFilePath))
+            return;
+        logger.info("saveKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
+        try (FileOutputStream keyStoreOut = new FileOutputStream(keyStoreFilePath);
+             FileOutputStream trustStoreOut = new FileOutputStream(trustStoreFilePath)) {
+            keyStore.store(keyStoreOut, keyStorePassword);
+            trustStore.store(trustStoreOut, trustStorePassword);
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (CertificateException e) {
+            e.printStackTrace();
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        } catch (KeyStoreException e) {
+            e.printStackTrace();
+        }
+    }
 
+    public boolean loadKeyAndTrustStore() {
+        if (keyStoreFilePath == null || trustStoreFilePath == null)
+            return false;
+        logger.info("loadKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
+        try (FileInputStream keyStoreIn = new FileInputStream(keyStoreFilePath);
+             FileInputStream trustStoreIn = new FileInputStream(trustStoreFilePath)) {
+            keyStore = KeyStore.getInstance("jks");
+            keyStore.load(keyStoreIn, keyStorePassword);
+            trustStore = KeyStore.getInstance("jks");
+            trustStore.load(trustStoreIn, trustStorePassword);
+            Certificate[] keyStoreCertChain = keyStore.getCertificateChain(keyStoreAlias);
+            chain = new X509Certificate[keyStoreCertChain.length];
+            for (int i = 0; i < keyStoreCertChain.length; i++)
+                chain[i] = (X509Certificate) keyStoreCertChain[i];
+            return true;
+        } catch (IOException e) {
+            e.printStackTrace();
+            return false;
+        } catch (CertificateException e) {
+            e.printStackTrace();
+            return false;
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return false;
+        } catch (KeyStoreException e) {
+            e.printStackTrace();
+            return false;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
 
     //unused
 
