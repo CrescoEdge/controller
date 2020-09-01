@@ -22,14 +22,19 @@ public class PerfControllerMonitor {
 
     private Gson gson;
 
+    private ControllerInfoBuilder builder;
+
     public PerfControllerMonitor(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PerfControllerMonitor.class.getName(),CLogger.Level.Info);
 
+        this.builder = new ControllerInfoBuilder(controllerEngine);
+
         gson = new Gson();
         this.crescoType = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
+
 
     }
 
@@ -237,7 +242,7 @@ public class PerfControllerMonitor {
             //response = kpiCache.getIfPresent(regionId + "." + agentId + "." + pluginId);
             //response = kpiCache.getIfPresent(regionId + "." + agentId);
             response = "{ERROR NO LONGER IMPLEMENTED}";
-
+            response = builder.getControllerInfoMap();
 
         } catch (Exception ex) {
             logger.error(ex.getMessage());

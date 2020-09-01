@@ -378,7 +378,6 @@ public class GlobalExecutor implements Executor {
             logger.error("resourceInfo() " + ex.getMessage());
             logger.error(getStringFromError(ex));
         }
-
         return ce;
     }
 

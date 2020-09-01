@@ -50,6 +50,7 @@ public class MeasurementEngine {
 
         metricInit();
 
+
         //logger.error("STARTED M ENGINE");
        // MetricRegistry metricRegistry = new MetricRegistry();
         /*
@@ -84,7 +85,7 @@ public class MeasurementEngine {
         new JvmThreadMetrics().bindTo(crescoMeterRegistry);
 
         //todo enable metrics
-        //initInternal();
+        initInternal();
 
 
         //Queue<String> receivedMessages = crescoMeterRegistry.gauge("unprocessed.messages", new ConcurrentLinkedQueue<>(), ConcurrentLinkedQueue::size);
@@ -147,8 +148,6 @@ public class MeasurementEngine {
                 metricValueMap.put("class",metric.className);
                 metricValueMap.put("type",metric.type.toString());
                 metricValueMap.put("value",String.valueOf(crescoMeterRegistry.get(metric.name).gauge().value()));
-
-
 
             } else if (Meter.Type.valueOf(metric.className) == Meter.Type.TIMER) {
                 TimeUnit timeUnit = crescoMeterRegistry.get(metric.name).timer().baseTimeUnit();
@@ -270,7 +269,6 @@ public class MeasurementEngine {
             return true;
         }
     }
-
     public Timer getTimer(String name) {
         if(metricMap != null) {
             if (metricMap.containsKey(name)) {
@@ -286,7 +284,6 @@ public class MeasurementEngine {
             return null;
         }
     }
-
     public void updateTimer(String name, long timeStamp) {
 
         Timer tmpTimer = getTimer(name);
@@ -294,7 +291,6 @@ public class MeasurementEngine {
             tmpTimer.record(System.nanoTime() - timeStamp, TimeUnit.NANOSECONDS);
         }
     }
-
     public Gauge getGauge(String name) {
         if(metricMap.containsKey(name)) {
             return this.crescoMeterRegistry.get(name).gauge();
@@ -302,7 +298,6 @@ public class MeasurementEngine {
             return null;
         }
     }
-
     public Gauge getGaugeRaw(String name) {
             return this.crescoMeterRegistry.get(name).gauge();
     }
@@ -323,7 +318,6 @@ public class MeasurementEngine {
                     .register(crescoMeterRegistry);
         }
     }
-
 
     public void initGlobalMetrics() {
 
