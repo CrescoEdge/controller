@@ -306,7 +306,6 @@ public class MeasurementEngine {
 
         setTimer("message.transaction.time", "The timer for messages", "controller");
 
-
     }
 
     public void initRegionalMetrics() {
