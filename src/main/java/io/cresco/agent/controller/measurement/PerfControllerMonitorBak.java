@@ -20,7 +20,6 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 public class PerfControllerMonitorBak {
-    private ControllerInfoBuilder builder;
     private Timer timer;
     private Timer cleanUpTimer;
 
@@ -42,7 +41,6 @@ public class PerfControllerMonitorBak {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PerfControllerMonitorBak.class.getName(),CLogger.Level.Info);
-        builder = new ControllerInfoBuilder(controllerEngine);
 
         gson = new Gson();
 
@@ -471,7 +469,7 @@ public class PerfControllerMonitorBak {
 
 
 
-                mapMessage.setString("perf", builder.getControllerInfoMap());
+                //mapMessage.setString("perf", builder.getControllerInfoMap());
 
                 //set property
                 mapMessage.setStringProperty("pluginname", "io.cresco.agent");
