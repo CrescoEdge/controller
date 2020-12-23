@@ -108,6 +108,7 @@ public class StaticPluginLoader implements Runnable  {
 
                                     if(map == null) {
 
+
                                         map = getPluginConfigMap(pluginName);
 
                                         if (map == null) {
