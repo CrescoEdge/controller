@@ -113,7 +113,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
+                                            map.put("jarfile", "repo-1.1-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
@@ -135,7 +135,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "dashboard-1.0-SNAPSHOT.jar");
+                                            map.put("jarfile", "dashboard-1.1-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
@@ -159,7 +159,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.0-SNAPSHOT.jar");
+                                            map.put("jarfile", "repo-1.1-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
