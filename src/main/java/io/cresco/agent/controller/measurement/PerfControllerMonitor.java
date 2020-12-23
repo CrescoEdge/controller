@@ -1,12 +1,16 @@
 package io.cresco.agent.controller.measurement;
 
-
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
+import io.cresco.library.metrics.MeasurementEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 
 import java.io.*;
 import java.lang.reflect.Type;
@@ -19,23 +23,24 @@ public class PerfControllerMonitor {
     private PluginBuilder plugin;
     private CLogger logger;
     private Type crescoType;
-
+    private MeasurementEngine me;
     private Gson gson;
-
-    private ControllerInfoBuilder builder;
 
     public PerfControllerMonitor(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(PerfControllerMonitor.class.getName(),CLogger.Level.Info);
-
-        this.builder = new ControllerInfoBuilder(controllerEngine);
+        this.me = controllerEngine.getMeasurementEngine();
 
         gson = new Gson();
         this.crescoType = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
 
-
+        //start metrics for controller
+        initJVMMetrics();
+        initControllerMetrics();
+        initRegionalMetrics();
+        initGlobalMetrics();
     }
 
     public String getResourceInfo(String actionRegion, String actionAgent) {
@@ -242,12 +247,107 @@ public class PerfControllerMonitor {
             //response = kpiCache.getIfPresent(regionId + "." + agentId + "." + pluginId);
             //response = kpiCache.getIfPresent(regionId + "." + agentId);
             response = "{ERROR NO LONGER IMPLEMENTED}";
-            response = builder.getControllerInfoMap();
+            response = getControllerInfoMap();
 
         } catch (Exception ex) {
             logger.error(ex.getMessage());
         }
         return response;
+    }
+
+    public String getControllerInfoMap() {
+
+        String returnStr = null;
+        try {
+
+            Map<String,List<Map<String,String>>> info = new HashMap<>();
+            info.put("controller", controllerEngine.getMeasurementEngine().getMetricGroupList("controller"));
+
+            Map<String,String> metricsMap = new HashMap<>();
+            metricsMap.put("name","controller_group");
+            metricsMap.put("metrics",gson.toJson(info));
+
+            List<Map<String,String>> metricsList = new ArrayList<>();
+            metricsList.add(metricsMap);
+
+            returnStr = gson.toJson(metricsList);
+
+        } catch(Exception ex) {
+            logger.error(ex.getMessage());
+        }
+
+        return returnStr;
+    }
+
+    private void initJVMMetrics() {
+
+        new ClassLoaderMetrics().bindTo(me.getCrescoMeterRegistry());
+        new JvmMemoryMetrics().bindTo(me.getCrescoMeterRegistry());
+        //not sure why this is disabled, perhaps not useful
+        //new JvmGcMetrics().bindTo(me.getCrescoMeterRegistry());
+        new ProcessorMetrics().bindTo(me.getCrescoMeterRegistry());
+        new JvmThreadMetrics().bindTo(me.getCrescoMeterRegistry());
+
+        Map<String,String> internalMap = new HashMap<>();
+
+        internalMap.put("jvm.memory.max", "jvm");
+        internalMap.put("jvm.memory.used", "jvm");
+        internalMap.put("jvm.memory.committed", "jvm");
+        internalMap.put("jvm.buffer.memory.used", "jvm");
+        internalMap.put("jvm.threads.daemon", "jvm");
+        internalMap.put("jvm.threads.live", "jvm");
+        internalMap.put("jvm.threads.peak", "jvm");
+        internalMap.put("jvm.classes.loaded", "jvm");
+        internalMap.put("jvm.classes.unloaded", "jvm");
+        internalMap.put("jvm.buffer.total.capacity", "jvm");
+        internalMap.put("jvm.buffer.count", "jvm");
+        internalMap.put("system.load.average.1m", "jvm");
+        internalMap.put("system.cpu.count", "jvm");
+        internalMap.put("system.cpu.usage", "jvm");
+        internalMap.put("process.cpu.usage", "jvm");
+
+        for (Map.Entry<String, String> entry : internalMap.entrySet()) {
+            String name = entry.getKey();
+            String group = entry.getValue();
+            me.setExisting(name,group);
+        }
+
+    }
+
+    private void initControllerMetrics() {
+        me.setTimer("message.transaction.time", "The timer for messages", "controller");
+    }
+
+    public void initRegionalMetrics() {
+
+        if(controllerEngine.getBrokeredAgents() != null) {
+
+            /*
+            Gauge.builder("brokered.agent.count", controllerEngine.getBrokeredAgents(), ConcurrentHashMap::size)
+                    .description("The number of currently brokered agents.")
+                    .register(crescoMeterRegistry);
+
+             */
+        }
+    }
+
+    public void initGlobalMetrics() {
+
+        /*
+        if(controllerEngine.getResourceScheduleQueue() != null) {
+            Gauge.builder("incoming.resource.queue", controllerEngine.getResourceScheduleQueue(), BlockingQueue::size)
+                    .description("The number of queued incoming resources to be scheduled.")
+                    .register(crescoMeterRegistry);
+        }
+
+
+        if(controllerEngine.getAppScheduleQueue() != null) {
+            Gauge.builder("incoming.application.queue", controllerEngine.getAppScheduleQueue(), BlockingQueue::size)
+                    .description("The number of queued incoming applications to be scheduled.")
+                    .register(crescoMeterRegistry);
+        }
+        */
+
     }
 
 

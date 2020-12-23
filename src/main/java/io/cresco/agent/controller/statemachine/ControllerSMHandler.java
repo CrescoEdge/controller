@@ -9,7 +9,6 @@ import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
-import io.cresco.agent.controller.measurement.MeasurementEngine;
 import io.cresco.agent.controller.measurement.PerfControllerMonitor;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
@@ -18,6 +17,7 @@ import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
+import io.cresco.library.metrics.MeasurementEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.mina.statemachine.annotation.State;
@@ -396,7 +396,7 @@ public class ControllerSMHandler {
             //enable this here to avoid nu,, perfControllerMonitor on global controller start
                 if(plugin.getConfig().getBooleanParam("enable_controllermon",true)) {
                     //enable measurements
-                    controllerEngine.setMeasurementEngine(new MeasurementEngine(controllerEngine));
+                    controllerEngine.setMeasurementEngine(new MeasurementEngine(plugin));
                     logger.info("MeasurementEngine initialized");
 
                     //send measurement info out
