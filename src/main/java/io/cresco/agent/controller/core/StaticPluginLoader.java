@@ -215,7 +215,7 @@ public class StaticPluginLoader implements Runnable  {
 
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "sysinfo-1.0-SNAPSHOT.jar");
+                                        map.put("jarfile", "sysinfo-1.1-SNAPSHOT.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
