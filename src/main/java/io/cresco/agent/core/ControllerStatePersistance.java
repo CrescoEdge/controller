@@ -43,36 +43,41 @@ public class ControllerStatePersistance {
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_SHUTDOWN:
-                logger.error("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT:
                 return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_SHUTDOWN:
-                logger.error("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 //return unregisterAgent(localRegion, localAgent);
+            case AGENT_FAILED:
+                logger.debug("AGENT_FAILED: NOT IMPLEMENTED : " + currentDesc);
             case REGION_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION:
                 return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
-                logger.error("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 //return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
-                logger.error("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case REGION_GLOBAL_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_FAILED:
-                logger.error("REGION_GLOBAL_FAILED: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("REGION_GLOBAL_FAILED: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case REGION_GLOBAL:
                 return regionGlobalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case GLOBAL_INIT:
+                logger.debug("GLOBAL_INIT: NOT IMPLEMENTED : " + currentDesc);
+                break;
             case GLOBAL:
                 return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
-                logger.error("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.debug("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
 
             default:
@@ -81,6 +86,7 @@ public class ControllerStatePersistance {
         }
         return false;
     }
+
 
     public boolean preInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){
 

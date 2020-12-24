@@ -162,7 +162,7 @@ public class CEPInstance {
                 //start measurement
                     InMemoryBroker.publish(topicName, jsonPayload);
                 } else {
-                    System.out.println("input error : no schema");
+                    logger.error("input error : no schema");
                 }
 
 

@@ -195,7 +195,7 @@ public class ActiveClient {
 
             this.agentConsumer = new AgentConsumer(controllerEngine, RXQueueName, URI);
             isInit = true;
-            logger.error("IN initActiveAgentConsumer setting URI:" + URI + " fault URI");
+            logger.debug("IN initActiveAgentConsumer setting URI:" + URI + " fault URI");
             setFaultTriggerURI(URI);
 
         } catch(Exception ex) {

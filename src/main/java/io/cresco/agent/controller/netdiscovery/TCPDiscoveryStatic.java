@@ -86,9 +86,12 @@ public class TCPDiscoveryStatic {
                 //this is the connection timeout
                 b.option(ChannelOption.CONNECT_TIMEOUT_MILLIS, discoveryTimeout);
                 b.option(ChannelOption.SO_KEEPALIVE, true);
+                //enable to debug channel options
+                /*
                 for (Map.Entry<ChannelOption<?>, Object> option : b.register().channel().config().getOptions().entrySet()) {
                     System.out.println("Option [" + option.getKey().name() + "]: " + option.getValue().toString());
                 }
+                 */
 
                 // Start the connection attempt.
                 b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
