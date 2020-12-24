@@ -144,26 +144,34 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                                 remoteAddress = remoteScope[0];
                             }
 
-                            if(discoveryNode.discovered_ip.equals(remoteAddress)) {
+                            if (discoveryNode.discovered_ip != null) {
 
-                                if(discoveryProcessor.isValidatedAuthenication(discoveryNode)) {
-                                    //discoveredList.add(discoveryNode);
-                                    if(discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVERED) {
-                                        discoveredList.add(discoveryNode);
-                                    } else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFIED) {
-                                        discoveredList.add(discoveryNode);
-                                        if(discoveryProcessor.setCertTrust(discoveryNode.getDiscoveredPath(),discoveryNode.discovered_cert)) {
-                                            logger.info("Added Static discovered host to discoveredList.");
+                                logger.trace("discovered_ip: " + discoveryNode.discovered_ip);
+                                logger.trace("remoteAddress: " + remoteAddress);
+                                if(discoveryNode.discovered_ip.equals(remoteAddress)) {
+
+                                    if(discoveryProcessor.isValidatedAuthenication(discoveryNode)) {
+                                        //discoveredList.add(discoveryNode);
+                                        if(discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVERED) {
+                                            discoveredList.add(discoveryNode);
+                                        } else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFIED) {
+                                            discoveredList.add(discoveryNode);
+                                            if(discoveryProcessor.setCertTrust(discoveryNode.getDiscoveredPath(),discoveryNode.discovered_cert)) {
+                                                logger.info("Added Static discovered host to discoveredList.");
+                                            } else {
+                                                logger.error("Could not set Trust");
+                                            }
                                         } else {
-                                            logger.error("Could not set Trust");
+                                            logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType: " + discoveryNode.nodeType.name() + " !UNKNOWN!");
                                         }
-                                    } else {
-                                        logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType: " + discoveryNode.nodeType.name() + " !UNKNOWN!");
                                     }
+
+                                } else {
+                                    logger.error("discoveryNode.discovered_ip: " + discoveryNode.discovered_ip + " != remoteAddress: " + remoteAddress);
                                 }
 
                             } else {
-                                logger.error("discoveryNode.discovered_ip: " + discoveryNode.discovered_ip + " != remoteAddress: " + remoteAddress);
+                                logger.error("check shared key : discoveryNode.discovered_ip: == NULL for remoteAddress: " + remoteAddress);
                             }
 
                         } else {
