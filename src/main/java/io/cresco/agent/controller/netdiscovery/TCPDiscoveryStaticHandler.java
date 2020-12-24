@@ -129,6 +129,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     private synchronized void processIncoming(String json, String remoteAddress) {
 
             try {
+                logger.trace("Incoming JSON: " + json);
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
                 DiscoveryNode discoveryNode = null;
                 if (me != null) {
