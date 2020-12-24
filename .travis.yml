@@ -9,7 +9,7 @@ script:
 
 after_success:
 - mvn package bundle:bundle
-- mvn deploy:deploy-file -Dfile=target/controller-1.0-SNAPSHOT.jar -Durl=https://oss.sonatype.org/content/repositories/snapshots
+- mvn deploy:deploy-file -Dfile=target/controller-1.1-SNAPSHOT.jar -Durl=https://oss.sonatype.org/content/repositories/snapshots
   -DrepositoryId=ossrh -DpomFile=pom.xml --settings travis-settings.xml -DskipTests=true
   -B
 - bash <(curl -s https://codecov.io/bash)
