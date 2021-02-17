@@ -833,24 +833,36 @@ public class GlobalExecutor implements Executor {
         try
         {
             if((ce.getParam("action_gpipeline") != null) && (ce.getParam("action_tenantid") != null)) {
+
                 String pipelineJSON = ce.getCompressedParam("action_gpipeline");
                 String tenantID = ce.getParam("action_tenantid");
 
-                gPayload gpay = controllerEngine.getGDB().createPipelineRecord(tenantID, pipelineJSON);
+                if(pipelineJSON != null) {
 
-                //add to scheduling queue
-                controllerEngine.getAppScheduler().incomingMessage(gpay);
 
-                //String returnGpipeline = controllerEngine.getGDB().dba.JsonFromgPayLoad(gpay);
-                //remove for the sake of network traffic
-                ce.removeParam("action_gpipeline");
-                ce.setParam("gpipeline_id",gpay.pipeline_id);
+                    gPayload gpay = controllerEngine.getGDB().createPipelineRecord(tenantID, pipelineJSON);
+
+                    //add to scheduling queue
+                    controllerEngine.getAppScheduler().incomingMessage(gpay);
+
+                    //String returnGpipeline = controllerEngine.getGDB().dba.JsonFromgPayLoad(gpay);
+                    //remove for the sake of network traffic
+                    ce.removeParam("action_gpipeline");
+                    ce.setParam("gpipeline_id",gpay.pipeline_id);
+
+                } else {
+                    ce.setParam("error","unable to decode pipeline");
+                    logger.error("unable to decode pipeline");
+                }
+
             } else {
                 ce.setParam("error","missing data in submission");
+                logger.error("missing data in submission");
             }
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
+            ex.printStackTrace();
         }
 
         return ce;

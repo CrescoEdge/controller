@@ -262,7 +262,6 @@ public class DBInterfaceImpl implements DBInterface {
 
         gPayload gpay = null;
         try {
-
             gpay = gson.fromJson(gPayload, gPayload.class);
 
             gpay.pipeline_id = "resource-" + UUID.randomUUID().toString();
