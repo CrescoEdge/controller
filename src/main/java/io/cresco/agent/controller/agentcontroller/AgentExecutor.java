@@ -240,7 +240,9 @@ public class AgentExecutor implements Executor {
         try {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
-            Map<String, String> hm = gson.fromJson(ce.getCompressedParam("configparams"), type);
+            String configParamsJson = ce.getCompressedParam("configparams");
+            logger.error(configParamsJson);
+            Map<String, String> hm = gson.fromJson(configParamsJson, type);
 
             //todo persistance should be set by the application not here
             hm.put("persistence_code","10");
