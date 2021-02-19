@@ -234,6 +234,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
             if(consumer != null) {
                 consumer.setMessageListener(messageListener);
+
                 listenerId = UUID.randomUUID().toString();
                 synchronized (lockMessage) {
                     messageConsumerMap.put(listenerId, consumer);
@@ -256,11 +257,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 MessageConsumer consumer = messageConsumerMap.get(listenerId);
                 if (consumer != null) {
                     try {
+                        logger.trace("removeMessageListener: closing listener : " + listenerId);
+                        logger.trace("removeMessageListener: message selector : " + consumer.getMessageSelector());
+
                         consumer.close();
+
                         messageConsumerMap.remove(listenerId);
                     } catch (JMSException e) {
                         logger.error("Failed to close message listener [{}]", listenerId);
                     }
+                } else {
+                    logger.error("removeMessageListener close called on unknown listener_id: " + listenerId);
                 }
             }
         } catch (Exception e) {

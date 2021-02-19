@@ -11,10 +11,7 @@ import io.siddhi.core.util.transport.InMemoryBroker;
 import javax.jms.Message;
 import javax.jms.MessageListener;
 import javax.jms.TextMessage;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class CEPInstance {
@@ -32,17 +29,19 @@ public class CEPInstance {
     private Gson gson;
 
     private String cepId;
+    private String listenerId;
 
     private String inputStreamName;
 
-    private String outputStreamName;
+
+
+    private InMemoryBroker.Subscriber outputSubscriber;
 
     public CEPInstance(PluginBuilder pluginBuilder, SiddhiManager siddhiManager, String cepId, String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
 
         this.plugin = pluginBuilder;
         logger = plugin.getLogger(CEPInstance.class.getName(),CLogger.Level.Info);
         this.inputStreamName = inputStreamName;
-        this.outputStreamName = outputStreamName;
 
         topicMap = Collections.synchronizedMap(new HashMap<>());
 
@@ -57,20 +56,30 @@ public class CEPInstance {
             String inputTopic = UUID.randomUUID().toString();
             String outputTopic = UUID.randomUUID().toString();
 
+            logger.error("");
+
             synchronized (lockTopic) {
                 topicMap.put(inputStreamName, inputTopic);
                 topicMap.put(outputStreamName, outputTopic);
             }
 
-
+            //generate query strings
             String sourceString = getSourceString(inputStreamDefinition, inputTopic, inputStreamName);
             String sinkString = getSinkString(outputStreamDefinition, outputTopic,outputStreamName);
 
             //Generating runtime
             siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(sourceString + " " + sinkString + " " + queryString);
 
-            //public void createCEP(String inputStreamName, String outputStreamName, String inputStreamAttributesString, String outputStreamAttributesString,String queryString) {
+            //Starting event processing
+            siddhiAppRuntime.start();
 
+            //create an output subscriber
+            outputSubscriber = new OutputSubscriber(plugin,cepId,outputTopic,outputStreamName);
+
+            //subscribe to "inMemory" broker per topic
+            InMemoryBroker.subscribe(outputSubscriber);
+
+            //create input stream
             MessageListener ml = new MessageListener() {
                 public void onMessage(Message msg) {
                     try {
@@ -91,16 +100,9 @@ public class CEPInstance {
                 }
             };
 
-            pluginBuilder.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"stream_name='" + inputStreamName + "'");
+            //subscribe to input
+            listenerId= pluginBuilder.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"stream_name='" + inputStreamName + "'");
 
-
-            InMemoryBroker.Subscriber subscriberTest = new OutputSubscriber(plugin,cepId,outputTopic,outputStreamName);
-
-            //subscribe to "inMemory" broker per topic
-            InMemoryBroker.subscribe(subscriberTest);
-
-            //Starting event processing
-            siddhiAppRuntime.start();
 
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -111,11 +113,16 @@ public class CEPInstance {
 
     public void shutdown() {
         try {
-
-            plugin.getAgentService().getDataPlaneService().removeMessageListener("stream_name='" + inputStreamName + "'");
+            //shutdown runtime
             if(siddhiAppRuntime != null) {
                 siddhiAppRuntime.shutdown();
             }
+
+            //stop listening for messages
+            plugin.getAgentService().getDataPlaneService().removeMessageListener(listenerId);
+
+            //unsubscribe from topic
+            InMemoryBroker.subscribe(outputSubscriber);
 
             /*
             if(siddhiManager != null) {
@@ -131,17 +138,7 @@ public class CEPInstance {
     public void clear() {
         try {
 
-            if(siddhiAppRuntime != null) {
-                siddhiAppRuntime.shutdown();
-                siddhiAppRuntime = null;
-            }
-
-            /*
-            if(siddhiManager != null) {
-                siddhiManager.shutdown();
-                siddhiManager = new SiddhiManager();
-            }
-            */
+            shutdown();
 
 
             synchronized (lockTopic) {
