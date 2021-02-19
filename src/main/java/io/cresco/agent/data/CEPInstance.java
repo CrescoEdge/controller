@@ -118,11 +118,12 @@ public class CEPInstance {
                 siddhiAppRuntime.shutdown();
             }
 
+            //unsubscribe from topic
+            InMemoryBroker.subscribe(outputSubscriber);
+
             //stop listening for messages
             plugin.getAgentService().getDataPlaneService().removeMessageListener(listenerId);
 
-            //unsubscribe from topic
-            InMemoryBroker.subscribe(outputSubscriber);
 
             /*
             if(siddhiManager != null) {
