@@ -43,6 +43,13 @@ public class PollAddPipeline implements Runnable {
                     me.setParam("resource_id", pipelineId);
                     me.setParam("location_region",gnode.params.get("location_region"));
                     me.setParam("location_agent",gnode.params.get("location_agent"));
+
+                    //todo persistance should be set by the application explicity
+                    //if <9 node will persist, so we will make that the default for CADL plugins
+                    if(!gnode.params.containsKey("persistence_code")) {
+                        gnode.params.put("persistence_code","10");
+                    }
+
                     gnode.params.remove("location_region");
                     gnode.params.remove("location_agent");
 

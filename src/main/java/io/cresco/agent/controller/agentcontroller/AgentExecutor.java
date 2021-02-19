@@ -241,11 +241,8 @@ public class AgentExecutor implements Executor {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             String configParamsJson = ce.getCompressedParam("configparams");
-            logger.error(configParamsJson);
+            logger.trace("pluginAdd configParamsJson: " + configParamsJson);
             Map<String, String> hm = gson.fromJson(configParamsJson, type);
-
-            //todo persistance should be set by the application not here
-            hm.put("persistence_code","10");
 
             Map<String,Object> map = new HashMap<>();
 
