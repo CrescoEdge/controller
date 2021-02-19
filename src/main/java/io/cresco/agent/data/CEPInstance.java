@@ -33,11 +33,16 @@ public class CEPInstance {
 
     private String cepId;
 
+    private String inputStreamName;
+
+    private String outputStreamName;
 
     public CEPInstance(PluginBuilder pluginBuilder, SiddhiManager siddhiManager, String cepId, String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
 
         this.plugin = pluginBuilder;
         logger = plugin.getLogger(CEPInstance.class.getName(),CLogger.Level.Info);
+        this.inputStreamName = inputStreamName;
+        this.outputStreamName = outputStreamName;
 
         topicMap = Collections.synchronizedMap(new HashMap<>());
 
@@ -107,6 +112,7 @@ public class CEPInstance {
     public void shutdown() {
         try {
 
+            plugin.getAgentService().getDataPlaneService().removeMessageListener("stream_name='" + inputStreamName + "'");
             if(siddhiAppRuntime != null) {
                 siddhiAppRuntime.shutdown();
             }
