@@ -689,7 +689,8 @@ public class DBInterfaceImpl implements DBInterface {
 
                     MsgEvent response = plugin.sendRPC(request);
                     if (response.getParam("repolist") != null) {
-                        repoList.add(response.getCompressedParam("repolist"));
+                        String repoListJson = response.getCompressedParam("repolist");
+                        repoList.add(repoListJson);
                     } else {
                         logger.error("NO RESPONSE FROM REPO LIST");
                     }
@@ -757,10 +758,12 @@ public class DBInterfaceImpl implements DBInterface {
         try
         {
             Map<String,List<Map<String,String>>> myRepoMapReturn = new HashMap<>();
+
             List<Map<String,String>> pluginsList = new ArrayList<>();
             List<String> repoList = getPluginListRepoInventory();
 
             for(String repoJSON : repoList) {
+                logger.error(repoJSON);
                 Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
                 if(myRepoMap != null) {
                     if (myRepoMap.containsKey("plugins")) {
