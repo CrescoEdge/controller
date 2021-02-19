@@ -763,7 +763,6 @@ public class DBInterfaceImpl implements DBInterface {
             List<String> repoList = getPluginListRepoInventory();
 
             for(String repoJSON : repoList) {
-                logger.error(repoJSON);
                 Map<String,List<Map<String,String>>> myRepoMap = gson.fromJson(repoJSON, type);
                 if(myRepoMap != null) {
                     if (myRepoMap.containsKey("plugins")) {
