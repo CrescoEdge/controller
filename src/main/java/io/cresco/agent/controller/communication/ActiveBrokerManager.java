@@ -7,6 +7,7 @@ import io.cresco.library.utilities.CLogger;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -124,6 +125,16 @@ public class ActiveBrokerManager implements Runnable  {
 			}
 		}
 		timer.cancel();
+
+		//stop monitoring all the brokers
+		for (Map.Entry<String, BrokeredAgent> entry : controllerEngine.getBrokeredAgents().entrySet()) {
+			String key = entry.getKey();
+			BrokeredAgent ba = entry.getValue();
+			logger.error("Stopping Brokered Agent [" + key + "]");
+			ba.setBrokerStatus(BrokerStatusType.STOPPED);
+		}
+
+
 		logger.debug("Broker Manager has shutdown");
 	}
 

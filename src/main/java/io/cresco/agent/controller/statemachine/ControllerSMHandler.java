@@ -195,8 +195,59 @@ public class ControllerSMHandler {
             @Transition(on = "stop", in = GLOBAL_FAILED, next = EMPTY)
     })
     public void stopGlobal() {
+
         logger.error("STOP CALLED GLOBAL");
         cstate.setGlobalShutdown("Shutdown Called");
+
+        //stop net discovery
+        logger.info("Shutdown discovery functions");
+        stopNetDiscoveryEngine();
+
+        logger.info("Shutdown agent functions");
+        isAgentShutdown();
+
+
+        //DB should not be called after this
+
+        //prevent regional from trying to restart broker
+        logger.info("Shutting down Regional Health Watcher");
+        if(controllerEngine.getRegionHealthWatcher() != null) {
+            controllerEngine.getRegionHealthWatcher().shutdown();
+            controllerEngine.setRegionHealthWatcher(null);
+        }
+
+        if(controllerEngine.getGlobalHealthWatcher() != null) {
+            controllerEngine.getGlobalHealthWatcher().shutdown();
+            controllerEngine.setGlobalHealthWatcher(null);
+        }
+
+        logger.info("Shutdown Active Broker Manager");
+        controllerEngine.setActiveBrokerManagerActive(false);
+
+        controllerEngine.getActiveClient().shutdown();
+
+        logger.info("Shutting down Broker");
+        if(controllerEngine.getBroker() != null) {
+            controllerEngine.getBroker().stopBroker();
+        }
+
+        controllerEngine.setDBManagerActive(false);
+            while(controllerEngine.getDBManagerThread().isAlive()) {
+                logger.info("Waiting on DB Manager Shutdown");
+                try {
+                    Thread.sleep(1000);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+
+            /*
+            if(controllerEngine.getGDB() != null) {
+                controllerEngine.getGDB().shutdown();
+            }
+             */
+            logger.error("IS THIS THE LAST?");
+
     }
 
     public void shutdown() {

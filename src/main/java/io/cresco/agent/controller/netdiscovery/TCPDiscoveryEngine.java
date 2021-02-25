@@ -58,6 +58,7 @@ public class TCPDiscoveryEngine implements Runnable {
                 sslCtx = null;
             }
 
+
             bossGroup = new NioEventLoopGroup(1);
             workerGroup = new NioEventLoopGroup();
 
@@ -88,6 +89,7 @@ public class TCPDiscoveryEngine implements Runnable {
             ChannelFuture cf = b.bind(discoveryPort).sync();
 
             cf.channel().closeFuture().sync();
+
 
 
         } catch(Exception ex) {

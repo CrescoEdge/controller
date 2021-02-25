@@ -27,6 +27,8 @@ public class DBEngine {
 
     private PluginBuilder pluginBuilder;
 
+    private String dbPath;
+
     public DBEngine(PluginBuilder plugin) {
 
         try {
@@ -59,9 +61,10 @@ public class DBEngine {
 
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
-            String dbPath = plugin.getPluginDataDirectory() + "/derbydb-home/" + dbName;
+            dbPath = plugin.getPluginDataDirectory() + "/derbydb-home/" + dbName;
 
             String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");
+
             //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
             if (dbDriver.contains("mysql")) {
                 dbType = DBType.MYSQL;
@@ -74,7 +77,7 @@ public class DBEngine {
             String dbUserName = plugin.getConfig().getStringParam("db_username");
             String dbPassword = plugin.getConfig().getStringParam("db_password");
 
-            Class.forName(dbDriver);
+            Class.forName(dbDriver).newInstance();
 
             if ((dbUserName != null) && (dbPassword != null)) {
                 ds = setupDataSource(dbConnectionString, dbUserName, dbPassword);
@@ -140,6 +143,33 @@ public class DBEngine {
         } catch (Exception ex) {
             ex.printStackTrace();
         }
+    }
+
+    public boolean shutdown() {
+        boolean isShutdown = false;
+        try {
+            //String shutdownString =  "jdbc:derby:" + dbPath + ";shutdown=true";
+            //DriverManager.getConnection(shutdownString);
+            DriverManager.getConnection("jdbc:derby:;shutdown=true");
+            Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+            DriverManager.deregisterDriver(d);
+
+        } catch (SQLException e) {
+            if (e.getErrorCode() == 50000) {
+                /*
+                XJ015 (with SQLCODE 50000) is the expected (successful)
+                SQLSTATE for complete system shutdown. 08006 (with SQLCODE 45000), on the other hand, is the expected SQLSTATE for shutdown of only an individual database.
+                 */
+                isShutdown = true;
+
+            } else {
+                e.printStackTrace();
+            }
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return isShutdown;
     }
 
     public boolean checkSchema() {
@@ -622,7 +652,6 @@ public class DBEngine {
         }
         return inodeResourceList;
     }
-
 
     public int getINodeStatus(String inodeId) {
         int status_code = -1;
@@ -2566,7 +2595,9 @@ public class DBEngine {
         // using the connect string passed in the command line
         // arguments.
         //
+
         ConnectionFactory connectionFactory = null;
+
         if((login == null) && (password == null)) {
             connectionFactory = new DriverManagerConnectionFactory(connectURI, null);
         } else {

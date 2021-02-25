@@ -287,34 +287,25 @@ public class ActiveBroker {
 	public void stopBroker() {
 		try {
 
-			logger.error("0");
-			connector.stop();
-			logger.error("1");
-
+			/*
 			ServiceStopper stopper = new ServiceStopper();
+
 			//broker.getManagementContext().stop();
-			logger.error("2");
+			logger.error("Stopping transport connectors");
 			for(TransportConnector tc : broker.getTransportConnectors()) {
-				logger.error("3");
+				logger.error("Stopping " + tc.getName() );
 				tc.stop();
 			}
-			logger.error("4");
+			logger.error("Stopping remaining connectors");
 			broker.stopAllConnectors(stopper);
-			logger.error("5");
+			 */
             broker.stop();
+			logger.error("Waiting until Broker Stop");
+			broker.waitUntilStopped();
 
-			logger.error("6");
-            while(broker.isStopping()) {
-				logger.error("7");
-				Thread.sleep(1000);
-			}
-			logger.error("8");
-			while(!broker.isStopped()) {
-				logger.error("9");
-				Thread.sleep(1000);
-			}
-			logger.error("10");
-			logger.debug("Broker has shutdown");
+			logger.error("Broker Stopped: " + broker.isStopped());
+
+
 		} catch (Exception e) {
 			logger.error("stopBroker {}", e.getMessage());
 		}

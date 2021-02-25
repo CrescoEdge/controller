@@ -1122,8 +1122,9 @@ public class DBInterfaceImpl implements DBInterface {
     }
 
     public void shutdown() {
-        //todo shutdown any DBEngine connections here, if any exist
+        dbe.shutdown();
         logger.info("DB Engine Shutdown");
+
     }
 
     public Map<String,String> paramStringToMap(String param) {

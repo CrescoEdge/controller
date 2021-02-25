@@ -131,6 +131,7 @@ public class ControllerEngine {
         boolean isStopped = false;
         try {
 
+            logger.error("Stopping all plugins.");
             pluginAdmin.stopAllPlugins();
 
             if(controllerSM != null) {
@@ -139,13 +140,8 @@ public class ControllerEngine {
 
                 controllerSM.stop();
             }
-
             if(plugin != null) {
                 plugin.setIsActive(false);
-            }
-
-            if(gdb != null) {
-                gdb.shutdown();
             }
 
             isStopped = true;
