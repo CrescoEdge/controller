@@ -45,6 +45,9 @@ public class AgentExecutor implements Executor {
             case "pluginremove":
                 return pluginRemove(incoming);
 
+            case "pluginupdate":
+                return pluginUpdate(incoming);
+
             case "setloglevel":
                 return setLogLevel(incoming);
 
@@ -380,6 +383,45 @@ public class AgentExecutor implements Executor {
         }
         return ce;
     }
+
+    private MsgEvent pluginUpdate(MsgEvent ce) {
+
+        try {
+
+            Type type = new TypeToken<Map<String, String>>(){}.getType();
+            String configParamsJson = ce.getCompressedParam("configparams");
+            logger.trace("pluginAdd configParamsJson: " + configParamsJson);
+            Map<String, String> hm = gson.fromJson(configParamsJson, type);
+            byte[] jarData = ce.getDataParam("jardata");
+
+            boolean isUpdated = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);
+
+            ce.removeParam("jardata");
+            ce.setParam("is_updated", String.valueOf(isUpdated));
+
+            return ce;
+
+        } catch(Exception ex) {
+
+            logger.error("pluginadd Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+
+        }
+
+        return null;
+    }
+
 
     private MsgEvent getDPLogIsEnabled(MsgEvent ce) {
 

@@ -1365,8 +1365,6 @@ public class PluginAdmin {
                     logger.error("Can't add " + pluginName + " could not find suitable jar for bundle loading!");
                 }
 
-
-
             } catch (Exception ex) {
                StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
@@ -1864,6 +1862,22 @@ public class PluginAdmin {
         }
         return repoDirPath;
     }
+
+    public boolean pluginUpdate(Map<String, String> hm, byte[] jarData) {
+        boolean isUpdated = false;
+        try {
+
+            String jarFile = hm.get("md5");
+            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + "/" + jarFile);
+            Files.write(path, jarData);
+            isUpdated = true;
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return isUpdated;
+    }
+
 
     public Path getPlugin(pNode node) {
         //boolean isFound = false;
