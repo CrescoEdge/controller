@@ -3,6 +3,7 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.library.core.CoreState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
@@ -52,6 +53,14 @@ public class AgentExecutor implements Executor {
 
             case "setlogdp":
                 return  setDPLogIsEnabled(incoming);
+
+            case "restartcontroller":
+                restartController();
+                break;
+
+            case "restartframework":
+                restartFramework();
+                break;
 
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -233,6 +242,50 @@ public class AgentExecutor implements Executor {
             ce.setParam("status_desc","getFileInfo() failure");
         }
         return ce;
+    }
+
+    private void restartController() {
+
+        try {
+
+            logger.error("Controller Restart Started");
+            CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
+            coreState.restartController();
+
+        } catch(Exception ex) {
+
+            logger.error("restartController " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
+    }
+
+    private void restartFramework() {
+
+        try {
+
+            logger.error("Framework Restart Started");
+            CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
+            coreState.restartFramework();
+
+        } catch(Exception ex) {
+
+            logger.error("restartController " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
     }
 
     private MsgEvent pluginAdd(MsgEvent ce) {

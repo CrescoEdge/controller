@@ -10,6 +10,7 @@ import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
 import io.cresco.library.app.gEdge;
 import io.cresco.library.app.pNode;
+import io.cresco.library.core.CoreState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.plugin.PluginService;
@@ -115,6 +116,36 @@ public class PluginAdmin {
             logger.error("Admin Does Not Exist!");
         }
 
+    }
+
+    public CoreState getCoreState() {
+
+        CoreState coreState = null;
+        try {
+
+            ServiceReference coreStateReference = null;
+
+            coreStateReference = context.getServiceReference(CoreState.class.getName());
+
+            if (coreStateReference != null) {
+
+                boolean assign = coreStateReference.isAssignableTo(context.getBundle(), CoreState.class.getName());
+
+                if (assign) {
+                    coreState = (CoreState) context.getService(coreStateReference);
+
+                } else {
+                    logger.error("Could not attached to CoreState");
+                }
+
+            } else {
+                logger.error("CoreState does not exist!");
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        return coreState;
     }
 
     public boolean logDPSetEnabled(String sessionId, boolean isEnabled) {
