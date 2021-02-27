@@ -45,7 +45,7 @@ public class AgentExecutor implements Executor {
             case "pluginremove":
                 return pluginRemove(incoming);
 
-            case "pluginupdate":
+            case "pluginupload":
                 return pluginUpdate(incoming);
 
             case "setloglevel":
@@ -56,6 +56,10 @@ public class AgentExecutor implements Executor {
 
             case "setlogdp":
                 return  setDPLogIsEnabled(incoming);
+
+            case "controllerupdate":
+                updateController(incoming);
+                break;
 
             case "restartcontroller":
                 restartController();
@@ -254,6 +258,29 @@ public class AgentExecutor implements Executor {
             logger.error("Controller Restart Started");
             CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
             coreState.restartController();
+
+        } catch(Exception ex) {
+
+            logger.error("restartController " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
+    }
+
+    private void updateController(MsgEvent me) {
+
+        try {
+
+            String jar_file_path = me.getParam("jar_file_path");
+            logger.error("Controller Restart Started");
+            CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
+            coreState.updateController(jar_file_path);
 
         } catch(Exception ex) {
 
