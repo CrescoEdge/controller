@@ -95,15 +95,25 @@ public class TCPDiscoveryEngine implements Runnable {
         } catch(Exception ex) {
             logger.error(ex.getMessage());
         } finally {
-            bossGroup.shutdownGracefully();
             workerGroup.shutdownGracefully();
+            bossGroup.shutdownGracefully();
         }
     }
 
+
     public static void shutdown() {
         try {
-            bossGroup.shutdownGracefully();
+
             workerGroup.shutdownGracefully();
+            while(!workerGroup.isShutdown()) {
+                Thread.sleep(1000);
+            }
+
+            bossGroup.shutdownGracefully();
+            while(!bossGroup.isShutdown()) {
+                Thread.sleep(1000);
+            }
+
         } catch(Exception ex) {
             //logger.error(ex.getMessage());
             ex.printStackTrace();

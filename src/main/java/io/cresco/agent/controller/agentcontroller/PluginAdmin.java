@@ -581,6 +581,13 @@ public class PluginAdmin {
                 List<Map<String, String>> pluginList = plugin.getPluginInventory(repoCacheDir.toFile().getAbsolutePath());
                 if (pluginList != null) {
                     for (Map<String, String> params : pluginList) {
+
+                        //{pluginname=io.cresco.controller,
+                        // jarfile=055e77b10431968300a81dcf14560d37,
+                        // version=1.1.0.SNAPSHOT-2021-02-27T181634Z,
+                        // md5=055e77b10431968300a81dcf14560d37}
+
+
                         String lName = params.get("pluginname");
                         String lVersion = params.get("version");
                         String lMD5 = params.get("md5");
@@ -592,14 +599,14 @@ public class PluginAdmin {
 
                             if((lName.equals(requestedName) && (lVersion.equals(requestedVersion)) && (lMD5.equals(requestedMD5)))) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + "/" + params.get("jarfile"));
                                 returnMap.put("jarstatus","localcache");
                             }
                         } else {
 
                             if(lName.equals(requestedName)) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + "/" + params.get("jarfile"));
                                 returnMap.put("version",lVersion);
                                 returnMap.put("md5",lMD5);
                                 returnMap.put("jarstatus","localcache");

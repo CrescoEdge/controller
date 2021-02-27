@@ -244,6 +244,7 @@ public class AgentServiceImpl implements AgentService {
 
         controllerEngine = new ControllerEngine(cstate, plugin, pluginAdmin, gdb);
 
+
         (new Thread() {
         public void run() {
             try {

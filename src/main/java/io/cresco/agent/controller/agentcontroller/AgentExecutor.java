@@ -46,7 +46,10 @@ public class AgentExecutor implements Executor {
                 return pluginRemove(incoming);
 
             case "pluginupload":
-                return pluginUpdate(incoming);
+                return pluginUpload(incoming);
+
+            case "pluginrepopull":
+                return pluginRepoPull(incoming);
 
             case "setloglevel":
                 return setLogLevel(incoming);
@@ -411,8 +414,10 @@ public class AgentExecutor implements Executor {
         return ce;
     }
 
-    private MsgEvent pluginUpdate(MsgEvent ce) {
 
+    private MsgEvent pluginUpload(MsgEvent ce) {
+
+        boolean isUpdated = false;
         try {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
@@ -421,12 +426,10 @@ public class AgentExecutor implements Executor {
             Map<String, String> hm = gson.fromJson(configParamsJson, type);
             byte[] jarData = ce.getDataParam("jardata");
 
-            boolean isUpdated = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);
-
-            ce.removeParam("jardata");
-            ce.setParam("is_updated", String.valueOf(isUpdated));
-
-            return ce;
+            if(ce.paramsContains("jardata")) {
+                logger.error("JAR FOUND");
+            }
+            isUpdated = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);
 
         } catch(Exception ex) {
 
@@ -446,7 +449,46 @@ public class AgentExecutor implements Executor {
 
         }
 
-        return null;
+        ce.removeParam("jardata");
+        ce.setParam("is_updated", String.valueOf(isUpdated));
+        return ce;
+    }
+
+    private MsgEvent pluginRepoPull(MsgEvent ce) {
+
+        boolean isUpdated = false;
+        try {
+
+            Type type = new TypeToken<Map<String, Object>>(){}.getType();
+            String configParamsJson = ce.getCompressedParam("configparams");
+            logger.trace("pluginAdd configParamsJson: " + configParamsJson);
+            Map<String, Object> hm = gson.fromJson(configParamsJson, type);
+
+
+            Map<String,Object> validated_list = controllerEngine.getPluginAdmin().remotePluginMap(hm);
+            ce.setCompressedParam("configparams",gson.toJson(validated_list));
+            isUpdated = true;
+
+        } catch(Exception ex) {
+
+            logger.error("pluginadd Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+
+        }
+
+        ce.setParam("is_updated", String.valueOf(isUpdated));
+        return ce;
     }
 
 

@@ -1,6 +1,7 @@
 package io.cresco.agent.controller.globalcontroller;
 
 import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalscheduler.PollRemovePipeline;
 import io.cresco.library.app.gPayload;
@@ -10,9 +11,11 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.*;
+import java.lang.reflect.Type;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +30,7 @@ public class GlobalExecutor implements Executor {
     private PluginBuilder plugin;
     private CLogger logger;
     private ExecutorService removePipelineExecutor;
+    private Gson gson;
 
     public GlobalExecutor(ControllerEngine controllerEngine) {
 
@@ -34,6 +38,7 @@ public class GlobalExecutor implements Executor {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(GlobalExecutor.class.getName(),CLogger.Level.Info);
         removePipelineExecutor = Executors.newFixedThreadPool(100);
+        gson = new Gson();
     }
 
     @Override
@@ -68,6 +73,9 @@ public class GlobalExecutor implements Executor {
 
                 case "setinodestatus":
                     return setINodeStatus(ce);
+
+                case "savetorepo":
+                    return saveToRepo(ce);
 
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
@@ -301,6 +309,88 @@ public class GlobalExecutor implements Executor {
         //
         return ce;
     }
+
+    private MsgEvent saveToRepo(MsgEvent ce) {
+
+        Boolean isSaved = false;
+        try {
+
+            Type type = new TypeToken<Map<String, String>>(){}.getType();
+            String configParamsJson = ce.getCompressedParam("configparams");
+            logger.trace("pluginAdd configParamsJson: " + configParamsJson);
+            Map<String, String> jarInfo = gson.fromJson(configParamsJson, type);
+
+            String pluginName = jarInfo.get("pluginname");
+            String pluginMD5 = jarInfo.get("md5");
+            String pluginJarFile = pluginMD5;
+            String pluginVersion = jarInfo.get("version");
+
+            //to send back
+            jarInfo.put("pluginname",pluginName);
+            jarInfo.put("jarfile",pluginJarFile);
+            jarInfo.put("version", pluginVersion);
+            jarInfo.put("md5",pluginMD5);
+
+
+            if((pluginName != null) && (pluginMD5 != null) && (pluginJarFile != null) && (pluginVersion != null) && (ce.paramsContains("jardata"))) {
+
+                List<Map<String,String>> repoList = controllerEngine.getGDB().getPluginListMapByType("pluginname","io.cresco.repo");
+
+
+                for (Map<String, String> repoMap : repoList) {
+
+                        String region = repoMap.get("region");
+                        String agent = repoMap.get("agent");
+                        String pluginID = repoMap.get("pluginid");
+
+                    if ((region != null) && (agent != null) && (pluginID != null)) {
+
+                        MsgEvent uploadMsg = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pluginID);
+                        uploadMsg.setParam("action","putjar");
+                        uploadMsg.setParam("pluginname", pluginName);
+                        uploadMsg.setParam("md5", pluginMD5);
+                        uploadMsg.setParam("jarfile", pluginMD5);
+                        uploadMsg.setParam("version", pluginVersion);
+                        uploadMsg.setDataParam("jardata", ce.getDataParam("jardata"));
+
+                        MsgEvent verify = plugin.sendRPC(uploadMsg);
+                        if (verify != null) {
+                            if (verify.getParams().containsKey("md5-confirm")) {
+                                if(verify.getParams().get("md5-confirm").equals(pluginMD5)) {
+                                    isSaved = true;
+                                } else {
+                                    logger.error("saveToRepo md5-confirm does not match plugin md5");
+                                }
+                            } else {
+                                logger.error("saveToRepo responce does not contain md5-confirm");
+                            }
+                        } else {
+                            logger.error("saveToRepo verify message was null");
+                        }
+
+                    } else {
+                        logger.error("saveToRepo mission region or agent or plugid info");
+                    }
+
+                }
+
+            } else {
+                logger.error("saveToRepo missing plugin info");
+                logger.error("saveToRep pluginName: " + pluginName);
+                logger.error("saveToRepo pluginMD5: " + pluginMD5);
+                logger.error("saveToRepo pluginJarFile: " + pluginJarFile);
+                logger.error("saveToRepo pluginVersion: " + pluginVersion);
+            }
+
+        } catch (Exception e) {
+            isSaved = false;
+            e.printStackTrace();
+        }
+        ce.removeParam("jardata");
+        ce.setParam("is_saved", String.valueOf(isSaved));
+        return ce;
+    }
+
 
     /**
      * Query to list a specific agentcontroller configuration
