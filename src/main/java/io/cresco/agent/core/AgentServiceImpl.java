@@ -1,6 +1,5 @@
 package io.cresco.agent.core;
 
-
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.data.DataPlaneLogger;
@@ -17,9 +16,16 @@ import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.*;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.net.InetAddress;
+import java.net.JarURLConnection;
+import java.net.URL;
 import java.nio.file.FileSystems;
 import java.util.*;
+import java.util.jar.Attributes;
+import java.util.jar.JarInputStream;
+import java.util.jar.Manifest;
 
 
 @Component(
@@ -220,7 +226,6 @@ public class AgentServiceImpl implements AgentService {
         //agent state
         agentState = new AgentState(cstate);
 
-
         //create admin
         pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, dataPlaneLogger);
 
@@ -236,14 +241,11 @@ public class AgentServiceImpl implements AgentService {
         logger.info("   /  /____   /  /  |  |   /  /____   _____/  /  /  /____   /  /__/  /");
         logger.info("  /_______/  /__/   |__|  /_______/  /_______/  /_______/  /________/");
         logger.info("");
-        //logger.info("      Configuration Source : {}", configMsg);
-        //logger.info("      Plugin Configuration File: {}", config.getPluginConfigFile());
         logger.info("");
 
-        logger.info("Controller Starting Init");
+        logger.info("Controller Version: " + getControllerVersion());
 
         controllerEngine = new ControllerEngine(cstate, plugin, pluginAdmin, gdb);
-
 
         (new Thread() {
         public void run() {
@@ -255,16 +257,6 @@ public class AgentServiceImpl implements AgentService {
                 } else {
                     logger.error("Controlled Failed Startup : Exiting");
                 }
-
-                //setup role init
-/*
-                if(controllerEngine.commInit()) {
-                    logger.info("Controller Completed Init");
-
-                } else {
-                    logger.error("Controlled Failed Init");
-                }
-*/
 
                 while(!controllerEngine.cstate.isActive()) {
                     logger.info("Waiting for controller to become active...");
@@ -323,6 +315,42 @@ public class AgentServiceImpl implements AgentService {
             pluginAdmin.setLogLevel(logId, level);
         }
 
+    }
+
+    public String getControllerVersion() {
+        String version = null;
+        try{
+
+            String jarURLString = new File(AgentServiceImpl.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getPath();
+            if(jarURLString.contains("!/")) {
+                jarURLString = "jar:file://" + jarURLString;
+                URL inputURL = new URL(jarURLString);
+
+                if (inputURL != null) {
+                    JarURLConnection conn = (JarURLConnection) inputURL.openConnection();
+                    InputStream in = conn.getInputStream();
+
+                    JarInputStream jarStream = new JarInputStream(in);
+                    Manifest mf = jarStream.getManifest();
+                    //Manifest mf = conn.getManifest();
+                    if (mf != null) {
+                        Attributes mainAttribs = mf.getMainAttributes();
+                        if (mainAttribs != null) {
+                            version = mainAttribs.getValue("Bundle-Version");
+                        }
+                    }
+                }
+            } else {
+                version = plugin.getPluginVersion(jarURLString);
+            }
+
+        }
+        catch(Exception ex)
+        {
+            ex.printStackTrace();
+
+        }
+        return version;
     }
 
     @Override
