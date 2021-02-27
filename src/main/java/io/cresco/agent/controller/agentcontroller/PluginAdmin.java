@@ -451,25 +451,9 @@ public class PluginAdmin {
 
                 if (agentEmbeddedJarPath == null) {
 
-                    Bundle[] bundleList = context.getBundles();
+                    Bundle systemBundle = context.getBundle(0);
+                    agentEmbeddedJarPath = "file://" + new File(systemBundle.getClass().getProtectionDomain().getCodeSource().getLocation().toURI()).getPath();
 
-                    for (Bundle b : bundleList) {
-
-                        //String eBundleId = String.valueOf(b.getBundleId());
-                        String eName = b.getSymbolicName();
-                        if (eName != null) {
-                            if (eName.equals("io.cresco.controller")) {
-                                String jarLocation = b.getLocation();
-                                if (jarLocation.contains("!")) {
-                                    String[] locationSplit = jarLocation.split("!");
-                                    if (locationSplit.length > 0) {
-                                        agentEmbeddedJarPath = locationSplit[0];
-                                        //logger.error("agent location: " + locationSplit[0]);
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
 
                 if (agentEmbeddedJarPath != null) {
@@ -756,7 +740,6 @@ public class PluginAdmin {
             } else {
                 validatedMap = jarIsEmbedded(map);
             }
-
 
         } catch(Exception ex) {
             logger.error("localPluginMap()");
@@ -1394,7 +1377,6 @@ public class PluginAdmin {
 
     }
 
-
     public boolean addConfig(String pluginId, Map<String,Object> map) {
         boolean isAdded = false;
         try {
@@ -1610,7 +1592,6 @@ public class PluginAdmin {
 
         return exportString;
     }
-
 
     /*
     public String getPluginExport() {

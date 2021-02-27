@@ -688,11 +688,15 @@ public class DBInterfaceImpl implements DBInterface {
                     request.setParam("action", "repolist");
 
                     MsgEvent response = plugin.sendRPC(request);
-                    if (response.getParam("repolist") != null) {
-                        String repoListJson = response.getCompressedParam("repolist");
-                        repoList.add(repoListJson);
+                    if(response != null) {
+                        if (response.getParam("repolist") != null) {
+                            String repoListJson = response.getCompressedParam("repolist");
+                            repoList.add(repoListJson);
+                        } else {
+                            logger.error("NO RESPONSE FROM REPO LIST MISSING PARAM");
+                        }
                     } else {
-                        logger.error("NO RESPONSE FROM REPO LIST");
+                        logger.error("NO RESPONSE FROM REPO LIST MISSING MESSAGE");
                     }
                 }
             }
