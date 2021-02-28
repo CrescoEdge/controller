@@ -122,8 +122,30 @@ public class StaticPluginLoader implements Runnable  {
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
 
+                                //load wsapi
+                                if (plugin.getConfig().getBooleanParam("enable_wsapi", true)) {
+
+                                    String pluginName = "io.cresco.wsapi";
+
+                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                                    if(map == null) {
+
+                                        map = getPluginConfigMap(pluginName);
+
+                                        if (map == null) {
+                                            map = new HashMap<>();
+                                            map.put("pluginname", pluginName);
+                                            map.put("jarfile", "wsapi-1.1-SNAPSHOT.jar");
+                                            map.put("persistence_code", "20");
+                                            map.put("inode_id", generatePluginId(pluginName));
+                                        }
+                                    }
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
+                                }
+
                                 //load dashboard
-                                if (plugin.getConfig().getBooleanParam("enable_dashboard", true)) {
+                                if (plugin.getConfig().getBooleanParam("enable_dashboard", false)) {
 
                                     String pluginName = "io.cresco.dashboard";
 
