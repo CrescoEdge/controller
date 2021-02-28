@@ -330,8 +330,10 @@ public class AgentExecutor implements Executor {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             String configParamsJson = ce.getCompressedParam("cepparams");
+            logger.error(configParamsJson);
             logger.trace("addCEP configParamsJson: " + configParamsJson);
             Map<String, String> params = gson.fromJson(configParamsJson, type);
+            logger.error(params.toString());
             String input_stream = params.get("input_stream");
             String input_stream_desc = params.get("input_stream_desc");
             String output_stream = params.get("output_stream");
@@ -355,7 +357,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("pluginadd Error: " + ex.getMessage());
+            logger.error("cepadd Error: " + ex.getMessage());
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
