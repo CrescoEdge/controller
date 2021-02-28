@@ -16,7 +16,6 @@ import org.osgi.service.cm.ConfigurationAdmin;
 import org.osgi.service.component.annotations.*;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.JarURLConnection;
@@ -325,21 +324,34 @@ public class AgentServiceImpl implements AgentService {
             if(jarURLString.contains("!/")) {
                 jarURLString = "jar:file://" + jarURLString;
                 URL inputURL = new URL(jarURLString);
+                JarInputStream jarStream = null;
 
-                if (inputURL != null) {
-                    JarURLConnection conn = (JarURLConnection) inputURL.openConnection();
-                    InputStream in = conn.getInputStream();
+                try {
 
-                    JarInputStream jarStream = new JarInputStream(in);
-                    Manifest mf = jarStream.getManifest();
-                    //Manifest mf = conn.getManifest();
-                    if (mf != null) {
-                        Attributes mainAttribs = mf.getMainAttributes();
-                        if (mainAttribs != null) {
-                            version = mainAttribs.getValue("Bundle-Version");
+                    if (inputURL != null) {
+                        JarURLConnection conn = (JarURLConnection) inputURL.openConnection();
+                        InputStream in = conn.getInputStream();
+
+                        jarStream = new JarInputStream(in);
+                        Manifest mf = jarStream.getManifest();
+                        //Manifest mf = conn.getManifest();
+                        if (mf != null) {
+                            Attributes mainAttribs = mf.getMainAttributes();
+                            if (mainAttribs != null) {
+                                version = mainAttribs.getValue("Bundle-Version");
+                            }
                         }
                     }
+                } catch(Exception ex) {
+                    ex.printStackTrace();
+                } finally {
+
+                    if(jarStream != null) {
+                        jarStream.close();
+                    }
                 }
+
+
             } else {
                 version = plugin.getPluginVersion(jarURLString);
             }
