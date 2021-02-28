@@ -72,6 +72,9 @@ public class AgentExecutor implements Executor {
                 restartFramework();
                 break;
 
+            case "addcep":
+                return addCEP(incoming);
+
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
                 logger.error(incoming.getParams().toString());
@@ -319,6 +322,56 @@ public class AgentExecutor implements Executor {
 
         }
 
+    }
+
+    private MsgEvent addCEP(MsgEvent ce) {
+
+        try {
+
+            Type type = new TypeToken<Map<String, String>>(){}.getType();
+            String configParamsJson = ce.getCompressedParam("cepparams");
+            logger.trace("addCEP configParamsJson: " + configParamsJson);
+            Map<String, String> params = gson.fromJson(configParamsJson, type);
+            String input_stream = params.get("input_stream");
+            String input_stream_desc = params.get("input_stream_desc");
+            String output_stream = params.get("output_stream");
+            String output_stream_desc = params.get("output_stream_desc");
+            String query = params.get("query");
+
+            String cepid = plugin.getAgentService().getDataPlaneService().createCEP(input_stream, input_stream_desc, output_stream,output_stream_desc, query);
+            if(cepid != null) {
+
+                ce.setParam("status_code", "10");
+                ce.setParam("status_desc", "CEP Active");
+                ce.setParam("cepid", cepid);
+
+            } else {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "CEP could not be started!");
+            }
+
+            return ce;
+
+
+        } catch(Exception ex) {
+
+            logger.error("pluginadd Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+
+        }
+
+        return null;
     }
 
     private MsgEvent pluginAdd(MsgEvent ce) {
