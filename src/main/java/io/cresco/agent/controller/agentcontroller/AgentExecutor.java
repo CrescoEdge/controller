@@ -72,8 +72,8 @@ public class AgentExecutor implements Executor {
                 restartFramework();
                 break;
 
-            case "addcep":
-                return addCEP(incoming);
+            case "cepadd":
+                return cepAdd(incoming);
 
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -324,7 +324,7 @@ public class AgentExecutor implements Executor {
 
     }
 
-    private MsgEvent addCEP(MsgEvent ce) {
+    private MsgEvent cepAdd(MsgEvent ce) {
 
         try {
 
