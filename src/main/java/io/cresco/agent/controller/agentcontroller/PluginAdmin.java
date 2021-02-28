@@ -868,8 +868,7 @@ public class PluginAdmin {
                     break;
 
                 case "localcache":
-
-                    Path jarPath = Paths.get(getRepoCacheDir().toString(),(String)map.get("jarfile"));
+                    Path jarPath = Paths.get((String)map.get("jarfile"));
                     if(jarPath.toFile().isFile()) {
                         bundle = context.getBundle(jarPath.toFile().getAbsolutePath());
 
@@ -877,7 +876,6 @@ public class PluginAdmin {
                             bundle = context.installBundle("file:" + jarPath.toFile().getAbsolutePath());
                         }
                     }
-
                     break;
 
 
