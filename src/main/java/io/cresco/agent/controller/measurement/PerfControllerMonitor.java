@@ -41,6 +41,18 @@ public class PerfControllerMonitor {
         initControllerMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
+
+    }
+
+    public void shutdown() {
+        try {
+
+            me.shutdown();
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
     }
 
     public String getResourceInfo(String actionRegion, String actionAgent) {
