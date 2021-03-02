@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class UDPDiscoveryEngine implements Runnable {
+    private static Thread discoveryEngineWorkerThread;
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private static Map<NetworkInterface, MulticastSocket> workers = new ConcurrentHashMap<>();
@@ -35,6 +36,7 @@ public class UDPDiscoveryEngine implements Runnable {
         this.gson = new Gson();
         this.discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
         logger.info("Started DiscoveryUDPEngine");
+
     }
 
     public UDPDiscoveryEngine(ControllerEngine controllerEngine, int discoveryPort) {
@@ -53,7 +55,14 @@ public class UDPDiscoveryEngine implements Runnable {
 
     public static void shutdown() {
         for (Map.Entry<NetworkInterface, MulticastSocket> entry : workers.entrySet()) {
-            entry.getValue().close();
+            MulticastSocket multicastSocket = entry.getValue();
+            multicastSocket.close();
+            while(!multicastSocket.isClosed()) {
+                System.out.println("waiting on multicast socket to close");
+            }
+            while(discoveryEngineWorkerThread.isAlive()) {
+                System.out.println("waiting on discovery thread to close");
+            }
         }
     }
 
@@ -64,8 +73,8 @@ public class UDPDiscoveryEngine implements Runnable {
             while (interfaces.hasMoreElements()) {
                 NetworkInterface networkInterface = interfaces.nextElement();
                 logger.debug("Found: " + networkInterface.getDisplayName());
-                Thread thread = new Thread(new DiscoveryEngineWorker(networkInterface, controllerEngine));
-                thread.start();
+                discoveryEngineWorkerThread = new Thread(new DiscoveryEngineWorker(networkInterface, controllerEngine));
+                discoveryEngineWorkerThread.start();
             }
             controllerEngine.setUDPDiscoveryActive(true);
             logger.trace("Shutdown");

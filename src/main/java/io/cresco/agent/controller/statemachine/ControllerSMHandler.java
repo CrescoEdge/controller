@@ -228,6 +228,17 @@ public class ControllerSMHandler {
 
         logger.info("Shutdown Active Broker Manager");
         controllerEngine.setActiveBrokerManagerActive(false);
+        //Poison Pill Shutdown, send null class if blocking on input
+        DiscoveryNode poisonDiscoveryNode = new DiscoveryNode(DiscoveryType.SHUTDOWN);
+        try {
+            controllerEngine.getIncomingCanidateBrokers().put(poisonDiscoveryNode);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        while(controllerEngine.getActiveBrokerManagerThread().isAlive()) {
+            logger.info("Waiting on Active Broker Manager Thread");
+        }
 
         controllerEngine.getActiveClient().shutdown();
 

@@ -300,8 +300,10 @@ public class ActiveBroker {
 			broker.stopAllConnectors(stopper);
 			 */
             broker.stop();
-			logger.error("Waiting until Broker Stop");
 			broker.waitUntilStopped();
+			while(!broker.isStopped()) {
+				logger.error("Waiting until Broker Stop");
+			}
 
 			logger.error("Broker Stopped: " + broker.isStopped());
 

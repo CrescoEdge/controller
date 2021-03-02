@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ControllerEngine {
@@ -47,7 +48,7 @@ public class ControllerEngine {
 
     public AtomicInteger responds = new AtomicInteger(0);
 
-    private boolean ActiveBrokerManagerActive = false;
+    private AtomicBoolean ActiveBrokerManagerActive = new AtomicBoolean(false);
     private boolean clientDiscoveryActiveIPv4 = false;
     private boolean clientDiscoveryActiveIPv6 = false;
     private boolean DiscoveryActive = false;
@@ -316,10 +317,12 @@ public class ControllerEngine {
         this.brokeredAgents = brokeredAgents;
     }
     public boolean isActiveBrokerManagerActive() {
-        return ActiveBrokerManagerActive;
+
+        return ActiveBrokerManagerActive.get();
+
     }
-    public void setActiveBrokerManagerActive(boolean activeBrokerManagerActive) {
-        ActiveBrokerManagerActive = activeBrokerManagerActive;
+    public void setActiveBrokerManagerActive(boolean activeBrokerManagerActiveState) {
+        ActiveBrokerManagerActive.set(activeBrokerManagerActiveState);
     }
     public BlockingQueue<DiscoveryNode> getIncomingCanidateBrokers() {
         return incomingCanidateBrokers;
