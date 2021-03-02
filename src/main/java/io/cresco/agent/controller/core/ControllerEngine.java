@@ -131,9 +131,10 @@ public class ControllerEngine {
         boolean isStopped = false;
         try {
 
-            logger.error("Stopping all plugins.");
+            logger.info("Stopping all plugins.");
             pluginAdmin.stopAllPlugins();
 
+            logger.info("Setting controller to stopped state");
             if(controllerSM != null) {
                 //if in STANDALONE_INIT startup was interupted in the middle of a state transition, must force interupt
                 controllerSMHandler.shutdown();

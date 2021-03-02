@@ -18,7 +18,7 @@ public class CEPEngine {
     private SiddhiManager siddhiManager;
     private Map<String,CEPInstance> cepMap;
     private AtomicBoolean lockCEP = new AtomicBoolean();
-
+    private InMemorySink sink;
 
     public CEPEngine(PluginBuilder pluginBuilder) {
 
@@ -31,8 +31,9 @@ public class CEPEngine {
         siddhiManager = new SiddhiManager();
 
         try {
-            InMemorySink sink = new InMemorySink();
+            sink = new InMemorySink();
             sink.connect();
+
         } catch (Exception ex) {
             ex.printStackTrace();
         }
@@ -75,6 +76,7 @@ public class CEPEngine {
                     CEPInstance value = entry.getValue();
                     value.shutdown();
                 }
+                sink.shutdown();
             }
 
             if(siddhiManager != null) {

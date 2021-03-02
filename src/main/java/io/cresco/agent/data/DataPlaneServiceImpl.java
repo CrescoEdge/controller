@@ -123,6 +123,26 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    public void shutdown() {
+	    try {
+	        logger.info("Shutting down CEPEngine");
+	        cepEngine.shutdown();
+
+            List<String> listeners = null;
+            synchronized (lockMessage) {
+                listeners = new ArrayList<>(messageConsumerMap.keySet());
+            }
+            for (String listener : listeners) {
+                logger.info("Removing listener: " + listener);
+                removeMessageListener(listener);
+            }
+
+
+        } catch (Exception ex) {
+	        ex.printStackTrace();
+        }
+    }
+
     public boolean isFaultURIActive() {
         return controllerEngine.getActiveClient().isFaultURIActive();
     }

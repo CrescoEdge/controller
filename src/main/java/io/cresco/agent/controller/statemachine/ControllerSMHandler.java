@@ -83,6 +83,8 @@ public class ControllerSMHandler {
 
     private AtomicBoolean forceShutdown = new AtomicBoolean(false);
 
+    private DataPlaneServiceImpl dataPlaneService;
+
     public ControllerSMHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -202,6 +204,9 @@ public class ControllerSMHandler {
         //stop net discovery
         logger.info("Shutdown discovery functions");
         stopNetDiscoveryEngine();
+
+        logger.info("Dataplane service shutdown");
+        dataPlaneService.shutdown();
 
         logger.info("Shutdown agent functions");
         isAgentShutdown();
@@ -859,10 +864,12 @@ public class ControllerSMHandler {
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
                     if(isLocalBroker(brokerAddress)) {
                         controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "vm://localhost");
-                        controllerEngine.setDataPlaneService(new DataPlaneServiceImpl(controllerEngine,"vm://localhost"));
+                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"vm://localhost");
+                        controllerEngine.setDataPlaneService(dataPlaneService);
                     } else {
                         controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
-                        controllerEngine.setDataPlaneService(new DataPlaneServiceImpl(controllerEngine,"nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false"));
+                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
+                        controllerEngine.setDataPlaneService(dataPlaneService);
                     }
 
                     while (!controllerEngine.getActiveClient().isFaultURIActive()) {

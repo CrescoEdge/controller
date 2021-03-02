@@ -116,6 +116,11 @@ public class AgentExecutor implements Executor {
                     return getFileInfo(incoming);
                 case "getfiledata":
                     return getFileData(incoming);
+                case "getcontrollerstatus":
+                    return getControllerStatus(incoming);
+                case "iscontrolleractive":
+                    return isControllerActive(incoming);
+
 
                 default:
                     logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -323,6 +328,58 @@ public class AgentExecutor implements Executor {
         }
 
     }
+
+
+    private MsgEvent getControllerStatus(MsgEvent ce) {
+
+        try {
+
+            ce.setParam("controller_status", String.valueOf(controllerEngine.cstate.getControllerState()));
+
+        } catch(Exception ex) {
+
+            logger.error("getControllerStatus Error: " + ex.getMessage());
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+            ce.setParam("controller_status","unknown");
+        }
+
+        return ce;
+    }
+
+    private MsgEvent isControllerActive(MsgEvent ce) {
+
+        try {
+
+            ce.setParam("is_controller_active", String.valueOf(controllerEngine.cstate.isActive()));
+
+        } catch(Exception ex) {
+
+            logger.error("isControllerActive: " + ex.getMessage());
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+            ce.setParam("is_controller_active",Boolean.FALSE.toString());
+        }
+
+        return ce;
+    }
+
 
     private MsgEvent cepAdd(MsgEvent ce) {
 
