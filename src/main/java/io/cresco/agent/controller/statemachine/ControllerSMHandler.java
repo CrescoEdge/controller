@@ -600,6 +600,13 @@ public class ControllerSMHandler {
         boolean isShutdown = false;
         try {
 
+            if(controllerEngine.getPerfControllerMonitor() != null) {
+                controllerEngine.getPerfControllerMonitor().shutdown();
+                controllerEngine.setPerfControllerMonitor(null);
+            } else {
+                logger.error("controllerEngine.getPerfControllerMonitor() == null");
+            }
+
             if(controllerEngine.getAgentHealthWatcher() != null) {
                 controllerEngine.getAgentHealthWatcher().shutdown();
                 controllerEngine.setAgentHealthWatcher(null);
