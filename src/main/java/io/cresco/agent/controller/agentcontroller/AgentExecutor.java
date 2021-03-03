@@ -72,6 +72,10 @@ public class AgentExecutor implements Executor {
                 restartFramework();
                 break;
 
+            case "killjvm":
+                killJVM();
+                break;
+
             case "cepadd":
                 return cepAdd(incoming);
 
@@ -318,6 +322,28 @@ public class AgentExecutor implements Executor {
         } catch(Exception ex) {
 
             logger.error("restartController " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
+    }
+
+    private void killJVM() {
+
+        try {
+
+            logger.error("Killing JVM");
+            CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
+            coreState.killJVM();
+
+        } catch(Exception ex) {
+
+            logger.error("killJVM " + ex.getMessage());
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
