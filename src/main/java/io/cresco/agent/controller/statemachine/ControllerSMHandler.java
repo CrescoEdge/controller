@@ -600,6 +600,12 @@ public class ControllerSMHandler {
         boolean isShutdown = false;
         try {
 
+            if(controllerEngine.getPluginAdmin() != null){
+                controllerEngine.getPluginAdmin().clearDataPlaneLogger();
+            } else {
+                logger.error("controllerEngine.getPluginAdmin() == null");
+            }
+
             if(controllerEngine.getPerfControllerMonitor() != null) {
                 controllerEngine.getPerfControllerMonitor().shutdown();
                 controllerEngine.setPerfControllerMonitor(null);

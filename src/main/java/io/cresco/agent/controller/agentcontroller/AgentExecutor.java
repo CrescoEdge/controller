@@ -726,9 +726,13 @@ public class AgentExecutor implements Executor {
     private MsgEvent setLogLevel(MsgEvent ce) {
 
         try {
-            String baseClassName = ce.getParam("baseclassname");
-            String loglevelString = ce.getParam("loglevel");
             String sessionId = ce.getParam("session_id");
+            String baseClassName = null;
+            if (ce.paramsContains("baseclassname")) {
+                baseClassName = ce.getParam("baseclassname");
+            }
+
+            String loglevelString = ce.getParam("loglevel");
 
             CLogger.Level loglevel = CLogger.Level.valueOf(loglevelString);
             if((baseClassName == null) || (sessionId == null)) {

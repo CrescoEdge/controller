@@ -118,6 +118,10 @@ public class PluginAdmin {
 
     }
 
+    public void clearDataPlaneLogger() {
+        dataPlaneLogger.shutdown();
+    }
+
     public CoreState getCoreState() {
 
         CoreState coreState = null;
@@ -195,7 +199,10 @@ public class PluginAdmin {
 
             //set log level for DP
             if(dataPlaneLogger != null) {
+                logger.error("dataPlaneLogger != NULL");
                 isSet = dataPlaneLogger.setLogLevel(sessionId, logId, level);
+            } else {
+                logger.error("dataPlaneLogger == NULL");
             }
 
         } catch (Exception ex) {

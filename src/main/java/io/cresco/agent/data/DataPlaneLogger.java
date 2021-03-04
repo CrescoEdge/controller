@@ -41,6 +41,14 @@ public class DataPlaneLogger {
 
     private CLogger.Level defaultLogLevel = CLogger.Level.Info;
 
+    public void shutdown() {
+
+        synchronized (lockMap) {
+            loggerEnabledMap.clear();
+        }
+
+    }
+
     public void setIsEnabled(String sessionId, boolean isEnabledSet) {
         synchronized (lockMap) {
             if(isEnabledSet) {
@@ -76,7 +84,7 @@ public class DataPlaneLogger {
             try {
                 if (pluginBuilder.getAgentService().getAgentState() != null) {
                     if (pluginBuilder.getAgentService().getAgentState().isActive()) {
-                        if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
+                        //if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
                             //we can sent do dataplane
                             //go over each session
                             List<String> activeSessions = getActiveSessions();
@@ -97,7 +105,7 @@ public class DataPlaneLogger {
                                     pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
                                 }
                             }
-                        }
+                        //}
                     }
                 }
             } catch (Exception ex) {
@@ -179,7 +187,7 @@ public class DataPlaneLogger {
             if(loggerMap.containsKey(sessionId)) {
                 if (loggerMap.get(sessionId).containsKey(logId)) {
                     logger.info("LogDP: Removing LogId: " + logId);
-                    loggerMap.remove(logId);
+                    loggerMap.get(sessionId).remove(logId);
                 }
             }
         }
@@ -190,7 +198,7 @@ public class DataPlaneLogger {
             try {
                 synchronized (lockMap) {
 
-                    if (logId.replace(" ", "").length() == 0) {
+                    if (logId.equals("default")) {
                         logger.info("LogDP: Setting defaultLogLevel to " + level.name() + " for session: " + sessionId);
                         if (loggerEnabledMap.containsKey(sessionId)) {
                             defaultLoggerMap.put(sessionId, level);
@@ -199,8 +207,11 @@ public class DataPlaneLogger {
                     } else {
                         if (loggerEnabledMap.containsKey(sessionId)) {
                             logger.info("LogDP: Setting LogLevel to " + level.name() + " for LogId: " + logId + " for session: " + sessionId);
+                            logger.error(loggerMap.get(sessionId).getClass().toString());
                             loggerMap.get(sessionId).put(logId, level);
                             isSet = true;
+                        } else {
+                            logger.error("!loggerEnabledMap.containsKey(sessionId)");
                         }
                     }
 

@@ -58,7 +58,6 @@ public class RegionHealthWatcher {
                 Thread.sleep(1000);
             }
 
-
             logger.debug("Shutdown");
         } catch (Exception ex) {
             ex.printStackTrace();

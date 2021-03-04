@@ -43,7 +43,6 @@ public class CLoggerImpl implements CLogger {
 
         logService = LoggerFactory.getLogger(logIdent);
 
-
     }
 
 
@@ -84,8 +83,6 @@ public class CLoggerImpl implements CLogger {
     public void trace(String logMessage, Object ... params) {
         trace(replaceBrackets(logMessage, params));
     }
-
-
 
     public void log(String messageBody, Level level) {
 
@@ -128,7 +125,6 @@ public class CLoggerImpl implements CLogger {
         }
         return newName + className.substring(lastIndex);
     }
-
 
     public void setLogLevel(Level level) {
         //this.level = level;
