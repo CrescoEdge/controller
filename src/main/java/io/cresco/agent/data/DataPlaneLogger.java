@@ -84,7 +84,7 @@ public class DataPlaneLogger {
             try {
                 if (pluginBuilder.getAgentService().getAgentState() != null) {
                     if (pluginBuilder.getAgentService().getAgentState().isActive()) {
-                        //if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
+                        if (pluginBuilder.getAgentService().getDataPlaneService().isFaultURIActive()) {
                             //we can sent do dataplane
                             //go over each session
                             List<String> activeSessions = getActiveSessions();
@@ -105,7 +105,7 @@ public class DataPlaneLogger {
                                     pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
                                 }
                             }
-                        //}
+                        }
                     }
                 }
             } catch (Exception ex) {

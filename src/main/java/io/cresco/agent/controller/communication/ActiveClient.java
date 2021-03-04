@@ -59,13 +59,16 @@ public class ActiveClient {
             if(faultTriggerURI != null) {
                 synchronized (lockConnectionMap) {
                     if(connectionMap.containsKey(faultTriggerURI)) {
-                        logger.trace("URI: " + faultTriggerURI + " Status Started:" + connectionMap.get(faultTriggerURI).isStarted());
+                        //can't trace, it causes stack overflow
+                        //logger.trace("URI: " + faultTriggerURI + " Status Started:" + connectionMap.get(faultTriggerURI).isStarted());
                         isActive = connectionMap.get(faultTriggerURI).isStarted();
                     }
                 }
             }
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
+            //logger.error(ex.getMessage());
+            //this might cause a stackoverflow as well
+            ex.printStackTrace();
         }
         return isActive;
     }

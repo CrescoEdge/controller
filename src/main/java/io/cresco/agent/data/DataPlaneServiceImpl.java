@@ -172,7 +172,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private ActiveMQSession getSession() {
 	    try {
 
-            while (!controllerEngine.getActiveClient().isFaultURIActive()) {
+	        while (!controllerEngine.getActiveClient().isFaultURIActive()) {
                 Thread.sleep(1000);
             }
 
