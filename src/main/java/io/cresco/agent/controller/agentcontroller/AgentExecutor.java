@@ -64,6 +64,10 @@ public class AgentExecutor implements Executor {
                 updateController(incoming);
                 break;
 
+            case "stopcontroller":
+                stopController();
+                break;
+
             case "restartcontroller":
                 restartController();
                 break;
@@ -264,6 +268,28 @@ public class AgentExecutor implements Executor {
             ce.setParam("status_desc","getFileInfo() failure");
         }
         return ce;
+    }
+
+    private void stopController() {
+
+        try {
+
+            logger.error("Controller Stop Started");
+            CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
+            coreState.stopController();
+
+        } catch(Exception ex) {
+
+            logger.error("stopController " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+        }
+
     }
 
     private void restartController() {
