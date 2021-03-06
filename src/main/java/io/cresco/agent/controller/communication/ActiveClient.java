@@ -272,11 +272,16 @@ public class ActiveClient {
             this.agentConsumer = null;
         }
 
+
         try {
             synchronized (lockConnectionMap) {
                 for (Map.Entry<String, ActiveMQConnection> entry : connectionMap.entrySet()) {
                     ActiveMQConnection value = entry.getValue();
+                    value.stop();
                     value.close();
+                    while(!value.isClosed()){
+                        Thread.sleep(500);
+                    }
                 }
                 connectionMap.clear();
             }
