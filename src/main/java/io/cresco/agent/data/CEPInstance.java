@@ -113,23 +113,17 @@ public class CEPInstance {
 
     public void shutdown() {
         try {
-            //shutdown runtime
-            if(siddhiAppRuntime != null) {
-                siddhiAppRuntime.shutdown();
-            }
 
             //unsubscribe from topic
-            InMemoryBroker.subscribe(outputSubscriber);
+            InMemoryBroker.unsubscribe(outputSubscriber);
 
             //stop listening for messages
             plugin.getAgentService().getDataPlaneService().removeMessageListener(listenerId);
 
-
-            /*
-            if(siddhiManager != null) {
-                siddhiManager.shutdown();
+            //shutdown runtime
+            if(siddhiAppRuntime != null) {
+                siddhiAppRuntime.shutdown();
             }
-            */
 
         } catch (Exception ex) {
             ex.printStackTrace();

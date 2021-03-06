@@ -31,6 +31,7 @@ public class TCPDiscoveryEngine implements Runnable {
 
     private static EventLoopGroup bossGroup;
     private static EventLoopGroup workerGroup;
+    private static ChannelFuture cf;
 
     public TCPDiscoveryEngine(ControllerEngine controllerEngine)   {
         this.controllerEngine = controllerEngine;
@@ -71,9 +72,11 @@ public class TCPDiscoveryEngine implements Runnable {
                         @Override
                         public void initChannel(SocketChannel ch) {
                             ChannelPipeline p = ch.pipeline();
+
                             if (sslCtx != null) {
                                 p.addLast(sslCtx.newHandler(ch.alloc()));
                             }
+
                             p.addLast(new IdleStateHandler(30,30,30));
                             p.addLast(
                                     new ObjectEncoder(),
@@ -86,9 +89,7 @@ public class TCPDiscoveryEngine implements Runnable {
 
             // Bind and start to accept incoming connections.
             //b.bind(discoveryPort).sync().channel().closeFuture().sync();
-            ChannelFuture cf = b.bind(discoveryPort).sync();
-
-            cf.channel().closeFuture().sync();
+            cf = b.bind(discoveryPort).sync();
 
         } catch(Exception ex) {
             logger.error(ex.getMessage());
@@ -102,12 +103,16 @@ public class TCPDiscoveryEngine implements Runnable {
     public static void shutdown() {
         try {
 
-            workerGroup.shutdownGracefully();
+            cf.channel().closeFuture().sync();
+            cf.channel().close();
+            cf.channel().parent().close();
+
+            workerGroup.shutdownGracefully().sync();
             while(!workerGroup.isShutdown()) {
                 Thread.sleep(1000);
             }
 
-            bossGroup.shutdownGracefully();
+            bossGroup.shutdownGracefully().sync();
             while(!bossGroup.isShutdown()) {
                 Thread.sleep(1000);
             }

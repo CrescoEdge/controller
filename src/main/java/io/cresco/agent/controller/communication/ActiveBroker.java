@@ -154,7 +154,6 @@ public class ActiveBroker {
 				lbp.setLogTransactionEvents(false);
 				lbp.setPerDestinationLogger(false);
 
-
 				//broker.setPlugins(new BrokerPlugin[]{lbp});
 				//LoggingBrokerPlugin
 				//LoggingBrokerPlugin
@@ -299,6 +298,11 @@ public class ActiveBroker {
 			logger.error("Stopping remaining connectors");
 			broker.stopAllConnectors(stopper);
 			 */
+			broker.getScheduler().shutdown();
+			while(broker.getScheduler().isStopped()) {
+				logger.error("Waiting until Broker Scheduler is Stop");
+			}
+
             broker.stop();
 			broker.waitUntilStopped();
 			while(!broker.isStopped()) {
