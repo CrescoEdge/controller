@@ -51,11 +51,22 @@
             <version>2.6.1</version>
         </dependency>
 
+        <!--
         <dependency>
             <groupId>org.apache.derby</groupId>
             <artifactId>derby</artifactId>
             <version>${derby.version}</version>
         </dependency>
+        -->
+
+        <!-- https://mvnrepository.com/artifact/org.hsqldb/hsqldb -->
+        <dependency>
+            <groupId>org.hsqldb</groupId>
+            <artifactId>hsqldb</artifactId>
+            <version>2.5.1</version>
+            <scope>test</scope>
+        </dependency>
+
 
         <dependency>
             <groupId>mysql</groupId>
@@ -391,6 +402,12 @@
             <artifactId>commons-logging</artifactId>
             <version>1.1.1</version>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.hsqldb</groupId>
+            <artifactId>hsqldb</artifactId>
+            <version>2.5.1</version>
+            <scope>compile</scope>
         </dependency>
 
     </dependencies>

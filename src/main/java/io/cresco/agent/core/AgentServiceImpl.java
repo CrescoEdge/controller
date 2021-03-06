@@ -291,6 +291,7 @@ public class AgentServiceImpl implements AgentService {
             }
             if(dbe != null) {
                 dbe.shutdown();
+
             }
 
         }

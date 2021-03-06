@@ -22,6 +22,9 @@ public class DBEngine {
     private Gson gson;
     private Type type;
     private DBType dbType = DBType.EMBEDDED;
+    private static PoolableConnectionFactory poolableConnectionFactory;
+    private static ObjectPool<PoolableConnection> connectionPool;
+    private static PoolingDataSource<PoolableConnection> dataSource;
 
     private List<String> tablesNames;
 
@@ -150,8 +153,14 @@ public class DBEngine {
         try {
             //String shutdownString =  "jdbc:derby:" + dbPath + ";shutdown=true";
             //DriverManager.getConnection(shutdownString);
-            DriverManager.getConnection("jdbc:derby:;shutdown=true");
-            Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+
+
+            dataSource.close();
+            connectionPool.close();
+
+            //DriverManager.getConnection("jdbc:derby:;shutdown=true");
+            //Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+            Driver d= new org.hsqldb.jdbc.JDBCDriver();
             DriverManager.deregisterDriver(d);
 
         } catch (SQLException e) {
@@ -2611,7 +2620,7 @@ public class DBEngine {
         // the "real" Connections created by the ConnectionFactory with
         // the classes that implement the pooling functionality.
         //
-        PoolableConnectionFactory poolableConnectionFactory =
+        poolableConnectionFactory =
                 new PoolableConnectionFactory(connectionFactory, null);
 
 
@@ -2623,7 +2632,7 @@ public class DBEngine {
         // We'll use a GenericObjectPool instance, although
         // any ObjectPool implementation will suffice.
         //
-        ObjectPool<PoolableConnection> connectionPool =
+        connectionPool =
                 new GenericObjectPool<>(poolableConnectionFactory);
 
         // Set the factory's pool property to the owning pool
@@ -2635,7 +2644,7 @@ public class DBEngine {
         // Finally, we create the PoolingDriver itself,
         // passing in the object pool we created.
         //
-        PoolingDataSource<PoolableConnection> dataSource =
+        dataSource =
                 new PoolingDataSource<>(connectionPool);
 
         return dataSource;
