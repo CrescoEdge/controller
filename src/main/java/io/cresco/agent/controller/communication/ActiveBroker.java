@@ -301,11 +301,16 @@ public class ActiveBroker {
 			logger.error("Stopping remaining connectors");
 			broker.stopAllConnectors(stopper);
 			 */
-			broker.getScheduler().shutdown();
-			while(broker.getScheduler().isStopped()) {
-				logger.error("Waiting until Broker Scheduler is Stop");
+
+
+
+			broker.getRegionBroker().getScheduler().shutdown();
+			broker.getRegionBroker().stop();
+			while(!broker.getRegionBroker().isStopped()) {
+				logger.error("Waiting until Regional Broker Stop");
 			}
 
+			broker.getScheduler().shutdown();
             broker.stop();
 			broker.waitUntilStopped();
 			while(!broker.isStopped()) {
@@ -313,6 +318,18 @@ public class ActiveBroker {
 			}
 
 			logger.error("Broker Stopped: " + broker.isStopped());
+
+			/*
+			broker.getScheduler().shutdown();
+			while(!broker.getScheduler().isStopped()) {
+				logger.error("Waiting until Broker Scheduler is Stop");
+			}
+
+			broker.getRegionBroker().getScheduler().shutdown();
+			while(!broker.getRegionBroker().getScheduler().isStopped()) {
+				logger.error("Waiting until Regional Broker Scheduler is Stop");
+			}
+			 */
 
 
 		} catch (Exception e) {
