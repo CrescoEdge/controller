@@ -134,8 +134,8 @@ public class ActiveBroker {
 				//broker.setManagementContext(mc);
 				broker.setSslContext(sslContextBroker);
 
-				broker.setPopulateJMSXUserID(false);
-				broker.setUseJmx(false);
+				broker.setPopulateJMSXUserID(true);
+				//broker.setUseJmx(false);
 
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
 
