@@ -103,9 +103,21 @@ public class TCPDiscoveryEngine implements Runnable {
     public static void shutdown() {
         try {
 
-            cf.channel().closeFuture().sync();
-            cf.channel().close();
-            cf.channel().parent().close();
+            try {
+                cf.channel().closeFuture().sync();
+            } catch (Exception ex) {
+                //eat
+            }
+            try {
+                cf.channel().close();
+            } catch (Exception ex) {
+                //eat
+            }
+            try {
+                cf.channel().parent().close();
+            }catch (Exception ex) {
+                //eat
+            }
 
             workerGroup.shutdownGracefully().sync();
             while(!workerGroup.isShutdown()) {
