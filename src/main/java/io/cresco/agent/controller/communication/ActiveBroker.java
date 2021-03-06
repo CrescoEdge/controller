@@ -3,9 +3,7 @@ package io.cresco.agent.controller.communication;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
-import org.apache.activemq.broker.SslBrokerService;
-import org.apache.activemq.broker.SslContext;
-import org.apache.activemq.broker.TransportConnector;
+import org.apache.activemq.broker.*;
 import org.apache.activemq.broker.region.policy.PolicyEntry;
 import org.apache.activemq.broker.region.policy.PolicyMap;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
@@ -302,15 +300,31 @@ public class ActiveBroker {
 			broker.stopAllConnectors(stopper);
 			 */
 
+			/*
+			for(Connection connection : broker.getRegionBroker().getClients()) {
+				connection.stop();
+			}
+
+			for(Connection connection : broker.getBroker().getClients()) {
+				connection.stop();
+			}
+
+			 */
 
 
+			/*
 			broker.getRegionBroker().getScheduler().shutdown();
 			broker.getRegionBroker().stop();
 			while(!broker.getRegionBroker().isStopped()) {
 				logger.error("Waiting until Regional Broker Stop");
 			}
 
-			broker.getScheduler().shutdown();
+			 */
+
+			//broker.getBroker().stop();
+			//broker.getBroker().getScheduler().shutdown();
+
+			//broker.getScheduler().shutdown();
             broker.stop();
 			broker.waitUntilStopped();
 			while(!broker.isStopped()) {
