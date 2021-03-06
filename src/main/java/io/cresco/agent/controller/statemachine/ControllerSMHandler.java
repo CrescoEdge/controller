@@ -164,6 +164,9 @@ public class ControllerSMHandler {
     })
     public void stopAgent() {
 
+        //stop internal update timer
+        stateUpdateTimer.cancel();
+
         //don't try to unregister if agent has failed
         if(cstate.getControllerState() != ControllerMode.AGENT_FAILED) {
             unregisterAgent(cstate.getRegion(), cstate.getAgent());
@@ -186,6 +189,9 @@ public class ControllerSMHandler {
             @Transition(on = "stop", in = REGION_GLOBAL, next = EMPTY)
     })
     public void stopRegion() {
+        //stop internal update timer
+        stateUpdateTimer.cancel();
+
         logger.error("STOP CALLED REGION");
         cstate.setRegionShutdown("Shutdown Called");
     }
@@ -197,6 +203,9 @@ public class ControllerSMHandler {
             @Transition(on = "stop", in = GLOBAL_FAILED, next = EMPTY)
     })
     public void stopGlobal() {
+
+        //stop internal update timer
+        stateUpdateTimer.cancel();
 
         logger.error("STOP CALLED GLOBAL");
         cstate.setGlobalShutdown("Shutdown Called");
