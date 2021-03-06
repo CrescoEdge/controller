@@ -179,6 +179,9 @@ public class DBEngine {
             //Driver d= new org.hsqldb.jdbc.JDBCDriver();
             DriverManager.deregisterDriver(d);
 
+            Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
+            DriverManager.deregisterDriver(da);
+
         }
         catch (Exception ex) {
             ex.printStackTrace();
