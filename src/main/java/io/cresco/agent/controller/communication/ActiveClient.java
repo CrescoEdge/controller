@@ -278,6 +278,8 @@ public class ActiveClient {
                 for (Map.Entry<String, ActiveMQConnection> entry : connectionMap.entrySet()) {
                     ActiveMQConnection value = entry.getValue();
                     value.stop();
+                    value.cleanUpTempDestinations();
+                    value.cleanup();
                     value.close();
                     while(!value.isClosed()){
                         Thread.sleep(500);
