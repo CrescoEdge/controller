@@ -133,7 +133,10 @@ public class ActiveBroker {
 				broker.setDestinationPolicy(map);
 				//broker.setManagementContext(mc);
 				broker.setSslContext(sslContextBroker);
-				broker.setPopulateJMSXUserID(true);
+
+				broker.setPopulateJMSXUserID(false);
+				broker.setUseJmx(false);
+
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
 
 				//broker.getTempDataStore().setDirectory(Paths.get("cresco.data").toFile());
