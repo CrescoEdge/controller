@@ -90,8 +90,6 @@ public class TCPDiscoveryEngine implements Runnable {
 
             cf.channel().closeFuture().sync();
 
-
-
         } catch(Exception ex) {
             logger.error(ex.getMessage());
         } finally {
