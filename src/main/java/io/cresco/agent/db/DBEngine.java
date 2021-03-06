@@ -151,29 +151,34 @@ public class DBEngine {
     public boolean shutdown() {
         boolean isShutdown = false;
         try {
-            //String shutdownString =  "jdbc:derby:" + dbPath + ";shutdown=true";
-            //DriverManager.getConnection(shutdownString);
-
-
+            //shutdown connections
             dataSource.close();
             connectionPool.close();
 
-            //DriverManager.getConnection("jdbc:derby:;shutdown=true");
-            //Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
-            Driver d= new org.hsqldb.jdbc.JDBCDriver();
-            DriverManager.deregisterDriver(d);
-
-        } catch (SQLException e) {
-            if (e.getErrorCode() == 50000) {
+            //shutdown database, catch acception
+            try {
+                //shutdown the database
+                //String shutdownString =  "jdbc:derby:" + dbPath + ";shutdown=true";
+                String shutdownString = "jdbc:derby:;shutdown=true";
+                DriverManager.getConnection(shutdownString);
+            } catch (SQLException e) {
+                if (e.getErrorCode() == 50000) {
                 /*
                 XJ015 (with SQLCODE 50000) is the expected (successful)
                 SQLSTATE for complete system shutdown. 08006 (with SQLCODE 45000), on the other hand, is the expected SQLSTATE for shutdown of only an individual database.
                  */
-                isShutdown = true;
+                    isShutdown = true;
 
-            } else {
-                e.printStackTrace();
+                } else {
+                    e.printStackTrace();
+                }
             }
+            //unload drivers
+            //DriverManager.getConnection("jdbc:derby:;shutdown=true");
+            Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+            //Driver d= new org.hsqldb.jdbc.JDBCDriver();
+            DriverManager.deregisterDriver(d);
+
         }
         catch (Exception ex) {
             ex.printStackTrace();
