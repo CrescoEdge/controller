@@ -325,6 +325,10 @@ public class ActiveBroker {
 			//broker.getBroker().getScheduler().shutdown();
 
 			//broker.getScheduler().shutdown();
+			broker.getRegionBroker().getScheduler().shutdown();
+			broker.getBroker().getScheduler().shutdown();
+			broker.getRegionBroker().stop();
+			broker.getBroker().stop();
             broker.stop();
 			broker.waitUntilStopped();
 			while(!broker.isStopped()) {
