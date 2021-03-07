@@ -1014,6 +1014,7 @@ public class ControllerSMHandler {
 
             controllerEngine.setDiscoveryActive(false);
 
+            controllerEngine.setUDPDiscoveryActive(false);
             if (controllerEngine.getDiscoveryUDPEngineThread() != null) {
                 logger.info("UDP Discovery Engine shutting down");
                 UDPDiscoveryEngine.shutdown();
@@ -1021,6 +1022,7 @@ public class ControllerSMHandler {
                 controllerEngine.setDiscoveryUDPEngineThread(null);
             }
 
+            controllerEngine.setTCPDiscoveryActive(false);
             if (controllerEngine.getDiscoveryTCPEngineThread() != null) {
                 logger.info("TCP Discovery Engine shutting down");
                 TCPDiscoveryEngine.shutdown();
