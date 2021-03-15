@@ -27,13 +27,10 @@ public class DiscoveryClientIPv4 {
                 Thread.sleep(2500);
             }
             controllerEngine.setClientDiscoveryActiveIPv4(true);
-            //Searching local network 255.255.255.255
-            String broadCastNetwork = "255.255.255.255";
 
-            DiscoveryClientWorkerIPv4 dcw = new DiscoveryClientWorkerIPv4(controllerEngine, disType, discoveryTimeout, broadCastNetwork);
+            DiscoveryClientWorkerIPv4 dcw = new DiscoveryClientWorkerIPv4(controllerEngine, disType, discoveryTimeout);
 
             //populate map with possible peers
-            logger.debug("Searching {}", broadCastNetwork);
             discoveryList.addAll(dcw.discover());
 
 

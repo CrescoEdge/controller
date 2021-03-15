@@ -3,6 +3,7 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
 import io.cresco.library.core.CoreState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
@@ -17,6 +18,7 @@ import java.lang.reflect.Type;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class AgentExecutor implements Executor {
@@ -128,6 +130,8 @@ public class AgentExecutor implements Executor {
                     return getControllerStatus(incoming);
                 case "iscontrolleractive":
                     return isControllerActive(incoming);
+                case "getbroadcastdiscovery":
+                    return getBroadcastDiscovery(incoming);
 
 
                 default:
@@ -232,6 +236,34 @@ public class AgentExecutor implements Executor {
         return ce;
     }
 
+    private MsgEvent getBroadcastDiscovery(MsgEvent ce) {
+
+        try {
+            logger.error("prediscover");
+            List<DiscoveryNode> discovery_list = controllerEngine.getPerfMonitorNet().getNetworkDiscoveryList();
+
+            for(DiscoveryNode dn : discovery_list) {
+                logger.error(gson.toJson(dn));
+            }
+            logger.error("post discover");
+            ce.setParam("broadcast_discovery","data");
+
+        } catch (Exception ex) {
+            logger.error("getBroadcastDiscovery " + ex.getMessage());
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+            ce.setParam("broadcast_discovery","unknown");
+
+        }
+        return ce;
+    }
     private MsgEvent getFileInfo (MsgEvent ce) {
         try {
 

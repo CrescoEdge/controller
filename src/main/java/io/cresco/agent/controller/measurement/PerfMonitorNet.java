@@ -96,7 +96,45 @@ public class PerfMonitorNet {
         return static_network_map;
     }
 
-    private List<MsgEvent> getNetworkDiscoveryList() {
+    public List<DiscoveryNode> getNetworkDiscoveryList() {
+
+
+        List<DiscoveryNode> discoveryList = null;
+        polling = true;
+        try {
+
+            discoveryList = new ArrayList<>();
+            /*
+            if (plugin.isIPv6()) {
+                if(ip6dc == null) {
+                    ip6dc = new DiscoveryClientIPv6(controllerEngine);
+                }
+                logger.error("Broker Search (IPv6)...");
+                discoveryList.addAll(ip6dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv6_agent_timeout", 10000)));
+                logger.debug("IPv6 Broker count = {} " + discoveryList.size());
+            }
+
+             */
+            if(ip4dc == null) {
+                ip4dc = new DiscoveryClientIPv4(controllerEngine);
+            }
+            logger.error("Broker Search (IPv4)...");
+            discoveryList.addAll(ip4dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 10000)));
+            logger.error("Broker count = {} " + discoveryList.size());
+
+            //for (MsgEvent me : discoveryList) {
+            //    logger.debug(me.getParams().toString());
+            //}
+
+        }
+        catch(Exception ex) {
+            logger.error("getNetworkDiscoveryList() " + ex.getMessage());
+        }
+        polling = false;
+        return discoveryList;
+    }
+
+    public List<MsgEvent> getNetworkDiscoveryListInternal() {
 
 
         List<MsgEvent> discoveryList = null;
@@ -104,18 +142,21 @@ public class PerfMonitorNet {
         try {
 
             discoveryList = new ArrayList<>();
+
             if (plugin.isIPv6()) {
                 if(ip6dc == null) {
                     ip6dc = new DiscoveryClientIPv6(controllerEngine);
                 }
-                logger.debug("Broker Search (IPv6)...");
+                logger.error("Broker Search (IPv6)...");
                 discoveryList.addAll(ip6dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv6_agent_timeout", 10000)));
                 logger.debug("IPv6 Broker count = {} " + discoveryList.size());
             }
+
+
             if(ip4dc == null) {
                 ip4dc = new DiscoveryClientIPv4(controllerEngine);
             }
-            logger.debug("Broker Search (IPv4)...");
+            logger.error("Broker Search (IPv4)...");
             //discoveryList.addAll(ip4dc.getDiscoveryResponse(DiscoveryType.NETWORK, plugin.getConfig().getIntegerParam("discovery_ipv4_agent_timeout", 10000)));
             logger.debug("Broker count = {} " + discoveryList.size());
 
@@ -134,11 +175,11 @@ public class PerfMonitorNet {
 
     private class PerfMonitorTask extends TimerTask {
 
-        private ControllerEngine controllerEngine;
+        //private ControllerEngine controllerEngine;
         private PluginBuilder plugin;
 
         PerfMonitorTask(ControllerEngine controllerEngine) {
-            this.controllerEngine = controllerEngine;
+            //this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
         }
 
@@ -161,20 +202,20 @@ public class PerfMonitorNet {
                 tick.setParam("resource_id", plugin.getConfig().getStringParam("resource_id", "netdiscovery_resource"));
                 tick.setParam("inode_id", plugin.getConfig().getStringParam("inode_id", "netdiscovery_inode"));
 
-                    List<MsgEvent> discoveryList = getNetworkDiscoveryList();
-                    List<DiscoveryNetworkTopoNode> dnList = new ArrayList<>();
-                    for(MsgEvent me : discoveryList) {
-                        dnList.add(new DiscoveryNetworkTopoNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
-                    }
+                List<MsgEvent> discoveryList = getNetworkDiscoveryListInternal();
+                List<DiscoveryNetworkTopoNode> dnList = new ArrayList<>();
+                for(MsgEvent me : discoveryList) {
+                    dnList.add(new DiscoveryNetworkTopoNode(me.getParam("src_ip"),me.getParam("src_port"),me.getParam("src_region"),me.getParam("src_agent"),me.getParam("dst_ip"),me.getParam("dst_port"),me.getParam("dst_region"),me.getParam("dst_agent"),me.getParam("broadcast_ts"),me.getParam("broadcast_latency"),me.getParam("agent_count")));
+                }
 
-                    //include any static entries
-                    dnList.addAll(dnListStatic);
+                //include any static entries
+                dnList.addAll(dnListStatic);
 
-                    String discoveryListString = gson.toJson(dnList);
+                String discoveryListString = gson.toJson(dnList);
 
-                    tick.setCompressedParam("perf", discoveryListString);
+                tick.setCompressedParam("perf", discoveryListString);
 
-                    plugin.msgIn(tick);
+                plugin.msgIn(tick);
 
             }
         }

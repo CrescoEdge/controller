@@ -8,6 +8,7 @@ import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
 import io.cresco.agent.controller.measurement.PerfControllerMonitor;
+import io.cresco.agent.controller.measurement.PerfMonitorNet;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.controller.statemachine.ControllerSM;
@@ -57,6 +58,7 @@ public class ControllerEngine {
     private boolean DBManagerActive = false;
 
     private PerfControllerMonitor perfControllerMonitor;
+    private PerfMonitorNet perfMonitorNet;
     private ActiveClient activeClient;
     private DataPlaneService dataPlaneService;
     private ActiveBroker broker;
@@ -417,10 +419,15 @@ public class ControllerEngine {
     }
 
     public PerfControllerMonitor getPerfControllerMonitor() { return  perfControllerMonitor; }
-
     public void setPerfControllerMonitor(PerfControllerMonitor perfControllerMonitor) {
         this.perfControllerMonitor = perfControllerMonitor;
     }
+
+    public void setPerfMonitorNet(PerfMonitorNet perfMonitorNet) {
+        this.perfMonitorNet = perfMonitorNet;
+    }
+    public PerfMonitorNet getPerfMonitorNet() { return  perfMonitorNet; }
+
 
     public Thread getDiscoveryUDPEngineThread() {
         return discoveryUDPEngineThread;

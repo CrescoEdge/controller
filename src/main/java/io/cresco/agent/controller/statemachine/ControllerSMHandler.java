@@ -10,6 +10,7 @@ import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
 import io.cresco.agent.controller.measurement.PerfControllerMonitor;
+import io.cresco.agent.controller.measurement.PerfMonitorNet;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.core.ControllerStateImp;
@@ -480,6 +481,10 @@ public class ControllerSMHandler {
                     //don't start this yet, otherwise agents will be listening for all KPIs
                     //perfControllerMonitor.setKpiListener();
                     logger.info("Performance Controller monitoring initialized");
+
+                    //PerfMonitorNet perfMonitorNet = new PerfMonitorNet(controllerEngine);
+                    controllerEngine.setPerfMonitorNet(new PerfMonitorNet(controllerEngine));
+                    logger.info("Performance Network monitoring initialized");
 
                     /*
                     PerfMonitorNet perfMonitorNet = new PerfMonitorNet(this);

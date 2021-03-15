@@ -20,7 +20,6 @@ class DiscoveryClientWorkerIPv4 {
     private Gson gson;
     private Timer timer;
     private int discoveryTimeout;
-    private String broadCastNetwork;
     private DiscoveryType disType;
     private boolean timerActive = false;
     private List<DiscoveryNode> discoveredList;
@@ -29,26 +28,24 @@ class DiscoveryClientWorkerIPv4 {
     private DiscoveryProcessor discoveryProcessor;
     private AtomicBoolean lockPacket = new AtomicBoolean();
 
-    DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String broadCastNetwork) {
+    DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientWorkerIPv4.class.getName(),CLogger.Level.Info);
         this.gson = new Gson();
         this.discoveryTimeout = discoveryTimeout;
-        this.broadCastNetwork = broadCastNetwork;
         this.disType = disType;
         this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
         this.broadcast_rec_port = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
         this.discoveryProcessor = new DiscoveryProcessor(controllerEngine);
     }
 
-    DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, String broadCastNetwork, int discoveryPort) {
+    DiscoveryClientWorkerIPv4(ControllerEngine controllerEngine, DiscoveryType disType, int discoveryTimeout, int discoveryPort) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(DiscoveryClientWorkerIPv4.class.getName(),CLogger.Level.Info);
         this.gson = new Gson();
         this.discoveryTimeout = discoveryTimeout;
-        this.broadCastNetwork = broadCastNetwork;
         this.disType = disType;
         this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
         this.broadcast_rec_port = discoveryPort;
@@ -138,16 +135,16 @@ class DiscoveryClientWorkerIPv4 {
 
                         logger.trace("Trying address {} for interface {}", interfaceAddress.getAddress().toString(), networkInterface.getDisplayName());
 
-                        InetAddress inAddr = interfaceAddress.getBroadcast();
+                        InetAddress broadcastAddr = interfaceAddress.getBroadcast();
 
-                        if (inAddr == null) {
+                        if (broadcastAddr == null) {
                             logger.trace("Not a broadcast");
                             continue;
                         }
 
-                        logger.trace("Creating DatagramSocket", inAddr.toString());
+                        logger.trace("Creating DatagramSocket", broadcastAddr.toString());
                         c = new DatagramSocket(null);
-                        logger.trace("Setting broadcast to true on DatagramSocket", inAddr.toString());
+                        logger.trace("Setting broadcast to true on DatagramSocket", broadcastAddr.toString());
                         c.setBroadcast(true);
 
                         timer = new Timer();
@@ -161,16 +158,17 @@ class DiscoveryClientWorkerIPv4 {
                         if(discoveryNode != null) {
 
                             sme.setCompressedParam("discovery_node", gson.toJson(discoveryNode));
-                            logger.trace("Building sendPacket for {}", inAddr.toString());
+                            logger.trace("Building sendPacket for {}", broadcastAddr.toString());
                             String sendJson = gson.toJson(sme);
                             byte[] sendData = sendJson.getBytes();
-                            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, Inet4Address.getByName(broadCastNetwork), broadcast_rec_port);
+                            //DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, Inet4Address.getByName(broadCastNetwork), broadcast_rec_port);
+                            DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, broadcastAddr, broadcast_rec_port);
                             synchronized (c) {
                                 c.send(sendPacket);
-                                logger.info("Sent sendPacket via {}", inAddr.toString());
+                                logger.info("Sent sendPacket via {}", broadcastAddr.toString());
                             }
                             while (!c.isClosed()) {
-                                logger.info("Listening " + inAddr.toString() + " Timeout: " + discoveryTimeout + " SysTime: " + System.currentTimeMillis());
+                                logger.info("Listening " + broadcastAddr.toString() + " Timeout: " + discoveryTimeout + " SysTime: " + System.currentTimeMillis());
                                 try {
                                     byte[] recvBuf = new byte[15000];
                                     DatagramPacket receivePacket = new DatagramPacket(recvBuf, recvBuf.length);
@@ -200,6 +198,7 @@ class DiscoveryClientWorkerIPv4 {
                         logger.error("getDiscoveryMap : SocketException {}", se.getMessage());
                     } catch (IOException ie) {
                         // Eat the exception, closing the port
+                        logger.error("IOException  " + ie.getMessage());
                     } catch (Exception e) {
                         StringWriter errors = new StringWriter();
                         e.printStackTrace(new PrintWriter(errors));
