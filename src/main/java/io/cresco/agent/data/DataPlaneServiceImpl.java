@@ -861,6 +861,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             MsgEvent re  = plugin.sendRPC(me);
 
+            if(re == null) {
+                logger.error("re = null");
+            } else {
+                logger.error(re.getParams().toString());
+            }
+
+
             if(re.paramsContains("md5") && re.paramsContains("size")) {
 
                 String rmd5 = re.getParam("md5");
