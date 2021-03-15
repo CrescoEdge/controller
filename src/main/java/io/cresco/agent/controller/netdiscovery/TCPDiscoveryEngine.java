@@ -89,7 +89,7 @@ public class TCPDiscoveryEngine implements Runnable {
 
             // Bind and start to accept incoming connections.
             //b.bind(discoveryPort).sync().channel().closeFuture().sync();
-            cf = b.bind(discoveryPort).sync();
+            cf = b.bind(discoveryPort).sync().channel().closeFuture().sync();
 
         } catch(Exception ex) {
             logger.error(ex.getMessage());

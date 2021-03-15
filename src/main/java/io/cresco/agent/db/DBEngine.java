@@ -22,9 +22,9 @@ public class DBEngine {
     private Gson gson;
     private Type type;
     private DBType dbType = DBType.EMBEDDED;
-    private static PoolableConnectionFactory poolableConnectionFactory;
-    private static ObjectPool<PoolableConnection> connectionPool;
-    private static PoolingDataSource<PoolableConnection> dataSource;
+    private PoolableConnectionFactory poolableConnectionFactory;
+    private ObjectPool<PoolableConnection> connectionPool;
+    private PoolingDataSource<PoolableConnection> dataSource;
 
     private List<String> tablesNames;
 
@@ -151,28 +151,28 @@ public class DBEngine {
     public boolean shutdown() {
         boolean isShutdown = false;
         try {
+
             //shutdown connections
             dataSource.close();
             connectionPool.close();
 
-            //shutdown database, catch acception
             try {
-                //shutdown the database
-                //String shutdownString =  "jdbc:derby:" + dbPath + ";shutdown=true";
-                String shutdownString = "jdbc:derby:;shutdown=true";
+                String shutdownString = "jdbc:derby:" + dbPath + ";shutdown=true";
                 DriverManager.getConnection(shutdownString);
             } catch (SQLException e) {
                 if (e.getErrorCode() == 50000) {
-                /*
-                XJ015 (with SQLCODE 50000) is the expected (successful)
-                SQLSTATE for complete system shutdown. 08006 (with SQLCODE 45000), on the other hand, is the expected SQLSTATE for shutdown of only an individual database.
-                 */
                     isShutdown = true;
 
-                } else {
+                } else if (e.getErrorCode() == 45000) {
+                    isShutdown = true;
+
+                }
+                else {
+                    System.out.println("Error code: " + e.getErrorCode());
                     e.printStackTrace();
                 }
             }
+
             //unload drivers
             //DriverManager.getConnection("jdbc:derby:;shutdown=true");
             Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
@@ -2600,11 +2600,11 @@ public class DBEngine {
     }
 
 
-    public static DataSource setupDataSource(String connectURI) {
+    public DataSource setupDataSource(String connectURI) {
         return setupDataSource(connectURI,null,null);
     }
 
-    public static DataSource setupDataSource(String connectURI, String login, String password) {
+    public DataSource setupDataSource(String connectURI, String login, String password) {
         //
         // First, we'll create a ConnectionFactory that the
         // pool will use to create Connections.
