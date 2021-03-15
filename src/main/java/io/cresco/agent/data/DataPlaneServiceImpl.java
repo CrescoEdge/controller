@@ -862,73 +862,72 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             MsgEvent re  = plugin.sendRPC(me);
 
             if(re == null) {
-                logger.error("re = null");
+                logger.error("downloadRemoteFile re message == null");
             } else {
-                logger.error(re.getParams().toString());
-            }
 
+                if(re.paramsContains("md5") && re.paramsContains("size")) {
 
-            if(re.paramsContains("md5") && re.paramsContains("size")) {
+                    String rmd5 = re.getParam("md5");
+                    long fileSize = Long.parseLong(re.getParam("size"));
 
-                String rmd5 = re.getParam("md5");
-                long fileSize = Long.parseLong(re.getParam("size"));
+                    int sizeOfFilePart = 1024 * 1024 * 5;// 5MB
 
-                int sizeOfFilePart = 1024 * 1024 * 5;// 5MB
+                    if(fileSize <= sizeOfFilePart) {
+                        //send request for file directly
 
-                if(fileSize <= sizeOfFilePart) {
-                    //send request for file directly
+                        Path filePath = Paths.get(localFilePath);
 
-                    Path filePath = Paths.get(localFilePath);
+                        try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
 
-                    try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
-
-                        MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
-                        dme.setParam("action", "getfiledata");
-                        dme.setParam("filepath", remoteFilePath);
-                        dme.setParam("skiplength", "0");
-                        dme.setParam("partsize", String.valueOf(fileSize));
-
-                        MsgEvent rdme = plugin.sendRPC(dme);
-                        fileOutputStream.write(rdme.getDataParam("payload"));
-                    }
-
-                } else { //we need to break up the file
-
-                    long fileDataRemaining = fileSize;
-                    long skipLength = 0;
-
-                    Path filePath = Paths.get(localFilePath);
-
-                    try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
-
-                        while (fileDataRemaining != 0) {
-                            //loop through writing files
-
-                            if (sizeOfFilePart >= fileDataRemaining) {
-                                sizeOfFilePart = (int) fileDataRemaining;
-                            }
-
-                            //System.out.println("Size of Data Part " + sizeOfFilePart + " Data Remaining = " + fileDataRemaining + " skipLength " + skipLength);
                             MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
                             dme.setParam("action", "getfiledata");
                             dme.setParam("filepath", remoteFilePath);
-                            dme.setParam("skiplength", String.valueOf(skipLength));
-                            dme.setParam("partsize", String.valueOf(sizeOfFilePart));
+                            dme.setParam("skiplength", "0");
+                            dme.setParam("partsize", String.valueOf(fileSize));
 
                             MsgEvent rdme = plugin.sendRPC(dme);
                             fileOutputStream.write(rdme.getDataParam("payload"));
+                        }
 
-                            fileDataRemaining = fileDataRemaining - sizeOfFilePart;
-                            skipLength += sizeOfFilePart;
+                    } else { //we need to break up the file
 
+                        long fileDataRemaining = fileSize;
+                        long skipLength = 0;
+
+                        Path filePath = Paths.get(localFilePath);
+
+                        try (FileOutputStream fileOutputStream = new FileOutputStream(filePath.toFile())) {
+
+                            while (fileDataRemaining != 0) {
+                                //loop through writing files
+
+                                if (sizeOfFilePart >= fileDataRemaining) {
+                                    sizeOfFilePart = (int) fileDataRemaining;
+                                }
+
+                                //System.out.println("Size of Data Part " + sizeOfFilePart + " Data Remaining = " + fileDataRemaining + " skipLength " + skipLength);
+                                MsgEvent dme = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
+                                dme.setParam("action", "getfiledata");
+                                dme.setParam("filepath", remoteFilePath);
+                                dme.setParam("skiplength", String.valueOf(skipLength));
+                                dme.setParam("partsize", String.valueOf(sizeOfFilePart));
+
+                                MsgEvent rdme = plugin.sendRPC(dme);
+                                fileOutputStream.write(rdme.getDataParam("payload"));
+
+                                fileDataRemaining = fileDataRemaining - sizeOfFilePart;
+                                skipLength += sizeOfFilePart;
+
+                            }
                         }
                     }
-                }
 
-                //check if file is correct
-                String lmd5 = plugin.getMD5(localFilePath);
-                if(lmd5.equals(rmd5)) {
-                    returnFilePath = Paths.get(localFilePath);
+                    //check if file is correct
+                    String lmd5 = plugin.getMD5(localFilePath);
+                    if(lmd5.equals(rmd5)) {
+                        returnFilePath = Paths.get(localFilePath);
+                    }
+
                 }
 
             }
