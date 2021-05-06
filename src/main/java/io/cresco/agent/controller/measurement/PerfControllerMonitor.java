@@ -314,7 +314,8 @@ public class PerfControllerMonitor {
         internalMap.put("jvm.classes.unloaded", "jvm");
         internalMap.put("jvm.buffer.total.capacity", "jvm");
         internalMap.put("jvm.buffer.count", "jvm");
-        internalMap.put("system.load.average.1m", "jvm");
+        //creates issue with windows
+        //internalMap.put("system.load.average.1m", "jvm");
         internalMap.put("system.cpu.count", "jvm");
         internalMap.put("system.cpu.usage", "jvm");
         internalMap.put("process.cpu.usage", "jvm");
