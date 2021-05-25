@@ -68,7 +68,11 @@ public class StaticPluginLoader implements Runnable  {
 
                         for(String pluginId : pluginList) {
                             if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 20) {
-                                systemPluginConfigList.add(getPluginConfigMap(pluginId));
+                                Map<String,Object> pluginMap = getPluginConfigMap(pluginId);
+                                //removing specific version information, in cases where config exist for system plugin, but plugin version has been updated.
+                                pluginMap.remove("version");
+                                pluginMap.remove("md5");
+                                systemPluginConfigList.add(pluginMap);
                             }
                         }
 
