@@ -27,6 +27,7 @@ public class UDPDiscoveryEngine implements Runnable {
     private int discoveryPort;
     private AtomicBoolean lockPacket = new AtomicBoolean();
     private DiscoveryProcessor discoveryProcessor;
+    private static DiscoveryEngineWorker discoveryEngineWorker;
 
     public UDPDiscoveryEngine(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -62,6 +63,12 @@ public class UDPDiscoveryEngine implements Runnable {
             }
             while(discoveryEngineWorkerThread.isAlive()) {
                 System.out.println("waiting on discovery thread to close");
+                try {
+                    discoveryEngineWorker.shutdown();
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
@@ -73,7 +80,8 @@ public class UDPDiscoveryEngine implements Runnable {
             while (interfaces.hasMoreElements()) {
                 NetworkInterface networkInterface = interfaces.nextElement();
                 logger.debug("Found: " + networkInterface.getDisplayName());
-                discoveryEngineWorkerThread = new Thread(new DiscoveryEngineWorker(networkInterface, controllerEngine));
+                discoveryEngineWorker = new DiscoveryEngineWorker(networkInterface, controllerEngine);
+                discoveryEngineWorkerThread = new Thread(discoveryEngineWorker);
                 discoveryEngineWorkerThread.start();
             }
             controllerEngine.setUDPDiscoveryActive(true);

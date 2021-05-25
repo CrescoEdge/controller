@@ -459,15 +459,17 @@ public class PluginAdmin {
                 if (agentEmbeddedJarPath == null) {
 
                     Bundle systemBundle = context.getBundle(0);
-                    agentEmbeddedJarPath = "file://" + new File(systemBundle.getClass().getProtectionDomain().getCodeSource().getLocation().toURI()).getPath();
-
+                    String basepath = new File(systemBundle.getClass().getProtectionDomain().getCodeSource().getLocation().toURI()).getPath();
+                    if(basepath.contains("\\")) {
+                        agentEmbeddedJarPath = "file:/" + basepath;
+                        agentEmbeddedJarPath = agentEmbeddedJarPath.replace("\\","/");
+                    } else {
+                        agentEmbeddedJarPath = "file:" + basepath;
+                    }
                 }
 
                 if (agentEmbeddedJarPath != null) {
-                    URL url = getClass().getClassLoader().getResource(requestedJarPath);
-
                     String jarURLString = "jar:" + agentEmbeddedJarPath + "!/" + requestedJarPath;
-
                     URL inputURL = new URL(jarURLString);
                     Manifest manifest = null;
 
@@ -503,6 +505,7 @@ public class PluginAdmin {
                             }
                         }catch (Exception ex) {
                             //gobble exception
+                            //ex.printStackTrace();
                         }
                     }
                 }
@@ -667,42 +670,6 @@ public class PluginAdmin {
 
         return isFound;
     }
-
-    /*
-    public Map<String,Object> getJarFromRepo(Map<String,Object> map)  {
-        Map<String,Object> returnMap = null;
-        try {
-
-            pNode node = getPnode(map);
-            if(node != null) {
-                Path jarPath = getPlugin(node);
-                if(jarPath != null) {
-                    if (jarPath.toFile().isFile()) {
-                        returnMap = getJarFromLocalCache(map);
-                    } else {
-                        logger.error("pnode ! file");
-                    }
-                } else {
-                    logger.error("Unable to retreve pnode from repo!");
-                }
-            } else {
-                logger.error("Unable to find pnode in repo(s)!");
-            }
-
-        } catch (Exception ex) {
-            logger.error("getJarFromRepo()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
-        }
-
-        return returnMap;
-    }
-     */
-
-
 
     public Map<String,Object> validatePluginMap(Map<String,Object> map) {
         Map<String,Object> validatedMap = null;
@@ -917,100 +884,6 @@ public class PluginAdmin {
         }
         return bundleID;
     }
-
-
-    /*
-    public long addBundle(Map<String,Object> pluginMap) {
-        long bundleID = -1;
-        try {
-
-
-            boolean jarIsLocal = pluginIsLocal(pluginMap);
-            String fileLocation = null;
-
-            if(!jarIsLocal) {
-                //try to download node
-                //pNode node = gson.fromJson(ce.getCompressedParam("pnode"), pNode.class);
-                //jarIsLocal = controllerEngine.getPluginAdmin().getPlugin(node);
-                //logger.error("!!! Implement plugin fetch from repo");
-            }
-
-            if(jarIsLocal) {
-
-                //replace remote jarfilename with local
-                fileLocation = getCachedJarPath(pluginMap);
-
-            } else {
-                fileLocation = (String) pluginMap.get("jarfile");
-            }
-
-            if(fileLocation != null) {
-                Bundle bundle = null;
-
-                //absolute file path was given
-                Path checkFile = Paths.get(fileLocation);
-
-                if (checkFile.toFile().isFile()) {
-
-                    bundle = context.getBundle(fileLocation);
-
-                    if (bundle == null) {
-                        bundle = context.installBundle("file:" + fileLocation);
-                    }
-
-                }
-                //check local repo
-                else {
-                    URL bundleURL = getClass().getClassLoader().getResource(fileLocation);
-                    if (bundleURL != null) {
-
-                        String bundlePath = bundleURL.getPath();
-                        InputStream bundleStream = getClass().getClassLoader().getResourceAsStream(fileLocation);
-                        bundle = context.installBundle(bundlePath, bundleStream);
-                    }
-                }
-                if (bundle != null) {
-                    bundleID = bundle.getBundleId();
-                }
-            }
-
-
-        } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);;
-        }
-        return bundleID;
-    }
-    */
-
-    String mostTargeted(String key, String pid, Bundle bundle) throws Exception {
-
-        String bsn = bundle.getSymbolicName();
-        Version version = bundle.getVersion();
-        String location = bundle.getLocation();
-        String f = String.format("(|(%1$s=%2$s)(%1$s=%2$s|%3$s)" +
-                        "(%1$s=%2$s|%3$s|%4$s)(%1$s=%2$s|%3$s|%4$s|%5$s))",
-                key, pid, bsn, version, location );
-
-        System.out.println("Config: " + f);
-
-        Configuration[] configurations = confAdmin.listConfigurations(f);
-        if (configurations == null)
-            return null;
-
-        String largest = null;
-        for (Configuration c : configurations) {
-            String s = (String) c.getProperties().get(key);
-            if ((largest == null) || (largest.length() < s.length()))
-                largest = s;
-        }
-        return largest;
-    }
-
-
 
     public boolean startBundle(long bundleID, String pid) {
         boolean isStarted = false;
@@ -1284,21 +1157,21 @@ public class PluginAdmin {
         return addPlugin(map, null);
     }
 
-    public String addPlugin(Map<String,Object> map, String edges) {
+    public String addPlugin(Map<String,Object> incomingMap, String edges) {
 
         String returnPluginID = null;
         if(pluginCount() < PLUGINLIMIT) {
             try {
 
-                String pluginID = (String)map.get("inode_id");
+                String pluginID = (String)incomingMap.get("inode_id");
 
                 if(pluginID == null) {
                     pluginID = "plugin-" + UUID.randomUUID().toString();
                 }
 
-                String pluginName = (String)map.get("pluginname");
+                String pluginName = (String)incomingMap.get("pluginname");
 
-                map = validatePluginMap(map);
+                Map<String,Object> map = validatePluginMap(incomingMap);
 
                 if(map != null) {
 
@@ -1358,6 +1231,7 @@ public class PluginAdmin {
                     }
                 } else {
                     logger.error("Can't add " + pluginName + " could not find suitable jar for bundle loading!");
+                    logger.error(pluginName + " : " + incomingMap);
                 }
 
             } catch (Exception ex) {
