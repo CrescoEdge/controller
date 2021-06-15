@@ -1451,6 +1451,34 @@ public class PluginAdmin {
         return statusMap;
     }
 
+    public String getPluginList() {
+
+
+        String exportString = null;
+        try {
+
+            List<Map<String,String>> configMapList = new ArrayList<>();
+
+            synchronized (lockPlugin) {
+                Iterator it = pluginMap.entrySet().iterator();
+                while (it.hasNext()) {
+                    Map.Entry pair = (Map.Entry) it.next();
+
+                    String pluginID = (String) pair.getKey();
+
+                    configMapList.add(gdb.getPNode(pluginID));
+                    //it.remove(); // avoids a ConcurrentModificationException
+                }
+            }
+            exportString = gson.toJson(configMapList);
+
+        } catch(Exception ex) {
+            logger.error("PluginExport.pluginExport() Error " + ex.getMessage());
+        }
+
+        return exportString;
+    }
+
     public String getPluginExport() {
 
 

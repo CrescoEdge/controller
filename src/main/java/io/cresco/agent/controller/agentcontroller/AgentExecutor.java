@@ -47,6 +47,12 @@ public class AgentExecutor implements Executor {
             case "pluginremove":
                 return pluginRemove(incoming);
 
+            case "pluginlist":
+                return pluginList(incoming);
+
+            case "pluginstatus":
+                return pluginStatus(incoming);
+
             case "pluginupload":
                 return pluginUpload(incoming);
 
@@ -609,6 +615,72 @@ public class AgentExecutor implements Executor {
             ce.setParam("status_desc", "Plugin Could Not Be Removed Exception [" + ex.getMessage() + "]");
         }
         return ce;
+    }
+
+    private MsgEvent pluginList(MsgEvent ce) {
+
+        try {
+            String pluginList = controllerEngine.getPluginAdmin().getPluginList();
+
+            if (pluginList != null) {
+                ce.setCompressedParam("plugin_list",pluginList);
+                ce.setParam("status_code", "10");
+                ce.setParam("status_desc", "Plugins Listed");
+
+            } else {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "Plugins Could Not Be Listed");
+            }
+
+        } catch(Exception ex) {
+            logger.error("pluginlist Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugins Could Not Be Listed Exception [" + ex.getMessage() + "]");
+        }
+        return ce;
+    }
+
+    private MsgEvent pluginStatus(MsgEvent ce) {
+
+        try {
+
+            String pluginId = ce.getParam("pluginid");
+            Map<String, String> statusMap = controllerEngine.getPluginAdmin().getPluginStatus(pluginId);
+
+            if(statusMap != null) {
+
+                ce.setParam("status_code", statusMap.get("status_code"));
+                ce.setParam("status_desc", statusMap.get("status_desc"));
+                ce.setParam("pluginid", pluginId);
+                ce.setCompressedParam("plugin_status", gson.toJson(statusMap));
+
+            } else {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "Plugin Status could not be determined!");
+            }
+
+            return ce;
+
+
+        } catch(Exception ex) {
+
+            logger.error("pluginadd Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
+
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+
+            ce.setParam("error",sStackTrace);
+
+
+        }
+
+        return null;
     }
 
 
