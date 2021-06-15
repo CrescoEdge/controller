@@ -334,7 +334,7 @@ public class AgentExecutor implements Executor {
 
         try {
 
-            logger.error("Controller Restart Started");
+            logger.info("restartController() Controller Restart Started");
             CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
             coreState.restartController();
 
@@ -357,10 +357,14 @@ public class AgentExecutor implements Executor {
         try {
 
             String jar_file_path = me.getParam("jar_file_path");
-            logger.error("Controller Restart Started");
+            logger.info("updateController() Controller Restart Started");
             CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
-            coreState.updateController(jar_file_path);
-
+            boolean isUpdated = coreState.updateController(jar_file_path);
+            if(isUpdated) {
+                logger.info("updateController() Controller Updated");
+            } else {
+                logger.error("updateController() Controller Update Failed");
+            }
         } catch(Exception ex) {
 
             logger.error("restartController " + ex.getMessage());
@@ -661,7 +665,6 @@ public class AgentExecutor implements Executor {
 
             return ce;
 
-
         } catch(Exception ex) {
 
             logger.error("pluginadd Error: " + ex.getMessage());
@@ -698,7 +701,12 @@ public class AgentExecutor implements Executor {
             if(ce.paramsContains("jardata")) {
                 logger.error("JAR FOUND");
             }
-            isUpdated = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);
+
+            String jarPath = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);
+            if(jarPath != null) {
+                isUpdated = true;
+                ce.setParam("jar_file_path",jarPath);
+            }
 
         } catch(Exception ex) {
 
@@ -715,9 +723,9 @@ public class AgentExecutor implements Executor {
 
             ce.setParam("error",sStackTrace);
 
-
         }
 
+        ce.removeParam("configparams");
         ce.removeParam("jardata");
         ce.setParam("is_updated", String.valueOf(isUpdated));
         return ce;

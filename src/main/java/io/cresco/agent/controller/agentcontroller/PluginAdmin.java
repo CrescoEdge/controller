@@ -817,7 +817,6 @@ public class PluginAdmin {
             {
                 case "embedded":
 
-
                     String requestedJarPath = (String) map.get("jarfile");
                     String jarURLString = "jar:" + agentEmbeddedJarPath + "!/" + requestedJarPath;
                     URL inputURL = new URL(jarURLString);
@@ -1758,19 +1757,19 @@ public class PluginAdmin {
         return repoDirPath;
     }
 
-    public boolean pluginUpdate(Map<String, String> hm, byte[] jarData) {
-        boolean isUpdated = false;
+    public String pluginUpdate(Map<String, String> hm, byte[] jarData) {
+        String jarPath = null;
         try {
 
             String jarFile = hm.get("md5");
             Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + "/" + jarFile);
             Files.write(path, jarData);
-            isUpdated = true;
+            jarPath = path.toAbsolutePath().toString();
 
         } catch (Exception ex) {
             ex.printStackTrace();
         }
-        return isUpdated;
+        return jarPath;
     }
 
 
