@@ -208,7 +208,7 @@ public class ControllerSMHandler {
         //stop internal update timer
         stateUpdateTimer.cancel();
 
-        logger.error("STOP CALLED GLOBAL");
+        logger.debug("STOP CALLED GLOBAL");
         cstate.setGlobalShutdown("Shutdown Called");
 
         //stop net discovery
@@ -272,7 +272,7 @@ public class ControllerSMHandler {
                 controllerEngine.getGDB().shutdown();
             }
              */
-            logger.error("IS THIS THE LAST?");
+            logger.debug("stopGlobal Complete");
 
     }
 
@@ -507,7 +507,7 @@ public class ControllerSMHandler {
     private Map<String,String> preInit() {
 
         Map<String,String> preInitMap = new HashMap<>();
-        logger.error("preInit Called");
+        logger.debug("preInit Called");
 
         String tmpAgent = plugin.getConfig().getStringParam("agentname");
         String tmpRegion = plugin.getConfig().getStringParam("regionname");
@@ -532,7 +532,7 @@ public class ControllerSMHandler {
 
     //prepare for standalone init
     public void standAloneInit() {
-        logger.error("standAloneInit Called");
+        logger.debug("standAloneInit Called");
         //here is where is starts
         //cstate.setStandaloneInit(tmpRegion, tmpAgent,"Core Init");
 
@@ -540,7 +540,7 @@ public class ControllerSMHandler {
 
     //do isStandAlone
     public boolean isStandAlone() {
-        logger.error("isStandAlone Called");
+        logger.debug("isStandAlone Called");
         //here is where is starts
         //cstate.setStandaloneInit(tmpRegion, tmpAgent,"Core Init");
         stateContext.setCurrentState(getStateByEnum(ControllerMode.STANDALONE)); //1
@@ -549,13 +549,13 @@ public class ControllerSMHandler {
     }
 
     private boolean isAgent(DiscoveryNode discoveryNode) {
-        logger.error("isAgent Called");
+        logger.debug("isAgent Called");
 
         //connect to a specific regional controller
         boolean isInit = false;
         try {
 
-            logger.error("trying host: " + discoveryNode.discovered_ip + " port:" + discoveryNode.discovered_port);
+            logger.debug("trying host: " + discoveryNode.discovered_ip + " port:" + discoveryNode.discovered_port);
 
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
             List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), discoveryNode.discovered_ip, discoveryNode.discovered_port, true);
@@ -569,7 +569,7 @@ public class ControllerSMHandler {
                     cbrokerAddress = "[" + cbrokerAddress + "]";
                 }
 
-                logger.error("Broker Address: " + cbrokerAddress);
+                logger.debug("Broker Address: " + cbrokerAddress);
                 //this.brokerAddressAgent = cbrokerAddress;
 
                 logger.info("AgentPath=" + cstate.getAgentPath());
@@ -649,7 +649,7 @@ public class ControllerSMHandler {
     }
 
     private boolean regionInit() {
-        logger.error("regionInit Called");
+        logger.debug("regionInit Called");
         boolean isInit = false;
         try {
             //cstate.setRegionInit(cstate.getRegion(),cstate.getAgent(),"initRegion() TS :" + System.currentTimeMillis());
@@ -674,7 +674,7 @@ public class ControllerSMHandler {
             controllerEngine.getActiveBrokerManagerThread().start();
 
             while (!controllerEngine.isActiveBrokerManagerActive()) {
-                logger.error("Waiting on active manager active");
+                logger.info("Waiting on active manager active");
                 Thread.sleep(1000);
             }
             logger.info("ActiveBrokerManager Started..");
@@ -695,7 +695,7 @@ public class ControllerSMHandler {
 
             //started by DBInterfaceImpl
             while (!controllerEngine.isDBManagerActive()) {
-                logger.error("isDBManagerActive() = false");
+                logger.info("isDBManagerActive() = false");
                 Thread.sleep(1000);
             }
 
@@ -722,7 +722,7 @@ public class ControllerSMHandler {
     private boolean isRegionGlobal(DiscoveryNode discoveryNode) {
 
         boolean isInit = false;
-        logger.error("isRegionGlobal Called");
+        logger.debug("isRegionGlobal Called");
 
         try {
             if(!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
@@ -989,13 +989,13 @@ public class ControllerSMHandler {
                 //discovery engine
 
                 if(controllerEngine.getDiscoveryUDPEngineThread() == null) {
-                    logger.error("Starting DiscoveryUDPEngine");
+                    logger.info("Starting DiscoveryUDPEngine");
                     controllerEngine.setDiscoveryUDPEngineThread(new Thread(new UDPDiscoveryEngine(controllerEngine)));
                     controllerEngine.getDiscoveryUDPEngineThread().start();
                 }
 
                 if(controllerEngine.getDiscoveryTCPEngineThread() == null) {
-                    logger.error("Starting DiscoveryTCPEngine");
+                    logger.info("Starting DiscoveryTCPEngine");
                     controllerEngine.setDiscoveryTCPEngineThread(new Thread(new TCPDiscoveryEngine(controllerEngine)));
                     controllerEngine.getDiscoveryTCPEngineThread().start();
                 }
@@ -1048,7 +1048,7 @@ public class ControllerSMHandler {
 
         DiscoveryNode discoveryNode = null;
 
-        logger.error("getDiscoveryNode discoveryNodeList Size = " + discoveryNodeList.size() );
+        logger.debug("getDiscoveryNode discoveryNodeList Size = " + discoveryNodeList.size() );
 
         while(discoveryNodeList.size() != 0) {
 
@@ -1070,7 +1070,7 @@ public class ControllerSMHandler {
             //see if we can exchange keys with the canidate host
             discoveryNode = exchangeKeyWithBroker(discoveryNodeCanidate.discovery_type, discoveryNodeCanidate.discovered_ip, discoveryNodeCanidate.discovered_port);
             if(discoveryNode != null) {
-                logger.error("Found node: " + discoveryNode.discovered_ip);
+                logger.debug("Found node: " + discoveryNode.discovered_ip);
                 break;
             } else {
                 discoveryNodeList.remove(discoveryNodeCanidate);
@@ -1267,7 +1267,7 @@ public class ControllerSMHandler {
             stateSubString = iGs + iGf + iGG + iGi + iRs + iRG + iRGf + iRGi + iRR + iRf + iRi + iAs + iAf + iAA + iAi + iSs + iSf + iS + iSi + iPi;
         }
 
-        logger.error("stateSub: " + stateSubString);
+        logger.debug("stateSub: " + stateSubString);
         return stateSubString;
     }
 

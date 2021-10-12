@@ -335,7 +335,7 @@ public class ActiveBroker {
 				logger.error("Waiting until Broker Stop");
 			}
 
-			logger.error("Broker Stopped: " + broker.isStopped());
+			logger.debug("Broker Stopped: " + broker.isStopped());
 
 			/*
 			broker.getScheduler().shutdown();

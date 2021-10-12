@@ -43,21 +43,21 @@ public class ControllerStatePersistance {
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_SHUTDOWN:
-                logger.error("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.warn("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT:
                 return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_SHUTDOWN:
-                logger.error("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.warn("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 //return unregisterAgent(localRegion, localAgent);
             case REGION_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION:
                 return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
-                logger.error("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.warn("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 //return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
                 logger.error("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
@@ -72,11 +72,11 @@ public class ControllerStatePersistance {
             case GLOBAL:
                 return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
-                logger.error("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
+                logger.warn("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
 
             default:
-                logger.error("setControllerState() INVALID MODE : " + currentMode.name() + " DESC: " + currentDesc);
+                logger.warn("setControllerState() INVALID MODE : " + currentMode.name() + " DESC: " + currentDesc);
                 break;
         }
         return false;
