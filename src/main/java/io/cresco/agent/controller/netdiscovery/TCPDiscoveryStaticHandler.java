@@ -148,7 +148,8 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
                                 logger.trace("discovered_ip: " + discoveryNode.discovered_ip);
                                 logger.trace("remoteAddress: " + remoteAddress);
-                                if(discoveryNode.discovered_ip.equals(remoteAddress)) {
+                                //For static discovery this must be relaxed as the public address might differ from the private
+                                //if(discoveryNode.discovered_ip.equals(remoteAddress)) {
 
                                     if(discoveryProcessor.isValidatedAuthenication(discoveryNode)) {
                                         //discoveredList.add(discoveryNode);
@@ -166,9 +167,9 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                                         }
                                     }
 
-                                } else {
-                                    logger.error("discoveryNode.discovered_ip: " + discoveryNode.discovered_ip + " != remoteAddress: " + remoteAddress);
-                                }
+                                //} else {
+                                //    logger.error("discoveryNode.discovered_ip: " + discoveryNode.discovered_ip + " != remoteAddress: " + remoteAddress);
+                                //}
 
                             } else {
                                 logger.error("check shared key : discoveryNode.discovered_ip: == NULL for remoteAddress: " + remoteAddress);
