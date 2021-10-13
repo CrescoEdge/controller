@@ -148,6 +148,12 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
                                 logger.trace("discovered_ip: " + discoveryNode.discovered_ip);
                                 logger.trace("remoteAddress: " + remoteAddress);
+
+                                //for NAT devices this must be used
+                                if(!discoveryNode.discovered_ip.equals(remoteAddress)) {
+                                    discoveryNode.discovered_ip = remoteAddress;
+                                }
+
                                 //For static discovery this must be relaxed as the public address might differ from the private
                                 //if(discoveryNode.discovered_ip.equals(remoteAddress)) {
 
