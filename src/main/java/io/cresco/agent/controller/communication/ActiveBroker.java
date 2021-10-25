@@ -386,7 +386,7 @@ public class ActiveBroker {
 			logger.info("Added Network Connector to Broker URI: static:nio+ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
 			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort);
 			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
-			bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false"));
+			bridge = broker.addNetworkConnector(new URI("failover:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false"));
 
 			//bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
 

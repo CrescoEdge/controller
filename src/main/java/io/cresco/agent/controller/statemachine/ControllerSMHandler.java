@@ -905,8 +905,8 @@ public class ControllerSMHandler {
                         dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"vm://localhost");
                         controllerEngine.setDataPlaneService(dataPlaneService);
                     } else {
-                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
-                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
+                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "failover:nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
+                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"failover:nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
                         controllerEngine.setDataPlaneService(dataPlaneService);
                     }
 
@@ -935,7 +935,7 @@ public class ControllerSMHandler {
             if(isLocalBroker(brokerAddress)) {
                 controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort);
             } else {
-                controllerEngine.getActiveClient().initActiveAgentProducer("nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
+                controllerEngine.getActiveClient().initActiveAgentProducer("failover:nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
             }
             logger.info("Agent ProducerThread Started..");
             isInit = true;
