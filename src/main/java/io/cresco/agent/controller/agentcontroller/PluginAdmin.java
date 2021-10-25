@@ -609,14 +609,14 @@ public class PluginAdmin {
 
                             if((lName.equals(requestedName) && (lVersion.equals(requestedVersion)) && (lMD5.equals(requestedMD5)))) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + "/" + params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("path.separator") + params.get("jarfile"));
                                 returnMap.put("jarstatus","localcache");
                             }
                         } else {
 
                             if(lName.equals(requestedName)) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + "/" + params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("path.separator") + params.get("jarfile"));
                                 returnMap.put("version",lVersion);
                                 returnMap.put("md5",lMD5);
                                 returnMap.put("jarstatus","localcache");
