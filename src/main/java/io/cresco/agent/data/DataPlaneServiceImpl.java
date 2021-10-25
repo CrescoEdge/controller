@@ -827,7 +827,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
                     partCounter++;
 
-                    Path filePath = Paths.get(journalPath.toAbsolutePath().toString() + "/" + dataName);
+                    Path filePath = Paths.get(journalPath.toAbsolutePath() + System.getProperty("file.separator") + dataName);
                     Files.createDirectories(filePath);
 
                     File newFile = new File(filePath.toAbsolutePath().toString(), filePartName);

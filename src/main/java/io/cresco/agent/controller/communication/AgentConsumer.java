@@ -177,7 +177,7 @@ public class AgentConsumer {
 								if(groupExist) {
 
 
-									Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath().toString() + "/" + dataName);
+									Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + dataName);
 									Files.createDirectories(filePath);
 
 									File filePart = new File(filePath.toAbsolutePath().toString(), dataPart);

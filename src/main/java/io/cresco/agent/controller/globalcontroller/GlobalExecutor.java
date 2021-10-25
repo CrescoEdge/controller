@@ -819,9 +819,9 @@ public class GlobalExecutor implements Executor {
         try
         {
             String baseUrl = ce.getParam("pluginurl");
-            if(!baseUrl.endsWith("/"))
+            if(!baseUrl.endsWith(System.getProperty("file.separator")))
             {
-                baseUrl = baseUrl + "/";
+                baseUrl = baseUrl + System.getProperty("file.separator");
             }
 
 

@@ -101,8 +101,8 @@ public class Config {
     public String getPluginPath() {
         SubnodeConfiguration sObj = iniConfObj.getSection("general");
         String pluginPath = sObj.getString("pluginpath");
-        if (!pluginPath.endsWith("/")) {
-            pluginPath = pluginPath + "/";
+        if (!pluginPath.endsWith(System.getProperty("file.separator"))) {
+            pluginPath = pluginPath + System.getProperty("file.separator");
         }
         return pluginPath;
     }

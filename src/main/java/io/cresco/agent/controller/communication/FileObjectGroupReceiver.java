@@ -32,7 +32,7 @@ public class FileObjectGroupReceiver {
             for (Map.Entry<String, FileObject> entry : fileObjectMap.entrySet()) {
                 String key = entry.getKey();
                 FileObject value = entry.getValue();
-                Path filePath = Paths.get(journalPath.toAbsolutePath().toString() + "/" + key + "/" + value.getFileName());
+                Path filePath = Paths.get(journalPath.toAbsolutePath() + System.getProperty("file.separator") + key + System.getProperty("file.separator") + value.getFileName());
                 fileList.add(filePath.toAbsolutePath().toString());
             }
 

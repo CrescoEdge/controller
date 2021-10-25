@@ -609,14 +609,14 @@ public class PluginAdmin {
 
                             if((lName.equals(requestedName) && (lVersion.equals(requestedVersion)) && (lMD5.equals(requestedMD5)))) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("path.separator") + params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("file.separator") + params.get("jarfile"));
                                 returnMap.put("jarstatus","localcache");
                             }
                         } else {
 
                             if(lName.equals(requestedName)) {
                                 returnMap = new HashMap<>(map);
-                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("path.separator") + params.get("jarfile"));
+                                returnMap.put("jarfile",repoCacheDir.toFile().getAbsolutePath() + System.getProperty("file.separator") + params.get("jarfile"));
                                 returnMap.put("version",lVersion);
                                 returnMap.put("md5",lMD5);
                                 returnMap.put("jarstatus","localcache");
@@ -1714,7 +1714,7 @@ public class PluginAdmin {
                     }
 
                     if(isLocal) {
-                        String tmpFilePath = repoCacheDir.toFile().getAbsolutePath() + "/" + hm.get("jarfile");
+                        String tmpFilePath = repoCacheDir.toFile().getAbsolutePath() + System.getProperty("file.separator") + hm.get("jarfile");
                         File checkFile = new File(tmpFilePath);
                         if(checkFile.isFile()) {
                             jarFilePath = tmpFilePath;
@@ -1762,7 +1762,7 @@ public class PluginAdmin {
         try {
 
             String jarFile = hm.get("md5");
-            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + "/" + jarFile);
+            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + System.getProperty("file.separator") + jarFile);
             Files.write(path, jarData);
             jarPath = path.toAbsolutePath().toString();
 
@@ -1808,7 +1808,7 @@ public class PluginAdmin {
 
                             logger.debug("region: " + region + " agent: " + agent + " pluginId: " + pluginID + " responded with jar data");
 
-                            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + "/" + jarFile);
+                            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + System.getProperty("file.separator") + jarFile);
 
                             Files.write(path, retMsg.getDataParam("jardata"));
 

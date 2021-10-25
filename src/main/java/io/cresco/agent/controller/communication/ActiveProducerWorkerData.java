@@ -120,7 +120,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 							for(FileObject fileObject : fileObjectList) {
 
-								Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath().toString() + "/" + fileObject.getDataName());
+								Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + fileObject.getDataName());
 
 								for (String parList : fileObject.getOrderedPartList()) {
 
