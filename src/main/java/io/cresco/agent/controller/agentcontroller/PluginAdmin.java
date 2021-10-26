@@ -1057,7 +1057,14 @@ public class PluginAdmin {
                         isStopped = true;
                     }
                 } else {
-                    logger.error("jarfilePath =" + jarFilePath + " or pid = " + pid + " is NULL");
+                    logger.error("jarfilePath =" + jarFilePath + " pid = " + pid);
+                    if(jarFilePath == null) {
+                        logger.error("jarfilePath is NULL");
+                    }
+                    if(pid == null) {
+                        logger.error("pid is NULL");
+                    }
+
                 }
             } else {
                 logger.error("stopPlugin() could not stop plugin!");
