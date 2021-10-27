@@ -1021,7 +1021,7 @@ public class PluginAdmin {
 
 
 
-                if ((jarFilePath != null) && (pid != null)) {
+                if (pid != null) {
 
                     Configuration pluginConfig = confAdmin.getConfiguration(pid);
                     if(pluginConfig != null) {
@@ -1060,19 +1060,13 @@ public class PluginAdmin {
                         isStopped = true;
                     }
                 } else {
-                    logger.error("jarfilePath =" + jarFilePath + " pid = " + pid);
+
+                    logger.error("pid is NULL");
 
                     synchronized (lockPlugin) {
                         if (pluginMap.containsKey(pluginId)) {
                             logger.debug(pluginMap.get(pluginId).toString());
                         }
-                    }
-
-                    if(jarFilePath == null) {
-                        logger.error("jarfilePath is NULL");
-                    }
-                    if(pid == null) {
-                        logger.error("pid is NULL");
                     }
 
                 }
