@@ -565,6 +565,11 @@ public class AgentExecutor implements Executor {
                 ce.setParam("status_desc", "Plugin Bundle could not be installed or started!");
             }
 
+            //remove jar data on responce
+            if(ce.paramsContains("jardata")) {
+                ce.removeParam("jardata");
+            }
+
             return ce;
 
 

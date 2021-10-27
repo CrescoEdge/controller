@@ -382,6 +382,7 @@ public class PluginAdmin {
                 String eName = b.getSymbolicName();
                 String eVersion = b.getVersion().toString();
 
+
                 String requestedName = (String) map.get("pluginname");
 
                 if((eName != null) && (eVersion != null)) {
@@ -391,14 +392,16 @@ public class PluginAdmin {
                         String requestedVersion = (String) map.get("version");
                         String requestedMD5 = (String) map.get("md5");
 
+                        //String jarLocation = Paths.get(b.getLocation()).toString();
+                        String jarLocation = b.getLocation();
+
+                        if(jarLocation.contains("!")) {
+                            jarLocation = "jar:" + jarLocation;
+                        }
+
+                        returnMap.put("jarfile",jarLocation);
+
                         if(requestedMD5 != null) {
-
-                            //String jarLocation = Paths.get(b.getLocation()).toString();
-                            String jarLocation = b.getLocation();
-
-                            if(jarLocation.contains("!")) {
-                                jarLocation = "jar:" + jarLocation;
-                            }
 
                             String eMD5 = plugin.getMD5(jarLocation);
 
@@ -1058,6 +1061,13 @@ public class PluginAdmin {
                     }
                 } else {
                     logger.error("jarfilePath =" + jarFilePath + " pid = " + pid);
+
+                    synchronized (lockPlugin) {
+                        if (pluginMap.containsKey(pluginId)) {
+                            logger.debug(pluginMap.get(pluginId).toString());
+                        }
+                    }
+
                     if(jarFilePath == null) {
                         logger.error("jarfilePath is NULL");
                     }
@@ -1181,6 +1191,8 @@ public class PluginAdmin {
 
                 if(map != null) {
 
+                    logger.debug("Incoming plugin map: " + map);
+
                     long bundleID = addBundle(map);
                     if (bundleID != -1) {
 
@@ -1203,6 +1215,8 @@ public class PluginAdmin {
                                     } else {
                                         pluginNode = new PluginNode(plugin, gdb, bundleID, pluginID, map, null);
                                     }
+
+                                    logger.debug("pluginNode Created: " + pluginNode);
 
                                     synchronized (lockPlugin) {
                                         pluginMap.put(pluginID, pluginNode);
