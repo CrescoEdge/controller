@@ -593,7 +593,7 @@ public class ControllerSMHandler {
                 }
 
             } else {
-                logger.error("isAgent() certDiscovery.size() != 1");
+                logger.error("isAgent() certDiscovery.size() == " + certDiscovery.size() + " should == 1");
             }
 
 

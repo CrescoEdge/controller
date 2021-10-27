@@ -25,6 +25,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     private boolean sendCert;
     private Gson gson;
     private DiscoveryProcessor discoveryProcessor;
+    private boolean readProcessed;
 
     public TCPDiscoveryStaticHandler(ControllerEngine controllerEngine, List<DiscoveryNode> discoveredList, DiscoveryType disType, String hostAddress, int discoveryPort, boolean sendCert) {
 
@@ -36,33 +37,47 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
         this.hostAddress = hostAddress;
         this.discoveryPort = discoveryPort;
         this.sendCert = sendCert;
+        this.readProcessed = false;
         this.gson = new Gson();
         this.discoveryProcessor = new DiscoveryProcessor(controllerEngine);
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
-
+        logger.debug("channelActive Thread" + Thread.currentThread());
         // Send the first message if this handler is a client-side handler.
         MsgEvent me = genDiscoverMsg();
 
         //MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, "src_agent","src_agent",null,"dst_region","dst_agent",null,true,true);
         if(me != null) {
+            String messagePayload = gson.toJson(me);
+            logger.debug("genDiscoverMsg(): " + messagePayload);
             //send initial message
-            ctx.writeAndFlush(gson.toJson(me));
+            ctx.writeAndFlush(messagePayload);
+        } else {
+            logger.error("genDiscoverMsg failed!");
         }
+
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        logger.debug("channelRead Thread" + Thread.currentThread());
         String remoteHost = ((InetSocketAddress)ctx.channel().remoteAddress()).getAddress().getHostAddress();
         processIncoming((String)msg, remoteHost);
+        readProcessed = true;
     }
 
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
-        ctx.flush();
-        ctx.close();
+        logger.debug("channelReadComplete Thread" + Thread.currentThread());
+        if(readProcessed) {
+            ctx.flush();
+            ctx.close();
+            readProcessed = false;
+        }
+        //ctx.flush();
+        //ctx.close();
         //ctx.fireChannelInactive();
     }
 
@@ -72,11 +87,18 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
         //System.out.println("channelInactive Thread" + Thread.currentThread() + " 0");
         //ctx.close();
         //System.out.println("channelInactive Thread" + Thread.currentThread() + " 1");
+        logger.debug("channelInactive Thread" + Thread.currentThread());
     }
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        cause.printStackTrace();
+
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        cause.printStackTrace(pw);
+
+        logger.debug("Discovery Error " + sw);
+        //cause.printStackTrace();
         ctx.close();
         discoveredList = null;
     }

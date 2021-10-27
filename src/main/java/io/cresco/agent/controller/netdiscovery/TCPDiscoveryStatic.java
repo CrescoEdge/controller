@@ -15,10 +15,13 @@ import io.netty.handler.codec.serialization.ClassResolvers;
 import io.netty.handler.codec.serialization.ObjectDecoder;
 import io.netty.handler.codec.serialization.ObjectEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 public class TCPDiscoveryStatic {
 
@@ -55,7 +58,11 @@ public class TCPDiscoveryStatic {
             }
         */
 
-            int idleTimeout = (discoveryTimeout/1000) * 2;
+            //int idleTimeout = (discoveryTimeout/1000) * 2;
+            //int idleTimeout = discoveryTimeout;
+            int idleTimeout = discoveryTimeout * 2;
+            int writeTimeout = discoveryTimeout * 2;
+            int readTimeout = discoveryTimeout * 2;
 
             EventLoopGroup group = new NioEventLoopGroup(1);
             try {
@@ -66,8 +73,8 @@ public class TCPDiscoveryStatic {
                             @Override
                             public void initChannel(SocketChannel ch) {
                                 ChannelPipeline p = ch.pipeline()
-                                        //.addFirst("write_timeout", new WriteTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
-                                        //.addFirst("read_timeout", new ReadTimeoutHandler(discoveryTimeout, TimeUnit.MILLISECONDS))
+                                        .addFirst(new WriteTimeoutHandler(writeTimeout, TimeUnit.MILLISECONDS))
+                                        .addFirst(new ReadTimeoutHandler(readTimeout, TimeUnit.MILLISECONDS))
                                         .addLast(new IdleStateHandler(idleTimeout,idleTimeout,idleTimeout));
 
                                 /*
@@ -78,7 +85,7 @@ public class TCPDiscoveryStatic {
                                 */
                                 p.addLast(
                                         new ObjectEncoder(),
-                                        new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
+                                        new ObjectDecoder(ClassResolvers.cacheDisabled(getClass().getClassLoader())),
                                         new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
                             }
                         });
