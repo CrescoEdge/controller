@@ -18,6 +18,7 @@ import javax.net.ssl.*;
 import java.io.*;
 import java.math.BigInteger;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.*;
 import java.security.cert.Certificate;
@@ -82,6 +83,21 @@ public class CertificateManager {
                         loadKeyAndTrustStore()) {
                     logger.info("Key Store and Trust Store loaded");
                 } else {
+
+                    //build directory structure if needed
+                    Path keyStorePath = Paths.get(keyStoreFilePath).getParent();
+                    if(keyStorePath != null) {
+                        if(!keyStorePath.toFile().exists()) {
+                            Files.createDirectories(keyStorePath);
+                        }
+                    }
+                    Path trustStorePath = Paths.get(trustStoreFilePath).getParent();
+                    if(trustStorePath != null) {
+                        if(!trustStorePath.toFile().exists()) {
+                            Files.createDirectories(trustStorePath);
+                        }
+                    }
+
                     logger.info("Key Store or Trust Store do not exists, (re)creating");
                     keyStore = KeyStore.getInstance("jks");
                     keyStore.load(null, null);
