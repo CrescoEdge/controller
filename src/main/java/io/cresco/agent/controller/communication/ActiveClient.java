@@ -78,6 +78,7 @@ public class ActiveClient {
         try {
 
             ActiveMQConnection activeMQConnection = getConnection(URI);
+
             if(activeMQConnection != null) {
                 activeMQSession = (ActiveMQSession)activeMQConnection.createSession(false, Session.AUTO_ACKNOWLEDGE);
             }
@@ -105,6 +106,25 @@ public class ActiveClient {
             synchronized (lockConnectionMap) {
                 if(connectionMap.containsKey(URI)) {
                     hasConnection = true;
+
+                    activeMQConnection = connectionMap.get(URI);
+
+                    if(!activeMQConnection.isStarted()) {
+                        //if stopped remove and cleanup connection and factory
+                        activeMQConnection.cleanup();
+                        activeMQConnection.close();
+                        connectionMap.remove(URI);
+                        activeMQConnection = null;
+                        hasConnection = false;
+
+                        synchronized (lockFactoryMap) {
+                            if (connectionFactoryMap.containsKey(URI)) {
+                                connectionFactoryMap.remove(URI);
+                            }
+                        }
+
+                    }
+
                 }
             }
 
@@ -116,7 +136,6 @@ public class ActiveClient {
 
                 boolean hasFactory = false;
                 //check if existing factory exist
-
 
                 synchronized (lockFactoryMap) {
                     if (connectionFactoryMap.containsKey(URI)) {

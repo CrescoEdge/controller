@@ -141,14 +141,19 @@ public class CertificateManager {
     public void addCertificatesToTrustStore(String alias, Certificate[] certs) {
         try {
             for(Certificate cert:certs){
-                //logger.error(cert.toString());
-                //PublicKey publicKey = cert.getPublicKey();
-                //String publicKeyString = Base64.encodeBase64String(publicKey.getEncoded());
-                //trustStore.setCertificateEntry(UUID.randomUUID().toString(),cert);
-                //.keyStore.setCertificateEntry(alias,cert);
-                logger.debug("ADDING ALIAS: " + alias + " to truststore");
+
+                if (cert instanceof X509Certificate) {
+                    X509Certificate x509cert = (X509Certificate) cert;
+
+                    // Get subject
+                    Principal principal = x509cert.getSubjectDN();
+                    //set alias to subject name to prevent overwriting in the cert chain
+                    alias = principal.getName();
+                }
+
+                logger.debug("addCertificatesToTrustStore: ADDING ALIAS: " + alias + " to truststore");
                 trustStore.setCertificateEntry(alias,cert);
-                //logger.error(publicKeyString);
+
             }
             saveKeyAndTrustStore();
         } catch (Exception ex) {
