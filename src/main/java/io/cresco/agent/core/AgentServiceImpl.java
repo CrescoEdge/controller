@@ -21,6 +21,8 @@ import java.net.InetAddress;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.nio.file.FileSystems;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.jar.Attributes;
 import java.util.jar.JarInputStream;
@@ -186,11 +188,29 @@ public class AgentServiceImpl implements AgentService {
     public String getAgentDataDirectory() {
         String agentDataDirectory = null;
         try {
-            if(plugin != null) {
-                agentDataDirectory = plugin.getConfig().getStringParam("agent_data_directory", FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString());
+
+            String cresco_data_location = System.getProperty("cresco_data_location");
+            if(cresco_data_location != null) {
+
+                if(plugin != null) {
+                    agentDataDirectory = plugin.getConfig().getStringParam("agent_data_directory", cresco_data_location);
+                } else {
+                    agentDataDirectory = cresco_data_location;
+                }
+
             } else {
-                agentDataDirectory = FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString();
+
+                if(plugin != null) {
+                    agentDataDirectory = plugin.getConfig().getStringParam("agent_data_directory", FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString());
+                } else {
+                    agentDataDirectory = FileSystems.getDefault().getPath("cresco-data").toAbsolutePath().toString();
+                }
+
             }
+
+
+
+
         } catch (Exception ex) {
             ex.printStackTrace();
             if(logger != null) {

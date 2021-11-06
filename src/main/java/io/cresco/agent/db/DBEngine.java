@@ -10,6 +10,8 @@ import org.apache.commons.pool2.impl.GenericObjectPool;
 import javax.sql.DataSource;
 import java.io.*;
 import java.lang.reflect.Type;
+import java.nio.file.FileSystems;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
@@ -36,7 +38,16 @@ public class DBEngine {
 
         try {
 
-            System.setProperty("derby.system.home", new File("cresco-data/derbydb-home/").getAbsolutePath());
+
+
+            String cresco_data_location = System.getProperty("cresco_data_location");
+            if(cresco_data_location != null) {
+                Path path = Paths.get(cresco_data_location, "derbydb-home");
+                System.setProperty("derby.system.home",path.toAbsolutePath().normalize().toString());
+            } else {
+                System.setProperty("derby.system.home", new File("cresco-data/derbydb-home/").getAbsolutePath());
+            }
+
             //to remove derby.log file
             //System.setProperty("derby.stream.error.field", "DerbyUtil.DEV_NULL");
             //to set the location of the derby.log file
@@ -64,6 +75,9 @@ public class DBEngine {
 
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
+
+
+
             dbPath = plugin.getPluginDataDirectory() + "/derbydb-home/" + dbName;
 
             String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");

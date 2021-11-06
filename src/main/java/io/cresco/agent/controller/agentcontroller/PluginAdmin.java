@@ -24,6 +24,7 @@ import java.io.*;
 import java.lang.reflect.Type;
 import java.net.JarURLConnection;
 import java.net.URL;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -1752,8 +1753,15 @@ public class PluginAdmin {
     public Path getRepoCacheDir() {
         Path repoDirPath = null;
         try {
+            String repoDirString = null;
 
-            String repoDirString =  plugin.getConfig().getStringParam("repo_cache_dir","cresco-data/agent-repo-cache");
+            String cresco_data_location = System.getProperty("cresco_data_location");
+            if(cresco_data_location != null) {
+                Path path = Paths.get(cresco_data_location, "agent-repo-cache");
+                repoDirString = plugin.getConfig().getStringParam("repo_cache_dir", path.toAbsolutePath().normalize().toString());
+            } else {
+                repoDirString =  plugin.getConfig().getStringParam("repo_cache_dir","cresco-data/agent-repo-cache");
+            }
 
             repoDirPath = Paths.get(repoDirString);
 

@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
 
@@ -118,9 +119,17 @@ public class ActiveBroker {
 				//String agentJar = Paths.get(ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath()).toFile().getParent();
 				//String dataDir = agentJar.substring(0,agentJar.lastIndexOf("/")) + "/cresco-data/";
 
-				FileUtils.deleteDirectory(Paths.get("cresco-data/activemq-data").toFile());
+				String cresco_data_location = System.getProperty("cresco_data_location");
+				if(cresco_data_location != null) {
+					Path path = Paths.get(cresco_data_location, "activemq-data");
+					FileUtils.deleteDirectory(Paths.get(path.toAbsolutePath().normalize().toString()).toFile());
+					System.setProperty("org.apache.activemq.default.directory.prefix", cresco_data_location);
+				} else {
+					FileUtils.deleteDirectory(Paths.get("cresco-data/activemq-data").toFile());
+					System.setProperty("org.apache.activemq.default.directory.prefix", "cresco-data/");
+				}
 
-				System.setProperty("org.apache.activemq.default.directory.prefix", "cresco-data/");
+
 
 				broker = new SslBrokerService();
 				//broker.setUseShutdownHook(true);

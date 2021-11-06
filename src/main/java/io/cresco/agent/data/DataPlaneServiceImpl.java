@@ -93,7 +93,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
         try {
-            String journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("cresco-data/dp-journal").toAbsolutePath().toString());
+            String journalDirPath = null;
+
+            String cresco_data_location = System.getProperty("cresco_data_location");
+            if(cresco_data_location != null) {
+                Path path = Paths.get(cresco_data_location, "dp-journal");
+                journalDirPath = plugin.getConfig().getStringParam("dp-journal_dir", path.toAbsolutePath().normalize().toString());
+            } else {
+                journalDirPath = plugin.getConfig().getStringParam("dp-journal_dir", FileSystems.getDefault().getPath("cresco-data/dp-journal").toAbsolutePath().toString());
+            }
+
             journalPath = Paths.get(journalDirPath);
             //remove old files if they exist from the journal
             if(journalPath.toFile().exists()) {
