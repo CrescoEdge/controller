@@ -242,12 +242,13 @@ public class ControllerEngine {
                 for (ActiveMQDestination des : er) {
 
                     if (des.isQueue()) {
-                        String testPath = des.getPhysicalName();
+                        String testPath = des.getPhysicalName().toLowerCase();
 
-                        logger.trace("isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
-                        if (testPath.equals(remoteAgentPath)) {
+                        if (testPath.equals(remoteAgentPath.toLowerCase())) {
                             isReachableAgent = true;
                         }
+                        logger.trace("isReachable " + isReachableAgent + " isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName() + " remote_agent = " + remoteAgentPath);
+
                     }
                 }
 
@@ -258,11 +259,11 @@ public class ControllerEngine {
                     //}
 
                     if (des.isQueue()) {
-                        String testPath = des.getPhysicalName();
-                        logger.trace("Regional isReachable isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName());
-                        if (testPath.equals(remoteAgentPath)) {
+                        String testPath = des.getPhysicalName().toLowerCase();
+                        if (testPath.equals(remoteAgentPath.toLowerCase())) {
                             isReachableAgent = true;
                         }
+                        logger.trace("Regional isReachable " + isReachableAgent + " isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName() + " remote_agent = " + remoteAgentPath);
                     }
                 }
 
