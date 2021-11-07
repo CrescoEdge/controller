@@ -4,16 +4,14 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
+import io.cresco.agent.core.Config;
 import io.cresco.library.core.CoreState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.*;
 import java.lang.reflect.Type;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -357,6 +355,22 @@ public class AgentExecutor implements Executor {
         try {
 
             String jar_file_path = me.getParam("jar_file_path");
+
+            //create a version record so that updated controller will be used on restart
+            File confDir = new File("conf");
+            if(!confDir.exists()) {
+                confDir.mkdir();
+            }
+            String versionConfig = "conf/version.ini";
+            File versionFile = new File(versionConfig);
+            if(versionFile.exists()) {
+                versionFile.delete();
+            }
+            BufferedWriter writer = new BufferedWriter(new FileWriter(versionConfig));
+            writer.write("[io.cresco.controller]" +  System.lineSeparator());
+            writer.write("jarfile=\"" + jar_file_path + "\"" +  System.lineSeparator());
+            writer.close();
+
             logger.info("updateController() Controller Restart Started");
             CoreState coreState = controllerEngine.getPluginAdmin().getCoreState();
             boolean isUpdated = coreState.updateController(jar_file_path);
@@ -365,6 +379,7 @@ public class AgentExecutor implements Executor {
             } else {
                 logger.error("updateController() Controller Update Failed");
             }
+
         } catch(Exception ex) {
 
             logger.error("restartController " + ex.getMessage());

@@ -70,7 +70,7 @@ public class StaticAgentLoader implements Runnable  {
             if (configFile.isFile()) {
 
                 //Agent Config
-                Config config = config = new Config(configFile.getAbsolutePath());
+                Config config = new Config(configFile.getAbsolutePath());
                 Map<String, Object> map = config.getConfigMap();
 
                 setConfAdmin(context);
