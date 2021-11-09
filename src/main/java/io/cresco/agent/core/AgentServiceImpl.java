@@ -309,8 +309,9 @@ public class AgentServiceImpl implements AgentService {
                     logger.error("deactivate() ControllerEngine stop() was dirty!");
                 }
             }
-            if(dbe != null) {
-                dbe.shutdown();
+
+            if(gdb != null) {
+                gdb.shutdown();
             }
 
         }

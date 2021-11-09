@@ -150,7 +150,7 @@ public class ControllerEngine {
             }
 
             //disable logging
-            pluginAdmin.setRootLogLevel(CLogger.Level.None);
+            //pluginAdmin.setRootLogLevel(CLogger.Level.None);
 
             isStopped = true;
         } catch (Exception ex) {

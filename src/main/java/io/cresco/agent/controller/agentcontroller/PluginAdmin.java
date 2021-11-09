@@ -563,6 +563,7 @@ public class PluginAdmin {
                 //absolute file path was given
                 Path checkFile = Paths.get((String) map.get("jarfile"));
 
+
                 if (checkFile.toFile().isFile()) {
 
 
