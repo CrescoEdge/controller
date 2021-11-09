@@ -38,8 +38,6 @@ public class DBEngine {
 
         try {
 
-            System.setProperty("derby.stream.error.method", "io.cresco.agent.db.DBLogger.disableDerbyLogFile");
-
             String cresco_data_location = System.getProperty("cresco_data_location");
             if(cresco_data_location != null) {
                 Path path = Paths.get(cresco_data_location, "derbydb-home");
