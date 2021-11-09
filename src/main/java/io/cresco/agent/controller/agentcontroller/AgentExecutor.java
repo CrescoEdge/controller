@@ -819,13 +819,13 @@ public class AgentExecutor implements Executor {
 
         try {
 
-            ce.setCompressedParam("agent-config",plugin.getConfig().getConfigAsJSON());
+            //ce.setCompressedParam("agent-config",plugin.getConfig().getConfigAsJSON());
             ce.setParam("agent-data", plugin.getConfig().getStringParam("cresco_data_location","cresco-data"));
 
         } catch(Exception ex) {
-            logger.error("getDPLogIsEnabled Error: " + ex.getMessage());
+            logger.error("getAgentInfo Error: " + ex.getMessage());
             ce.setParam("status_code", "9");
-            ce.setParam("status_desc", "logDP Could Not Get Exception");
+            ce.setParam("status_desc", "getAgentInfo Could Not Get Exception");
         }
         return ce;
     }
