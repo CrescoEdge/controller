@@ -123,7 +123,7 @@ public class ActiveBroker {
 				if(cresco_data_location != null) {
 					Path path = Paths.get(cresco_data_location, "activemq-data");
 					FileUtils.deleteDirectory(Paths.get(path.toAbsolutePath().normalize().toString()).toFile());
-					System.setProperty("org.apache.activemq.default.directory.prefix", cresco_data_location);
+					System.setProperty("org.apache.activemq.default.directory.prefix", cresco_data_location + System.getProperty("file.separator"));
 				} else {
 					FileUtils.deleteDirectory(Paths.get("cresco-data/activemq-data").toFile());
 					System.setProperty("org.apache.activemq.default.directory.prefix", "cresco-data/");
