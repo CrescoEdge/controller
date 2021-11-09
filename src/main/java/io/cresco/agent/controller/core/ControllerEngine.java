@@ -144,9 +144,13 @@ public class ControllerEngine {
 
                 controllerSM.stop();
             }
+
             if(plugin != null) {
                 plugin.setIsActive(false);
             }
+
+            //disable logging
+            pluginAdmin.setRootLogLevel(CLogger.Level.None);
 
             isStopped = true;
         } catch (Exception ex) {

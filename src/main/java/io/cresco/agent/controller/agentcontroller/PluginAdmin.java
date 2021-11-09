@@ -217,6 +217,33 @@ public class PluginAdmin {
         return isSet;
     }
 
+    public boolean setRootLogLevel(CLogger.Level level) {
+        boolean isSet = false;
+        try {
+
+
+            //set log level for file
+            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+
+            Dictionary<String, Object> log4jProps = logConfig.getProperties();
+            log4jProps.put( "log4j.rootLogger", level.name().toUpperCase() + ", CONSOLE, FILE" );
+
+            logConfig.updateIfDifferent(log4jProps);
+            isSet = true;
+
+            logger.info("Set RootLoglevel: " + level.name());
+
+        } catch (Exception ex) {
+            logger.error("setLogLevel() " + ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return isSet;
+    }
+
     public boolean setLogLevel(String logId, CLogger.Level level) {
         boolean isSet = false;
         try {
