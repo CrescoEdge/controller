@@ -310,10 +310,6 @@ public class AgentServiceImpl implements AgentService {
                 }
             }
 
-            if(gdb != null) {
-                gdb.shutdown();
-            }
-
         }
 
         if(logger != null) {

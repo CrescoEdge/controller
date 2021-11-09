@@ -145,6 +145,10 @@ public class ControllerEngine {
                 controllerSM.stop();
             }
 
+            if(gdb != null) {
+                gdb.shutdown();
+            }
+
             if(plugin != null) {
                 plugin.setIsActive(false);
             }
