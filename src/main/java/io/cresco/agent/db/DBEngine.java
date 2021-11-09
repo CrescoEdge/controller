@@ -171,8 +171,10 @@ public class DBEngine {
             connectionPool.close();
 
             try {
-                String shutdownString = "jdbc:derby:" + dbPath + ";shutdown=true";
-                DriverManager.getConnection(shutdownString);
+                //String shutdownString = "jdbc:derby:" + dbPath + ";shutdown=true";
+                //DriverManager.getConnection(shutdownString);
+                DriverManager.getConnection("jdbc:derby:;shutdown=true");
+
             } catch (SQLException e) {
                 if (e.getErrorCode() == 50000) {
                     isShutdown = true;
