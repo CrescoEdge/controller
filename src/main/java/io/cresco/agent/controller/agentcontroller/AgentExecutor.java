@@ -89,6 +89,9 @@ public class AgentExecutor implements Executor {
             case "cepadd":
                 return cepAdd(incoming);
 
+            case "getagentinfo":
+                return getAgentInfo(incoming);
+
             default:
                 logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
                 logger.error(incoming.getParams().toString());
@@ -811,6 +814,22 @@ public class AgentExecutor implements Executor {
         }
         return ce;
     }
+
+    private MsgEvent getAgentInfo(MsgEvent ce) {
+
+        try {
+
+            ce.setCompressedParam("agent-config",plugin.getConfig().getConfigAsJSON());
+            ce.setParam("agent-data", plugin.getConfig().getStringParam("cresco_data_location","cresco-data"));
+
+        } catch(Exception ex) {
+            logger.error("getDPLogIsEnabled Error: " + ex.getMessage());
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "logDP Could Not Get Exception");
+        }
+        return ce;
+    }
+
 
     private MsgEvent setDPLogIsEnabled(MsgEvent ce) {
 
