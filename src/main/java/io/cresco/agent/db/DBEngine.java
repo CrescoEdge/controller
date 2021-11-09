@@ -172,7 +172,10 @@ public class DBEngine {
 
             try {
                 //String shutdownString = "jdbc:derby:" + dbPath + ";shutdown=true";
-                //DriverManager.getConnection(shutdownString);
+                //String dropString = "jdbc:derby:" + dbPath + ";drop=true";
+                String dropString = "jdbc:derby:" + dbPath + ";drop=true";
+                DriverManager.getConnection(dropString);
+                //DriverManager.getConnection("jdbc:derby:memory:eh;drop=true");
                 DriverManager.getConnection("jdbc:derby:;shutdown=true");
 
             } catch (SQLException e) {
