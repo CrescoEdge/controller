@@ -263,8 +263,12 @@ public class AgentServiceImpl implements AgentService {
         logger.info("");
 
         logger.info("Controller Version: " + getControllerVersion());
-
+        if(plugin.getConfig().getStringParam("cresco_data_location") != null) {
+            logger.info("Storage Path: " + plugin.getConfig().getStringParam("cresco_data_location"));
+        }
         controllerEngine = new ControllerEngine(cstate, plugin, pluginAdmin, gdb);
+
+
 
         (new Thread() {
         public void run() {

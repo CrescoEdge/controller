@@ -55,6 +55,7 @@ public class UDPDiscoveryEngine implements Runnable {
     }
 
     public static void shutdown() {
+
         for (Map.Entry<NetworkInterface, MulticastSocket> entry : workers.entrySet()) {
             MulticastSocket multicastSocket = entry.getValue();
             multicastSocket.close();
