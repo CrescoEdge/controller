@@ -400,73 +400,78 @@ public class PluginAdmin {
 
     public Map<String,Object> jarIsBundle(Map<String,Object> map) {
         Map<String,Object> returnMap = null;
+
         try {
 
-            Bundle[] bundleList = context.getBundles();
+            if(context != null) {
 
-            for(Bundle b : bundleList) {
+                Bundle[] bundleList = context.getBundles();
 
-                String eBundleId = String.valueOf(b.getBundleId());
-                String eName = b.getSymbolicName();
-                String eVersion = b.getVersion().toString();
+                for(Bundle b : bundleList) {
 
+                    String eBundleId = String.valueOf(b.getBundleId());
+                    String eName = b.getSymbolicName();
+                    String eVersion = b.getVersion().toString();
 
-                String requestedName = (String) map.get("pluginname");
+                    String requestedName = (String) map.get("pluginname");
 
-                if((eName != null) && (eVersion != null)) {
+                    if((eName != null) && (eVersion != null)) {
 
-                    if (map.containsKey("version")) {
+                        if (map.containsKey("version")) {
 
-                        String requestedVersion = (String) map.get("version");
-                        String requestedMD5 = (String) map.get("md5");
+                            String requestedVersion = (String) map.get("version");
+                            String requestedMD5 = (String) map.get("md5");
 
-                        //String jarLocation = Paths.get(b.getLocation()).toString();
-                        String jarLocation = b.getLocation();
+                            //String jarLocation = Paths.get(b.getLocation()).toString();
+                            String jarLocation = b.getLocation();
 
-                        if(jarLocation.contains("!")) {
-                            jarLocation = "jar:" + jarLocation;
-                        }
+                            if(jarLocation.contains("!")) {
+                                jarLocation = "jar:" + jarLocation;
+                            }
 
-                        returnMap.put("jarfile",jarLocation);
+                            returnMap.put("jarfile",jarLocation);
 
-                        if(requestedMD5 != null) {
+                            if(requestedMD5 != null) {
 
-                            String eMD5 = plugin.getMD5(jarLocation);
+                                String eMD5 = plugin.getMD5(jarLocation);
 
-                            if(eMD5 != null) {
+                                if(eMD5 != null) {
 
-                                if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
+                                    if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
+
+                                        returnMap = new HashMap<>(map);
+                                        returnMap.put("jarstatus", "bundle");
+                                        returnMap.put("bundle_id", eBundleId);
+                                    }
+
+                                }
+
+                            } else {
+
+                                if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
 
                                     returnMap = new HashMap<>(map);
                                     returnMap.put("jarstatus", "bundle");
                                     returnMap.put("bundle_id", eBundleId);
                                 }
-
                             }
-
                         } else {
-
-                            if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
+                            if (eName.equals(requestedName)) {
 
                                 returnMap = new HashMap<>(map);
+                                returnMap.put("version", eVersion);
                                 returnMap.put("jarstatus", "bundle");
                                 returnMap.put("bundle_id", eBundleId);
                             }
                         }
-                    } else {
-                        if (eName.equals(requestedName)) {
 
-                            returnMap = new HashMap<>(map);
-                            returnMap.put("version", eVersion);
-                            returnMap.put("jarstatus", "bundle");
-                            returnMap.put("bundle_id", eBundleId);
-                        }
                     }
 
                 }
 
+            } else {
+                logger.error("jarIsBundle OSGi context is NULL");
             }
-
 
         } catch (Exception ex) {
             StringWriter errors = new StringWriter();
