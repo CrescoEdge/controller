@@ -2418,8 +2418,11 @@ public class DBEngine {
             } else if((regionId != null) && (agentId == null)) {
                 //region
 
-                queryString = "SELECT A.agent_id, A.status_code FROM ANODE A, RNODE R, AGENTOF O "
-                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID";
+                queryString = "SELECT A.agent_id, A.status_code FROM ANODE A, RNODE R, AGENTOF O " +
+                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "AND R.REGION_ID = O.REGION_ID " +
+                        "AND O.AGENT_ID = A.AGENT_ID " +
+                        "AND R.REGION_ID = O.REGION_ID ";
 
             }
             else if((regionId == null) && (agentId == null)) {
