@@ -2412,6 +2412,7 @@ public class DBEngine {
                         "AND A.AGENT_ID = '" + agentId + "'" +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND P.PLUGIN_ID = PO.PLUGIN_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID ";
 
             } else if((regionId != null) && (agentId == null)) {
