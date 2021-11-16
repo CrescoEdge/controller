@@ -223,7 +223,7 @@ public class RegionHealthWatcher {
 
                             } else if (entry.getValue() == NodeStatusType.STALE) { //will include more items once nodes update correctly
                                 logger.error("Agent NodeID : " + entry.getKey() + " Status : " + entry.getValue().toString() + " SETTING LOST");
-                                controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 50, "set LOST by regional controller health watcher");
+                                controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), entry.getKey(), null, 50, "agent set LOST by regional controller health watcher I0");
                                 setPluginsLost(entry.getKey());
                                 //set plugins lost
                             } else if (entry.getValue() == NodeStatusType.ERROR) { //will include more items once nodes update correctly
@@ -242,7 +242,7 @@ public class RegionHealthWatcher {
 
             for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {
                 logger.error("Agent NodeID : " + agentName + " Plugin NodeID : " + entry.getKey() + " SETTING LOST");
-                controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), agentName, entry.getKey(), 50, "set LOST by regional controller health watcher");
+                controllerEngine.getGDB().setNodeStatusCode(plugin.getRegion(), agentName, entry.getKey(), 50, "plugin set LOST by regional controller health watcher I1");
             }
         }
 
