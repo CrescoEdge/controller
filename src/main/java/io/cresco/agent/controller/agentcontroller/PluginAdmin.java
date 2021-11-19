@@ -412,6 +412,12 @@ public class PluginAdmin {
                     String eBundleId = String.valueOf(b.getBundleId());
                     String eName = b.getSymbolicName();
                     String eVersion = b.getVersion().toString();
+                    String jarLocation = b.getLocation();
+                    if(jarLocation != null) {
+                        if (jarLocation.contains("!")) {
+                            jarLocation = "jar:" + jarLocation;
+                        }
+                    }
 
                     String requestedName = (String) map.get("pluginname");
 
@@ -421,15 +427,6 @@ public class PluginAdmin {
 
                             String requestedVersion = (String) map.get("version");
                             String requestedMD5 = (String) map.get("md5");
-
-                            //String jarLocation = Paths.get(b.getLocation()).toString();
-                            String jarLocation = b.getLocation();
-
-                            if(jarLocation.contains("!")) {
-                                jarLocation = "jar:" + jarLocation;
-                            }
-
-                            returnMap.put("jarfile",jarLocation);
 
                             if(requestedMD5 != null) {
 
@@ -442,6 +439,9 @@ public class PluginAdmin {
                                         returnMap = new HashMap<>(map);
                                         returnMap.put("jarstatus", "bundle");
                                         returnMap.put("bundle_id", eBundleId);
+                                        if(jarLocation != null) {
+                                            returnMap.put("jarfile",jarLocation);
+                                        }
                                     }
 
                                 }
@@ -453,6 +453,9 @@ public class PluginAdmin {
                                     returnMap = new HashMap<>(map);
                                     returnMap.put("jarstatus", "bundle");
                                     returnMap.put("bundle_id", eBundleId);
+                                    if(jarLocation != null) {
+                                        returnMap.put("jarfile",jarLocation);
+                                    }
                                 }
                             }
                         } else {
@@ -462,6 +465,9 @@ public class PluginAdmin {
                                 returnMap.put("version", eVersion);
                                 returnMap.put("jarstatus", "bundle");
                                 returnMap.put("bundle_id", eBundleId);
+                                if(jarLocation != null) {
+                                    returnMap.put("jarfile",jarLocation);
+                                }
                             }
                         }
 
