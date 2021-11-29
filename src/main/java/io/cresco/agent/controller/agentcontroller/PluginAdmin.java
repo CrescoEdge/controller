@@ -413,6 +413,7 @@ public class PluginAdmin {
                     String eName = b.getSymbolicName();
                     String eVersion = b.getVersion().toString();
                     String jarLocation = b.getLocation();
+
                     if(jarLocation != null) {
                         if (jarLocation.contains("!")) {
                             jarLocation = "jar:" + jarLocation;
@@ -426,27 +427,6 @@ public class PluginAdmin {
                         if (map.containsKey("version")) {
 
                             String requestedVersion = (String) map.get("version");
-                            String requestedMD5 = (String) map.get("md5");
-
-                            if(requestedMD5 != null) {
-
-                                String eMD5 = plugin.getMD5(jarLocation);
-
-                                if(eMD5 != null) {
-
-                                    if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)) )) {
-
-                                        returnMap = new HashMap<>(map);
-                                        returnMap.put("jarstatus", "bundle");
-                                        returnMap.put("bundle_id", eBundleId);
-                                        if(jarLocation != null) {
-                                            returnMap.put("jarfile",jarLocation);
-                                        }
-                                    }
-
-                                }
-
-                            } else {
 
                                 if ((eName.equals(requestedName) && (eVersion.equals(requestedVersion)))) {
 
@@ -457,7 +437,7 @@ public class PluginAdmin {
                                         returnMap.put("jarfile",jarLocation);
                                     }
                                 }
-                            }
+
                         } else {
                             if (eName.equals(requestedName)) {
 
