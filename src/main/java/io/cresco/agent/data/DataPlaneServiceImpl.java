@@ -738,22 +738,23 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     public List<FileObject> createFileObjects(List<String> fileList) {
         List<FileObject> fileObjects = null;
+
         try {
 
             fileObjects = new ArrayList<>();
+
 
             for(String filePath : fileList) {
                 fileObjects.add(createFileObject(filePath));
             }
 
+
         }catch (Exception ex) {
-            ex.printStackTrace();
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            StringWriter errors = new StringWriter();
+            ex.printStackTrace(new PrintWriter(errors));
+            logger.error(errors.toString());
         }
+
         return fileObjects;
     }
 

@@ -104,6 +104,8 @@ public class ActiveProducerWorkerData implements Runnable {
 
 							//break apart the files and create manafest
 							List<FileObject> fileObjectList = controllerEngine.getDataPlaneService().createFileObjects(me.getFileList());
+
+
 							textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
 							textMessage.setStringProperty("filegroup",fileGroup);
 
@@ -144,6 +146,7 @@ public class ActiveProducerWorkerData implements Runnable {
 									if(cresco_data_location != null) {
 										Path path = Paths.get(cresco_data_location, "producer-journal");
 										journalDirPath = plugin.getConfig().getStringParam("journal_dir", path.toAbsolutePath().normalize().toString());
+
 									} else {
 										journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("cresco-data/producer-journal").toAbsolutePath().toString());
 									}
@@ -203,7 +206,9 @@ public class ActiveProducerWorkerData implements Runnable {
 						}
 						catch (Exception ex) {
 							logger.error("ERROR SENDING FILE MESSAGE");
-							ex.printStackTrace();
+							StringWriter errors = new StringWriter();
+							ex.printStackTrace(new PrintWriter(errors));
+							logger.error(errors.toString());
 						} finally{
 							try {
 								if (dataProducer != null) {

@@ -163,7 +163,15 @@ public class AgentExecutor implements Executor {
     private MsgEvent getLog(MsgEvent ce) {
         try {
 
-            Path filePath = Paths.get("cresco-data/cresco-logs/main.log");
+            Path filePath = null;
+
+            String cresco_data_location = System.getProperty("cresco_data_location");
+            if(cresco_data_location != null) {
+                filePath = Paths.get(cresco_data_location, "cresco-logs","main.log");
+            } else {
+                filePath = Paths.get("cresco-data", "cresco-logs","main.log");
+            }
+
             ce.addFile(filePath.toAbsolutePath().toString());
 
             return ce;
