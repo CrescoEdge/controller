@@ -26,6 +26,7 @@ import org.apache.mina.statemachine.annotation.Transition;
 import org.apache.mina.statemachine.annotation.Transitions;
 import org.apache.mina.statemachine.context.StateContext;
 
+import javax.jms.DeliveryMode;
 import javax.jms.JMSException;
 import javax.jms.MapMessage;
 import java.io.PrintWriter;
@@ -1334,7 +1335,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
                                 //logger.error("SENDING AGENT UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 8, 0);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -1356,7 +1357,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
 
                                 //logger.error("SENDING REGIONAL UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 8, 0);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();

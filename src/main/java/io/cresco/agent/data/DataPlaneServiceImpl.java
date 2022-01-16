@@ -187,6 +187,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	        if(activeMQSession == null) {
                 activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+
 	        }
 
                 
@@ -309,7 +310,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
     }
 
+
     public boolean sendMessage(TopicType topicType, Message message) {
+        return sendMessage(topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
+    }
+
+    public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
         try {
 
             while(!controllerEngine.cstate.isActive()) {
@@ -326,17 +332,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         }
                     }
                     //if has header, send blob
-                    Object inputObject = message.getObjectProperty("data_stream");
+                    Object inputObject = message.getObjectProperty("blob_data_stream");
                     if(inputObject != null) {
                         InputStream inputStream = (InputStream) inputObject;
                         ActiveMQSession activeMQSession = getSession();
                         if(activeMQSession != null) {
                             BlobMessage blobMessage = activeMQSession.createBlobMessage(inputStream);
-                            agentProducer.send(blobMessage, DeliveryMode.NON_PERSISTENT, 0, 0);
+                            agentProducer.send(blobMessage, deliveryMode, priority, timeToLive);
                         }
                     } else {
                         if(agentProducer != null) {
-                            agentProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                            agentProducer.send(message, deliveryMode, priority, timeToLive);
                         }
                     }
                     break;
@@ -345,7 +351,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         regionProducer = getMessageProducer(topicType);
                     }
                     if(regionProducer != null) {
-                        regionProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        regionProducer.send(message, deliveryMode, priority, timeToLive);
                     }
                     break;
                 case GLOBAL:
@@ -353,7 +359,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         globalProducer = getMessageProducer(topicType);
                     }
                     if(globalProducer != null) {
-                        globalProducer.send(message, DeliveryMode.NON_PERSISTENT, 0, 0);
+                        globalProducer.send(message, deliveryMode, priority, timeToLive);
                     }
                     break;
             }
@@ -377,6 +383,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error(sStackTrace);
             return false;
         }
+
     }
 
     private String getTopicName(TopicType topicType) {
@@ -492,6 +499,42 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return message;
     }
 
+    public Message createMessage(InputStream inputStream) {
+        BlobMessage message = null;
+        try {
+            ActiveMQSession activeMQSession = getSession();
+            if(activeMQSession != null) {
+                message = activeMQSession.createBlobMessage(inputStream);
+            }
+
+        } catch (Exception ex) {
+            ex.printStackTrace();
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            String sStackTrace = sw.toString(); // stack trace as a string
+            logger.error(sStackTrace);
+        }
+        return message;
+    }
+
+    public InputStream getInputMessageStream(Message message) {
+        InputStream inputStream = null;
+        try {
+            BlobMessage blobMessage = (BlobMessage) message;
+            inputStream = blobMessage.getInputStream();
+
+        } catch (Exception ex) {
+                ex.printStackTrace();
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                ex.printStackTrace(pw);
+                String sStackTrace = sw.toString(); // stack trace as a string
+                logger.error(sStackTrace);
+            }
+        return inputStream;
+    }
+
     public ObjectMessage createObjectMessage() {
 	    ObjectMessage objectMessage = null;
 
@@ -577,6 +620,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             ActiveMQSession activeMQSession = getSession();
             if(activeMQSession != null) {
                 streamMessage = activeMQSession.createStreamMessage();
+
             }
 
         } catch (Exception ex) {
@@ -608,6 +652,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
         return textMessage;
     }
+
+
 
     /*
     private String getCEPPluginId() {
@@ -816,7 +862,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             int partCounter = 0;//I like to name parts from 001, 002, 003, ...
             //you can change it to 0 if you want 000, 001, ...
 
-            int sizeOfFiles = 1024 * 1024 * 5;// 1MB
+            int sizeOfFiles = 1024 * 1024 * 5;// 50MB
             byte[] buffer = new byte[sizeOfFiles];
 
 

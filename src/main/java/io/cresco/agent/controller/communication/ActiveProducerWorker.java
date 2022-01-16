@@ -130,9 +130,9 @@ public class ActiveProducerWorker {
 			switch (type) {
 				case "CONFIG":  pri = 10;
 					break;
-				case "EXEC":  pri = 10;
+				case "EXEC":  pri = 7;
 					break;
-				case "WATCHDOG":  pri = 7;
+				case "WATCHDOG":  pri = 5;
 					break;
 				case "KPI":  pri = 0;
 					break;

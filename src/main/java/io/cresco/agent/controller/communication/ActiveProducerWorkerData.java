@@ -58,170 +58,149 @@ public class ActiveProducerWorkerData implements Runnable {
 		}
 	}
 
+	boolean deleteDirectory(File directoryToBeDeleted) {
+		File[] allContents = directoryToBeDeleted.listFiles();
+		if (allContents != null) {
+			for (File file : allContents) {
+				deleteDirectory(file);
+			}
+		}
+		return directoryToBeDeleted.delete();
+	}
 
 	public void run() {
 		try {
-			int pri = 0;
+			ActiveMQSession dataSess = null;
+			MessageProducer dataProducer = null;
 
-			/*
-			CONFIG,
-        	DISCOVER,
-        	ERROR,
-        	EXEC,
-        	GC,
-        	INFO,
-        	KPI,
-        	LOG,
-        	WATCHDOG;
-			 */
+			try {
 
-			String type = me.getMsgType().toString();
+				dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 
-			switch (type) {
-				case "CONFIG":  pri = 10;
-					break;
-				case "EXEC":  pri = 10;
-					break;
-				case "WATCHDOG":  pri = 7;
-					break;
-				case "KPI":  pri = 0;
-					break;
-				default: pri = 4;
-					break;
-			}
+				TextMessage textMessage = dataSess.createTextMessage(gson.toJson(me));
+
+				String fileGroup = UUID.randomUUID().toString();
+
+				//break apart the files and create manafest
+				List<FileObject> fileObjectList = controllerEngine.getDataPlaneService().createFileObjects(me.getFileList());
+
+				textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
+				textMessage.setStringProperty("filegroup",fileGroup);
+
+				//send initial message to register the transfer
+				//create new producer and make sure it does not timeout
+				Destination dataDestination = dataSess.createQueue(TXQueueName);
+				dataProducer = dataSess.createProducer(dataDestination);
+				dataProducer.setTimeToLive(0);
+				dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
+
+				dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 7, 0);
+
+				dataProducer.close();
+
+				for(FileObject fileObject : fileObjectList) {
+
+					Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + fileObject.getDataName());
+
+					for (String parList : fileObject.getOrderedPartList()) {
+
+						dataProducer = dataSess.createProducer(dataDestination);
+						dataProducer.setTimeToLive(0);
+						dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 
 
-					ActiveMQSession dataSess = null;
-			 		MessageProducer dataProducer = null;
+						BytesMessage bytesMessage = dataSess.createBytesMessage();
+						bytesMessage.setStringProperty("datapart", parList);
+						bytesMessage.setStringProperty("dataname", fileObject.getDataName());
+						bytesMessage.setStringProperty("filegroup", fileGroup);
+						bytesMessage.setStringProperty("dst_region", me.getDstRegion());
+						bytesMessage.setStringProperty("dst_agent", me.getDstAgent());
+
+						//bytesMessage.setStringProperty("JMSXGroupID", fileObject.getDataName());
+
+						String journalDirPath = null;
+
+						String cresco_data_location = System.getProperty("cresco_data_location");
+						if(cresco_data_location != null) {
+							Path path = Paths.get(cresco_data_location, "producer-journal");
+							journalDirPath = plugin.getConfig().getStringParam("journal_dir", path.toAbsolutePath().normalize().toString());
+
+						} else {
+							journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("cresco-data/producer-journal").toAbsolutePath().toString());
+						}
+
+						Path journalPath = Paths.get(journalDirPath);
+						Files.createDirectories(journalPath);
+
+
+						File filePart = new File(filePath.toAbsolutePath().toString(), parList);
+
+						byte[] fileContent = Files.readAllBytes(filePart.toPath());
+
+						bytesMessage.writeBytes(fileContent);
 
 						try {
 
-							dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-
-							TextMessage textMessage = dataSess.createTextMessage(gson.toJson(me));
-
-							String fileGroup = UUID.randomUUID().toString();
-
-							//break apart the files and create manafest
-							List<FileObject> fileObjectList = controllerEngine.getDataPlaneService().createFileObjects(me.getFileList());
-
-
-							textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
-							textMessage.setStringProperty("filegroup",fileGroup);
-
-							//send initial message to register the transfer
-							//create new producer and make sure it does not timeout
-							Destination dataDestination = dataSess.createQueue(TXQueueName);
-							dataProducer = dataSess.createProducer(dataDestination);
-							dataProducer.setTimeToLive(0);
-							dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
-
-							dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 10, 0);
-
-							dataProducer.close();
-
-							for(FileObject fileObject : fileObjectList) {
-
-								Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + fileObject.getDataName());
-
-								for (String parList : fileObject.getOrderedPartList()) {
-
-									dataProducer = dataSess.createProducer(dataDestination);
-									dataProducer.setTimeToLive(0);
-									dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
-
-
-									BytesMessage bytesMessage = dataSess.createBytesMessage();
-									bytesMessage.setStringProperty("datapart", parList);
-									bytesMessage.setStringProperty("dataname", fileObject.getDataName());
-									bytesMessage.setStringProperty("filegroup", fileGroup);
-									bytesMessage.setStringProperty("dst_region", me.getDstRegion());
-									bytesMessage.setStringProperty("dst_agent", me.getDstAgent());
-
-									//bytesMessage.setStringProperty("JMSXGroupID", fileObject.getDataName());
-
-									String journalDirPath = null;
-
-									String cresco_data_location = System.getProperty("cresco_data_location");
-									if(cresco_data_location != null) {
-										Path path = Paths.get(cresco_data_location, "producer-journal");
-										journalDirPath = plugin.getConfig().getStringParam("journal_dir", path.toAbsolutePath().normalize().toString());
-
-									} else {
-										journalDirPath = plugin.getConfig().getStringParam("journal_dir", FileSystems.getDefault().getPath("cresco-data/producer-journal").toAbsolutePath().toString());
-									}
-
-									Path journalPath = Paths.get(journalDirPath);
-									Files.createDirectories(journalPath);
-
-
-									File filePart = new File(filePath.toAbsolutePath().toString(), parList);
-
-									byte[] fileContent = Files.readAllBytes(filePart.toPath());
-
-									bytesMessage.writeBytes(fileContent);
-
-									try {
-
-										dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
-
-									} catch (JMSException jmse) {
-										jmse.printStackTrace();
-										logger.error("sendMessage Data: jmse {} ", jmse.getMessage());
-										StringWriter errors = new StringWriter();
-										jmse.printStackTrace(new PrintWriter(errors));
-										logger.error(errors.toString());
-
-										try {
-											logger.error("Rebuilding Session");
-											dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-											dataProducer = dataSess.createProducer(dataDestination);
-											dataProducer.setTimeToLive(0);
-											dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
-											dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
-										} catch (Exception ex) {
-											logger.error("Rebuilding Session Error " + ex.getMessage());
-											ex.printStackTrace();
-										}
-									} catch (Exception ex) {
-										logger.error("General send failure : " + ex.getMessage());
-										ex.printStackTrace();
-									} finally {
-										if(dataProducer != null) {
-											dataProducer.close();
-										}
-									}
-									filePart.delete();
-								}
-								//remove temp folder
-								filePath.toFile().delete();
-							}
-
+							dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
 
 						} catch (JMSException jmse) {
-							logger.error("run() sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage());
+							jmse.printStackTrace();
+							logger.error("sendMessage Data: jmse {} ", jmse.getMessage());
 							StringWriter errors = new StringWriter();
 							jmse.printStackTrace(new PrintWriter(errors));
 							logger.error(errors.toString());
-						}
-						catch (Exception ex) {
-							logger.error("ERROR SENDING FILE MESSAGE");
-							StringWriter errors = new StringWriter();
-							ex.printStackTrace(new PrintWriter(errors));
-							logger.error(errors.toString());
-						} finally{
+
 							try {
-								if (dataProducer != null) {
-									dataProducer.close();
-								}
-								if(dataSess != null) {
-									dataSess.close();
-								}
-							}catch (Exception ex) {
-								logger.error("Can't Close data producer");
+								logger.error("Rebuilding Session");
+								dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+								dataProducer = dataSess.createProducer(dataDestination);
+								dataProducer.setTimeToLive(0);
+								dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
+								dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
+							} catch (Exception ex) {
+								logger.error("Rebuilding Session Error " + ex.getMessage());
 								ex.printStackTrace();
 							}
+						} catch (Exception ex) {
+							logger.error("General send failure : " + ex.getMessage());
+							ex.printStackTrace();
+						} finally {
+							if(dataProducer != null) {
+								dataProducer.close();
+							}
 						}
+						filePart.delete();
+					}
+					//remove temp folder
+					//filePath.toFile().delete();
+					deleteDirectory(filePath.toFile());
+				}
+
+			} catch (JMSException jmse) {
+				logger.error("run() sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage());
+				StringWriter errors = new StringWriter();
+				jmse.printStackTrace(new PrintWriter(errors));
+				logger.error(errors.toString());
+			}
+			catch (Exception ex) {
+				logger.error("ERROR SENDING FILE MESSAGE");
+				StringWriter errors = new StringWriter();
+				ex.printStackTrace(new PrintWriter(errors));
+				logger.error(errors.toString());
+			} finally{
+				try {
+					if (dataProducer != null) {
+						dataProducer.close();
+					}
+					if(dataSess != null) {
+						dataSess.close();
+					}
+				}catch (Exception ex) {
+					logger.error("Can't Close data producer");
+					ex.printStackTrace();
+				}
+			}
+
 
 
 		} catch (Exception ex) {

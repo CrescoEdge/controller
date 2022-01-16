@@ -53,9 +53,12 @@ public class AgentConsumer {
 			@Override
 			public void onRemoval(RemovalNotification<String, MsgEvent> n){
 				if (n.wasEvicted()) {
-					//String cause = n.getCause().name();
+					String cause = n.getCause().name();
 					//assertEquals(RemovalCause.SIZE.toString(),cause);
 					logger.error("IMPLEMENT REMOVAL OF FILES!");
+					logger.error(cause);
+					logger.error("key: " + n.getKey());
+					logger.error("value: " + n.getValue().getParams().toString());
 				}
 			}
 		};
