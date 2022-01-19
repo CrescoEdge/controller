@@ -463,8 +463,10 @@ public class DBEngine {
                 }
 
                 stmt.executeUpdate(stmtString);
+                stmt.close();
             }
 
+            conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -575,7 +577,10 @@ public class DBEngine {
                 stmtString = "INSERT INTO cstate values (" + config_ts + ",'" + current_mode + "','" + current_desc + "','" + global_region + "','" + global_agent + "','" + regional_region + "','" + regional_agent + "','" + local_region + "','" + local_agent + "')";
 
                 stmt.executeUpdate(stmtString);
+                stmt.close();
             }
+
+            conn.close();
 
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -596,8 +601,10 @@ public class DBEngine {
 
 
                 stmt.executeUpdate(stmtString);
+                stmt.close();
             }
 
+            conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -617,8 +624,10 @@ public class DBEngine {
 
 
                 stmt.executeUpdate(stmtString);
+                stmt.close();
             }
 
+            conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -645,8 +654,14 @@ public class DBEngine {
                                 inodeResourceList.add(node);
                             }
                         }
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -677,8 +692,13 @@ public class DBEngine {
                             }
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -703,8 +723,13 @@ public class DBEngine {
                         rs.next();
                         status_code = rs.getInt(1);
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -727,8 +752,11 @@ public class DBEngine {
                 try (Statement stmt = conn.createStatement()) {
 
                     queryReturn = stmt.executeUpdate(queryString);
-
+                    
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -755,8 +783,13 @@ public class DBEngine {
                         rs.next();
                         status_code = rs.getInt(1);
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -794,8 +827,13 @@ public class DBEngine {
                         pNodeMap.put("configparams", rs.getString("configparams"));
                         pNodeMap.put("persistence_code", rs.getString("persistence_code"));
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -828,8 +866,13 @@ public class DBEngine {
                         //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
                         aNodeMap.put("configparams", rs.getString("configparams"));
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -862,8 +905,13 @@ public class DBEngine {
                         //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
                         aNodeMap.put("configparams", rs.getString("configparams"));
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -887,7 +935,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -913,8 +964,13 @@ public class DBEngine {
                             System.out.println("WHY IS RESULT SET EMPTY THIS NULL: AGENT_ID = " + agentId);
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -966,9 +1022,14 @@ public class DBEngine {
 
                         rs.next();
                         configParams = rs.getString(1);
-
+                        
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1019,8 +1080,13 @@ public class DBEngine {
                         rs.next();
                         count = rs.getInt(1);
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1044,9 +1110,14 @@ public class DBEngine {
 
                         rs.next();
                         submission = rs.getString(1);
+                    
+                        rs.close();
                     }
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1068,7 +1139,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
 
@@ -1091,7 +1165,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+                
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1117,8 +1194,11 @@ public class DBEngine {
 
                     stmt.executeUpdate(insertRNodeString);
                     conn.commit();
-                }
 
+                    stmt.close();
+                }
+                
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1176,7 +1256,11 @@ public class DBEngine {
 
                     stmt.executeUpdate(insertANodeString);
                     conn.commit();
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1205,8 +1289,14 @@ public class DBEngine {
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
                         }
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1234,8 +1324,14 @@ public class DBEngine {
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
                         }
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1255,8 +1351,11 @@ public class DBEngine {
                                 "values ('" + region + "','" + agent + "')";
 
                         stmt.executeUpdate(insertANodeToRNode);
+
+                        stmt.close();
                     }
 
+                    conn.close();
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
@@ -1276,8 +1375,11 @@ public class DBEngine {
                             "values ('" + agent + "','" + plugin + "')";
 
                     stmt.executeUpdate(insertANodeToRNode);
+
+                    stmt.close();
                 }
 
+                conn.close();
             } catch (Exception ex) {
                 ex.printStackTrace();
             }
@@ -1299,8 +1401,11 @@ public class DBEngine {
 
                 stmt.executeUpdate(insertPNodeString);
                 //force update of pnode, so the next command does not fail.
+
+                stmt.close();
             }
 
+            conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -1334,8 +1439,11 @@ public class DBEngine {
                 status = status + stmt.executeUpdate(insertPNodeToANode);
 
                 conn.commit();
+
+                stmt.close();
             }
 
+            conn.close();
         } catch(Exception ex) {
             ex.printStackTrace();
         }
@@ -1357,7 +1465,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1380,12 +1491,17 @@ public class DBEngine {
             try(Connection conn = ds.getConnection()) {
                 try (Statement stmt = conn.createStatement()) {
 
-
                     try(ResultSet rs = stmt.executeQuery(queryString)) {
                         rs.next();
                         exist = rs.getBoolean(1);
+
+                        rs.close();
                     }
+                    
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1411,7 +1527,11 @@ public class DBEngine {
                             "values ('" + inodeId + "','" + kpiparams + "')";
 
                     stmt.executeUpdate(stmtString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -1432,7 +1552,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1452,7 +1575,11 @@ public class DBEngine {
                             "values ('" + inodeId + "','" + resourceId + "'," + statusCode + ",'" + statusDesc + "','" + configparams + "')";
 
                     stmt.executeUpdate(stmtString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -1472,7 +1599,11 @@ public class DBEngine {
                             "values ('" + vnodeId + "','" + resourceId + "','" + inodeId + "','" + configparams + "')";
 
                     stmt.executeUpdate(stmtString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -1494,8 +1625,14 @@ public class DBEngine {
                     try(ResultSet rs = stmt.executeQuery(queryString)) {
                         rs.next();
                         status_code = rs.getInt(1);
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1534,8 +1671,13 @@ public class DBEngine {
 
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         }
@@ -1579,8 +1721,13 @@ public class DBEngine {
                             inodeKPIList.add(rs.getString(1));
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         }
@@ -1612,8 +1759,14 @@ public class DBEngine {
                         statusMap.put("tenant_id", rs.getString("tenant_id"));
                         statusMap.put("status_code", rs.getString("status_code"));
                         statusMap.put("status_desc", rs.getString("status_desc"));
+                    
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         }
@@ -1855,8 +2008,11 @@ public class DBEngine {
                     stmt.executeUpdate(createInode);
                     stmt.executeUpdate(createVnode);
                     stmt.executeUpdate(createInodeKPI);
-
+                    
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -1880,14 +2036,20 @@ public class DBEngine {
                     try(ResultSet rs = stmt.executeQuery(queryString)) {
                         rs.next();
                         exist = rs.getBoolean(1);
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         }
         catch (SQLException sqle) {
             //eat SQL exception, if tables does not exist this will throw
-            System.out.println("SQL EXCEPTIO : "  + sqle.getMessage());
+            System.out.println("SQL EXCEPTION : "  + sqle.getMessage());
             sqle.printStackTrace();
         }
         catch(Exception ex) {
@@ -1909,7 +2071,10 @@ public class DBEngine {
 
                     result = stmt.executeUpdate(stmtString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1960,8 +2125,14 @@ public class DBEngine {
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
                         }
+
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -1984,7 +2155,10 @@ public class DBEngine {
 
                     stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2006,7 +2180,10 @@ public class DBEngine {
 
                     stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2034,7 +2211,11 @@ public class DBEngine {
 
 
                     stmt.executeUpdate(queryString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2057,7 +2238,11 @@ public class DBEngine {
                     if (stmt.executeUpdate(queryString) == 1) {
                         isRemoved = true;
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2080,7 +2265,11 @@ public class DBEngine {
                     if (stmt.executeUpdate(queryString) == 1) {
                         isRemoved = true;
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2115,7 +2304,11 @@ public class DBEngine {
                     if (stmt.executeUpdate(queryString) == 1) {
                         isRemoved = true;
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         }
@@ -2163,8 +2356,13 @@ public class DBEngine {
                             cstateMap.put("local_agent", rs.getString(9));
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
 
@@ -2240,7 +2438,11 @@ public class DBEngine {
                     if (result < 2) {
                         isRemoved = true;
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2276,7 +2478,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -2332,8 +2537,13 @@ public class DBEngine {
                                 }
                             }
 
+                            rs.close();
                         }
+
+                        stmt.close();
                     }
+
+                    conn.close();
                 }
             } else {
                 System.out.println("getNodeList(regionId = " + regionId + " , agentId= " + agentId + ")");
@@ -2383,8 +2593,13 @@ public class DBEngine {
                             configMapList.add(configMap);
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -2442,8 +2657,13 @@ public class DBEngine {
                             }
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -2498,8 +2718,13 @@ public class DBEngine {
                             }
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -2539,7 +2764,10 @@ public class DBEngine {
 
                     queryReturn = stmt.executeUpdate(queryString);
 
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
@@ -2562,7 +2790,11 @@ public class DBEngine {
 
 
                     stmt.executeUpdate(stmtString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2581,7 +2813,11 @@ public class DBEngine {
                             "values (" + tenantId + ",'" + tenantName + "')";
 
                     stmt.executeUpdate(stmtString);
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
         } catch(Exception ex) {
             ex.printStackTrace();
@@ -2610,8 +2846,13 @@ public class DBEngine {
                             }
                         }
 
+                        rs.close();
                     }
+
+                    stmt.close();
                 }
+
+                conn.close();
             }
 
         } catch(Exception ex) {
