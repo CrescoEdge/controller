@@ -340,7 +340,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             BlobMessage blobMessage = activeMQSession.createBlobMessage(inputStream);
                             agentProducer.send(blobMessage, deliveryMode, priority, timeToLive);
                         }
-                        inputStream.close();
+                        if (inputStream != null) {
+                            inputStream.close();
+                        }
                     } else {
                         if(agentProducer != null) {
                             agentProducer.send(message, deliveryMode, priority, timeToLive);
@@ -840,7 +842,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             filePartNames = streamToSplitFile(dataName, fis);
 
-            fis.close();
+            if (fis != null) {
+                fis.close();
+            }
         } catch (Exception ex) {
             ex.printStackTrace();
             StringWriter sw = new StringWriter();
