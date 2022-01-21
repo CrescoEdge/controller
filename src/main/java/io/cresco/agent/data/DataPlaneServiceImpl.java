@@ -340,6 +340,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             BlobMessage blobMessage = activeMQSession.createBlobMessage(inputStream);
                             agentProducer.send(blobMessage, deliveryMode, priority, timeToLive);
                         }
+                        inputStream.close();
                     } else {
                         if(agentProducer != null) {
                             agentProducer.send(message, deliveryMode, priority, timeToLive);
@@ -835,11 +836,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             File f = new File(fileName);
 
-            //try-with-resources to ensure closing stream
             FileInputStream fis = new FileInputStream(f);
 
             filePartNames = streamToSplitFile(dataName, fis);
 
+            fis.close();
         } catch (Exception ex) {
             ex.printStackTrace();
             StringWriter sw = new StringWriter();
@@ -848,6 +849,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
         }
+        
         return filePartNames;
     }
 
