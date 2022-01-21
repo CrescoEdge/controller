@@ -506,7 +506,9 @@ public class PluginAdmin {
                             String eName = mainAttributess.getValue("Bundle-SymbolicName");
                             String eVersion = mainAttributess.getValue("Bundle-Version");
                             String eMD5 = plugin.getMD5(in);
-                            in.close();
+                            if (in != null) {
+                                in.close();
+                            }
 
                             String requestedName = (String) map.get("pluginname");
                             if (map.containsKey("version")) {
@@ -849,7 +851,9 @@ public class PluginAdmin {
                         InputStream in = conn.getInputStream();
                         String bundlePath = inputURL.getPath();
                         bundle = context.installBundle(bundlePath, in);
-                        in.close();
+                        if (in != null) {
+                            in.close();
+                        }
                     }
 
 

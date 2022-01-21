@@ -362,7 +362,9 @@ public class AgentServiceImpl implements AgentService {
                                 version = mainAttribs.getValue("Bundle-Version");
                             }
                         }
-                        in.close();
+                        if (in != null) {
+                            in.close();
+                        }
                     
                     }
                 } catch(Exception ex) {

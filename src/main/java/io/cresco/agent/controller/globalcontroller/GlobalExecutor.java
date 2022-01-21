@@ -1122,8 +1122,12 @@ public class GlobalExecutor implements Executor {
                         phm.put(sline[0], sline[1]);
                     }
                 }
-                reader.close();
-                in.close();
+                if (reader != null) {
+                    reader.close();
+                }
+                if (in != null) {
+                    in.close();
+                }
             }
         }
         catch (IOException e)
@@ -1152,7 +1156,9 @@ public class GlobalExecutor implements Executor {
                     System.err.println(msg);
                     version = "Unable to determine Version";
                 }
-                fis.close();
+                if (fis != null) {
+                    fis.close();
+                }
             } catch (Exception ex) {
                 ex.printStackTrace();
                 String msg = "Unable to determine Plugin Version " + ex.toString();
@@ -1229,7 +1235,9 @@ public class GlobalExecutor implements Executor {
                 output.append(line).append("\n");
             }
 
-            reader.close();
+            if (reader != null) {
+                reader.close();
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }

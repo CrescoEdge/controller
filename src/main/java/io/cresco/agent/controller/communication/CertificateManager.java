@@ -317,7 +317,9 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
             InputStream inputStream = new ByteArrayInputStream(Base64.getDecoder().decode(certString));
             cert = (X509Certificate)certificateFactory.generateCertificate(inputStream);
-            inputStream.close();
+            if (inputStream != null) {
+                inputStream.close();
+            }
         } catch(Exception ex) {
             logger.error("getCertsfromString : error " + ex.getMessage());
             StringWriter sw = new StringWriter();
