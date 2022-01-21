@@ -1152,6 +1152,7 @@ public class GlobalExecutor implements Executor {
                     System.err.println(msg);
                     version = "Unable to determine Version";
                 }
+                fis.close();
             } catch (Exception ex) {
                 ex.printStackTrace();
                 String msg = "Unable to determine Plugin Version " + ex.toString();
@@ -1228,6 +1229,7 @@ public class GlobalExecutor implements Executor {
                 output.append(line).append("\n");
             }
 
+            reader.close();
         } catch (Exception e) {
             e.printStackTrace();
         }

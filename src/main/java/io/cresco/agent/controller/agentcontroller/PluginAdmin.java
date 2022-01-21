@@ -849,6 +849,7 @@ public class PluginAdmin {
                         InputStream in = conn.getInputStream();
                         String bundlePath = inputURL.getPath();
                         bundle = context.installBundle(bundlePath, in);
+                        in.close();
                     }
 
 
