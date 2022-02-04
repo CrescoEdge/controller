@@ -363,6 +363,7 @@ public class GlobalExecutor implements Executor {
                                 }
                             } else {
                                 logger.error("saveToRepo responce does not contain md5-confirm");
+                                logger.error(verify.getParams().toString());
                             }
                         } else {
                             logger.error("saveToRepo verify message was null");
