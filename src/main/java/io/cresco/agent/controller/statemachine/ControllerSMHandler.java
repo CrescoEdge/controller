@@ -14,6 +14,7 @@ import io.cresco.agent.controller.measurement.PerfMonitorNet;
 import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.core.ControllerStateImp;
+import io.cresco.agent.data.DataPlanePersistantInstance;
 import io.cresco.agent.data.DataPlaneServiceImpl;
 import io.cresco.library.agent.ControllerMode;
 import io.cresco.library.data.TopicType;
@@ -901,16 +902,32 @@ public class ControllerSMHandler {
                 try {
                     //consumer agent
                     int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
+
+                    String URI = null;
                     if(isLocalBroker(brokerAddress)) {
-                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "vm://localhost");
-                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"vm://localhost");
-                        controllerEngine.setDataPlaneService(dataPlaneService);
+                        URI = "vm://localhost";
+                        //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
+                        //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
+                        //controllerEngine.setDataPlaneService(dataPlaneService);
                     } else {
-                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+                        URI = "failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
+                        //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
                         //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
-                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+                        //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
                         //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
+                        //controllerEngine.setDataPlaneService(dataPlaneService);
+                    }
+
+                    if(URI != null) {
+                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
+                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
+                        //check to see if there is an existing one
+                        //if(controllerEngine.getDataPlaneService() != null) {
+                        //    Map<String, DataPlanePersistantInstance> messageConfigMap = new HashMap<>();
+                        //    controllerEngine.getDataPlaneService().getMessageConfigMap();
+                        //}
                         controllerEngine.setDataPlaneService(dataPlaneService);
+
                     }
 
                     while (!controllerEngine.getActiveClient().isFaultURIActive()) {

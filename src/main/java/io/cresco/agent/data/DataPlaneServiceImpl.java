@@ -46,6 +46,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private MessageProducer globalProducer;
 
     private Map<String,MessageConsumer> messageConsumerMap;
+    private Map<String,DataPlanePersistantInstance> messageConfigMap;
     private final AtomicBoolean lockMessage = new AtomicBoolean();
 
     private String URI;
@@ -64,6 +65,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
 		messageConsumerMap = Collections.synchronizedMap(new HashMap<>());
+        messageConfigMap = Collections.synchronizedMap(new HashMap<>());
 
 		this.URI = URI;
         typeOfListFileObject = new TypeToken<List<FileObject>>() { }.getType();
@@ -233,9 +235,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	    return  messageConsumer;
     }
 
-	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
-	    String listenerId = null;
-        try {
+    public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
+        return addMessageListener(topicType, messageListener, selectorString, false, null);
+    }
+
+	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, Boolean persistant, String listenerId) {
+	    try {
 
             MessageConsumer consumer = null;
 
@@ -265,9 +270,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             if(consumer != null) {
                 consumer.setMessageListener(messageListener);
 
-                listenerId = UUID.randomUUID().toString();
+                if(listenerId == null) {
+                    listenerId = UUID.randomUUID().toString();
+                }
                 synchronized (lockMessage) {
                     messageConsumerMap.put(listenerId, consumer);
+                    //keep persistent in memory
+                    if(persistant) {
+                        messageConfigMap.put(listenerId, new DataPlanePersistantInstance(topicType, messageListener, selectorString, listenerId));
+                    }
                 }
             }
 
@@ -279,6 +290,55 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error(sStackTrace);
         }
         return listenerId;
+    }
+
+    public void updateConnections(String URI)  {
+
+        //set new URI
+        this.URI = URI;
+
+        //reset activeMQSession
+        try {
+            if(activeMQSession != null){
+                if(!activeMQSession.isClosed()) {
+                    activeMQSession.close();
+                }
+                activeMQSession = null;
+            }
+
+        } catch (Exception ex) {
+            logger.error("updateConnections(): reset activeMQSession ");
+            logger.error(ex.getMessage());
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            logger.error(sw.toString());
+        }
+
+        //rebuild listeners
+        synchronized (lockMessage) {
+            //get all keys
+            List<String> listenerIds = new ArrayList<>(messageConsumerMap.keySet());
+            for(String listenerId : listenerIds) {
+                try {
+
+                    messageConsumerMap.get(listenerId).setMessageListener(null);
+                    messageConsumerMap.get(listenerId).close();
+                    messageConsumerMap.remove(listenerId);
+
+                } catch (Exception ex) {
+                    logger.error("resetMessageListener() : remove existing messageConsumerMap");
+                    logger.error(ex.getMessage());
+                    StringWriter sw = new StringWriter();
+                    PrintWriter pw = new PrintWriter(sw);
+                    ex.printStackTrace(pw);
+                    logger.error(sw.toString());
+                }
+            }
+        }
+
+        //add consumers back
+
     }
 
     public void removeMessageListener(String listenerId) {
