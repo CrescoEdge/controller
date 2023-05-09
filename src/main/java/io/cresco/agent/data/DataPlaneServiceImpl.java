@@ -189,12 +189,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	        if(activeMQSession == null) {
                 activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-
 	        }
 
                 
             if(activeMQSession.isClosed()) {
                 activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                logger.error("getsession: activeMQSession.isClosed()");
             }
             
         } catch (Exception ex) {
@@ -236,7 +236,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
     public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
-        return addMessageListener(topicType, messageListener, selectorString, false, null);
+        return addMessageListener(topicType, messageListener, selectorString, true);
+    }
+
+    public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, boolean persistant) {
+        return addMessageListener(topicType, messageListener, selectorString, persistant, null);
     }
 
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, Boolean persistant, String listenerId) {
@@ -295,6 +299,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public void updateConnections(String URI)  {
 
         //set new URI
+        logger.error("Restoring DataPlane");
         this.URI = URI;
 
         //reset activeMQSession
@@ -306,6 +311,22 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 activeMQSession = null;
             }
 
+            if(agentProducer != null){
+                agentProducer.close();
+                agentProducer = null;
+            }
+
+            if(regionProducer != null){
+                regionProducer.close();
+                regionProducer = null;
+            }
+
+            if(globalProducer != null){
+                globalProducer.close();
+                globalProducer = null;
+
+            }
+
         } catch (Exception ex) {
             logger.error("updateConnections(): reset activeMQSession ");
             logger.error(ex.getMessage());
@@ -315,15 +336,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error(sw.toString());
         }
 
-        //rebuild listeners
+        //clean existing listeners
         synchronized (lockMessage) {
             //get all keys
             List<String> listenerIds = new ArrayList<>(messageConsumerMap.keySet());
             for(String listenerId : listenerIds) {
                 try {
-
-                    messageConsumerMap.get(listenerId).setMessageListener(null);
-                    messageConsumerMap.get(listenerId).close();
+                    logger.error("Removing old listenerId: " + listenerId);
+                    //messageConsumerMap.get(listenerId).setMessageListener(null);
+                    //messageConsumerMap.get(listenerId).close();
                     messageConsumerMap.remove(listenerId);
 
                 } catch (Exception ex) {
@@ -336,8 +357,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
             }
         }
-
         //add consumers back
+        Map<String, DataPlanePersistantInstance> saveMessageConfigMap = null;
+        synchronized (lockMessage) {
+            saveMessageConfigMap = new HashMap<>(messageConfigMap);
+            messageConfigMap.clear();
+        }
+
+        for (DataPlanePersistantInstance dataPlanePersistantInstance : saveMessageConfigMap.values()) {
+            logger.info("Restoring listenerId: " + dataPlanePersistantInstance.getListenerId());
+            addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
+        }
 
     }
 
@@ -500,6 +530,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 String sStackTrace = sw.toString(); // stack trace as a string
                 logger.error(sStackTrace);
             }
+        } else {
+            logger.error("getMessageProducer: activeMQSession != null");
         }
 
         return messageProducer;

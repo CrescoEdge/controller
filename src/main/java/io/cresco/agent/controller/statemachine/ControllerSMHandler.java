@@ -920,13 +920,13 @@ public class ControllerSMHandler {
 
                     if(URI != null) {
                         controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
-                        dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
-                        //check to see if there is an existing one
-                        //if(controllerEngine.getDataPlaneService() != null) {
-                        //    Map<String, DataPlanePersistantInstance> messageConfigMap = new HashMap<>();
-                        //    controllerEngine.getDataPlaneService().getMessageConfigMap();
-                        //}
-                        controllerEngine.setDataPlaneService(dataPlaneService);
+                        //check to see if there is an dataPlaneService, if so reset connections
+                        if(controllerEngine.getDataPlaneService() == null) {
+                            dataPlaneService = new DataPlaneServiceImpl(controllerEngine, URI);
+                            controllerEngine.setDataPlaneService(dataPlaneService);
+                        } else {
+                            controllerEngine.getDataPlaneService().updateConnections(URI);
+                        }
 
                     }
 
