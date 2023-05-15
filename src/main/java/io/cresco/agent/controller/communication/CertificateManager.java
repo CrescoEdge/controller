@@ -48,22 +48,25 @@ public class CertificateManager {
     private PluginBuilder plugin;
 
     private int keySize = 2048;
+    private boolean certificateSaveFailureEncountered = false;
 
     public CertificateManager(ControllerEngine controllerEngine) {
+        long startTime = System.currentTimeMillis();
 
+        this.controllerEngine = controllerEngine;
+        this.plugin = controllerEngine.getPluginBuilder();
+        this.logger = plugin.getLogger(CertificateManager.class.getName(), CLogger.Level.Info);
         try {
-            long startTime = System.currentTimeMillis();
-
-            this.controllerEngine = controllerEngine;
-            this.plugin = controllerEngine.getPluginBuilder();
-            this.logger = plugin.getLogger(CertificateManager.class.getName(),CLogger.Level.Info);
 
             Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
 
             keySize = plugin.getConfig().getIntegerParam("messagekeysize",2048);
+            if (keySize < 512) {
+                logger.warn("Message key sizes (messagekeysize) of <512 are not currently supported, using 512 bits");
+                keySize = 512;
+            }
 
-
-            this.keyStoreAlias = controllerEngine.cstate.getAgentPath();
+            this.keyStoreAlias = this.controllerEngine.cstate.getAgentPath();
 
             String keyStorePasswordStr = plugin.getConfig().getStringParam("keystorepwd");
             keyStoreFilePath = plugin.getConfig().getStringParam("keystorefile");
@@ -72,16 +75,16 @@ public class CertificateManager {
             if (keyStorePasswordStr != null && keyStoreFilePath != null &&
                     trustStorePasswordStr != null && trustStoreFilePath != null &&
                     !keyStoreFilePath.equals(trustStoreFilePath)) {
-                logger.info("keyStorePasswordStr: {}", keyStorePasswordStr);
-                logger.info("keyStoreFilePath: {}", keyStoreFilePath);
-                logger.info("trustStorePasswordStr: {}", trustStorePasswordStr);
-                logger.info("trustStoreFilePath: {}", trustStoreFilePath);
+                logger.debug("keyStorePasswordStr: {}", keyStorePasswordStr);
+                logger.debug("keyStoreFilePath: {}", keyStoreFilePath);
+                logger.debug("trustStorePasswordStr: {}", trustStorePasswordStr);
+                logger.debug("trustStoreFilePath: {}", trustStoreFilePath);
                 keyStorePassword = keyStorePasswordStr.toCharArray();
                 trustStorePassword = trustStorePasswordStr.toCharArray();
                 if (Files.exists(Paths.get(keyStoreFilePath)) &&
                         Files.exists(Paths.get(trustStoreFilePath)) &&
                         loadKeyAndTrustStore()) {
-                    logger.info("Key Store and Trust Store loaded");
+                    logger.info("Existing key store and trust store loaded");
                 } else {
 
                     //build directory structure if needed
@@ -98,7 +101,7 @@ public class CertificateManager {
                         }
                     }
 
-                    logger.info("Key Store or Trust Store do not exists, (re)creating");
+                    logger.info("Key store or trust store do not exists or are invalid, (re)creating");
                     keyStore = KeyStore.getInstance("jks");
                     keyStore.load(null, null);
 
@@ -384,9 +387,27 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     }
 
     public void saveKeyAndTrustStore() {
-        if (keyStoreFilePath == null || trustStoreFilePath == null || keyStoreFilePath.equals(trustStoreFilePath))
+        if (keyStoreFilePath == null || trustStoreFilePath == null || keyStoreFilePath.equals(trustStoreFilePath) || certificateSaveFailureEncountered)
             return;
-        logger.info("saveKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
+        logger.debug("saveKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
+        Path keyStoreFilePathObj = Paths.get(keyStoreFilePath);
+        try {
+            Files.createDirectories(keyStoreFilePathObj.getParent());
+        } catch (IOException e) {
+            logger.warn("Failed to create key store parent directory: {}, retaining certificates only in memory",
+                    keyStoreFilePathObj.getParent());
+            certificateSaveFailureEncountered = true;
+            return;
+        }
+        Path trustStoreFilePathObj = Paths.get(trustStoreFilePath);
+        try {
+            Files.createDirectories(trustStoreFilePathObj.getParent());
+        } catch (IOException e) {
+            logger.warn("Failed to create trust store parent directory: {}, retaining certificates only in memory",
+                    trustStoreFilePathObj.getParent());
+            certificateSaveFailureEncountered = true;
+            return;
+        }
         try (FileOutputStream keyStoreOut = new FileOutputStream(keyStoreFilePath);
              FileOutputStream trustStoreOut = new FileOutputStream(trustStoreFilePath)) {
             keyStore.store(keyStoreOut, keyStorePassword);
@@ -405,14 +426,34 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     public boolean loadKeyAndTrustStore() {
         if (keyStoreFilePath == null || trustStoreFilePath == null)
             return false;
-        logger.info("loadKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
+        logger.debug("loadKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
         try (FileInputStream keyStoreIn = new FileInputStream(keyStoreFilePath);
              FileInputStream trustStoreIn = new FileInputStream(trustStoreFilePath)) {
+            logger.trace("Generating blank key store object");
             keyStore = KeyStore.getInstance("jks");
+            logger.trace("Loading existing key store: {}", Paths.get(keyStoreFilePath).toAbsolutePath());
             keyStore.load(keyStoreIn, keyStorePassword);
+            if (keyStore == null) {
+                logger.warn("Failed to load existing key store file with provided password");
+                return false;
+            }
+            logger.trace("Checking for alias [{}] in key store", keyStoreAlias);
+            if (!keyStore.containsAlias(keyStoreAlias)) {
+                logger.warn("Alias [{}] does not appear in key store, load failed", keyStoreAlias);
+                return false;
+            }
+            logger.trace("Generating blank trust store object");
             trustStore = KeyStore.getInstance("jks");
+            logger.trace("Loading existing trust store: {}", Paths.get(trustStoreFilePath).toAbsolutePath());
             trustStore.load(trustStoreIn, trustStorePassword);
             Certificate[] keyStoreCertChain = keyStore.getCertificateChain(keyStoreAlias);
+            if (keyStoreCertChain == null) {
+                logger.warn("Certificate chain for alias [{}] does not appear in key store, load failed",
+                        keyStoreAlias);
+                return false;
+            }
+            logger.trace("Loading [{}] certificates from key store alias [{}]", keyStoreCertChain.length,
+                    keyStoreAlias);
             chain = new X509Certificate[keyStoreCertChain.length];
             for (int i = 0; i < keyStoreCertChain.length; i++)
                 chain[i] = (X509Certificate) keyStoreCertChain[i];
