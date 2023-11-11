@@ -18,7 +18,6 @@ import java.util.*;
 
 public class PerfControllerMonitor {
 
-
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
