@@ -158,7 +158,8 @@ public class MockBundleContext implements BundleContext
         List<Bundle> bundleList = new ArrayList<>();
         bundleList.add(new MockBundle("io.cresco.controller","1.0-SNAPSHOT"));
         bundleList.add(new MockBundle("io.cresco.repo","1.0-SNAPSHOT"));
-        bundleList.add(new MockBundle("io.cresco.dashboard","1.0-SNAPSHOT"));
+        //dashboard is deprecated v1.1
+        //bundleList.add(new MockBundle("io.cresco.dashboard","1.0-SNAPSHOT"));
         bundleList.add(new MockBundle("io.cresco.cep","1.0-SNAPSHOT"));
         bundleList.add(new MockBundle("io.cresco.sysinfo","1.0-SNAPSHOT"));
 

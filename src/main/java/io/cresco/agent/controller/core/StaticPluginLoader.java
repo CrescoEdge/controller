@@ -149,6 +149,8 @@ public class StaticPluginLoader implements Runnable  {
                                 }
 
                                 //load dashboard
+                                //dashboard is deprecated v1.1
+                                /*
                                 if (plugin.getConfig().getBooleanParam("enable_dashboard", false)) {
 
                                     String pluginName = "io.cresco.dashboard";
@@ -169,6 +171,7 @@ public class StaticPluginLoader implements Runnable  {
                                     }
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
+                                 */
 
                             } else {
 
