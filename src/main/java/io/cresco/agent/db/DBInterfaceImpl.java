@@ -1121,7 +1121,7 @@ public class DBInterfaceImpl implements DBInterface {
     //complete
 
     public String getIsAssignedInfo(String resourceid,String inodeid, boolean isResourceMetric) {
-        logger.error("inode: " + inodeid + " resouce_id:" + resourceid);
+        logger.error("getIsAssignedInfo not implemented inode: " + inodeid + " resouce_id:" + resourceid);
         return null;
     }
 
