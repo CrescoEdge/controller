@@ -172,8 +172,11 @@ public class AgentExecutor implements Executor {
                 filePath = Paths.get("cresco-data", "cresco-logs","main.log");
             }
 
-            ce.addFile(filePath.toAbsolutePath().toString());
-
+            if(ce.paramsContains("action_inmessage")) {
+                ce.setCompressedDataParam("log",java.nio.file.Files.readAllBytes(filePath));
+            } else{
+                ce.addFile(filePath.toAbsolutePath().toString());
+            }
             return ce;
 
 

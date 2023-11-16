@@ -1041,7 +1041,7 @@ public class DBInterfaceImpl implements DBInterface {
         String queryReturn = null;
         try
         {
-            String returnGetGpipeline = getPipeline(actionPipelineId);
+            queryReturn = getPipeline(actionPipelineId);
             //if(returnGetGpipeline != null) {
             //    queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress(returnGetGpipeline));
             //}

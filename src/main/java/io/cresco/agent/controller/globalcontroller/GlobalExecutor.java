@@ -557,7 +557,7 @@ public class GlobalExecutor implements Executor {
                     ce.setParam("success", Boolean.TRUE.toString());
 
                 } else {
-                    ce.setParam("error", "action_pipelineid does not exist.");
+                    ce.setParam("error", "No pipeline found in DB.");
                 }
             } else {
                 ce.setParam("error", "no action_pipelineid provided.");
