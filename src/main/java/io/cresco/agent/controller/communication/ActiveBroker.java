@@ -6,6 +6,7 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.broker.*;
 import org.apache.activemq.broker.region.policy.PolicyEntry;
 import org.apache.activemq.broker.region.policy.PolicyMap;
+import org.apache.activemq.broker.region.policy.PrefetchRatePendingMessageLimitStrategy;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.NetworkConnector;
@@ -13,7 +14,6 @@ import org.apache.activemq.util.ServiceStopper;
 import org.apache.commons.io.FileUtils;
 
 import javax.net.ssl.SSLContext;
-import java.io.File;
 import java.io.IOException;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
@@ -58,10 +58,25 @@ public class ActiveBroker {
 				systemUsage.setStoreUsage(storeUsage);
 				*/
 
+
 				PolicyEntry entry = new PolicyEntry();
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
 
+				PrefetchRatePendingMessageLimitStrategy preFetchRate = new PrefetchRatePendingMessageLimitStrategy();
+				preFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+
+				entry.setTopic(">");
+				entry.setPendingMessageLimitStrategy(preFetchRate);
+				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1000);
+				entry.setTopicPrefetch(topicPrefetchLimit);
+				boolean allConsumersExclusive = plugin.getConfig().getBooleanParam("all_consumers_exclusive",true);
+				entry.setAllConsumersExclusiveByDefault(allConsumersExclusive);
+
+				//entry.setOptimizedDispatch(true);
+				//entry.setProducerFlowControl(true);
+
+				//entry.setAdvisoryWhenFull(true);
 
 		        //entry.setOptimizedDispatch(true);
 
@@ -145,6 +160,7 @@ public class ActiveBroker {
 				//broker.setUseJmx(false);
 
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
+
 
 				//broker.getTempDataStore().setDirectory(Paths.get("cresco.data").toFile());
 				/*

@@ -715,7 +715,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             ActiveMQSession activeMQSession = getSession();
             if(activeMQSession != null) {
                 streamMessage = activeMQSession.createStreamMessage();
-
             }
 
         } catch (Exception ex) {
