@@ -1010,9 +1010,12 @@ public class ControllerSMHandler {
                 //discovery engine
 
                 if(controllerEngine.getDiscoveryUDPEngineThread() == null) {
-                    logger.info("Starting DiscoveryUDPEngine");
-                    controllerEngine.setDiscoveryUDPEngineThread(new Thread(new UDPDiscoveryEngine(controllerEngine)));
-                    controllerEngine.getDiscoveryUDPEngineThread().start();
+                    boolean enable_udp_discovery = plugin.getConfig().getBooleanParam("enable_udp_discovery", false);
+                    if(enable_udp_discovery) {
+                        logger.info("Starting DiscoveryUDPEngine");
+                        controllerEngine.setDiscoveryUDPEngineThread(new Thread(new UDPDiscoveryEngine(controllerEngine)));
+                        controllerEngine.getDiscoveryUDPEngineThread().start();
+                    }
                 }
 
                 if(controllerEngine.getDiscoveryTCPEngineThread() == null) {
