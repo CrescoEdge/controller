@@ -408,6 +408,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
         try {
 
+            /*
+			Default (JMSPriority == 4)
+			High (JMSPriority > 4 && <= 9)
+			Low (JMSPriority > 0 && < 4)
+             */
+            //JMSPriority > 4 is reserved for CONFIG, WATCHDOG, and EXEC MsgEvents
+            //Reduce requested priority to 4 (default) if needed
+            if(priority > 4) {
+                priority = 4;
+            }
+
             while(!controllerEngine.cstate.isActive()) {
                 Thread.sleep(1000);
                 logger.debug("!controllerEngine.cstate.isActive() SLEEPING 1s");

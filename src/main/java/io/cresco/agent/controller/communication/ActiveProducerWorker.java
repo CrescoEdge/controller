@@ -125,16 +125,20 @@ public class ActiveProducerWorker {
         	WATCHDOG;
 			 */
 
+			/*
+			Default (JMSPriority == 4)
+			High (JMSPriority > 4 && <= 9)
+			Low (JMSPriority > 0 && < 4)
+			 */
+
 			String type = se.getMsgType().toString();
 
 			switch (type) {
-				case "CONFIG":  pri = 10;
+				case "CONFIG":
+                case "WATCHDOG":
+                    pri = 9;
 					break;
-				case "EXEC":  pri = 7;
-					break;
-				case "WATCHDOG":  pri = 5;
-					break;
-				case "KPI":  pri = 0;
+                case "EXEC":  pri = 8;
 					break;
 				default: pri = 4;
 					break;

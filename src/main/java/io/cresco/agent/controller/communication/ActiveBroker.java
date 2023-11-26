@@ -63,23 +63,28 @@ public class ActiveBroker {
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
 
-				PrefetchRatePendingMessageLimitStrategy preFetchRate = new PrefetchRatePendingMessageLimitStrategy();
-				preFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+
+				entry.setQueue(">");
+				//enable prioritization of messages in queues
+				entry.setPrioritizedMessages(true);
 
 				entry.setTopic(">");
-				entry.setPendingMessageLimitStrategy(preFetchRate);
+				//enable prioritization of messages in queues
+				entry.setPrioritizedMessages(true);
+				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
 				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1000);
 				entry.setTopicPrefetch(topicPrefetchLimit);
+				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
+				PrefetchRatePendingMessageLimitStrategy preFetchRate = new PrefetchRatePendingMessageLimitStrategy();
+				preFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+				entry.setPendingMessageLimitStrategy(preFetchRate);
+				//configure exclusive consumers
 				boolean allConsumersExclusive = plugin.getConfig().getBooleanParam("all_consumers_exclusive",true);
 				entry.setAllConsumersExclusiveByDefault(allConsumersExclusive);
 
 				//entry.setOptimizedDispatch(true);
 				//entry.setProducerFlowControl(true);
-
 				//entry.setAdvisoryWhenFull(true);
-
-		        //entry.setOptimizedDispatch(true);
-
 				//ManagementContext mc = new ManagementContext();
 				//mc.setSuppressMBean("endpoint=dynamicProducer,endpoint=Consumer");
 
