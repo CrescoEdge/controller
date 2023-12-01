@@ -1045,7 +1045,7 @@ public class ControllerSMHandler {
 
                 if(enable_broker_transport) {
                     while (!controllerEngine.isUDPDiscoveryActive() && !controllerEngine.isTCPDiscoveryActive() && (!forceShutdown.get())) {
-                        logger.error("HELP I AM STUCK HERE NOW");
+                        logger.debug("Waiting for discovery to finish");
                         Thread.sleep(1000);
                     }
                 }
