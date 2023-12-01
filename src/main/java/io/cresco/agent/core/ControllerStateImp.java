@@ -33,8 +33,11 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean isActive() {
+		return ((currentMode == ControllerMode.STANDALONE) || (currentMode == ControllerMode.AGENT) || (currentMode == ControllerMode.GLOBAL) || (currentMode == ControllerMode.REGION_GLOBAL));
+	}
 
-			return ((currentMode == ControllerMode.STANDALONE) || currentMode == ControllerMode.AGENT) || (currentMode == ControllerMode.GLOBAL) || (currentMode == ControllerMode.REGION_GLOBAL);
+	public boolean isFailed() {
+		return ((currentMode == ControllerMode.AGENT_FAILED) || (currentMode == ControllerMode.GLOBAL_FAILED) || (currentMode == ControllerMode.REGION_GLOBAL) || (currentMode == ControllerMode.REGION_GLOBAL_FAILED) || (currentMode == ControllerMode.STANDALONE_FAILED));
 	}
 
 	public synchronized ControllerMode getControllerState() {

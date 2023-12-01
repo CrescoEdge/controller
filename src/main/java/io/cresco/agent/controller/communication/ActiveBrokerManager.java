@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ActiveBrokerManager implements Runnable  {
 	private PluginBuilder plugin;
@@ -36,18 +37,11 @@ public class ActiveBrokerManager implements Runnable  {
 
 	public void addBroker(String agentPath) {
 		BrokeredAgent ba = controllerEngine.getBrokeredAgents().get(agentPath);
-		//logger.error("addBroker: agentPath = " + agentPath + " status 0 = " + ba.brokerStatus.toString());
 		if(ba.getBrokerStatus() == BrokerStatusType.INIT) {
 			//Fire up new thread.
 			ba.setBrokerStatus(BrokerStatusType.STARTING);
 		}
-		/*
-		logger.error("addBroker: agentPath = " + agentPath + " status 1 = " + ba.brokerStatus.toString());
-		if(ba.brokerStatus == BrokerStatusType.STARTING) {
-			ba.setActive();
-		}
-		logger.error("addBroker: agentPath = " + agentPath + " status 2 = " + ba.brokerStatus.toString());
-		*/
+
 	}
 
 	public void run() {
@@ -63,12 +57,16 @@ public class ActiveBrokerManager implements Runnable  {
 					if (discoveryNode.discovery_type != DiscoveryType.SHUTDOWN) {
 						//String agentIP = cb.getParam("dst_ip");
 
-						if ((!controllerEngine.isLocal(discoveryNode.discovered_ip)) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost"))) { //ignore local responses
+						//if ((!controllerEngine.isLocal(discoveryNode.discovered_ip)) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost"))) { //ignore local responses
+						if((!controllerEngine.isLocal(discoveryNode.discovered_ip) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost")))) {
+							logger.warn("REMOVED BLOCKED BROKER CONNECTION FOR LOCALHOST, THIS MIGHT CAUSE ISSUES, NEED TO PREVENT AGENT CONNECTING TO SELF IN THE DISCOVERY PROCESS");
+						}
 
+						//if ((!controllerEngine.isLocal(discoveryNode.discovered_ip))) { //ignore local responses
 
 							boolean addBroker = false;
 							//String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");
-							logger.info("Trying to connect to: " + discoveryNode.getDiscoveredPath());
+							logger.debug("Trying to connect to: " + discoveryNode.getDiscoveredPath());
 							//logger.trace(getClass().getName() + ">>> canidate boker :" + agentPath + " canidate ip:" + agentIP) ;
 
 							BrokeredAgent ba = null;
@@ -90,31 +88,35 @@ public class ActiveBrokerManager implements Runnable  {
 
 							} else {
 
-								logger.error("brokered agents does not contains key for " + discoveryNode.getDiscoveredPath());
+								logger.debug("brokered agents does not contains key for " + discoveryNode.getDiscoveredPath());
 
 								ba = new BrokeredAgent(controllerEngine, discoveryNode);
+
 								controllerEngine.getBrokeredAgents().put(discoveryNode.getDiscoveredPath(), ba);
-								addBroker = true;
+								logger.debug("list of brokered agents:");
+								for(Map.Entry<String, BrokeredAgent> tba : controllerEngine.getBrokeredAgents().entrySet()) {
+									logger.debug("key: " + tba.getKey() + " path:" + tba.getValue().getPath());
+								}
 								logger.trace("BA NEW ADDING agentPath: " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.getDiscoveredPath());
 								addBroker = true;
 							}
 							//try and connect
 							if (addBroker && !controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
+								//add broker node
 								addBroker(discoveryNode.getDiscoveredPath());
 								int count = 0;
-
-								logger.trace("Waiting on Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip + " count:" + count);
-								logger.trace("Status : " + ba.getBrokerStatus().toString() + " URI : " + ba.URI + " Address : " + ba.getActiveAddress());
-								logger.trace("isReachable : " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
+								logger.debug("Waiting on Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip + " count:" + count);
+								logger.debug("Status : " + ba.getBrokerStatus().toString() + " URI : " + ba.URI + " Address : " + ba.getActiveAddress());
+								logger.debug("isReachable : " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
 								Thread.sleep(1000);
 								count++;
 
 							} else {
-								logger.info("Not Adding Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip);
+								logger.error("Not Adding Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip);
 							}
-						} else {
-							logger.error("LOCAL DISCOVERY FOR BROKER");
-						}
+						//} else {
+						//	logger.error("LOCAL DISCOVERY FOR BROKER");
+						//}
 					}
 				}
 			}

@@ -9,12 +9,15 @@ import org.apache.activemq.broker.region.policy.PolicyMap;
 import org.apache.activemq.broker.region.policy.PrefetchRatePendingMessageLimitStrategy;
 import org.apache.activemq.broker.util.LoggingBrokerPlugin;
 import org.apache.activemq.command.ActiveMQDestination;
+import org.apache.activemq.network.DiscoveryNetworkConnector;
 import org.apache.activemq.network.NetworkConnector;
 import org.apache.activemq.util.ServiceStopper;
 import org.apache.commons.io.FileUtils;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -39,10 +42,27 @@ public class ActiveBroker {
 
 		try {
 
+			boolean enable_broker_transport = plugin.getConfig().getBooleanParam("enable_broker_transport", true);
+			boolean enable_dynamic_broker_port = plugin.getConfig().getBooleanParam("enable_dynamic_broker_port", true);
+
 			int brokerPort = getBrokerPort();
 
-			if(portAvailable(brokerPort)) {
+			boolean isPortAvailable = false;
+			//check if transport is enabled, otherwise bypass
+			if(enable_broker_transport) {
 
+				if(enable_dynamic_broker_port) {
+					while (!portAvailable(brokerPort)) {
+						brokerPort++;
+					}
+				}
+
+				isPortAvailable = portAvailable(brokerPort);
+			} else {
+				isPortAvailable = true;
+			}
+
+			if(isPortAvailable) {
 
 				/*
 				SystemUsage systemUsage = new SystemUsage();
@@ -166,7 +186,6 @@ public class ActiveBroker {
 
 				broker.setUseAuthenticatedPrincipalForJMSXUserID(true);
 
-
 				//broker.getTempDataStore().setDirectory(Paths.get("cresco.data").toFile());
 				/*
 				By default, ActiveMQ uses a dedicated thread per destination. If there are large numbers of Destinations there will be a large number of threads and
@@ -175,6 +194,7 @@ public class ActiveBroker {
 				//Performance greatly suffered under load
 				//broker.setDedicatedTaskRunner(true);
 
+				/*
 				LoggingBrokerPlugin lbp = new LoggingBrokerPlugin();
 				lbp.setLogAll(false);
 				lbp.setLogConnectionEvents(false);
@@ -184,6 +204,8 @@ public class ActiveBroker {
 				lbp.setLogSessionEvents(false);
 				lbp.setLogTransactionEvents(false);
 				lbp.setPerDestinationLogger(false);
+				 */
+
 
 				//broker.setPlugins(new BrokerPlugin[]{lbp});
 				//LoggingBrokerPlugin
@@ -199,27 +221,26 @@ public class ActiveBroker {
 				//broker.setPlugins(new BrokerPlugin[]{authorizationPlugin,authenticationPlugin});
 				//<amq:transportConnector uri="ssl://localhost:61616" />
 
-				connector = new TransportConnector();
+				if(enable_broker_transport) {
+					logger.info("Broker [nio+ssl] transport on port: " + brokerPort);
+					connector = new TransportConnector();
 
+					//try for connector
+					connector.setUpdateClusterClients(true);
+					connector.setUpdateClusterClientsOnRemove(true);
 
+					if (plugin.isIPv6())
+						//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
+						connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true"));
 
+					else
+						//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
+						connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true"));
 
-				if (plugin.isIPv6())
-					//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://[::]:"+ brokerPort + "?daemon=true"));
+					broker.addConnector(connector);
 
-				else
-					//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
-					connector.setUri(new URI("nio+ssl://0.0.0.0:"+ brokerPort + "?daemon=true"));
+				}
 
-
-                /*
-                connector.setUpdateClusterClients(true);
-                connector.setRebalanceClusterClients(true);
-                connector.setUpdateClusterClientsOnRemove(true);
-                */
-
-				broker.addConnector(connector);
 
 				logger.info("Starting Broker");
 
@@ -404,30 +425,29 @@ public class ActiveBroker {
 
 	}
 
-	public NetworkConnector AddNetworkConnector(String URI) {
+	public NetworkConnector AddNetworkConnector(String hostname) {
 		NetworkConnector bridge = null;
 		try {
 
-
-//
-			//int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
-
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
-			logger.info("Added Network Connector to Broker URI: static:nio+ssl://" + URI + ":" + discoveryPort + "?verifyHostName=false");
-			logger.trace("URI: static:nio+ssl://" + URI + ":" + discoveryPort);
-			//bridge = broker.addNetworkConnector(new URI("static:ssl://" + URI + ":"+ discoveryPort + "?transport.verifyHostName=false"));
-			bridge = broker.addNetworkConnector(new URI("failover:(nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false"));
-			//bridge = broker.addNetworkConnector(new URI("static:nio+ssl://" + URI + ":"+ discoveryPort + "?verifyHostName=false&staticBridge=false"));
 
+			URI uri = new URI("static:(nio+ssl://" + hostname + ":"+ discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 
-			//bridge.setUserName(brokerUserName);
-            //bridge.setPassword(brokerPassword);
+			logger.debug("Connector URI: " + uri);
+
+			bridge = broker.addNetworkConnector(uri);
+
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
 			updateTrustManager();
 
+
 		} catch(Exception ex) {
-			logger.error("AddNetworkConnector {}", ex.getMessage());
+			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage());
+			StringWriter sw = new StringWriter();
+			PrintWriter pw = new PrintWriter(sw);
+			ex.printStackTrace(pw);
+			logger.error(sw.toString());
 		}
 		return bridge;
 	}

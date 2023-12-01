@@ -305,8 +305,13 @@ public class StaticPluginLoader implements Runnable  {
 
 
                     } else {
-                        Thread.sleep(100);
-                        logger.trace("Status : " + controllerEngine.cstate.getControllerState());
+                        if(controllerEngine.cstate.isFailed()) {
+                            logger.error("Failed shutting down");
+                            isStaticInit = true;
+                        } else {
+                            Thread.sleep(100);
+                            logger.trace("Status : " + controllerEngine.cstate.getControllerState());
+                        }
                     }
                 }
 

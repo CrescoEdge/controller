@@ -56,35 +56,35 @@ public class BrokeredAgent {
 		switch (brokerStatus) {
 
 			case INIT:
-				logger.info("BROKER STATUS = INIT");
+				logger.debug("BROKER STATUS = INIT");
 				this.brokerStatus = BrokerStatusType.INIT;
 				break;
 			case STARTING:
-				logger.info("BROKER STATUS = STARTING");
+				logger.debug("BROKER STATUS = STARTING");
 				this.brokerStatus = BrokerStatusType.STARTING;
 				addressMap.put(brokerNode.discovered_ip, BrokerStatusType.STARTING);
 				setStarting();
 				break;
 			case ACTIVE:
-				logger.info("BROKER STATUS = ACTIVE");
+				logger.debug("BROKER STATUS = ACTIVE");
 				this.brokerStatus = BrokerStatusType.ACTIVE;
 				addressMap.put(brokerNode.discovered_ip, BrokerStatusType.ACTIVE);
 				break;
 			case STOPPED:
-				logger.info("BROKER STATUS = STOPPED");
+				logger.debug("BROKER STATUS = STOPPED");
 				setStopped();
 				this.brokerStatus = BrokerStatusType.STOPPED;
 				logger.debug("setStop : Broker STOP");
 				break;
 			case FAILED:
-				logger.info("BROKER STATUS = FAILED");
+				logger.debug("BROKER STATUS = FAILED");
 				this.brokerStatus = BrokerStatusType.FAILED;
 				setStopped();
 				checkIfGlobal();
 				break;
 
 			default:
-				logger.error("BROKER STATUS = " + brokerStatus);
+				logger.debug("BROKER STATUS = " + brokerStatus);
 				break;
 		}
 
@@ -100,6 +100,7 @@ public class BrokeredAgent {
 		while(!bm.MonitorActive) {
 			try {
 				Thread.sleep(1000);
+				logger.debug("waiting on monitor active ");
 			} catch (Exception e) {
 				logger.error("setStarting {}", e.getMessage());
 			}
@@ -107,6 +108,7 @@ public class BrokeredAgent {
 	}
 
 	private void setStopped() {
+		logger.error("CALLING FROM BROKERED AGENT");
 		if(bm.MonitorActive) {
 			bm.shutdown();
 		}

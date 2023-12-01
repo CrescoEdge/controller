@@ -80,7 +80,7 @@ class DiscoveryClientWorkerIPv4 {
 
 
                         if(discoveryNode != null) {
-                            logger.info("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
+                            logger.debug("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
 
                             String remoteAddress = packet.getAddress().getHostAddress();
                             if (remoteAddress.contains("%")) {

@@ -202,6 +202,9 @@ public class PluginAdmin {
             if(dataPlaneLogger != null) {
                 //logger.error("dataPlaneLogger != NULL");
                 isSet = dataPlaneLogger.setLogLevel(sessionId, logId, level);
+                if(isSet) {
+                    setLogLevel(logId,level);
+                }
             } else {
                 logger.error("dataPlaneLogger == NULL");
             }

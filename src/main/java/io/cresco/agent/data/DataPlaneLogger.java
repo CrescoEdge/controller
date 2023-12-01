@@ -6,6 +6,8 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import javax.jms.TextMessage;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -207,8 +209,15 @@ public class DataPlaneLogger {
                     } else {
                         if (loggerEnabledMap.containsKey(sessionId)) {
                             logger.info("LogDP: Setting LogLevel to " + level.name() + " for LogId: " + logId + " for session: " + sessionId);
-                            logger.error(loggerMap.get(sessionId).getClass().toString());
-                            loggerMap.get(sessionId).put(logId, level);
+
+                            //logger.error(loggerMap.get(sessionId).getClass().toString());
+                            if(!loggerMap.containsKey(sessionId)) {
+                                NavigableMap<String, CLogger.Level> nm = new TreeMap<>();
+                                nm.put(logId,level);
+                                loggerMap.put(sessionId, nm);
+                            } else {
+                                loggerMap.get(sessionId).put(logId, level);
+                            }
                             isSet = true;
                         } else {
                             logger.error("!loggerEnabledMap.containsKey(sessionId)");
@@ -217,7 +226,12 @@ public class DataPlaneLogger {
 
                 }
             } catch (Exception ex) {
-                logger.error(ex.getMessage());
+                logger.error("setLogLevel(): " + ex.getMessage());
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                ex.printStackTrace(pw);
+                String sStackTrace = sw.toString(); // stack trace as a string
+                logger.error(sStackTrace);
             }
         return isSet;
     }

@@ -34,7 +34,7 @@ class BrokerMonitor implements Runnable {
 	}
 
 	public boolean connectToBroker(String brokerAddress, String agentPath) {
-	    logger.trace("BrokerAddress: " + brokerAddress);
+	    logger.trace("connectToBroker() BrokerAddress: " + brokerAddress);
 		boolean isConnected = false;
 		try {
 			if((InetAddress.getByName(brokerAddress) instanceof Inet6Address)) {
@@ -42,14 +42,16 @@ class BrokerMonitor implements Runnable {
 			}
 			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress);
 			bridge.start();
-            logger.trace("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress);
+
+
+			logger.info("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress);
 			int connect_count = 0;
 
 			while((connect_count++ < 10) && !bridge.isStarted()) {
 				Thread.sleep(1000);
                 logger.trace("Wating on Bridge to Start: " + bridge.getBrokerName());
 			}
-            logger.trace("Bridge.isStarted: " + bridge.isStarted() + " brokerName: " + bridge.getBrokerName() + " name: " + bridge.getName());
+            logger.debug("Bridge \nisStarted: " + bridge.isStarted() + " \nbrokerName: " + bridge.getBrokerName() + " \nname: " + bridge.getName());
 
 			//
             //Send a message
@@ -72,21 +74,21 @@ class BrokerMonitor implements Runnable {
 			}
 
             connect_count = 0;
-			while((connect_count++ < 10) && !isConnected) {
-                logger.trace("ActiveBridge Count: " + bridge.activeBridges().size());
+			while((connect_count++ < 5) && !isConnected) {
+                logger.debug("ActiveBridge Count: " + bridge.activeBridges().size() + " isStarted:" + bridge.isStarted() + " isStopped: " + bridge.isStopped());
 
                 for(NetworkBridge b : bridge.activeBridges()) {
                     String remoteBroker = b.getRemoteBrokerName();
 
-                    logger.trace("RemoteBroker: " + b.getRemoteBrokerName() + " Remote Address: " + b.getRemoteAddress() + " Local Address: " + b.getLocalAddress() + " Local Name: " + b.getLocalBrokerName() + " Remote ID: " + b.getRemoteBrokerId() );
+                    logger.debug("RemoteBroker: " + b.getRemoteBrokerName() + " Remote Address: " + b.getRemoteAddress() + " Local Address: " + b.getLocalAddress() + " Local Name: " + b.getLocalBrokerName() + " Remote ID: " + b.getRemoteBrokerId() );
 					if(remoteBroker != null) {
-                        logger.trace("RemoteBroker: " + remoteBroker + " agentPath: " + agentPath);
+                        logger.debug("RemoteBroker: " + remoteBroker + " agentPath: " + agentPath);
                         if(remoteBroker.equals(agentPath)) {
 	    					isConnected = true;
 	    				}
 					}
-					Thread.sleep(1000);
 				}
+				Thread.sleep(1000);
 			}
 
         } catch(Exception ex) {

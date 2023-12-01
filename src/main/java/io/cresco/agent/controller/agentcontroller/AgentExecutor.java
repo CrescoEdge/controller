@@ -926,7 +926,7 @@ public class AgentExecutor implements Executor {
             if((baseClassName == null) || (sessionId == null)) {
 
                 ce.setParam("status_code", "9");
-                ce.setParam("status_desc", "baseClassName NULL OR session_id NULL");
+                ce.setParam("status_desc", "one or more NULL baseClassName: "+ baseClassName + " OR session_id: " + sessionId);
 
             } else {
 

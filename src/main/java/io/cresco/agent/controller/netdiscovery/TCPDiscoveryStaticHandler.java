@@ -159,7 +159,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                         discoveryNode = gson.fromJson(me.getCompressedParam("discovery_node"), DiscoveryNode.class);
 
                         if(discoveryNode != null) {
-                            logger.info("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
+                            logger.debug("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
 
                             if (remoteAddress.contains("%")) {
                                 String[] remoteScope = remoteAddress.split("%");
@@ -186,9 +186,9 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                                         } else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFIED) {
                                             discoveredList.add(discoveryNode);
                                             if(discoveryProcessor.setCertTrust(discoveryNode.getDiscoveredPath(),discoveryNode.discovered_cert)) {
-                                                logger.info("Added Static discovered host to discoveredList.");
+                                                logger.debug("Added Static discovered host to discoveredList.");
                                             } else {
-                                                logger.error("Could not set Trust");
+                                                logger.debug("Could not set Trust");
                                             }
                                         } else {
                                             logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType: " + discoveryNode.nodeType.name() + " !UNKNOWN!");

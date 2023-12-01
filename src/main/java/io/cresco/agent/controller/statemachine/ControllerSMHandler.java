@@ -288,6 +288,8 @@ public class ControllerSMHandler {
         try {
 
             int configMode = getConfigMode();
+
+            logger.debug("CONFIG MODE: " + configMode);
             long retryWait = plugin.getConfig().getLongParam("retrywait", 3000l);
 
             //On startup ControllerMode.PRE_INIT is default, but SM is empty
@@ -423,7 +425,6 @@ public class ControllerSMHandler {
                     //next try and connect to global controller
 
                     while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
-
                         DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), 32005);
 
                         if(discoveryNode != null) {
@@ -431,7 +432,7 @@ public class ControllerSMHandler {
                             cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
                             isStateInit = isRegionGlobal(discoveryNode);
                         } else {
-                            logger.error("No agents discovered.");
+                            logger.error("No global controller discovered.");
                         }
                         Thread.sleep(retryWait);
                     }
@@ -728,13 +729,14 @@ public class ControllerSMHandler {
 
         try {
             if(!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
-                logger.info(discoveryNode.getDiscoveredPath() + " NOT REACHABLE");
+                logger.debug(discoveryNode.getDiscoveredPath() + " NOT REACHABLE");
                 controllerEngine.getIncomingCanidateBrokers().add(discoveryNode);
-                logger.info(discoveryNode.getDiscoveredPath() + " submitted canidate broker ip " + discoveryNode.discovered_ip);
+                logger.debug(discoveryNode.getDiscoveredPath() + " submitted canidate broker ip " + discoveryNode.discovered_ip);
 
                 int timeout = 0;
-                while ((!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) && (timeout < 10)) {
-                    logger.info("Trying to connect to Global Controller : " + discoveryNode.getDiscoveredPath());
+                int gcRetry = plugin.getConfig().getIntegerParam("gc_connect_retry", 25);
+                while ((!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) && (timeout < gcRetry)) {
+                    logger.debug("Trying to connect to Global Controller : " + discoveryNode.getDiscoveredPath());
                     timeout++;
                     Thread.sleep(1000);
                 }
@@ -1011,6 +1013,12 @@ public class ControllerSMHandler {
 
                 if(controllerEngine.getDiscoveryUDPEngineThread() == null) {
                     boolean enable_udp_discovery = plugin.getConfig().getBooleanParam("enable_udp_discovery", false);
+                    //if there is no broker, prevent discovery
+                    if(plugin.getConfig().getBooleanParam("enable_broker_transport") != null) {
+                        if(!plugin.getConfig().getBooleanParam("enable_broker_transport")) {
+                            enable_udp_discovery = false;
+                        }
+                    }
                     if(enable_udp_discovery) {
                         logger.info("Starting DiscoveryUDPEngine");
                         controllerEngine.setDiscoveryUDPEngineThread(new Thread(new UDPDiscoveryEngine(controllerEngine)));
@@ -1019,13 +1027,27 @@ public class ControllerSMHandler {
                 }
 
                 if(controllerEngine.getDiscoveryTCPEngineThread() == null) {
-                    logger.info("Starting DiscoveryTCPEngine");
-                    controllerEngine.setDiscoveryTCPEngineThread(new Thread(new TCPDiscoveryEngine(controllerEngine)));
-                    controllerEngine.getDiscoveryTCPEngineThread().start();
+                    boolean enable_tcp_discovery = plugin.getConfig().getBooleanParam("enable_tcp_discovery", true);
+                    //if there is no broker, prevent discovery
+                    if(plugin.getConfig().getBooleanParam("enable_broker_transport") != null) {
+                        if(!plugin.getConfig().getBooleanParam("enable_broker_transport")) {
+                            enable_tcp_discovery = false;
+                        }
+                    }
+                    if(enable_tcp_discovery) {
+                        logger.info("Starting DiscoveryTCPEngine");
+                        controllerEngine.setDiscoveryTCPEngineThread(new Thread(new TCPDiscoveryEngine(controllerEngine)));
+                        controllerEngine.getDiscoveryTCPEngineThread().start();
+                    }
                 }
 
-                while (!controllerEngine.isUDPDiscoveryActive() && !controllerEngine.isTCPDiscoveryActive()) {
-                    Thread.sleep(1000);
+                boolean enable_broker_transport = plugin.getConfig().getBooleanParam("enable_broker_transport", true);
+
+                if(enable_broker_transport) {
+                    while (!controllerEngine.isUDPDiscoveryActive() && !controllerEngine.isTCPDiscoveryActive() && (!forceShutdown.get())) {
+                        logger.error("HELP I AM STUCK HERE NOW");
+                        Thread.sleep(1000);
+                    }
                 }
 
                 controllerEngine.setDiscoveryActive(true);
