@@ -1920,7 +1920,13 @@ public class PluginAdmin {
                 }
             }
 
-            List<pNode> nodeList = repoCache.getIfPresent(requestedName);
+            List<pNode> nodeList = null;
+            try {
+                nodeList = repoCache.getIfPresent(requestedName);
+            } catch (Exception ex) {
+                //logger.error("repoCache.getIfPresent(requestedName) requestedName: " + requestedName);
+            }
+
             if(nodeList == null) {
                 logger.debug("getPnode() nodeList is NULL");
             } else {
@@ -1942,7 +1948,7 @@ public class PluginAdmin {
 
         } catch (Exception ex) {
             logger.error("getPnode()");
-           StringWriter sw = new StringWriter();
+            StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
             String sStackTrace = sw.toString(); // stack trace as a string

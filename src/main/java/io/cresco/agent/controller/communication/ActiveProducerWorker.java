@@ -111,7 +111,7 @@ public class ActiveProducerWorker {
 		boolean isSent = false;
 		//MessageProducer producer = null;
 		try {
-			int pri = 0;
+			int pri;
 
 			/*
 			CONFIG,
@@ -135,12 +135,15 @@ public class ActiveProducerWorker {
 
 			switch (type) {
 				case "CONFIG":
+					pri = 8;
+					break;
                 case "WATCHDOG":
                     pri = 9;
 					break;
-                case "EXEC":  pri = 8;
+                case "EXEC":
+					pri = 7;
 					break;
-				default: pri = 4;
+				default: pri = 5;
 					break;
 			}
 
@@ -159,6 +162,7 @@ public class ActiveProducerWorker {
 
 				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
 				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
+
 				isSent = true;
 
 			//}
