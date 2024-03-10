@@ -599,7 +599,7 @@ public class AgentExecutor implements Executor {
                 ce.removeParam("jardata");
             }
 
-            return ce;
+            //return ce;
 
 
         } catch(Exception ex) {
@@ -617,10 +617,9 @@ public class AgentExecutor implements Executor {
 
             ce.setParam("error",sStackTrace);
 
-
         }
 
-        return null;
+        return ce;
     }
 
     private MsgEvent pluginRemove(MsgEvent ce) {
