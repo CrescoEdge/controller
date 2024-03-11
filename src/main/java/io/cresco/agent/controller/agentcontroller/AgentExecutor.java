@@ -574,7 +574,7 @@ public class AgentExecutor implements Executor {
                 map.put(key,value);
             }
 
-            
+
             String pluginId = null;
 
             if(ce.getParam("edges") != null) {
