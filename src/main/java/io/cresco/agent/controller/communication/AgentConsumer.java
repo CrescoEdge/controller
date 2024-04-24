@@ -332,8 +332,11 @@ public class AgentConsumer {
 
 
 		} catch (Exception ex) {
-			ex.printStackTrace();
 			logger.error("Failure to Register File Message");
+			StringWriter sw = new StringWriter();
+			PrintWriter pw = new PrintWriter(sw);
+			ex.printStackTrace(pw);
+			logger.error("Stack: " + sw);
 		}
 		return isRegistered;
 	}
@@ -343,6 +346,10 @@ public class AgentConsumer {
 			consumer.close();
 		} catch (Exception ex) {
 			logger.error("Consumer Shutdown Error: " + ex.getMessage());
+			StringWriter sw = new StringWriter();
+			PrintWriter pw = new PrintWriter(sw);
+			ex.printStackTrace(pw);
+			logger.error("Stack: " + sw);
 		}
 	}
 
