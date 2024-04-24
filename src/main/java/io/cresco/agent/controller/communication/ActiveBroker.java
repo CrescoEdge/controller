@@ -229,13 +229,14 @@ public class ActiveBroker {
 					connector.setUpdateClusterClients(true);
 					connector.setUpdateClusterClientsOnRemove(true);
 
+
 					if (plugin.isIPv6())
-						//connector.setUri(new URI("ssl://[::]:"+ discoveryPort + "?transport.verifyHostName=false"));
-						connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true"));
+						//connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
+					    connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true"));
 
 					else
-						//connector.setUri(new URI("ssl://0.0.0.0:"+ discoveryPort + "?transport.verifyHostName=false"));
-						connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true"));
+						//connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
+					    connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true"));
 
 					broker.addConnector(connector);
 

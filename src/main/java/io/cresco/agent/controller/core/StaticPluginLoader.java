@@ -30,7 +30,7 @@ public class StaticPluginLoader implements Runnable  {
 
         try {
 
-            File localPluginFile = new File("plugin.ini");
+            File localPluginFile = new File("plugins.ini");
             if(localPluginFile.isFile()) {
                 this.config = new Config(localPluginFile.getAbsolutePath());
             }
