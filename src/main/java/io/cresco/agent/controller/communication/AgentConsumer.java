@@ -16,6 +16,8 @@ import org.apache.activemq.BlobMessage;
 import javax.jms.Queue;
 import javax.jms.*;
 import java.io.File;
+import java.io.StringWriter;
+import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -298,7 +300,10 @@ public class AgentConsumer {
 					}
 				} catch(Exception ex) {
 					logger.error("onMessage Error : " + ex.getMessage());
-					ex.printStackTrace();
+					StringWriter sw = new StringWriter();
+					PrintWriter pw = new PrintWriter(sw);
+					ex.printStackTrace(pw);
+					logger.error("Stack: " + sw);
 				}
 			}
 		});
