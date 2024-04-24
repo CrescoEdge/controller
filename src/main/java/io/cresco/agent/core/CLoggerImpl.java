@@ -134,8 +134,12 @@ public class CLoggerImpl implements CLogger {
     private String replaceBrackets(String logMessage, Object ... params) {
         int replaced = 0;
         while (logMessage.contains("{}") && replaced < params.length) {
-            logMessage = logMessage.replaceFirst("\\{\\}", String.valueOf(params[replaced]));
-            replaced++;
+            try {
+                logMessage = logMessage.replaceFirst("\\{\\}", String.valueOf(params[replaced]));
+                replaced++;
+            } catch (Exception ex) {
+                logService.error("CORE LOGGER REGEX ERROR: MESSAGE:[" + logMessage + "]");
+            }
         }
         return logMessage;
     }
