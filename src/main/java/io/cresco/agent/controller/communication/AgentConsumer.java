@@ -101,11 +101,6 @@ public class AgentConsumer {
 						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 						if(me != null) {
 
-
-
-
-
-
 							//logger.info("TEST PLUG 0");
 							//logger.info("Q: " + RXQueueName);
 							//logger.info("TEST PLUG " + controllerEngine.cstate.getAgentPath());
@@ -120,8 +115,6 @@ public class AgentConsumer {
 								//don't forward message until files have arrived
 								return;
 							}
-
-
 
 							//start RPC checks
 							boolean isMyRPC = false;
@@ -147,7 +140,6 @@ public class AgentConsumer {
 								controllerEngine.msgInThreaded(me);
 							}
 
-							//
 						} else {
 							logger.error("non-MsgEvent message found!");
 						}
