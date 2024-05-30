@@ -87,7 +87,7 @@ public class ActiveBroker {
 				entry.setQueue(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
-				entry.setProducerFlowControl(true);
+				//entry.setProducerFlowControl(true);
 
 				entry.setTopic(">");
 				//enable prioritization of messages in queues
@@ -103,7 +103,7 @@ public class ActiveBroker {
 				boolean allConsumersExclusive = plugin.getConfig().getBooleanParam("all_consumers_exclusive",true);
 				entry.setAllConsumersExclusiveByDefault(allConsumersExclusive);
 
-				entry.setProducerFlowControl(true);
+				//entry.setProducerFlowControl(true);
 				//entry.setOptimizedDispatch(true);
 				//entry.setProducerFlowControl(true);
 				//entry.setAdvisoryWhenFull(true);
