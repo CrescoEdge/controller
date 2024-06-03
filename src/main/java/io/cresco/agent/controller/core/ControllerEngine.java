@@ -211,6 +211,7 @@ public class ControllerEngine {
         return localAddressList;
     }
 
+    /*
     public boolean isIPv6() {
         boolean isIPv6 = false;
         try {
@@ -240,6 +241,8 @@ public class ControllerEngine {
         }
         return isIPv6;
     }
+    
+     */
 
     public boolean isReachableAgent(String remoteAgentPath) {
         boolean isReachableAgent = false;
