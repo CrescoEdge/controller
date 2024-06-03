@@ -233,8 +233,8 @@ public class ActiveBroker {
 
 
 					if (plugin.isIPv6())
-						//connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
-					    connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true"));
+						//connector.setUri(new URI("nio+ssl://[::1]:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
+					    connector.setUri(new URI("nio+ssl://[::1]:" + brokerPort + "?daemon=true"));
 
 					else
 						//connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
