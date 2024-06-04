@@ -117,7 +117,7 @@ public class UDPDiscoveryEngine implements Runnable {
                     //logger.trace("Init [{}]", networkInterface.getDisplayName());
                     SocketAddress sa;
                     if (plugin.isIPv6()) {
-                        sa = new InetSocketAddress("[::1]", discoveryPort);
+                        sa = new InetSocketAddress("[::]", discoveryPort);
                     } else {
                         sa = new InetSocketAddress("0.0.0.0", discoveryPort);
                     }
@@ -128,7 +128,7 @@ public class UDPDiscoveryEngine implements Runnable {
                     while(!workers.containsKey(networkInterface)) {
                         Thread.sleep(1000);
                     }
-                    logger.trace("Bound to interface [{}] address [::1]", networkInterface.getDisplayName());
+                    logger.trace("Bound to interface [{}] address [::]", networkInterface.getDisplayName());
 
                     if (plugin.isIPv6()) {
                         //find to network and site multicast addresses

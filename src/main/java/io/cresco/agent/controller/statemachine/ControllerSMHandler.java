@@ -685,7 +685,7 @@ public class ControllerSMHandler {
             String brokerAddress = null;
 
             if (plugin.isIPv6()) { //set broker address for consumers and producers
-                brokerAddress = "[::1]";
+                brokerAddress = "[::]";
             } else {
                 brokerAddress = "localhost";
             }
@@ -973,7 +973,7 @@ public class ControllerSMHandler {
     public boolean isLocalBroker(String brokerAddress) {
 
         if(brokerAddress != null) {
-            return (brokerAddress.equals("[::1]")) || ((brokerAddress.equals("localhost")));
+            return (brokerAddress.equals("[::]")) || ((brokerAddress.equals("localhost")));
         }
         return false;
     }
