@@ -956,7 +956,9 @@ public class ControllerSMHandler {
             }
             int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
             if(isLocalBroker(brokerAddress)) {
-                controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort);
+                controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
+                //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + "localhost" + ":" + discoveryPort);
+                //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort);
                 //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort + "?wireFormat.maxInactivityDuration=0");
             } else {
                 controllerEngine.getActiveClient().initActiveAgentProducer("failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
