@@ -192,8 +192,8 @@ public class DBEngine {
 
             //unload drivers
             //DriverManager.getConnection("jdbc:derby:;shutdown=true");
+
             //Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
-            //Driver d= new org.hsqldb.jdbc.JDBCDriver();
             //DriverManager.deregisterDriver(d);
 
             //Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
