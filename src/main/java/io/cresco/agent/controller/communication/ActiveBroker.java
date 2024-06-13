@@ -87,11 +87,12 @@ public class ActiveBroker {
 				entry.setQueue(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
-				//entry.setProducerFlowControl(true);
+				entry.setProducerFlowControl(true);
 
 				entry.setTopic(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
+				entry.setProducerFlowControl(true);
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
 				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1000);
 				entry.setTopicPrefetch(topicPrefetchLimit);

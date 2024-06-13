@@ -198,6 +198,10 @@ public class ActiveClient {
         try {
 
             activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(URI);
+            //activeMQSslConnectionFactory.setAlwaysSessionAsync(false);
+            //activeMQSslConnectionFactory.setOptimizeAcknowledge(true);
+            //activeMQSslConnectionFactory.setUseAsyncSend(true);
+
             if(URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
             }
