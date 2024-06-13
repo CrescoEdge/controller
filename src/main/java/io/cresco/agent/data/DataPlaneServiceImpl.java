@@ -9,10 +9,9 @@ import io.cresco.library.data.TopicType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import jakarta.jms.*;
 import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.BlobMessage;
-
-import javax.jms.*;
 import java.io.*;
 import java.lang.reflect.Type;
 import java.net.URL;
@@ -45,7 +44,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private MessageProducer regionProducer;
     private MessageProducer globalProducer;
 
-    private Map<String,MessageConsumer> messageConsumerMap;
+    private Map<String, MessageConsumer> messageConsumerMap;
     private Map<String,DataPlanePersistantInstance> messageConfigMap;
     private final AtomicBoolean lockMessage = new AtomicBoolean();
 
@@ -56,7 +55,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private Type typeOfListFileObject;
     private Gson gson;
 
-	public DataPlaneServiceImpl(ControllerEngine controllerEngine, String URI) throws JMSException {
+	public DataPlaneServiceImpl(ControllerEngine controllerEngine, String URI)  {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(DataPlaneServiceImpl.class.getName(),CLogger.Level.Info);

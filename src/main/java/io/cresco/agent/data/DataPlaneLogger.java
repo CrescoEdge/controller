@@ -5,7 +5,7 @@ import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.jms.TextMessage;
+import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.*;

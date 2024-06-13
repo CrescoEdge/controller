@@ -27,9 +27,7 @@ import org.apache.mina.statemachine.annotation.Transition;
 import org.apache.mina.statemachine.annotation.Transitions;
 import org.apache.mina.statemachine.context.StateContext;
 
-import javax.jms.DeliveryMode;
-import javax.jms.JMSException;
-import javax.jms.MapMessage;
+import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.Inet6Address;
@@ -940,13 +938,7 @@ public class ControllerSMHandler {
 
                     consumerAgentConnected = true;
                     logger.info("Agent ConsumerThread Started..");
-                } catch (JMSException jmx) {
-                    logger.error("Agent ConsumerThread JMX " + jmx.getMessage());
-                    StringWriter errors = new StringWriter();
-                    jmx.printStackTrace(new PrintWriter(errors));
-                    logger.error(errors.toString());
-                }
-                catch (Exception ex) {
+                } catch (Exception ex) {
                     logger.error("Agent ConsumerThread " + ex.getMessage());
                     StringWriter errors = new StringWriter();
                     ex.printStackTrace(new PrintWriter(errors));

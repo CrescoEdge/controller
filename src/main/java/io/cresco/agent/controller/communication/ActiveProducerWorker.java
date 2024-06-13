@@ -7,7 +7,7 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQSession;
 
-import javax.jms.*;
+import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.UUID;

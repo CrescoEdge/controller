@@ -1,8 +1,8 @@
 package io.cresco.agent.data;
 
 import io.cresco.library.data.TopicType;
+import jakarta.jms.MessageListener;
 
-import javax.jms.MessageListener;
 import java.io.IOException;
 
 public class DataPlanePersistantInstance {

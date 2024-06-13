@@ -8,9 +8,7 @@ import io.siddhi.core.SiddhiAppRuntime;
 import io.siddhi.core.SiddhiManager;
 import io.siddhi.core.util.transport.InMemoryBroker;
 
-import javax.jms.Message;
-import javax.jms.MessageListener;
-import javax.jms.TextMessage;
+import jakarta.jms.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 

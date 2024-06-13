@@ -5,8 +5,7 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import io.siddhi.core.util.transport.InMemoryBroker;
 
-import javax.jms.TextMessage;
-
+import jakarta.jms.TextMessage;
 public class OutputSubscriber implements InMemoryBroker.Subscriber {
 
     private PluginBuilder plugin;

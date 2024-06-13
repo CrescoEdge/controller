@@ -81,9 +81,9 @@ public class DBEngine {
             String dbDriver = plugin.getConfig().getStringParam("db_driver", "org.apache.derby.jdbc.EmbeddedDriver");
 
             //String dbDriver = plugin.getConfig().getStringParam("db_driver","org.hsqldb.jdbcDriver");
-            if (dbDriver.contains("mysql")) {
-                dbType = DBType.MYSQL;
-            }
+            //if (dbDriver.contains("mysql")) {
+            //    dbType = DBType.MYSQL;
+            //}
 
 
             String dbConnectionString = plugin.getConfig().getStringParam("db_jdbc", "jdbc:derby:" + dbPath + ";create=true");
@@ -193,11 +193,11 @@ public class DBEngine {
             //unload drivers
             //DriverManager.getConnection("jdbc:derby:;shutdown=true");
 
-            //Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
-            //DriverManager.deregisterDriver(d);
+            Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+            DriverManager.deregisterDriver(d);
 
-            //Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
-            //DriverManager.deregisterDriver(da);
+            Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
+            DriverManager.deregisterDriver(da);
 
         }
         catch (Exception ex) {

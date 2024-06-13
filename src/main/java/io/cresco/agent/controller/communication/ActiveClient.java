@@ -9,7 +9,7 @@ import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.ActiveMQSslConnectionFactory;
 
-import javax.jms.Session;
+import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.security.SecureRandom;

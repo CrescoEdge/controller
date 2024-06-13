@@ -10,9 +10,7 @@ import io.cresco.library.data.TopicType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import javax.jms.MapMessage;
-import javax.jms.Message;
-import javax.jms.MessageListener;
+import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.reflect.Type;

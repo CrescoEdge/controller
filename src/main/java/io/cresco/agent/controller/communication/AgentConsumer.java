@@ -10,11 +10,12 @@ import io.cresco.library.data.FileObject;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import jakarta.jms.*;
+
+import jakarta.jms.Queue;
 import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.BlobMessage;
 
-import javax.jms.Queue;
-import javax.jms.*;
 import java.io.File;
 import java.io.StringWriter;
 import java.io.PrintWriter;
