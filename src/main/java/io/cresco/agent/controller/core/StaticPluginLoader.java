@@ -118,7 +118,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.1-SNAPSHOT.jar");
+                                            map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
@@ -140,39 +140,13 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "wsapi-1.1-SNAPSHOT.jar");
+                                            map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
                                     }
                                     String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                                 }
-
-                                //load dashboard
-                                //dashboard is deprecated v1.1
-                                /*
-                                if (plugin.getConfig().getBooleanParam("enable_dashboard", true)) {
-
-                                    String pluginName = "io.cresco.dashboard";
-
-                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
-
-                                    if(map == null) {
-
-                                        map = getPluginConfigMap(pluginName);
-
-                                        if (map == null) {
-                                            map = new HashMap<>();
-                                            map.put("pluginname", pluginName);
-                                            map.put("jarfile", "dashboard-1.1-SNAPSHOT.jar");
-                                            map.put("persistence_code", "20");
-                                            map.put("inode_id", generatePluginId(pluginName));
-                                        }
-                                    }
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                }
-
-                                 */
 
 
                             } else {
@@ -191,7 +165,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.1-SNAPSHOT.jar");
+                                            map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
@@ -214,7 +188,7 @@ public class StaticPluginLoader implements Runnable  {
                                         if (map == null) {
                                             map = new HashMap<>();
                                             map.put("pluginname", pluginName);
-                                            map.put("jarfile", "wsapi-1.1-SNAPSHOT.jar");
+                                            map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
                                             map.put("persistence_code", "20");
                                             map.put("inode_id", generatePluginId(pluginName));
                                         }
@@ -226,29 +200,6 @@ public class StaticPluginLoader implements Runnable  {
                             isStaticInit = true;
                         }
 
-                        /*
-                        if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.cdp")) {
-                            //load cep plugin
-                            if (plugin.getConfig().getBooleanParam("enable_cep", true)) {
-                                //logger.info("Starting CDP : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
-                                String pluginName = "io.cresco.cep";
-
-                                Map<String, Object> map = null;
-                                map = getPluginConfigMap(pluginName);
-
-                                if(map == null) {
-                                    map = new HashMap<>();
-                                    map.put("pluginname", pluginName);
-                                    map.put("jarfile", "cep-1.0-SNAPSHOT.jar");
-                                    map.put("persistence_code", "20");
-                                    map.put("inode_id", pluginName);
-                                }
-                                String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
-
-
-                            }
-                        }
-                         */
 
                         if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
                             //load sysinfo
@@ -268,7 +219,7 @@ public class StaticPluginLoader implements Runnable  {
 
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "sysinfo-1.1-SNAPSHOT.jar");
+                                        map.put("jarfile", "sysinfo-1.2-SNAPSHOT.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
