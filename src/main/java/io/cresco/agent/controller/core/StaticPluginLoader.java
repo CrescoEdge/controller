@@ -229,7 +229,7 @@ public class StaticPluginLoader implements Runnable  {
                             }
 
                         }
-                        
+
                         for (String pluginId : pluginList) {
 
                             try {
