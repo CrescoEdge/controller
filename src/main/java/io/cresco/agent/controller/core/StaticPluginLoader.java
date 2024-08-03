@@ -229,29 +229,29 @@ public class StaticPluginLoader implements Runnable  {
                             }
 
                         }
+                        
+                        for (String pluginId : pluginList) {
 
-                            for (String pluginId : pluginList) {
+                            try {
+                                //check if plugin is already running already
+                                if (!controllerEngine.getPluginAdmin().pluginExist(pluginId)) {
+                                    //check if plugin should be running
+                                    if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 10) {
 
-                                try {
-                                    //check if plugin is already running already
-                                    if (!controllerEngine.getPluginAdmin().pluginExist(pluginId)) {
-                                        //check if plugin should be running
-                                        if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 10) {
-
-                                            //start new plugin
-                                            Map<String, Object> configMap = getPluginConfigMap(pluginId);
-                                            if (configMap != null) {
-                                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(configMap);
-                                            }
+                                        //start new plugin
+                                        Map<String, Object> configMap = getPluginConfigMap(pluginId);
+                                        if (configMap != null) {
+                                            String pluginID = controllerEngine.getPluginAdmin().addPlugin(configMap);
                                         }
                                     }
-
-                                } catch (Exception ex) {
-                                    logger.error("Failed to restart plugin: " + pluginId);
-                                    ex.printStackTrace();
                                 }
 
+                            } catch (Exception ex) {
+                                logger.error("Failed to restart plugin: " + pluginId);
+                                ex.printStackTrace();
                             }
+
+                        }
                         //list might be large clear them
                         pluginList.clear();
                         systemPluginConfigList.clear();
