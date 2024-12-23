@@ -112,7 +112,7 @@ public class ActiveProducerWorker {
 		//MessageProducer producer = null;
 		try {
 			int pri;
-
+			int deliveryMode = DeliveryMode.NON_PERSISTENT;
 			/*
 			CONFIG,
         	DISCOVER,
@@ -134,14 +134,17 @@ public class ActiveProducerWorker {
 			String type = se.getMsgType().toString();
 
 			switch (type) {
+				case "WATCHDOG":
+					pri = 9;
+					deliveryMode = DeliveryMode.PERSISTENT;
+					break;
 				case "CONFIG":
 					pri = 8;
-					break;
-                case "WATCHDOG":
-                    pri = 9;
+					deliveryMode = DeliveryMode.PERSISTENT;
 					break;
                 case "EXEC":
 					pri = 7;
+					deliveryMode = DeliveryMode.PERSISTENT;
 					break;
 				default: pri = 5;
 					break;
@@ -161,7 +164,7 @@ public class ActiveProducerWorker {
 				}
 
 				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
-				producer.send(textMessage, DeliveryMode.NON_PERSISTENT, pri, 0);
+				producer.send(textMessage, deliveryMode, pri, 0);
 
 				isSent = true;
 
