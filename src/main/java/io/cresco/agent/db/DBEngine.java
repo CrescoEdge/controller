@@ -2,10 +2,13 @@ package io.cresco.agent.db;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
+import io.cresco.agent.data.DataPlaneLogger;
 import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.utilities.CLogger;
 import org.apache.commons.dbcp2.*;
 import org.apache.commons.pool2.ObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPool;
+import org.apache.derby.jdbc.EmbeddedDriver;
 
 import javax.sql.DataSource;
 import java.io.*;
@@ -27,6 +30,8 @@ public class DBEngine {
     private PoolableConnectionFactory poolableConnectionFactory;
     private ObjectPool<PoolableConnection> connectionPool;
     private PoolingDataSource<PoolableConnection> dataSource;
+
+    private CLogger logger;
 
     private List<String> tablesNames;
 
@@ -52,6 +57,9 @@ public class DBEngine {
             //System.setProperty("derby.stream.error.file","cresco-data/derby-log/derby.log");
 
             this.pluginBuilder = plugin;
+            this.logger = pluginBuilder.getLogger(DBEngine.class.getName(),CLogger.Level.Info);
+
+            logger.info("Init DB");
 
             tablesNames = new ArrayList<>();
             tablesNames.add("inodekpi");
@@ -70,11 +78,8 @@ public class DBEngine {
             }.getType();
 
 
-
             String defaultDBName = "cresco-controller-db";
             String dbName = plugin.getConfig().getStringParam("db_name", defaultDBName);
-
-
 
             dbPath = plugin.getPluginDataDirectory() + "/derbydb-home/" + dbName;
 
@@ -92,6 +97,9 @@ public class DBEngine {
             String dbUserName = plugin.getConfig().getStringParam("db_username");
             String dbPassword = plugin.getConfig().getStringParam("db_password");
 
+            //org.apache.derby.jdbc.EmbeddedDriver embeddedDriver = new EmbeddedDriver();
+            //logger.info("Init DB 0.6 Class " + embeddedDriver.getClass().toString());
+
             Class.forName(dbDriver).newInstance();
 
             if ((dbUserName != null) && (dbPassword != null)) {
@@ -107,6 +115,7 @@ public class DBEngine {
             //ds = setupDataSource("jdbc:mysql://localhost/cresco?characterEncoding=UTF-8","root", "nopassword");
 
             if (dbType == DBType.EMBEDDED) {
+
                 if (dbName.equals(defaultDBName)) {
                     File dbsource = Paths.get(dbPath).toFile();
                     //File dbsource = new File(defaultDBName);
@@ -115,11 +124,11 @@ public class DBEngine {
                     } else {
                         //dbsource.mkdir();
                         initDB();
-
                         addTenant(0, "default tenant");
                     }
                 }
             }
+
 
             if (dbType == DBType.MYSQL) {
                 if (!checkSchema()) {
@@ -128,7 +137,6 @@ public class DBEngine {
                     addTenant(0, "default tenant");
                 }
             }
-
 
 
             /*
@@ -193,11 +201,11 @@ public class DBEngine {
             //unload drivers
             //DriverManager.getConnection("jdbc:derby:;shutdown=true");
 
-            Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
+            Driver d = new org.apache.derby.jdbc.EmbeddedDriver();
             DriverManager.deregisterDriver(d);
 
-            //Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
-            //DriverManager.deregisterDriver(da);
+            Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
+            DriverManager.deregisterDriver(da);
 
         }
         catch (Exception ex) {
@@ -2057,6 +2065,7 @@ public class DBEngine {
         }
         return exist;
     }
+    //
 
     private int dropTable(String tableName) {
         int result = -1;

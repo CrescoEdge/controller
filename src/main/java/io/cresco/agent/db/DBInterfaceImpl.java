@@ -139,8 +139,8 @@ public class DBInterfaceImpl implements DBInterface {
                     pluginconfigs = de.getCompressedParam("pluginconfigs");
                 }
 
-
                 wasAdded = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
+
             } else {
                 logger.error("nodeUpdate() node mode found!");
             }

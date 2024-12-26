@@ -248,6 +248,7 @@ public class AgentServiceImpl implements AgentService {
         //create admin
         pluginAdmin = new PluginAdmin(this, plugin, agentState, gdb, context, dataPlaneLogger);
 
+        //create logger
         logger = plugin.getLogger("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
         //setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);
         //pluginAdmin.setLogLevel("agent:io.cresco.agent.core.agentservice", CLogger.Level.Info);

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DBManager implements Runnable  {
 	private ControllerEngine controllerEngine;
@@ -16,11 +17,11 @@ public class DBManager implements Runnable  {
 	private CLogger logger;
 	private Timer timer;
 	private BlockingQueue<String> importQueue;
+
 	public DBManager(ControllerEngine controllerEngine, BlockingQueue<String> importQueue) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(DBManager.class.getName(),CLogger.Level.Info);
-
 
 		//importQueue = new LinkedBlockingQueue<>();
 		this.importQueue = importQueue;
@@ -41,14 +42,21 @@ public class DBManager implements Runnable  {
 		logger.debug("DB Manager shutdown initialized");
 	}
 
-	private void processDBImports() {
+	private boolean processDBImports() {
+		boolean processedImport = false;
 		try {
+			if(importQueue.isEmpty()) {
+				logger.error("processDBImports importQueue.isEmpty()");
+			}
 			while (!importQueue.isEmpty()) {
+				logger.error("!importQueue.isEmpty()");
 				controllerEngine.getGDB().setDBImport(importQueue.take());
+				processedImport = true;
 			}
 		} catch(Exception ex) {
 			logger.error("processDBImports() Error : " + ex.toString());
 		}
+		return processedImport;
 	}
 
 	public void run() {
@@ -56,10 +64,9 @@ public class DBManager implements Runnable  {
 		controllerEngine.setDBManagerActive(true);
 		while(controllerEngine.isDBManagerActive()) {
 			try {
-
-				processDBImports();
-				Thread.sleep(1000);
-
+				if(!processDBImports()) {
+					Thread.sleep(1000);
+				}
 			} catch (Exception ex) {
 				logger.error("Run {}", ex.getMessage());
                 ex.printStackTrace();

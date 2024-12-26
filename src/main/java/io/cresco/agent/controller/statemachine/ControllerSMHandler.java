@@ -92,7 +92,7 @@ public class ControllerSMHandler {
         this.logger = plugin.getLogger(ControllerSMHandler.class.getName(), CLogger.Level.Info);
         this.cstate = controllerEngine.cstate;
         this.stateUpdateTimer = new Timer();
-        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), 500, 5000l);
+        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), 500, 15000L);
     }
 
     @Transition(on = "start", in = EMPTY)
@@ -688,10 +688,9 @@ public class ControllerSMHandler {
                 brokerAddress = "localhost";
             }
 
-            //DB manager only used for regional and global
+            //it's not clear that dbmanager does anything current;y
+            /*
             logger.debug("Starting DB Manager");
-            logger.debug("Starting Broker Manager");
-
             controllerEngine.setDBManagerThread(new Thread(new DBManager(controllerEngine, controllerEngine.getGDB().importQueue)));
             controllerEngine.getDBManagerThread().start();
 
@@ -700,6 +699,10 @@ public class ControllerSMHandler {
                 logger.info("isDBManagerActive() = false");
                 Thread.sleep(1000);
             }
+             */
+
+            //DB manager only used for regional and global
+            logger.debug("Starting Broker Manager");
 
             if(initIOChannels(brokerAddress)) {
                 logger.debug("initIOChannels Success");
@@ -1351,6 +1354,11 @@ public class ControllerSMHandler {
     }
 
     class stateUpdateTask extends TimerTask {
+
+        private String lastRegionconfigs = "";
+        private String lastAgentconfigs = "";
+        private String lastpluginconfigs = "";
+
         public void run() {
 
                 if (controllerEngine.cstate.isActive()) {
@@ -1365,8 +1373,19 @@ public class ControllerSMHandler {
                                 Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
-                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
+
+                                String canidateAgentConfigs = exportMap.get("agentconfigs");
+                                if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
+                                    updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
+                                    lastAgentconfigs = canidateAgentConfigs;
+                                    logger.info("exportMap: updating agents: " + canidateAgentConfigs);
+                                }
+                                String canidatePluginConfigs = exportMap.get("pluginconfigs");
+                                if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
+                                    updateMap.setString("pluginconfigs", canidatePluginConfigs);
+                                    lastpluginconfigs = canidateAgentConfigs;
+                                    logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
+                                }
 
                                 updateMap.setStringProperty("update_mode", "AGENT");
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
@@ -1387,9 +1406,26 @@ public class ControllerSMHandler {
                                 Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(true, true, true, plugin.getRegion(), null, null);
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
-                                updateMap.setString("regionconfigs", exportMap.get("regionconfigs"));
-                                updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                updateMap.setString("pluginconfigs", exportMap.get("pluginconfigs"));
+
+                                String canidateRegionalConfigs = exportMap.get("regionconfigs");
+                                if(!lastRegionconfigs.equals(canidateRegionalConfigs)) {
+                                    updateMap.setString("regionconfigs", canidateRegionalConfigs);
+                                    lastRegionconfigs = canidateRegionalConfigs;
+                                    logger.info("exportMap: updating agents: " + canidateRegionalConfigs);
+                                }
+
+                                String canidateAgentConfigs = exportMap.get("agentconfigs");
+                                if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
+                                    updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
+                                    lastAgentconfigs = canidateAgentConfigs;
+                                    logger.info("exportMap: updating agents: " + canidateAgentConfigs);
+                                }
+                                String canidatePluginConfigs = exportMap.get("pluginconfigs");
+                                if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
+                                    updateMap.setString("pluginconfigs", canidatePluginConfigs);
+                                    lastpluginconfigs = canidateAgentConfigs;
+                                    logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
+                                }
 
                                 updateMap.setStringProperty("update_mode", "REGION");
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
