@@ -1373,7 +1373,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
                                 //logger.error("SENDING AGENT UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 8, 0);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 9, 0);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -1395,7 +1395,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
 
                                 //logger.error("SENDING REGIONAL UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 8, 0);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 9, 0);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();

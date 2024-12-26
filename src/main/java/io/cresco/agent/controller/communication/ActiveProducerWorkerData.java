@@ -93,7 +93,7 @@ public class ActiveProducerWorkerData implements Runnable {
 				dataProducer.setTimeToLive(0);
 				dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 
-				dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 7, 0);
+				dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 0, 0);
 
 				dataProducer.close();
 
