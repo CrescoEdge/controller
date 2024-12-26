@@ -196,8 +196,8 @@ public class DBEngine {
             Driver d= new org.apache.derby.jdbc.EmbeddedDriver();
             DriverManager.deregisterDriver(d);
 
-            Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
-            DriverManager.deregisterDriver(da);
+            //Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
+            //DriverManager.deregisterDriver(da);
 
         }
         catch (Exception ex) {
