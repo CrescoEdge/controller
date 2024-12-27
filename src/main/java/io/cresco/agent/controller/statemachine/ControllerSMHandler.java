@@ -91,8 +91,13 @@ public class ControllerSMHandler {
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(ControllerSMHandler.class.getName(), CLogger.Level.Info);
         this.cstate = controllerEngine.cstate;
+
+        //This should be set to the same rates on the remote side
+        long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
+        long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
+
         this.stateUpdateTimer = new Timer();
-        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), 500, 15000L);
+        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), watchDogIntervalDelay, watchDogInterval);
     }
 
     @Transition(on = "start", in = EMPTY)

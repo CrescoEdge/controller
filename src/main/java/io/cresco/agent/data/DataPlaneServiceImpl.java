@@ -401,10 +401,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
     public boolean sendMessage(TopicType topicType, Message message) {
-        return sendMessage(topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
+        return sendMessage(MsgEvent.Type.INFO, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
+    }
+
+    @Override
+    public boolean sendMessage(MsgEvent.Type msgEventType, TopicType topicType, Message message) {
+        //priority and delivery model will be adjusted in downstream function baed on MsgEvent type
+        return sendMessage(msgEventType, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
     }
 
     public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
+        return sendMessage(MsgEvent.Type.INFO, topicType, message, deliveryMode, priority, timeToLive);
+    }
+    private boolean sendMessage(MsgEvent.Type msgEventType, TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
         try {
 
             /*
@@ -414,8 +423,44 @@ public class DataPlaneServiceImpl implements DataPlaneService {
              */
             //JMSPriority > 4 is reserved for CONFIG, WATCHDOG, and EXEC MsgEvents
             //Reduce requested priority to 4 (default) if needed
+
             if(priority > 4) {
                 priority = 4;
+            }
+
+            /*
+			CONFIG,
+        	DISCOVER,
+        	ERROR,
+        	EXEC,
+        	GC,
+        	INFO,
+        	KPI,
+        	LOG,
+        	WATCHDOG;
+			 */
+
+			/*
+			Default (JMSPriority == 4)
+			High (JMSPriority > 4 && <= 9)
+			Low (JMSPriority > 0 && < 4)
+			 */
+
+            String type = msgEventType.toString();
+
+            switch (type) {
+                case "WATCHDOG":
+                    priority = 9;
+                    deliveryMode = DeliveryMode.PERSISTENT;
+                    break;
+                case "CONFIG":
+                    priority = 8;
+                    deliveryMode = DeliveryMode.PERSISTENT;
+                    break;
+                case "EXEC":
+                    priority = 7;
+                    deliveryMode = DeliveryMode.PERSISTENT;
+                    break;
             }
 
             while(!controllerEngine.cstate.isActive()) {

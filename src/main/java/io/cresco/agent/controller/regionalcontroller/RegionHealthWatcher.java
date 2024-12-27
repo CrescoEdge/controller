@@ -17,8 +17,6 @@ public class RegionHealthWatcher {
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
-    private long startTS;
-    private int wdTimer;
     public Timer regionalUpdateTimer;
     private RegionalExecutor regionalExecutor;
     private AtomicBoolean communicationsHealthTimerActive = new AtomicBoolean();
@@ -31,17 +29,18 @@ public class RegionHealthWatcher {
         this.logger = plugin.getLogger(RegionHealthWatcher.class.getName(),CLogger.Level.Info);
         this.regionalExecutor = new RegionalExecutor(controllerEngine);
 
+        long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
+        long commWatchDogInterval = plugin.getConfig().getLongParam("comm_watchdog_interval",3000L);
+        long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
+
         logger.debug("RegionHealthWatcher Initializing");
-        this.plugin = plugin;
-        wdTimer = 3000;
-        startTS = System.currentTimeMillis();
         communicationsHealthTimer = new Timer();
-        communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 5000, wdTimer);
+        communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), watchDogIntervalDelay, commWatchDogInterval);
 
 
-        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3l);
+        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
         regionalUpdateTimer = new Timer();
-        regionalUpdateTimer.scheduleAtFixedRate(new RegionalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
+        regionalUpdateTimer.scheduleAtFixedRate(new RegionalNodeStatusWatchDog(controllerEngine, logger), watchDogIntervalDelay * periodMultiplier, periodMultiplier * watchDogInterval);//remote
 
         logger.info("Initialized");
     }
