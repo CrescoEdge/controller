@@ -12,8 +12,6 @@ public class GlobalHealthWatcher {
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
-    private long startTS;
-    private int wdTimer;
     public Timer globalUpdateTimer;
 
     public GlobalHealthWatcher(ControllerEngine controllerEngine) {
@@ -22,13 +20,13 @@ public class GlobalHealthWatcher {
         this.logger = plugin.getLogger(GlobalHealthWatcher.class.getName(),CLogger.Level.Info);
 
         logger.debug("GlobalHealthWatcher Initializing");
-        this.plugin = plugin;
-        wdTimer = 3000;
-        startTS = System.currentTimeMillis();
 
-        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3l);
+        long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
+        long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
+        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
+
         globalUpdateTimer = new Timer();
-        globalUpdateTimer.scheduleAtFixedRate(new GlobalNodeStatusWatchDog(controllerEngine, logger), 5000 * periodMultiplier, 5000 * periodMultiplier);//remote
+        globalUpdateTimer.scheduleAtFixedRate(new GlobalNodeStatusWatchDog(controllerEngine, logger),  periodMultiplier * watchDogIntervalDelay, periodMultiplier * watchDogInterval);//remote
 
         logger.info("Initialized");
 

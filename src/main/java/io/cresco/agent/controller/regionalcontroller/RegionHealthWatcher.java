@@ -30,15 +30,14 @@ public class RegionHealthWatcher {
         this.regionalExecutor = new RegionalExecutor(controllerEngine);
 
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
-        long commWatchDogInterval = plugin.getConfig().getLongParam("comm_watchdog_interval",3000L);
+        long commWatchDogInterval = plugin.getConfig().getLongParam("comm_watchdog_interval",5000L);
         long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
+        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
 
         logger.debug("RegionHealthWatcher Initializing");
         communicationsHealthTimer = new Timer();
         communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), watchDogIntervalDelay, commWatchDogInterval);
 
-
-        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
         regionalUpdateTimer = new Timer();
         regionalUpdateTimer.scheduleAtFixedRate(new RegionalNodeStatusWatchDog(controllerEngine, logger), watchDogIntervalDelay * periodMultiplier, periodMultiplier * watchDogInterval);//remote
 

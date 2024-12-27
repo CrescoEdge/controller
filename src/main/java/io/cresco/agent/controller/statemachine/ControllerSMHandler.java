@@ -1388,7 +1388,7 @@ public class ControllerSMHandler {
                                 String canidatePluginConfigs = exportMap.get("pluginconfigs");
                                 if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
                                     updateMap.setString("pluginconfigs", canidatePluginConfigs);
-                                    lastpluginconfigs = canidateAgentConfigs;
+                                    lastpluginconfigs = canidatePluginConfigs;
                                     logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
                                 }
 
@@ -1397,7 +1397,8 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
                                 //logger.error("SENDING AGENT UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 9, 0);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
+
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
@@ -1428,7 +1429,7 @@ public class ControllerSMHandler {
                                 String canidatePluginConfigs = exportMap.get("pluginconfigs");
                                 if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
                                     updateMap.setString("pluginconfigs", canidatePluginConfigs);
-                                    lastpluginconfigs = canidateAgentConfigs;
+                                    lastpluginconfigs = canidatePluginConfigs;
                                     logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
                                 }
 
@@ -1436,7 +1437,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
 
                                 //logger.error("SENDING REGIONAL UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, updateMap, DeliveryMode.PERSISTENT, 9, 0);
+                                plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
                                 ex.printStackTrace();
