@@ -557,6 +557,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         ActiveMQSession activeMQSession = getSession();
 
+        //logger.info("Disabling AsyncBatch");
+        //activeMQSession.setAsyncDispatch(false);
+        //activeMQSession.setSessionAsyncDispatch(false);
+
         if(activeMQSession != null) {
 
             try {

@@ -263,20 +263,22 @@ public class ControllerSMHandler {
         }
 
         controllerEngine.setDBManagerActive(false);
-            while(controllerEngine.getDBManagerThread().isAlive()) {
-                logger.info("Waiting on DB Manager Shutdown");
-                try {
-                    Thread.sleep(1000);
-                } catch (Exception ex) {
-                    ex.printStackTrace();
+            if(controllerEngine.getDBManagerThread() != null) {
+                while (controllerEngine.getDBManagerThread().isAlive()) {
+                    logger.info("Waiting on DB Manager Shutdown");
+                    try {
+                        Thread.sleep(1000);
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
                 }
             }
-
             /*
             if(controllerEngine.getGDB() != null) {
                 controllerEngine.getGDB().shutdown();
             }
              */
+
             logger.debug("stopGlobal Complete");
 
     }

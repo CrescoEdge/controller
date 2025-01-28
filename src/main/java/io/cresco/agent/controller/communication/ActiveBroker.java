@@ -89,6 +89,7 @@ public class ActiveBroker {
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
 
+
 				entry.setTopic(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
