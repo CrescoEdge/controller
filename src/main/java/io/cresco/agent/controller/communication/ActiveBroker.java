@@ -83,7 +83,6 @@ public class ActiveBroker {
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
 
-
 				entry.setQueue(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
@@ -95,7 +94,7 @@ public class ActiveBroker {
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
-				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1000);
+				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",100);
 				entry.setTopicPrefetch(topicPrefetchLimit);
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
 				PrefetchRatePendingMessageLimitStrategy preFetchRate = new PrefetchRatePendingMessageLimitStrategy();
