@@ -1385,13 +1385,13 @@ public class ControllerSMHandler {
                                 if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
                                     updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
                                     lastAgentconfigs = canidateAgentConfigs;
-                                    logger.info("exportMap: updating agents: " + canidateAgentConfigs);
+                                    logger.debug("exportMap: updating agents: " + canidateAgentConfigs);
                                 }
                                 String canidatePluginConfigs = exportMap.get("pluginconfigs");
                                 if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
                                     updateMap.setString("pluginconfigs", canidatePluginConfigs);
                                     lastpluginconfigs = canidatePluginConfigs;
-                                    logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
+                                    logger.debug("exportMap: updating plugins: " + canidatePluginConfigs);
                                 }
 
                                 updateMap.setStringProperty("update_mode", "AGENT");
@@ -1419,20 +1419,20 @@ public class ControllerSMHandler {
                                 if(!lastRegionconfigs.equals(canidateRegionalConfigs)) {
                                     updateMap.setString("regionconfigs", canidateRegionalConfigs);
                                     lastRegionconfigs = canidateRegionalConfigs;
-                                    logger.info("exportMap: updating agents: " + canidateRegionalConfigs);
+                                    logger.debug("exportMap: updating agents: " + canidateRegionalConfigs);
                                 }
 
                                 String canidateAgentConfigs = exportMap.get("agentconfigs");
                                 if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
                                     updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
                                     lastAgentconfigs = canidateAgentConfigs;
-                                    logger.info("exportMap: updating agents: " + canidateAgentConfigs);
+                                    logger.debug("exportMap: updating agents: " + canidateAgentConfigs);
                                 }
                                 String canidatePluginConfigs = exportMap.get("pluginconfigs");
                                 if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
                                     updateMap.setString("pluginconfigs", canidatePluginConfigs);
                                     lastpluginconfigs = canidatePluginConfigs;
-                                    logger.info("exportMap: updating plugins: " + canidatePluginConfigs);
+                                    logger.debug("exportMap: updating plugins: " + canidatePluginConfigs);
                                 }
 
                                 updateMap.setStringProperty("update_mode", "REGION");
