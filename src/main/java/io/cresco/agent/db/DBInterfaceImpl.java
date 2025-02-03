@@ -203,7 +203,7 @@ public class DBInterfaceImpl implements DBInterface {
                 }
             }
 
-            int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",3);
+            int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",10);
             List<String> pendingStaleList = dbe.getStaleNodeList(region,agent, periodMultiplier);
             for(String node : pendingStaleList) {
                 if(nodeStatusMap.containsKey(node)) {
