@@ -32,7 +32,7 @@ public class ControllerStatePersistance {
     public boolean setControllerState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         //logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
-
+        // how we we save to the db
         switch (currentMode) {
             case PRE_INIT:
                 return preInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);

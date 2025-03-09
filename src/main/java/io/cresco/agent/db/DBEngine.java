@@ -533,7 +533,6 @@ public class DBEngine {
                     }
 
                 }
-
                 exportMap.put("agentconfigs",gson.toJson(agentMap));
 
             }
@@ -1185,7 +1184,6 @@ public class DBEngine {
         return queryReturn;
     }
 
-
     public void addRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try {
@@ -1214,7 +1212,6 @@ public class DBEngine {
         }
 
     }
-
 
     private void cleanANodesfromRNode(String region_id) {
 
@@ -1276,7 +1273,6 @@ public class DBEngine {
         }
 
     }
-
 
     public boolean assoicateANodetoRNodeExist(String regionId, String agentId) {
         boolean exist = false;

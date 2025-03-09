@@ -474,10 +474,11 @@ public class DBInterfaceImpl implements DBInterface {
                     for (String agent : agentList) {
                         Map<String, String> regionMap = new HashMap<>();
                         //logger.trace("Agent : " + region);
-                        regionMap.put("name", agent);
-                        regionMap.put("region", region);
+                        regionMap.put("agent_id", agent);
+                        regionMap.put("region_id", region);
                         regionMap.put("plugins", String.valueOf(dbe.getNodeCount(region, agent)));
-
+                        Map<String,String> aNode = dbe.getANode(agent);
+                        regionMap.put("status_desc", aNode.get("status_desc"));
                         try {
 
                             try {
@@ -488,6 +489,7 @@ public class DBInterfaceImpl implements DBInterface {
                                 regionMap.put("location",params.get("location"));
                                 regionMap.put("platform",params.get("platform"));
                                 regionMap.put("environment",params.get("environment"));
+
                             } catch(Exception ex) {
                                 logger.error(ex.getMessage());
                                 StringWriter errors = new StringWriter();

@@ -1,5 +1,6 @@
 package io.cresco.agent.controller.statemachine;
 
+import com.google.gson.Gson;
 import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.agent.controller.communication.ActiveBroker;
 import io.cresco.agent.controller.communication.ActiveBrokerManager;
@@ -86,11 +87,15 @@ public class ControllerSMHandler {
 
     private DataPlaneServiceImpl dataPlaneService;
 
+    private Gson gson;
+
     public ControllerSMHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(ControllerSMHandler.class.getName(), CLogger.Level.Info);
         this.cstate = controllerEngine.cstate;
+
+        gson = new Gson();
 
         //This should be set to the same rates on the remote side
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
@@ -587,7 +592,12 @@ public class ControllerSMHandler {
                     logger.info("initIOChannels Success");
                     //agent name not set on core init
                     stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT)); //1
-                    cstate.setAgentSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "Agent() Dynamic Regional Host: " + cbrokerAddress + " connected."); //2
+
+                    Map<String,String> desc = new HashMap<>();
+                    desc.put("mode", "AGENT");
+                    desc.put("broker",cbrokerAddress);
+
+                    cstate.setAgentSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, gson.toJson(desc)); //2
                     if(registerAgent(discoveryNode.discovered_region,cstate.getAgent())) {
                         controllerEngine.setAgentHealthWatcher(new AgentHealthWatcher(controllerEngine));
                         isInit = true;
@@ -714,7 +724,11 @@ public class ControllerSMHandler {
             if(initIOChannels(brokerAddress)) {
                 logger.debug("initIOChannels Success");
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION)); //1
-                cstate.setRegionSuccess(cstate.getRegion(),cstate.getAgent(), "isRegion() Success");
+
+                Map<String,String> desc = new HashMap<>();
+                desc.put("mode", "REGION");
+
+                cstate.setRegionSuccess(cstate.getRegion(),cstate.getAgent(), gson.toJson(desc));
                 isInit = true;
             } else {
                 logger.error("initIOChannels Failed");
@@ -817,7 +831,10 @@ public class ControllerSMHandler {
 
                     isInit = true;
                     stateContext.setCurrentState(getStateByEnum(ControllerMode.GLOBAL)); //1
-                    cstate.setGlobalSuccess("globalSuccess() : Case 32"); //2
+                    Map<String,String> desc = new HashMap<>();
+                    desc.put("mode", "GLOBAL");
+
+                    cstate.setGlobalSuccess(gson.toJson(desc)); //2
 
                     //measurementEngine.initGlobalMetrics();
                 } else {
