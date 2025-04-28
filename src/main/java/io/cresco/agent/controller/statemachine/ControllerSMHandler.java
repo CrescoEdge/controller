@@ -89,13 +89,21 @@ public class ControllerSMHandler {
 
     private Gson gson;
 
+    private final String transport;
+    private String verifyTransport = "";
+
     public ControllerSMHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(ControllerSMHandler.class.getName(), CLogger.Level.Info);
         this.cstate = controllerEngine.cstate;
-
         gson = new Gson();
+
+        transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
+        if(transport.contains("ssl")) {
+            verifyTransport = "?verifyHostName=false";
+        }
+
 
         //This should be set to the same rates on the remote side
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
@@ -934,16 +942,8 @@ public class ControllerSMHandler {
                     String URI = null;
                     if(isLocalBroker(brokerAddress)) {
                         URI = "vm://localhost";
-                        //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
-                        //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
-                        //controllerEngine.setDataPlaneService(dataPlaneService);
                     } else {
-                        URI = "failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
-                        //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
-                        //controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), "nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
-                        //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,URI);
-                        //dataPlaneService = new DataPlaneServiceImpl(controllerEngine,"nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false");
-                        //controllerEngine.setDataPlaneService(dataPlaneService);
+                        URI = "failover:(" + transport +"://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
                     }
 
                     if(URI != null) {
@@ -976,12 +976,8 @@ public class ControllerSMHandler {
             int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
             if(isLocalBroker(brokerAddress)) {
                 controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
-                //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + "localhost" + ":" + discoveryPort);
-                //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort);
-                //controllerEngine.getActiveClient().initActiveAgentProducer("vm://" + brokerAddress + ":" + discoveryPort + "?wireFormat.maxInactivityDuration=0");
             } else {
-                controllerEngine.getActiveClient().initActiveAgentProducer("failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
-                //controllerEngine.getActiveClient().initActiveAgentProducer("failover:(nio+ssl://" + brokerAddress + ":" + discoveryPort + "?verifyHostName=false&wireFormat.maxInactivityDuration=0)?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+                controllerEngine.getActiveClient().initActiveAgentProducer("failover:(" + transport + "://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
             }
             logger.info("Agent ProducerThread Started..");
             isInit = true;

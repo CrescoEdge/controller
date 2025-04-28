@@ -17,86 +17,117 @@ public class ActiveProducerWorker {
 	private PluginBuilder plugin;
 	private String producerWorkerName;
 	private CLogger logger;
-	private ActiveMQSession sess;
+	private ActiveMQSession sess; // The session managed by this worker
 
-	private MessageProducer producer;
+	private MessageProducer producer; // The producer managed by this worker
 	private Gson gson;
-	public boolean isActive;
-	private String TXQueueName;
-	private Destination destination;
+	public volatile boolean isActive; // Flag used by AgentProducer cleanup task
+	private String TXQueueName; // Destination queue name
+	private Destination destination; // JMS Destination object
 
-	private String URI;
+	private String URI; // Connection URI associated with this worker
 
 
 	public ActiveProducerWorker(ControllerEngine controllerEngine, String TXQueueName, String URI)  {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
-		this.logger = plugin.getLogger(ActiveProducerWorker.class.getName(),CLogger.Level.Info);
+		// Use a more specific logger name if possible
+		this.logger = plugin.getLogger(ActiveProducerWorker.class.getName() + "[" + TXQueueName + "]", CLogger.Level.Info);
 
 		this.URI = URI;
-		this.producerWorkerName = UUID.randomUUID().toString();
-		try {
-			this.TXQueueName = TXQueueName;
-			gson = new Gson();
+		this.TXQueueName = TXQueueName;
+		this.producerWorkerName = TXQueueName + "_" + UUID.randomUUID().toString(); // More descriptive name
+		this.gson = new Gson();
 
+		try {
+			// Initialize the connection, session, destination, and producer
 			if(isInit()) {
-				isActive = true;
+				// isActive is now set within isInit on success
+				logger.info("Worker [{}] initialized successfully.", producerWorkerName);
 			} else {
-				logger.error("Unable to init");
+				// Handle initialization failure immediately
+				logger.error("Worker [{}] failed to initialize!", producerWorkerName);
+				// Optionally throw an exception to signal failure to the creator (AgentProducer)
+				throw new RuntimeException("Failed to initialize ActiveProducerWorker for queue " + TXQueueName);
 			}
-			logger.debug("Initialized", TXQueueName);
 		} catch (Exception e) {
-			logger.error("Constructor {}", e.getMessage());
+			logger.error("Worker [{}] constructor exception: {}", producerWorkerName, e.getMessage(), e);
+			// Ensure cleanup if constructor fails midway
+			shutdown();
+			throw new RuntimeException("Exception during ActiveProducerWorker construction", e);
 		}
 	}
 
+	// isInit() - Initializes or re-initializes JMS resources for this worker.
 	public boolean isInit() {
-		boolean isInit = false;
+		boolean isInitSuccess = false;
+		logger.debug("Worker [{}] attempting initialization/re-initialization...", producerWorkerName);
 		try {
+			// --- Cleanup existing resources first ---
+			shutdown(); // Use shutdown logic for cleanup
 
-			if(producer != null) {
-				producer.close();
-				producer = null;
-			}
-
-			if(destination != null) {
-				destination = null;
-			}
-
-			if(sess != null) {
-				sess.close();
-				sess = null;
-			}
-
+			// --- Create new resources ---
+			logger.debug("Worker [{}] creating new session via ActiveClient for URI [{}]", producerWorkerName, URI);
 			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-			destination = sess.createQueue(TXQueueName);
 
-			producer = sess.createProducer(destination);
-			producer.setTimeToLive(300000L);
-			producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+			if (sess != null && !sess.isClosed()) { // Check if session creation was successful
+				logger.debug("Worker [{}] session created. Creating destination queue [{}].", producerWorkerName, TXQueueName);
+				destination = sess.createQueue(TXQueueName);
 
-			isInit = true;
+				logger.debug("Worker [{}] destination created. Creating producer.", producerWorkerName);
+				producer = sess.createProducer(destination);
+				// Configure producer (consider making TTL configurable)
+				producer.setTimeToLive(300000L);
+				producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT); // Default, overridden in send
 
+				isInitSuccess = true;
+				isActive = true; // Mark as active only on successful initialization
+				logger.info("Worker [{}] initialization complete.", producerWorkerName);
+			} else {
+				logger.error("Worker [{}] failed to create session from ActiveClient for URI [{}].", producerWorkerName, URI);
+				// Ensure cleanup if session creation failed
+				shutdown();
+			}
 		} catch (Exception ex) {
-			logger.error("isInit: " + ex.getMessage());
+			logger.error("Worker [{}] Exception during isInit: {}", producerWorkerName, ex.getMessage(), ex);
+			// Ensure cleanup on any exception during initialization
+			shutdown();
 		}
-		return isInit;
+		return isInitSuccess;
 	}
 
+	// shutdown() - Cleans up JMS resources associated with this worker.
 	public boolean shutdown() {
 		boolean isShutdown = false;
+		logger.debug("Worker [{}] shutting down...", producerWorkerName);
+		isActive = false; // Mark as inactive immediately
 		try {
-			//producer.close();
-			sess.close();
-			logger.debug("Producer Worker [{}] has shutdown", TXQueueName);
+			if (producer != null) {
+				try {
+					producer.close();
+					logger.trace("Worker [{}] producer closed.", producerWorkerName);
+				} catch (JMSException e) {
+					logger.warn("Worker [{}] JMSException closing producer: {}", producerWorkerName, e.getMessage());
+				}
+				producer = null; // Nullify after closing
+			}
+			if (sess != null) {
+				try {
+					sess.close();
+					logger.trace("Worker [{}] session closed.", producerWorkerName);
+				} catch (JMSException e) {
+					logger.warn("Worker [{}] JMSException closing session: {}", producerWorkerName, e.getMessage());
+				}
+				sess = null; // Nullify after closing
+			}
+			destination = null; // Nullify destination reference
 			isShutdown = true;
-		} catch (JMSException jmse) {
-			logger.error(jmse.getMessage());
-			logger.error(jmse.getLinkedException().getMessage());
+			logger.debug("Worker [{}] shutdown sequence complete.", producerWorkerName);
+		} catch (Exception e) {
+			// Catch any unexpected errors during shutdown
+			logger.error("Worker [{}] general exception during shutdown: {}", producerWorkerName, e.getMessage(), e);
 		}
 		return isShutdown;
-
-
 	}
 
 	public String getURI() {
@@ -107,98 +138,64 @@ public class ActiveProducerWorker {
 		return TXQueueName;
 	}
 
-	public boolean sendMessage(MsgEvent se) {
-		boolean isSent = false;
-		//MessageProducer producer = null;
-		try {
-			int pri;
-			int deliveryMode = DeliveryMode.NON_PERSISTENT;
-			/*
-			CONFIG,
-        	DISCOVER,
-        	ERROR,
-        	EXEC,
-        	GC,
-        	INFO,
-        	KPI,
-        	LOG,
-        	WATCHDOG;
-			 */
-
-			/*
-			Default (JMSPriority == 4)
-			High (JMSPriority > 4 && <= 9)
-			Low (JMSPriority > 0 && < 4)
-			 */
-
-			String type = se.getMsgType().toString();
-
-			switch (type) {
-				case "WATCHDOG":
-					pri = 9;
-					deliveryMode = DeliveryMode.PERSISTENT;
-					break;
-				case "CONFIG":
-					pri = 8;
-					deliveryMode = DeliveryMode.PERSISTENT;
-					break;
-                case "EXEC":
-					pri = 7;
-					deliveryMode = DeliveryMode.PERSISTENT;
-					break;
-				default: pri = 5;
-					break;
-			}
-
-			/*
-				producer = sess.createProducer(destination);
-				producer.setTimeToLive(300000L);
-				producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-*/
-				logger.trace("MESSAGE= [" + se.getParams() + "]");
-
-				if(sess.isClosed()) {
-					logger.error("Session closed! for queue: " + TXQueueName + " URI: " + URI);
-					logger.error("Calling isInit()");
-					isInit();
-				}
-
-				TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
-				producer.send(textMessage, deliveryMode, pri, 0);
-
-				isSent = true;
-
-			//}
-			//producer.send(sess.createTextMessage(gson.toJson(se)));
-			logger.trace("sendMessage to : {} : from : {}", TXQueueName, producerWorkerName);
-
-		} catch (JMSException jmse) {
-			logger.error("sendMessage: jmse {} : {}", se.getParams(), jmse.getMessage());
-			StringWriter errors = new StringWriter();
-			jmse.printStackTrace(new PrintWriter(errors));
-			logger.error(errors.toString());
-			//trigger comminit()
-		} catch (Exception ex) {
-			logger.error("sendMessage()  " + ex.getMessage());
-			StringWriter errors = new StringWriter();
-			ex.printStackTrace(new PrintWriter(errors));
-			logger.error(errors.toString());
-			//trigger comminit()
-		} finally {
-			/*
-			if(producer != null) {
-				try {
-					producer.close();
-				} catch (Exception ex) {
-					ex.printStackTrace();
-				}
-			}
-			*/
+	// Simplified sendMessage - Throws JMSException on failure to be handled by AgentProducer.
+	public boolean sendMessage(MsgEvent se) throws JMSException {
+		// Basic null checks before proceeding - throw exception if invalid state
+		if (sess == null || producer == null || sess.isClosed()) {
+			String errorMsg = String.format("sendMessage called on worker [%s] but session [%s] or producer [%s] is null or session is closed!",
+					producerWorkerName, (sess == null ? "null" : "exists"), (producer == null ? "null" : "exists"));
+			logger.error(errorMsg);
+			// Mark as inactive and throw exception so AgentProducer handles recreation
+			isActive = false;
+			throw new JMSException("Invalid state for worker " + producerWorkerName + ": " + errorMsg);
 		}
 
-		return isSent;
+		int pri = 5; // Default priority
+		int deliveryMode = DeliveryMode.NON_PERSISTENT; // Default delivery mode
+		String type = se.getMsgType().toString();
+
+		// Determine priority and delivery mode based on message type
+		switch (type) {
+			case "WATCHDOG":
+				pri = 9;
+				deliveryMode = DeliveryMode.PERSISTENT;
+				break;
+			case "CONFIG":
+				pri = 8;
+				deliveryMode = DeliveryMode.PERSISTENT;
+				break;
+			case "EXEC":
+				pri = 7;
+				deliveryMode = DeliveryMode.PERSISTENT;
+				break;
+			// Add other cases if needed
+		}
+
+		try {
+			logger.trace("Worker [{}] sending message: {}", producerWorkerName, se.getParams());
+			TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+
+			// Send with determined delivery mode, priority, and TTL (0 = default/infinite)
+			producer.send(textMessage, deliveryMode, pri, 0);
+
+			logger.trace("Worker [{}] successfully sent message to queue [{}]", producerWorkerName, TXQueueName);
+			return true; // Return true on successful send
+
+		} catch (JMSException jmse) {
+			// Log the specific error encountered during send
+			logger.error("Worker [{}] JMSException during send to queue [{}]: {}", producerWorkerName, TXQueueName, jmse.getMessage());
+			// Mark as inactive as the send failed, likely due to connection/session issue
+			isActive = false;
+			// Re-throw the exception to be caught and handled by AgentProducer
+			throw jmse;
+		}
+		// Catching general exceptions might mask specific JMS issues,
+		// but can be useful for unexpected errors. Consider if needed.
+		/* catch (Exception ex) {
+		    logger.error("Worker [{}] Unexpected Exception during send: {}", producerWorkerName, ex.getMessage(), ex);
+		    isActive = false;
+		    // Wrap general exceptions in JMSException if needed for consistent handling upstream
+		    throw new JMSException("Unexpected error in sendMessage: " + ex.getMessage());
+		}*/
 	}
-
-
-
 }

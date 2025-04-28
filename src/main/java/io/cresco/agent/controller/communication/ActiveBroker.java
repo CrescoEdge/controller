@@ -33,12 +33,17 @@ public class ActiveBroker {
 	private ControllerEngine controllerEngine;
 	private PluginBuilder plugin;
 	private SslBrokerService broker;
+	private final String transport;
+	private String verifyTransport = "";
 
 	public ActiveBroker(ControllerEngine controllerEngine, String brokerName) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveBroker.class.getName(),CLogger.Level.Info);
-
+		transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
+		if(transport.contains("ssl")) {
+			verifyTransport = "?verifyHostName=false";
+		}
 
 		try {
 
@@ -225,21 +230,19 @@ public class ActiveBroker {
 				//<amq:transportConnector uri="ssl://localhost:61616" />
 
 				if(enable_broker_transport) {
-					logger.info("Broker [nio+ssl] transport on port: " + brokerPort);
+
+					logger.info("Broker transport " + transport + " on port: " + brokerPort);
 					connector = new TransportConnector();
 
 					//try for connector
 					connector.setUpdateClusterClients(true);
 					connector.setUpdateClusterClientsOnRemove(true);
 
-
 					if (plugin.isIPv6())
-						//connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
-					    connector.setUri(new URI("nio+ssl://[::]:" + brokerPort + "?daemon=true"));
+						connector.setUri(new URI(transport + "://[::]:" + brokerPort + "?daemon=true"));
 
 					else
-						//connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true&wireFormat.maxInactivityDuration=0"));
-					    connector.setUri(new URI("nio+ssl://0.0.0.0:" + brokerPort + "?daemon=true"));
+						connector.setUri(new URI(transport + "://0.0.0.0:" + brokerPort + "?daemon=true"));
 
 					broker.addConnector(connector);
 
@@ -435,7 +438,7 @@ public class ActiveBroker {
 
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 
-			URI uri = new URI("static:(nio+ssl://" + hostname + ":"+ discoveryPort + "?verifyHostName=false)?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
+			URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 
 			logger.debug("Connector URI: " + uri);
 
