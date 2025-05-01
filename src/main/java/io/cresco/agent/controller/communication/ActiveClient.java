@@ -12,8 +12,12 @@ import jakarta.jms.*;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.security.SecureRandom;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.List; // Added import
 
 public class ActiveClient {
 
@@ -47,9 +51,11 @@ public class ActiveClient {
         this.faultTriggerURI = faultTriggerURI;
     }
 
-    private String getFaultTriggerURI() {
+    // --- METHOD ADDED BACK ---
+    public String getFaultTriggerURI() {
         return faultTriggerURI;
     }
+    // --- END METHOD ADDED BACK ---
 
     public boolean isFaultURIActive() {
         boolean isActive = false;
@@ -61,6 +67,7 @@ public class ActiveClient {
                 // If no specific fault URI is set, perhaps assume active or check a default?
                 // For now, return false if no faultTriggerURI is set.
                 isActive = false;
+                logger.trace("isFaultURIActive: faultTriggerURI is null, returning false.");
             }
         } catch (Exception ex) {
             logger.error("isFaultURIActive Exception: {}", ex.getMessage(), ex);
@@ -423,6 +430,3 @@ public class ActiveClient {
         }
     }
 }
-
-
-

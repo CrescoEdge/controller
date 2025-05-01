@@ -22,7 +22,7 @@ public class DBInterfaceImpl implements DBInterface {
 
     private PluginBuilder plugin;
     private CLogger logger;
-    private DBEngine dbe;
+    private DBEngine dbe; // The DBEngine instance
 
     private Gson gson;
     private Type type;
@@ -33,7 +33,7 @@ public class DBInterfaceImpl implements DBInterface {
     public DBInterfaceImpl(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
-        this.dbe = dbe;
+        this.dbe = dbe; // Assign the DBEngine instance
         //this.dbe = new DBEngine(plugin);
 
         this.importQueue = new LinkedBlockingQueue<>();
@@ -44,6 +44,26 @@ public class DBInterfaceImpl implements DBInterface {
         mapType = new TypeToken<Map<String, String>>(){}.getType();
 
     }
+
+    // --- NEW WRAPPER METHOD ---
+    /**
+     * Updates the watchdog timestamp for the specified node.
+     * @param regionId The region ID (null if updating agent or plugin).
+     * @param agentId The agent ID (null if updating region or plugin).
+     * @param pluginId The plugin ID (null if updating region or agent).
+     * @return The number of rows updated (should be 1 if successful, 0 otherwise).
+     */
+    public int updateWatchDogTS(String regionId, String agentId, String pluginId) {
+        try {
+            // Call the method in the underlying DBEngine instance
+            return dbe.updateWatchDogTS(regionId, agentId, pluginId);
+        } catch (Exception ex) {
+            logger.error("updateWatchDogTS wrapper error: {}", ex.getMessage(), ex);
+            return -1; // Indicate error
+        }
+    }
+    // --- END NEW WRAPPER METHOD ---
+
 
     public Map<String,String> getInodeMap(String inodeId) {
         return dbe.getInodeMap(inodeId);
@@ -103,15 +123,18 @@ public class DBInterfaceImpl implements DBInterface {
 
 
                 if (region_watchdog_update != null) {
-                    dbe.updateWatchDogTS(region_watchdog_update, null, null);
+                    // Use the wrapper method
+                    updateWatchDogTS(region_watchdog_update, null, null);
                 }
 
                 if (agent_watchdog_update != null) {
-                    dbe.updateWatchDogTS(null, agent_watchdog_update, null);
+                    // Use the wrapper method
+                    updateWatchDogTS(null, agent_watchdog_update, null);
                 }
 
                 if (plugin_watchdog_update != null) {
-                    dbe.updateWatchDogTS(null, null, plugin_watchdog_update);
+                    // Use the wrapper method
+                    updateWatchDogTS(null, null, plugin_watchdog_update);
                 }
 
                 logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
@@ -1245,7 +1268,5 @@ public class DBInterfaceImpl implements DBInterface {
         logger.error("boolean setDBImport(String exportData)");
         return false;
     }
-
-
 
 }
