@@ -104,79 +104,90 @@ public class DBInterfaceImpl implements DBInterface {
     }
 
 
+    // Replace the existing nodeUpdate method in java/io/cresco/agent/db/DBInterfaceImpl.java
+// with the following:
+
+    @Override
     public boolean nodeUpdate(MsgEvent de) {
-        boolean wasAdded = false;
+        boolean wasProcessedCorrectly = false; // Default to false, indicates if any valid action was taken
 
         try {
+            // Extract parameters relevant to watchdog timestamp updates
+            String region_watchdog_update = de.getParam("region_watchdog_update");
+            String agent_watchdog_update = de.getParam("agent_watchdog_update");
+            String plugin_watchdog_update = de.getParam("plugin_watchdog_update");
+            int timestampUpdatesPerformed = 0;
 
-            String mode = null;
-
-            if(de.paramsContains("mode")) {
-                mode = de.getParam("mode");
+            // Attempt to update watchdog timestamps if corresponding parameters are present
+            if (region_watchdog_update != null) {
+                if (dbe.updateWatchDogTS(region_watchdog_update, null, null) > 0) {
+                    timestampUpdatesPerformed++;
+                    logger.trace("Watchdog TS updated for region: {}", region_watchdog_update);
+                } else {
+                    logger.warn("Failed to update watchdog TS for region: {}", region_watchdog_update);
+                }
+            }
+            if (agent_watchdog_update != null) { // This matches the error log context
+                if (dbe.updateWatchDogTS(null, agent_watchdog_update, null) > 0) {
+                    timestampUpdatesPerformed++;
+                    logger.trace("Watchdog TS updated for agent: {}", agent_watchdog_update);
+                } else {
+                    logger.warn("Failed to update watchdog TS for agent: {}", agent_watchdog_update);
+                }
+            }
+            if (plugin_watchdog_update != null) {
+                if (dbe.updateWatchDogTS(null, null, plugin_watchdog_update) > 0) {
+                    timestampUpdatesPerformed++;
+                    logger.trace("Watchdog TS updated for plugin: {}", plugin_watchdog_update);
+                } else {
+                    logger.warn("Failed to update watchdog TS for plugin: {}", plugin_watchdog_update);
+                }
             }
 
-            if(mode != null) {
-
-                String region_watchdog_update = de.getParam("region_watchdog_update");
-                String agent_watchdog_update = de.getParam("agent_watchdog_update");
-                String plugin_watchdog_update = de.getParam("plugin_watchdog_update");
-
-
-                if (region_watchdog_update != null) {
-                    // Use the wrapper method
-                    updateWatchDogTS(region_watchdog_update, null, null);
-                }
-
-                if (agent_watchdog_update != null) {
-                    // Use the wrapper method
-                    updateWatchDogTS(null, agent_watchdog_update, null);
-                }
-
-                if (plugin_watchdog_update != null) {
-                    // Use the wrapper method
-                    updateWatchDogTS(null, null, plugin_watchdog_update);
-                }
-
-                logger.debug("Watchdog Node Update: region: " + region_watchdog_update + " agent: " + agent_watchdog_update);
-
-                String regionconfigs = null;
-                String agentconfigs = null;
-                String pluginconfigs = null;
-
-                if (de.paramsContains("regionconfigs")) {
-                    logger.debug("Adding region(s)");
-                    regionconfigs = de.getCompressedParam("regionconfigs");
-                }
-
-                //process agents
-                if (de.paramsContains("agentconfigs")) {
-
-                    logger.debug("Adding agent(s)");
-                    agentconfigs = de.getCompressedParam("agentconfigs");
-
-                }
-
-                if (de.paramsContains("pluginconfigs")) {
-
-                    logger.debug("found plugins! ");
-                    pluginconfigs = de.getCompressedParam("pluginconfigs");
-                }
-
-                wasAdded = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
-
-            } else {
-                logger.error("nodeUpdate() node mode found!");
+            // If any timestamp was successfully updated, consider the core watchdog function successful.
+            if (timestampUpdatesPerformed > 0) {
+                wasProcessedCorrectly = true;
             }
 
+            // Now, handle the 'mode' parameter and call to dbe.nodeUpdateStatus
+            // The error "[InterfaceImpl] nodeUpdate() node mode found!" implies 'mode' is present.
+            String mode = de.getParam("mode");
+
+            if (mode != null) {
+                logger.debug("Mode '{}' found in MsgEvent (Type: {}). Processing with dbe.nodeUpdateStatus.", mode, de.getMsgType().name());
+
+                String regionconfigs = de.paramsContains("regionconfigs") ? de.getCompressedParam("regionconfigs") : null;
+                String agentconfigs = de.paramsContains("agentconfigs") ? de.getCompressedParam("agentconfigs") : null;
+                String pluginconfigs = de.paramsContains("pluginconfigs") ? de.getCompressedParam("pluginconfigs") : null;
+
+                boolean statusUpdateCallSuccess = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
+
+                if (statusUpdateCallSuccess) {
+                    // If dbe.nodeUpdateStatus also reports success, then all intended operations worked.
+                    wasProcessedCorrectly = true;
+                } else {
+                    // dbe.nodeUpdateStatus returned false. This indicates an issue with the 'mode' processing or config parts.
+                    logger.warn("nodeUpdate: Mode '{}' present, but dbe.nodeUpdateStatus returned false. Timestamp updates success: {}. Msg: {}",
+                            mode, (timestampUpdatesPerformed > 0), de.getParams());
+                    // If timestamp updates didn't happen AND this also failed, then the whole operation is a failure.
+                    // If timestamps *did* succeed, wasProcessedCorrectly remains true from the earlier check.
+                    if (timestampUpdatesPerformed == 0) {
+                        wasProcessedCorrectly = false;
+                    }
+                }
+            } else { // mode is null
+                if (!wasProcessedCorrectly) { // Only an issue if timestamps also weren't updated
+                    logger.warn("nodeUpdate() called with no 'mode' and no specific watchdog parameters. Msg: {}", de.getParams());
+                }
+            }
         } catch (Exception ex) {
-            logger.error("addNodeFromUpdate() : " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("DBInterfaceImpl.nodeUpdate() Exception: {}", ex.getMessage(), ex);
+            wasProcessedCorrectly = false; // Ensure false on any exception
         }
 
-        return wasAdded;
+        logger.debug("DBInterfaceImpl.nodeUpdate returning: {} for MsgType: {}, Mode: {}, AgentWatchdog: {}",
+                wasProcessedCorrectly, de.getMsgType().name(), de.getParam("mode"), de.getParam("agent_watchdog_update"));
+        return wasProcessedCorrectly;
     }
 
     public String getPipeline(String pipelineId) {

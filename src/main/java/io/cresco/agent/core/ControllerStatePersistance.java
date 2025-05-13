@@ -67,6 +67,9 @@ public class ControllerStatePersistance {
                 break;
             case REGION_GLOBAL:
                 return regionGlobalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            case GLOBAL_INIT:
+                // I think this is the right thing to do
+                return true;
             case GLOBAL:
                 return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
