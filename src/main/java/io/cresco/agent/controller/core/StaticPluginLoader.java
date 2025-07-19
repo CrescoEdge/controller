@@ -56,158 +56,80 @@ public class StaticPluginLoader implements Runnable  {
 
         boolean isStaticInit = false;
 
-            try {
+        try {
 
-                while(!isStaticInit) {
+            while(!isStaticInit) {
 
-                    if(controllerEngine.cstate.isActive()) {
+                if(controllerEngine.cstate.isActive()) {
 
-                        //pull the list of all plugins
-                        List<String> pluginList = controllerEngine.getGDB().getNodeList(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent());
-                        List<Map<String,Object>> systemPluginConfigList = new ArrayList<>();
+                    //pull the list of all plugins
+                    List<String> pluginList = controllerEngine.getGDB().getNodeList(controllerEngine.cstate.getRegion(), controllerEngine.cstate.getAgent());
+                    List<Map<String,Object>> systemPluginConfigList = new ArrayList<>();
 
-                        for(String pluginId : pluginList) {
-                            if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 20) {
-                                Map<String,Object> pluginMap = getPluginConfigMap(pluginId);
-                                //removing specific version information, in cases where config exist for system plugin, but plugin version has been updated.
-                                pluginMap.remove("version");
-                                pluginMap.remove("md5");
-                                systemPluginConfigList.add(pluginMap);
+                    for(String pluginId : pluginList) {
+                        if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 20) {
+                            Map<String,Object> pluginMap = getPluginConfigMap(pluginId);
+                            //removing specific version information, in cases where config exist for system plugin, but plugin version has been updated.
+                            pluginMap.remove("version");
+                            pluginMap.remove("md5");
+                            systemPluginConfigList.add(pluginMap);
+                        }
+                    }
+
+
+
+                    if (config != null) {
+
+                        for (String tmpPluginID : config.getPluginList(1)) {
+
+                            try {
+                                Map<String, Object> map = config.getConfigMap(tmpPluginID);
+
+                                if ((map.containsKey("pluginname"))) {
+                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
+                                } else {
+                                    logger.error("Bad Config Found " + map.toString());
+                                }
+
+                            } catch (Exception exe) {
+                                exe.printStackTrace();
                             }
                         }
 
+                        isStaticInit = true;
+                    } else {
+                        //why not load this sucker here...
+                        logger.debug("No plugin config!");
+
+                        if(controllerEngine.cstate.isGlobalController()) {
+
+                            //load repo
+                            if(plugin.getConfig().getBooleanParam("enable_repo",true)) {
+
+                                String pluginName = "io.cresco.repo";
+
+                                Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                                if(map == null) {
 
 
-                        if (config != null) {
+                                    map = getPluginConfigMap(pluginName);
 
-                            for (String tmpPluginID : config.getPluginList(1)) {
-
-                                try {
-                                    Map<String, Object> map = config.getConfigMap(tmpPluginID);
-
-                                    if ((map.containsKey("pluginname"))) {
-                                            String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                    } else {
-                                        logger.error("Bad Config Found " + map.toString());
+                                    if (map == null) {
+                                        map = new HashMap<>();
+                                        map.put("pluginname", pluginName);
+                                        map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
+                                        map.put("persistence_code", "20");
+                                        map.put("inode_id", generatePluginId(pluginName));
                                     }
-
-                                } catch (Exception exe) {
-                                    exe.printStackTrace();
                                 }
+                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                             }
 
-                            isStaticInit = true;
-                        } else {
-                            //why not load this sucker here...
-                            logger.debug("No plugin config!");
+                            //load wsapi
+                            if (plugin.getConfig().getBooleanParam("enable_wsapi", true)) {
 
-                            if(controllerEngine.cstate.isGlobalController()) {
-
-                                //load repo
-                                if(plugin.getConfig().getBooleanParam("enable_repo",true)) {
-
-                                    String pluginName = "io.cresco.repo";
-
-                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
-
-                                    if(map == null) {
-
-
-                                        map = getPluginConfigMap(pluginName);
-
-                                        if (map == null) {
-                                            map = new HashMap<>();
-                                            map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
-                                            map.put("persistence_code", "20");
-                                            map.put("inode_id", generatePluginId(pluginName));
-                                        }
-                                    }
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                }
-
-                                //load wsapi
-                                if (plugin.getConfig().getBooleanParam("enable_wsapi", true)) {
-
-                                    String pluginName = "io.cresco.wsapi";
-
-                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
-
-                                    if(map == null) {
-
-                                        map = getPluginConfigMap(pluginName);
-
-                                        if (map == null) {
-                                            map = new HashMap<>();
-                                            map.put("pluginname", pluginName);
-                                            map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
-                                            map.put("persistence_code", "20");
-                                            map.put("inode_id", generatePluginId(pluginName));
-                                        }
-                                    }
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                }
-
-
-                            } else {
-
-                                //load repo if requested
-                                if(plugin.getConfig().getBooleanParam("enable_repo",false)) {
-
-                                    String pluginName = "io.cresco.repo";
-
-                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
-
-                                    if(map == null) {
-
-                                        map = getPluginConfigMap(pluginName);
-
-                                        if (map == null) {
-                                            map = new HashMap<>();
-                                            map.put("pluginname", pluginName);
-                                            map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
-                                            map.put("persistence_code", "20");
-                                            map.put("inode_id", generatePluginId(pluginName));
-                                        }
-                                    }
-
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                }
-
-                                //load wsapi
-                                if (plugin.getConfig().getBooleanParam("enable_wsapi", false)) {
-
-                                    String pluginName = "io.cresco.wsapi";
-
-                                    Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
-
-                                    if(map == null) {
-
-                                        map = getPluginConfigMap(pluginName);
-
-                                        if (map == null) {
-                                            map = new HashMap<>();
-                                            map.put("pluginname", pluginName);
-                                            map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
-                                            map.put("persistence_code", "20");
-                                            map.put("inode_id", generatePluginId(pluginName));
-                                        }
-                                    }
-                                    String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
-                                }
-
-                            }
-                            isStaticInit = true;
-                        }
-
-
-                        if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
-                            //load sysinfo
-                            if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
-
-                                //logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
-
-                                String pluginName = "io.cresco.sysinfo";
+                                String pluginName = "io.cresco.wsapi";
 
                                 Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
 
@@ -216,69 +138,176 @@ public class StaticPluginLoader implements Runnable  {
                                     map = getPluginConfigMap(pluginName);
 
                                     if (map == null) {
-
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "sysinfo-1.2-SNAPSHOT.jar");
+                                        map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
                                 }
-                                String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
-
+                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                             }
 
-                        }
 
-                        for (String pluginId : pluginList) {
+                        } else {
 
-                            try {
-                                //check if plugin is already running already
-                                if (!controllerEngine.getPluginAdmin().pluginExist(pluginId)) {
-                                    //check if plugin should be running
-                                    if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 10) {
+                            //load repo if requested
+                            if(plugin.getConfig().getBooleanParam("enable_repo",false)) {
 
-                                        //start new plugin
-                                        Map<String, Object> configMap = getPluginConfigMap(pluginId);
-                                        if (configMap != null) {
-                                            String pluginID = controllerEngine.getPluginAdmin().addPlugin(configMap);
-                                        }
+                                String pluginName = "io.cresco.repo";
+
+                                Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                                if(map == null) {
+
+                                    map = getPluginConfigMap(pluginName);
+
+                                    if (map == null) {
+                                        map = new HashMap<>();
+                                        map.put("pluginname", pluginName);
+                                        map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
+                                        map.put("persistence_code", "20");
+                                        map.put("inode_id", generatePluginId(pluginName));
                                     }
                                 }
 
-                            } catch (Exception ex) {
-                                logger.error("Failed to restart plugin: " + pluginId);
-                                ex.printStackTrace();
+                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
+                            }
+
+                            //load wsapi
+                            if (plugin.getConfig().getBooleanParam("enable_wsapi", false)) {
+
+                                String pluginName = "io.cresco.wsapi";
+
+                                Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                                if(map == null) {
+
+                                    map = getPluginConfigMap(pluginName);
+
+                                    if (map == null) {
+                                        map = new HashMap<>();
+                                        map.put("pluginname", pluginName);
+                                        map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
+                                        map.put("persistence_code", "20");
+                                        map.put("inode_id", generatePluginId(pluginName));
+                                    }
+                                }
+                                String pluginID = controllerEngine.getPluginAdmin().addPlugin(map);
                             }
 
                         }
-                        //list might be large clear them
-                        pluginList.clear();
-                        systemPluginConfigList.clear();
+                        isStaticInit = true;
+                    }
 
+                    // Start of new section for stunnel plugin
+                    if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.stunnel")) {
+                        //load stunnel
+                        if (plugin.getConfig().getBooleanParam("enable_stunnel", true)) {
 
-                    } else {
-                        if(controllerEngine.cstate.isFailed()) {
-                            logger.error("Failed shutting down");
-                            isStaticInit = true;
-                        } else {
-                            Thread.sleep(100);
-                            logger.trace("Status : " + controllerEngine.cstate.getControllerState());
+                            logger.info("Starting STUNNEL plugin : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
+
+                            String pluginName = "io.cresco.stunnel";
+
+                            Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                            if(map == null) {
+
+                                map = getPluginConfigMap(pluginName);
+
+                                if (map == null) {
+
+                                    map = new HashMap<>();
+                                    map.put("pluginname", pluginName);
+                                    // CORRECTED JARFILE NAME
+                                    map.put("jarfile", "stunnel-1.2-SNAPSHOT.jar");
+                                    map.put("persistence_code", "20");
+                                    map.put("inode_id", generatePluginId(pluginName));
+                                }
+                            }
+                            String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
                         }
                     }
+                    // End of new section for stunnel plugin
+
+                    if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.sysinfo")) {
+                        //load sysinfo
+                        if (plugin.getConfig().getBooleanParam("enable_sysinfo", true)) {
+
+                            //logger.info("Starting SYSINFO : Status Active: " + controllerEngine.cstate.isActive() + " Status State: " + controllerEngine.cstate.getControllerState());
+
+                            String pluginName = "io.cresco.sysinfo";
+
+                            Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+
+                            if(map == null) {
+
+                                map = getPluginConfigMap(pluginName);
+
+                                if (map == null) {
+
+                                    map = new HashMap<>();
+                                    map.put("pluginname", pluginName);
+                                    map.put("jarfile", "sysinfo-1.2-SNAPSHOT.jar");
+                                    map.put("persistence_code", "20");
+                                    map.put("inode_id", generatePluginId(pluginName));
+                                }
+                            }
+                            String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
+
+                        }
+
+                    }
+
+                    for (String pluginId : pluginList) {
+
+                        try {
+                            //check if plugin is already running already
+                            if (!controllerEngine.getPluginAdmin().pluginExist(pluginId)) {
+                                //check if plugin should be running
+                                if (controllerEngine.getGDB().getPNodePersistenceCode(pluginId) == 10) {
+
+                                    //start new plugin
+                                    Map<String, Object> configMap = getPluginConfigMap(pluginId);
+                                    if (configMap != null) {
+                                        String pluginID = controllerEngine.getPluginAdmin().addPlugin(configMap);
+                                    }
+                                }
+                            }
+
+                        } catch (Exception ex) {
+                            logger.error("Failed to restart plugin: " + pluginId);
+                            ex.printStackTrace();
+                        }
+
+                    }
+                    //list might be large clear them
+                    pluginList.clear();
+                    systemPluginConfigList.clear();
+
+
+                } else {
+                    if(controllerEngine.cstate.isFailed()) {
+                        logger.error("Failed shutting down");
+                        isStaticInit = true;
+                    } else {
+                        Thread.sleep(100);
+                        logger.trace("Status : " + controllerEngine.cstate.getControllerState());
+                    }
                 }
-
-            } catch(Exception ex) {
-
-                StringWriter sw = new StringWriter();
-                PrintWriter pw = new PrintWriter(sw);
-                ex.printStackTrace(pw);
-                //String sStackTrace = sw.toString(); // stack trace as a string
-                //System.out.println(sStackTrace);
-
-                //ex.printStackTrace();
-                logger.error(sw.toString());
             }
+
+        } catch(Exception ex) {
+
+            StringWriter sw = new StringWriter();
+            PrintWriter pw = new PrintWriter(sw);
+            ex.printStackTrace(pw);
+            //String sStackTrace = sw.toString(); // stack trace as a string
+            //System.out.println(sStackTrace);
+
+            //ex.printStackTrace();
+            logger.error(sw.toString());
+        }
 
     }
 
@@ -320,7 +349,5 @@ public class StaticPluginLoader implements Runnable  {
         }
         return configMap;
     }
-
-
 
 }
