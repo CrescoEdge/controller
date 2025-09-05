@@ -76,6 +76,16 @@ public class Config {
         return enabledPlugins;
     }
 
+    public String getPublicKeyDirectory() {
+        SubnodeConfiguration sObj = iniConfObj.getSection("general");
+        String publicKeyDirectory = sObj.getString("public_key_directory");
+        if (publicKeyDirectory == null) {
+            // Default to a directory within the cresco-data folder
+            publicKeyDirectory = new File("cresco-data/public-keys").getAbsolutePath();
+        }
+        return publicKeyDirectory;
+    }
+
     public int getIntParams(String section, String param) {
         int return_param = -1;
         try {

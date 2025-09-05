@@ -132,6 +132,11 @@ public class CertificateManager {
                 addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
             }
 
+            // Export the public key
+            exportPublicKey();
+            // Import and public keys from external agents
+            importPublicKeysFromDirectory();
+
             logger.info("CertificateManager Init: " + (System.currentTimeMillis() - startTime) + " ms");
 
 
@@ -140,6 +145,56 @@ public class CertificateManager {
             logger.error("CertificateChainGeneration() Error: " + ex.getMessage());
         }
 
+    }
+
+    private void exportPublicKey() {
+        try {
+            String publicKeyDirectoryPath = plugin.getConfig().getStringParam("public_key_directory", "cresco-data/public-keys");
+            File publicKeyDirectory = new File(publicKeyDirectoryPath);
+            if (!publicKeyDirectory.exists()) {
+                publicKeyDirectory.mkdirs();
+            }
+            String certFileName = controllerEngine.cstate.getAgentPath() + ".cer";
+            File certFile = new File(publicKeyDirectory, certFileName);
+            try (FileOutputStream fos = new FileOutputStream(certFile)) {
+                fos.write(getPublicCertificate()[0].getEncoded());
+            }
+        } catch (Exception ex) {
+            logger.error("Failed to export public key: " + ex.getMessage());
+        }
+    }
+
+    private void importPublicKeysFromDirectory() {
+        try {
+            String publicKeyDirectoryPath = plugin.getConfig().getStringParam("public_key_directory", "cresco-data/public-keys");
+            File publicKeyDirectory = new File(publicKeyDirectoryPath);
+            if (publicKeyDirectory.exists() && publicKeyDirectory.isDirectory()) {
+                File[] certFiles = publicKeyDirectory.listFiles();
+                if (certFiles != null) {
+                    for (File certFile : certFiles) {
+                        if (certFile.isFile()) {
+                            try {
+                                String alias = certFile.getName().replace(".cer", "");
+                                if (!trustStore.containsAlias(alias)) {
+                                    try (FileInputStream fis = new FileInputStream(certFile)) {
+                                        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+                                        Certificate cert = cf.generateCertificate(fis);
+                                        trustStore.setCertificateEntry(alias, cert);
+                                        logger.info("Imported public key: " + alias);
+                                    }
+                                } else {
+                                    logger.debug("Certificate with alias '" + alias + "' already exists in the truststore. Skipping.");
+                                }
+                            } catch (Exception e) {
+                                logger.error("Failed to import certificate " + certFile.getName() + ": " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("Error importing public keys: " + ex.getMessage());
+        }
     }
 
     public void addCertificatesToTrustStore(String alias, Certificate[] certs) {
