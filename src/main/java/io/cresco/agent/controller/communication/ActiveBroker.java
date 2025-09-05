@@ -24,6 +24,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.List;
 
 public class ActiveBroker {
 	private CLogger logger;
@@ -446,8 +447,8 @@ public class ActiveBroker {
 
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
+            bridge.setNetworkTTL(5);
 			updateTrustManager();
-
 
 		} catch(Exception ex) {
 			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage());
@@ -458,6 +459,10 @@ public class ActiveBroker {
 		}
 		return bridge;
 	}
+
+    public List<NetworkConnector> getNetworkConnectors() {
+        return broker.getNetworkConnectors();
+    }
 
 	public boolean portAvailable(int port) {
 		if (port < 0 || port > 65535) {
@@ -490,4 +495,8 @@ public class ActiveBroker {
 		}
 		return false;
 	}
+
+    public boolean isPeerConnected(String agentPath) {
+        return controllerEngine.getBrokeredAgents().containsKey(agentPath);
+    }
 }

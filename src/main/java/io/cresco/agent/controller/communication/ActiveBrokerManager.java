@@ -30,7 +30,7 @@ public class ActiveBrokerManager implements Runnable  {
 		timer = new Timer();
 		timer.scheduleAtFixedRate(new BrokerWatchDog(logger), 500, 5000);//remote
 	}
-	  
+
 	public void shutdown() {
 		logger.debug("Active Broker Manager shutdown initialized");
 	}
@@ -141,6 +141,8 @@ public class ActiveBrokerManager implements Runnable  {
 
 		logger.debug("Broker Manager has shutdown");
 	}
+
+
 
 	class BrokerWatchDog extends TimerTask {
 		//private final Logger logger = LoggerFactory.getLogger(BrokerWatchDog.class);

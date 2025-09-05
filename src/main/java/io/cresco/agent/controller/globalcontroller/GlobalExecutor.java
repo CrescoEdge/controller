@@ -9,17 +9,15 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.activemq.network.NetworkBridge;
+import org.apache.activemq.network.NetworkConnector;
 
 import java.io.*;
 import java.lang.reflect.Type;
 import java.net.URL;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.jar.*;
@@ -31,6 +29,7 @@ public class GlobalExecutor implements Executor {
     private CLogger logger;
     private ExecutorService removePipelineExecutor;
     private Gson gson;
+    private Type type;
 
     public GlobalExecutor(ControllerEngine controllerEngine) {
 
@@ -39,6 +38,8 @@ public class GlobalExecutor implements Executor {
         this.logger = plugin.getLogger(GlobalExecutor.class.getName(),CLogger.Level.Info);
         removePipelineExecutor = Executors.newFixedThreadPool(100);
         gson = new Gson();
+        type = new TypeToken<Map<String, List<Map<String, String>>>>() {
+        }.getType();
     }
 
     @Override
@@ -180,6 +181,86 @@ public class GlobalExecutor implements Executor {
 
     //EXEC
 
+    private Map<String, List<Map<String, String>>> getAgentMap(String remoteRegion, String remoteAgent) {
+
+        Map<String, List<Map<String, String>>> agentMap = null;
+        try {
+
+            MsgEvent uploadMsg = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, remoteRegion, remoteAgent);
+            uploadMsg.setParam("action", "listagents");
+            uploadMsg.setParam("action_region", remoteRegion);
+            MsgEvent remoteAgentList = plugin.sendRPC(uploadMsg);
+            agentMap = gson.fromJson(remoteAgentList.getCompressedParam("agentslist"), type);
+
+        } catch (Exception ex) {
+            logger.error("Error duringgetAgentMap: " + ex.getMessage());
+        }
+
+        return agentMap;
+
+    }
+
+    private List<Map<String,String>> getBridgedRegions() {
+
+        // {"regions":[{"name":"global-region","agents":"1"}]}
+        List<Map<String,String>> returnBridgedRegions = null;
+        try {
+
+            List<NetworkConnector> connectors = controllerEngine.getBroker().getNetworkConnectors();
+            if (connectors != null) {
+                returnBridgedRegions = new ArrayList<>();
+                for (NetworkConnector connector : connectors) {
+                    for (NetworkBridge bridge : connector.activeBridges()) {
+                        String remoteBrokerName = bridge.getRemoteBrokerName();
+                        if (remoteBrokerName != null) {
+
+                            String[] pathParts = remoteBrokerName.split("_");
+                            if (pathParts.length == 2) {
+                                String remoteRegion = pathParts[0];
+                                String remoteAgent =  pathParts[1];
+
+                                Map<String, List<Map<String, String>>> agentMap = getAgentMap(remoteRegion, remoteAgent);
+                                if(agentMap != null) {
+                                    Map<String, String> regionMap = new HashMap<>();
+                                    regionMap.put("name", remoteRegion);
+                                    regionMap.put("bridged_agent", remoteAgent);
+                                    regionMap.put("agents", String.valueOf(agentMap.get("agents").size()));
+                                    regionMap.put("type", "bridged");
+                                    returnBridgedRegions.add(regionMap);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("Error during broker connection reconciliation: " + ex.getMessage());
+        }
+        return returnBridgedRegions;
+    }
+
+    private Map<String,List<Map<String,String>>> getRegions() {
+
+            Map<String,List<Map<String,String>>> queryMap = null;
+
+        try {
+
+            List<Map<String,String>> bridgedRegions = getBridgedRegions();
+
+            queryMap = controllerEngine.getGDB().getRegionList();
+
+            if(bridgedRegions != null) {
+                queryMap.get("regions").addAll(bridgedRegions);
+            }
+
+        }
+        catch(Exception ex) {
+            logger.error("Error during getRegions(): " + ex.getMessage());
+        }
+
+        return queryMap;
+    }
+
     /**
      * Query to list all regions
      * @param ce MsgEvent.Type.EXEC, action=listregions
@@ -188,9 +269,12 @@ public class GlobalExecutor implements Executor {
      */
     private MsgEvent listRegions(MsgEvent ce) {
         try {
-            //ce.setParam("regionslist", controllerEngine.getGDB().getRegionList());
-            ce.setCompressedParam("regionslist", controllerEngine.getGDB().getRegionList());
+
+            Map<String,List<Map<String,String>>> queryMap = getRegions();
+            String mapString = gson.toJson(queryMap);
+            ce.setCompressedParam("regionslist",mapString);
             logger.trace("list regions return : " + ce.getParams().toString());
+
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -198,6 +282,29 @@ public class GlobalExecutor implements Executor {
 
         return ce;
     }
+
+    private Map<String,List<Map<String,String>>> getAgents(String regionName) {
+
+        Map<String,List<Map<String,String>>> queryMap = null;
+
+        try {
+            if((Objects.equals(controllerEngine.cstate.getRegion(), regionName)) || (regionName == null)) {
+                queryMap = controllerEngine.getGDB().getAgentList(regionName);
+            } else {
+                Map<String,List<Map<String,String>>> regionMap = getRegions();
+                for(Map<String,String> mapEntry : regionMap.get("regions")) {
+                    if(mapEntry.get("name").equals(regionName)) {
+                        queryMap = getAgentMap(regionName, mapEntry.get("bridged_agent"));
+                    }
+                }
+            }
+        }
+        catch(Exception ex) {
+            logger.error("Error during getAgents(): " + ex.getMessage());
+        }
+        return queryMap;
+    }
+
     /**
      * Query to list all agents (action_region=null) or agents in a specific region (action_region=[region]
      * @param ce MsgEvent.Type.EXEC, action=listagents, action_region=[optional region]
@@ -213,8 +320,11 @@ public class GlobalExecutor implements Executor {
             if(ce.getParam("action_region") != null) {
                 actionRegionAgents = ce.getParam("action_region");
             }
+
             //ce.setParam("agentslist",controllerEngine.getGDB().getAgentList(actionRegionAgents));
-            ce.setCompressedParam("agentslist",controllerEngine.getGDB().getAgentList(actionRegionAgents));
+            Map<String,List<Map<String,String>>> agentMap = getAgents(actionRegionAgents);
+
+            ce.setCompressedParam("agentslist",gson.toJson(agentMap));
             logger.trace("list agents return : " + ce.getParams().toString());
         }
         catch(Exception ex) {

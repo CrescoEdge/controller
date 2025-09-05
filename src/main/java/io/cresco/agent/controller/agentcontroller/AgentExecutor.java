@@ -3,6 +3,7 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
 import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
 import io.cresco.agent.core.Config;
 import io.cresco.library.core.CoreState;
@@ -139,7 +140,8 @@ public class AgentExecutor implements Executor {
                     return isControllerActive(incoming);
                 case "getbroadcastdiscovery":
                     return getBroadcastDiscovery(incoming);
-
+                case "listagents":
+                    return listAgents(incoming);
 
                 default:
                     logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -159,6 +161,33 @@ public class AgentExecutor implements Executor {
     public MsgEvent executeKPI(MsgEvent incoming) {
         return null;
     }
+
+    /**
+     * Query to list all agents (action_region=null) or agents in a specific region (action_region=[region]
+     * @param ce MsgEvent.Type.EXEC, action=listagents, action_region=[optional region]
+     *           if action_region=null all agents are listed
+     * @return creates "agentslist", in compressed json format
+     * @see GlobalExecutor#executeEXEC(MsgEvent)
+     */
+    private MsgEvent listAgents(MsgEvent ce) {
+
+        try {
+            String actionRegionAgents = null;
+
+            if(ce.getParam("action_region") != null) {
+                actionRegionAgents = ce.getParam("action_region");
+            }
+
+            ce.setCompressedParam("agentslist",gson.toJson(controllerEngine.getGDB().getAgentList(actionRegionAgents)));
+            logger.trace("list agents return : " + ce.getParams().toString());
+        }
+        catch(Exception ex) {
+            ce.setParam("error", ex.getMessage());
+        }
+
+        return ce;
+    }
+
 
     private MsgEvent getLog(MsgEvent ce) {
         try {

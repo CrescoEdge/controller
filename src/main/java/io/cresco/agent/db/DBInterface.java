@@ -11,8 +11,8 @@ public interface DBInterface {
 
     void shutdown();
     Map<String,String> getResourceTotal();
-    String getRegionList();
-    String getAgentList(String actionRegion);
+    Map<String,List<Map<String,String>>> getRegionList();
+    Map<String,List<Map<String,String>>> getAgentList(String actionRegion);
     String getPluginListRepo();
     Map<String, List<pNode>> getPluginListRepoSet();
     List<String> getPluginListRepoInventory();

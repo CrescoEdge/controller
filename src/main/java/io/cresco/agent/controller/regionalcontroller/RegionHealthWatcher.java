@@ -2,14 +2,17 @@ package io.cresco.agent.controller.regionalcontroller;
 
 
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
+import io.cresco.agent.controller.netdiscovery.DiscoveryType;
+import io.cresco.agent.controller.netdiscovery.TCPDiscoveryStatic;
 import io.cresco.agent.db.NodeStatusType;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.activemq.network.NetworkBridge;
+import org.apache.activemq.network.NetworkConnector;
 
-import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class RegionHealthWatcher {
@@ -30,6 +33,8 @@ public class RegionHealthWatcher {
 
     private long pingInterval; // Interval for active ping checks to Global
     private long pingTimeout; // Timeout for waiting for ping response from Global
+
+    private Set<String> registeredPeers = new HashSet<>(); // Add this field
 
 
     public RegionHealthWatcher(ControllerEngine controllerEngine) {
@@ -103,6 +108,44 @@ public class RegionHealthWatcher {
             logger.debug("Shutdown");
         } catch (Exception ex) {
             logger.error("Shutdown Error: {}", ex.getMessage(), ex);
+        }
+    }
+
+    // CORRECTED METHOD to handle static peer connections
+    private void maintainPeerConnections() {
+        logger.trace("Maintaining regional peer connections...");
+        String regionalPeersStr = plugin.getConfig().getStringParam("regional_peers");
+
+        if (regionalPeersStr != null && !regionalPeersStr.isEmpty()) {
+            List<String> regionalPeers = new ArrayList<>(Arrays.asList(regionalPeersStr.split(",")));
+
+            for (String peerAddress : regionalPeers) {
+                peerAddress = peerAddress.trim();
+                try {
+                    // Discover the peer first to get its proper agent path
+                    TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
+                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, 5000, peerAddress, true); // 5 sec timeout
+
+                    if (discovered != null && !discovered.isEmpty()) {
+                        DiscoveryNode peerNode = discovered.get(0);
+                        String peerAgentPath = peerNode.getDiscoveredPath();
+
+                        // Use isPeerConnected, which checks the brokeredAgents map directly
+                        logger.error("Peer Discovered Path: {}", peerAgentPath);
+                        if (!controllerEngine.getBroker().isPeerConnected(peerAgentPath)) {
+                            logger.warn("Peer connection to {} ({}) is down or not established. Attempting to connect...", peerAddress, peerAgentPath);
+                            controllerEngine.getIncomingCanidateBrokers().put(peerNode);
+                            logger.info("Submitted connection candidate for peer {}", peerAddress);
+                        } else {
+                            logger.trace("Peer connection to {} ({}) is already active or pending.", peerAddress, peerAgentPath);
+                        }
+                    } else {
+                        logger.error("Could not discover or connect to peer: {}", peerAddress);
+                    }
+                } catch (Exception e) {
+                    logger.error("Error while maintaining peer connection to {}: {}", peerAddress, e.getMessage());
+                }
+            }
         }
     }
 
@@ -261,6 +304,10 @@ public class RegionHealthWatcher {
 
         public void run() {
             if (controllerEngine.cstate.isRegionalController()) { // Only run if node is regional controller
+
+                // Do something with peers
+                controllerEngine.getRegionHealthWatcher().maintainPeerConnections();
+
                 if (!regionalUpdateTimerActive.compareAndSet(false, true)) {
                     logger.warn("RegionalNodeStatusWatchDog already running, skipping cycle.");
                     return; // Already running

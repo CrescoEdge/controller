@@ -483,10 +483,9 @@ public class DBInterfaceImpl implements DBInterface {
         return false;
     }
 
-    public String getAgentList(String actionRegion) {
-        String queryReturn = null;
-
-        Map<String,List<Map<String,String>>> queryMap;
+    public Map<String,List<Map<String,String>>> getAgentList(String actionRegion) {
+        
+        Map<String,List<Map<String,String>>> queryMap = null;
 
         try
         {
@@ -547,7 +546,7 @@ public class DBInterfaceImpl implements DBInterface {
                 }
                 queryMap.put("agents", regionArray);
             }
-            queryReturn = gson.toJson(queryMap);
+            //queryReturn = gson.toJson(queryMap);
 
         }
         catch(Exception ex)
@@ -559,7 +558,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error(sw.toString()); //
         }
 
-        return queryReturn;
+        return queryMap;
     }
 
     public int getINodeStatus(String inodeId) {
@@ -750,10 +749,9 @@ public class DBInterfaceImpl implements DBInterface {
         return repoList;
     }
 
-    public String getRegionList() {
-        String queryReturn = null;
+    public Map<String,List<Map<String,String>>> getRegionList() {
 
-        Map<String,List<Map<String,String>>> queryMap;
+        Map<String,List<Map<String,String>>> queryMap = Collections.emptyMap();
 
         try
         {
@@ -767,6 +765,7 @@ public class DBInterfaceImpl implements DBInterface {
                     logger.trace("Region : " + region);
                     List<String> agentList = dbe.getNodeList(region, null);
                     regionMap.put("name",region);
+                    regionMap.put("type","local");
                     if(agentList != null) {
                         regionMap.put("agents", String.valueOf(agentList.size()));
                     } else {
@@ -778,7 +777,8 @@ public class DBInterfaceImpl implements DBInterface {
             queryMap.put("regions",regionArray);
 
             //queryReturn = DatatypeConverter.printBase64Binary(gdb.stringCompress((gson.toJson(queryMap))));
-            queryReturn = gson.toJson(queryMap);
+            //queryReturn = gson.toJson(queryMap);
+            //return queryMap;
 
         }
         catch(Exception ex)
@@ -790,7 +790,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error(sw.toString()); //
         }
 
-        return queryReturn;
+        return queryMap;
     }
 
     public String getPluginListRepo() {
