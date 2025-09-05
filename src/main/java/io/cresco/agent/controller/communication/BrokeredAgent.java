@@ -108,7 +108,7 @@ public class BrokeredAgent {
 	}
 
 	private void setStopped() {
-		logger.error("CALLING FROM BROKERED AGENT");
+		logger.debug("CALLING FROM BROKERED AGENT");
 		if(bm.MonitorActive) {
 			bm.shutdown();
 		}

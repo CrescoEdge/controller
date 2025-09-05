@@ -346,44 +346,6 @@ public class ActiveBroker {
 	public void stopBroker() {
 		try {
 
-			/*
-			ServiceStopper stopper = new ServiceStopper();
-
-			//broker.getManagementContext().stop();
-			logger.error("Stopping transport connectors");
-			for(TransportConnector tc : broker.getTransportConnectors()) {
-				logger.error("Stopping " + tc.getName() );
-				tc.stop();
-			}
-			logger.error("Stopping remaining connectors");
-			broker.stopAllConnectors(stopper);
-			 */
-
-			/*
-			for(Connection connection : broker.getRegionBroker().getClients()) {
-				connection.stop();
-			}
-
-			for(Connection connection : broker.getBroker().getClients()) {
-				connection.stop();
-			}
-
-			 */
-
-
-			/*
-			broker.getRegionBroker().getScheduler().shutdown();
-			broker.getRegionBroker().stop();
-			while(!broker.getRegionBroker().isStopped()) {
-				logger.error("Waiting until Regional Broker Stop");
-			}
-
-			 */
-
-			//broker.getBroker().stop();
-			//broker.getBroker().getScheduler().shutdown();
-
-			//broker.getScheduler().shutdown();
 			broker.getRegionBroker().getScheduler().shutdown();
 			broker.getBroker().getScheduler().shutdown();
 			broker.getRegionBroker().stop();
@@ -395,18 +357,6 @@ public class ActiveBroker {
 			}
 
 			logger.debug("Broker Stopped: " + broker.isStopped());
-
-			/*
-			broker.getScheduler().shutdown();
-			while(!broker.getScheduler().isStopped()) {
-				logger.error("Waiting until Broker Scheduler is Stop");
-			}
-
-			broker.getRegionBroker().getScheduler().shutdown();
-			while(!broker.getRegionBroker().getScheduler().isStopped()) {
-				logger.error("Waiting until Regional Broker Scheduler is Stop");
-			}
-			 */
 
 
 		} catch (Exception e) {
@@ -438,8 +388,10 @@ public class ActiveBroker {
 		try {
 
 			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
+            int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
 
-			URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
+
+            URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 
 			logger.debug("Connector URI: " + uri);
 
@@ -447,7 +399,9 @@ public class ActiveBroker {
 
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
-            bridge.setNetworkTTL(5);
+            bridge.setNetworkTTL(messageTTL);
+            bridge.setDecreaseNetworkConsumerPriority(true);
+            bridge.setConduitSubscriptions(true);
 			updateTrustManager();
 
 		} catch(Exception ex) {
@@ -473,13 +427,16 @@ public class ActiveBroker {
             if (destinations != null) {
                 for (ActiveMQDestination destination : destinations) {
                     if (destination.isQueue()) {
-                        String physicalName = destination.getPhysicalName();
-                        String[] pathParts = physicalName.split("_");
-                        if (pathParts.length == 2) {
-                            Map<String,String> regionMap = new HashMap<>();
-                            regionMap.put("region_id", pathParts[0]);
-                            regionMap.put("agent_id", pathParts[1]);
-                            returnBridgedRegions.add(regionMap);
+
+                        if (!broker.getBroker().getDestinationMap().get(destination).getConsumers().isEmpty()) {
+                            String physicalName = destination.getPhysicalName();
+                            String[] pathParts = physicalName.split("_");
+                            if (pathParts.length == 2) {
+                                Map<String, String> regionMap = new HashMap<>();
+                                regionMap.put("region_id", pathParts[0]);
+                                regionMap.put("agent_id", pathParts[1]);
+                                returnBridgedRegions.add(regionMap);
+                            }
                         }
                     }
                 }

@@ -108,7 +108,7 @@ class BrokerMonitor implements Runnable {
 		} catch (Exception e) {
 			logger.error("stopBridge {}", e.getMessage());
 		}
-		controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);
+		//controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);
 	}
 	  
 	public void run() {

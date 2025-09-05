@@ -62,7 +62,6 @@ public class ActiveBrokerManager implements Runnable  {
 							logger.warn("REMOVED BLOCKED BROKER CONNECTION FOR LOCALHOST, THIS MIGHT CAUSE ISSUES, NEED TO PREVENT AGENT CONNECTING TO SELF IN THE DISCOVERY PROCESS");
 						}
 
-						//if ((!controllerEngine.isLocal(discoveryNode.discovered_ip))) { //ignore local responses
 
 							boolean addBroker = false;
 							//String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");
@@ -131,12 +130,14 @@ public class ActiveBrokerManager implements Runnable  {
 		timer.cancel();
 
 		//stop monitoring all the brokers
+        /*
 		for (Map.Entry<String, BrokeredAgent> entry : controllerEngine.getBrokeredAgents().entrySet()) {
 			String key = entry.getKey();
 			BrokeredAgent ba = entry.getValue();
 			logger.error("Stopping Brokered Agent [" + key + "]");
 			ba.setBrokerStatus(BrokerStatusType.STOPPED);
 		}
+         */
 
 
 		logger.debug("Broker Manager has shutdown");

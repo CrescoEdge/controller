@@ -190,7 +190,9 @@ public class GlobalExecutor implements Executor {
             uploadMsg.setParam("action", "listagents");
             uploadMsg.setParam("action_region", remoteRegion);
             MsgEvent remoteAgentList = plugin.sendRPC(uploadMsg);
-            agentMap = gson.fromJson(remoteAgentList.getCompressedParam("agentslist"), type);
+            if(remoteAgentList != null) {
+                agentMap = gson.fromJson(remoteAgentList.getCompressedParam("agentslist"), type);
+            }
 
         } catch (Exception ex) {
             logger.error("Error duringgetAgentMap: " + ex.getMessage());

@@ -2,9 +2,7 @@ package io.cresco.agent.controller.statemachine;
 
 import com.google.gson.Gson;
 import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
-import io.cresco.agent.controller.communication.ActiveBroker;
-import io.cresco.agent.controller.communication.ActiveBrokerManager;
-import io.cresco.agent.controller.communication.CertificateManager;
+import io.cresco.agent.controller.communication.*;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
@@ -23,6 +21,7 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.metrics.MeasurementEngine;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
+import org.apache.activemq.network.NetworkConnector;
 import org.apache.mina.statemachine.annotation.State;
 import org.apache.mina.statemachine.annotation.Transition;
 import org.apache.mina.statemachine.annotation.Transitions;
@@ -216,6 +215,7 @@ public class ControllerSMHandler {
     }
 
 
+    // find the stopGlobal() method and replace it with this implementation
     @Transitions({
             @Transition(on = "stop", in = GLOBAL_INIT, next = EMPTY),
             @Transition(on = "stop", in = GLOBAL, next = EMPTY),
@@ -234,13 +234,12 @@ public class ControllerSMHandler {
         stopNetDiscoveryEngine();
 
         logger.info("Dataplane service shutdown");
-        dataPlaneService.shutdown();
+        if (dataPlaneService != null) {
+            dataPlaneService.shutdown();
+        }
 
         logger.info("Shutdown agent functions");
         isAgentShutdown();
-
-
-        //DB should not be called after this
 
         //prevent regional from trying to restart broker
         logger.info("Shutting down Regional Health Watcher");
@@ -254,18 +253,56 @@ public class ControllerSMHandler {
             controllerEngine.setGlobalHealthWatcher(null);
         }
 
-        logger.info("Shutdown Active Broker Manager");
+        logger.info("Signaling Active Broker Manager to stop...");
         controllerEngine.setActiveBrokerManagerActive(false);
         //Poison Pill Shutdown, send null class if blocking on input
         DiscoveryNode poisonDiscoveryNode = new DiscoveryNode(DiscoveryType.SHUTDOWN);
         try {
             controllerEngine.getIncomingCanidateBrokers().put(poisonDiscoveryNode);
         } catch (InterruptedException e) {
-            e.printStackTrace();
+            logger.error("Interrupted while sending poison pill to ActiveBrokerManager.");
+            Thread.currentThread().interrupt();
         }
 
-        while(controllerEngine.getActiveBrokerManagerThread().isAlive()) {
-            logger.info("Waiting on Active Broker Manager Thread");
+        // Explicitly shut down all network connectors.
+        // This must happen before we shut down the broker.
+        if (controllerEngine.getBroker() != null) {
+            logger.info("Explicitly stopping all network connectors...");
+            List<NetworkConnector> connectors = new ArrayList<>(controllerEngine.getBroker().getNetworkConnectors());
+            if (!connectors.isEmpty()) {
+                logger.debug("Found {} network connector(s) to shut down.", connectors.size());
+                for (NetworkConnector connector : connectors) {
+                    logger.info("Stopping network connector: {}", connector.getName());
+                    controllerEngine.getBroker().removeNetworkConnector(connector);
+                }
+                logger.info("All network connectors have been stopped.");
+            } else {
+                logger.info("No active network connectors to stop.");
+            }
+        }
+
+        // Wait for the ActiveBrokerManager thread to finish its loop
+        try {
+            if (controllerEngine.getActiveBrokerManagerThread() != null && controllerEngine.getActiveBrokerManagerThread().isAlive()) {
+                logger.info("Waiting for Active Broker Manager Thread to terminate...");
+                controllerEngine.getActiveBrokerManagerThread().join(5000); // Wait up to 5 seconds
+                if (controllerEngine.getActiveBrokerManagerThread().isAlive()) {
+                    logger.warn("Active Broker Manager thread did not terminate in time. Interrupting.");
+                    controllerEngine.getActiveBrokerManagerThread().interrupt();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("Interrupted while waiting for ActiveBrokerManager thread to join.");
+        }
+
+        // Now, safely shut down all brokered agent monitors
+        if (controllerEngine.getBrokeredAgents() != null) {
+            logger.info("Stopping all brokered agent monitors...");
+            for (BrokeredAgent ba : controllerEngine.getBrokeredAgents().values()) {
+                ba.setBrokerStatus(BrokerStatusType.STOPPED);
+            }
+            logger.info("All brokered agent monitors stopped.");
         }
 
         controllerEngine.getActiveClient().shutdown();
@@ -276,23 +313,18 @@ public class ControllerSMHandler {
         }
 
         controllerEngine.setDBManagerActive(false);
-            if(controllerEngine.getDBManagerThread() != null) {
-                while (controllerEngine.getDBManagerThread().isAlive()) {
-                    logger.info("Waiting on DB Manager Shutdown");
-                    try {
-                        Thread.sleep(1000);
-                    } catch (Exception ex) {
-                        ex.printStackTrace();
-                    }
+        if(controllerEngine.getDBManagerThread() != null) {
+            while (controllerEngine.getDBManagerThread().isAlive()) {
+                logger.info("Waiting on DB Manager Shutdown");
+                try {
+                    Thread.sleep(1000);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
                 }
             }
-            /*
-            if(controllerEngine.getGDB() != null) {
-                controllerEngine.getGDB().shutdown();
-            }
-             */
+        }
 
-            logger.debug("stopGlobal Complete");
+        logger.debug("stopGlobal Complete");
 
     }
 
