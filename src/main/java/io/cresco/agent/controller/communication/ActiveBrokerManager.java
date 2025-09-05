@@ -100,7 +100,8 @@ public class ActiveBrokerManager implements Runnable  {
 								addBroker = true;
 							}
 							//try and connect
-							if (addBroker && !controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
+							//if (addBroker && !controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
+                            if (addBroker) {
 								//add broker node
 								addBroker(discoveryNode.getDiscoveredPath());
 								int count = 0;
@@ -108,7 +109,6 @@ public class ActiveBrokerManager implements Runnable  {
 								logger.debug("Status : " + ba.getBrokerStatus().toString() + " URI : " + ba.URI + " Address : " + ba.getActiveAddress());
 								logger.debug("isReachable : " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
 								Thread.sleep(1000);
-								count++;
 
 							} else {
 								logger.error("Not Adding Broker : " + discoveryNode.getDiscoveredPath() + " remote_ip: " + discoveryNode.discovered_ip);

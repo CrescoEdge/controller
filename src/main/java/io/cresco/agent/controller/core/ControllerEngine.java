@@ -252,6 +252,7 @@ public class ControllerEngine {
                 for (ActiveMQDestination des : er) {
 
                     if (des.isQueue()) {
+
                         String testPath = des.getPhysicalName();
 
                         if (testPath.equals(remoteAgentPath)) {
