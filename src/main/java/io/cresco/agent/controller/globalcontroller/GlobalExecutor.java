@@ -200,6 +200,39 @@ public class GlobalExecutor implements Executor {
 
     }
 
+    private List<Map<String,String>> getConnectedRegions() {
+
+        List<Map<String,String>> returnBridgedRegions = new ArrayList<>();
+        try {
+
+            for(Map<String,String> connectedRegions : controllerEngine.getBroker().getBridgedRegions()) {
+
+                String remoteRegion = connectedRegions.get("region_id");
+                String remoteAgent =  connectedRegions.get("agent_id");
+
+                if(!remoteRegion.equals(controllerEngine.cstate.getRegion()) && !remoteAgent.equals(controllerEngine.cstate.getAgent())) {
+
+                    Map<String, List<Map<String, String>>> agentMap = getAgentMap(remoteRegion, remoteAgent);
+                    if(agentMap != null) {
+                        Map<String, String> regionMap = new HashMap<>();
+                        regionMap.put("name", remoteRegion);
+                        regionMap.put("bridged_agent", remoteAgent);
+                        regionMap.put("agents", String.valueOf(agentMap.get("agents").size()));
+                        regionMap.put("type", "bridged");
+                        returnBridgedRegions.add(regionMap);
+                    }
+
+                }
+
+            }
+
+        } catch (Exception ex) {
+            logger.error("Error during broker connection reconciliation: " + ex.getMessage());
+        }
+        return returnBridgedRegions;
+    }
+
+    /*
     private List<Map<String,String>> getBridgedRegions() {
 
         // {"regions":[{"name":"global-region","agents":"1"}]}
@@ -238,6 +271,7 @@ public class GlobalExecutor implements Executor {
         }
         return returnBridgedRegions;
     }
+     */
 
     private Map<String,List<Map<String,String>>> getRegions() {
 
@@ -245,12 +279,13 @@ public class GlobalExecutor implements Executor {
 
         try {
 
-            List<Map<String,String>> bridgedRegions = getBridgedRegions();
+            List<Map<String,String>> connectedRegions = getConnectedRegions();
+
 
             queryMap = controllerEngine.getGDB().getRegionList();
 
-            if(bridgedRegions != null) {
-                queryMap.get("regions").addAll(bridgedRegions);
+            if(connectedRegions != null) {
+                queryMap.get("regions").addAll(connectedRegions);
             }
 
         }

@@ -24,7 +24,7 @@ import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
-import java.util.List;
+import java.util.*;
 
 public class ActiveBroker {
 	private CLogger logger;
@@ -463,6 +463,34 @@ public class ActiveBroker {
     public List<NetworkConnector> getNetworkConnectors() {
         return broker.getNetworkConnectors();
     }
+
+    public List<Map<String,String>> getBridgedRegions() {
+        List<Map<String, String>> returnBridgedRegions = new ArrayList<>();
+
+        try {
+            // Process destinations from the main broker
+            ActiveMQDestination[] destinations = getBrokerDestinations();
+            if (destinations != null) {
+                for (ActiveMQDestination destination : destinations) {
+                    if (destination.isQueue()) {
+                        String physicalName = destination.getPhysicalName();
+                        String[] pathParts = physicalName.split("_");
+                        if (pathParts.length == 2) {
+                            Map<String,String> regionMap = new HashMap<>();
+                            regionMap.put("region_id", pathParts[0]);
+                            regionMap.put("agent_id", pathParts[1]);
+                            returnBridgedRegions.add(regionMap);
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception ex) {
+            logger.error("Error during broker connection reconciliation: " + ex.getMessage());
+        }
+        return returnBridgedRegions;
+    }
+
 
 	public boolean portAvailable(int port) {
 		if (port < 0 || port > 65535) {
