@@ -110,7 +110,7 @@ public class ActiveBroker {
 				boolean allConsumersExclusive = plugin.getConfig().getBooleanParam("all_consumers_exclusive",true);
 				entry.setAllConsumersExclusiveByDefault(allConsumersExclusive);
 
-				//entry.setProducerFlowControl(true);
+                //entry.setProducerFlowControl(true);
 				//entry.setOptimizedDispatch(true);
 				//entry.setProducerFlowControl(true);
 				//entry.setAdvisoryWhenFull(true);
@@ -400,8 +400,8 @@ public class ActiveBroker {
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
             bridge.setNetworkTTL(messageTTL);
-            bridge.setDecreaseNetworkConsumerPriority(true);
-            bridge.setConduitSubscriptions(true);
+            bridge.setDecreaseNetworkConsumerPriority(false);
+            bridge.setConduitSubscriptions(false);
 			updateTrustManager();
 
 		} catch(Exception ex) {

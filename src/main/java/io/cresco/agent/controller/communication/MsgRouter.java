@@ -65,23 +65,8 @@ public class MsgRouter {
     }
 
     private void forwardToLocalGlobal(MsgEvent rm) {
-        logger.error("forwardToLocalGlobal() " + rm.getParams());
+        logger.debug("forwardToLocalGlobal() " + rm.getParams());
         forwardToLocalRegion(rm);
-    }
-
-    private void forwardToRemoteGlobal2(MsgEvent rm) {
-        logger.error("forwardToRemoteGlobal() " + rm.getParams());
-
-        boolean isOk = false;
-        if(rm.getParam("desc") != null) {
-            if(rm.getParam("desc").startsWith("to-global")) {
-                isOk = true;
-            }
-        }
-
-        if(!isOk) {
-            logger.error("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
-        }
     }
 
     private void forwardToRemoteGlobal(MsgEvent rm) {
@@ -313,9 +298,15 @@ public class MsgRouter {
                         break;
 
                     case 12639:
-                        logger.debug("remote agent sending message to local agent");
+                        logger.debug("remote agent sending message to local agent plugin");
                         logger.trace(rm.getParams().toString());
                         forwardToLocalPlugin(rm);
+                        break;
+
+                    case 12655:
+                        logger.debug("remote global agent sending message to local global agent");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalAgent(rm);
                         break;
 
                     case 12671:
@@ -323,6 +314,7 @@ public class MsgRouter {
                         logger.trace(rm.getParams().toString());
                         forwardToLocalPlugin(rm);
                         break;
+
                     case 12751:
                         logger.debug("Remote agent sending message to local agent 12751");
                         logger.trace(rm.getParams().toString());
