@@ -111,7 +111,6 @@ public class RegionHealthWatcher {
         }
     }
 
-    // CORRECTED METHOD to handle static peer connections
     private void maintainPeerConnections() {
         logger.trace("Maintaining regional peer connections...");
         String regionalPeersStr = plugin.getConfig().getStringParam("regional_peers");
@@ -124,14 +123,14 @@ public class RegionHealthWatcher {
                 try {
                     // Discover the peer first to get its proper agent path
                     TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, 5000, peerAddress, true); // 5 sec timeout
+                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("peer_discovery_timeout",5000), peerAddress, true); // 5 sec timeout
 
                     if (discovered != null && !discovered.isEmpty()) {
                         DiscoveryNode peerNode = discovered.get(0);
                         String peerAgentPath = peerNode.getDiscoveredPath();
 
                         // Use isPeerConnected, which checks the brokeredAgents map directly
-                        logger.error("Peer Discovered Path: {}", peerAgentPath);
+                        logger.debug("Peer Discovered Path: {}", peerAgentPath);
                         if (!controllerEngine.getBroker().isPeerConnected(peerAgentPath)) {
                             logger.warn("Peer connection to {} ({}) is down or not established. Attempting to connect...", peerAddress, peerAgentPath);
                             controllerEngine.getIncomingCanidateBrokers().put(peerNode);
