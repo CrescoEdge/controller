@@ -88,27 +88,44 @@ public class ActiveBroker {
 				PolicyEntry entry = new PolicyEntry();
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
+                entry.setMemoryLimit(64 * 1024 * 1024); // 64 MB memory limit per destination
 
+                // Queue
 				entry.setQueue(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
+                entry.setUseCache(false);
+                entry.setExpireMessagesPeriod(0);
 
+                int queuePrefetchLimit = plugin.getConfig().getIntegerParam("queue_prefetch_limit",1);
+                entry.setTopicPrefetch(queuePrefetchLimit);
 
-				entry.setTopic(">");
+                PrefetchRatePendingMessageLimitStrategy queuePreFetchRate = new PrefetchRatePendingMessageLimitStrategy();
+                queuePreFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+                entry.setPendingMessageLimitStrategy(queuePreFetchRate);
+                //configure exclusive consumers
+                boolean queueAllConsumersExclusive = plugin.getConfig().getBooleanParam("queue_all_consumers_exclusive",true);
+                entry.setAllConsumersExclusiveByDefault(queueAllConsumersExclusive);
+
+                // Topics
+                entry.setTopic(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
+                entry.setUseCache(false);
+                entry.setExpireMessagesPeriod(0);
+
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
-				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",100);
+				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1);
 				entry.setTopicPrefetch(topicPrefetchLimit);
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
-				PrefetchRatePendingMessageLimitStrategy preFetchRate = new PrefetchRatePendingMessageLimitStrategy();
-				preFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
-				entry.setPendingMessageLimitStrategy(preFetchRate);
+				PrefetchRatePendingMessageLimitStrategy topicPreFetchRate = new PrefetchRatePendingMessageLimitStrategy();
+				topicPreFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+				entry.setPendingMessageLimitStrategy(topicPreFetchRate);
 				//configure exclusive consumers
-				boolean allConsumersExclusive = plugin.getConfig().getBooleanParam("all_consumers_exclusive",true);
-				entry.setAllConsumersExclusiveByDefault(allConsumersExclusive);
+				boolean topicAllConsumersExclusive = plugin.getConfig().getBooleanParam("topic_all_consumers_exclusive",true);
+				entry.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
 
                 //entry.setProducerFlowControl(true);
 				//entry.setOptimizedDispatch(true);
