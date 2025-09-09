@@ -96,9 +96,10 @@ public class ActiveBroker {
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
                 entry.setUseCache(false);
-                entry.setExpireMessagesPeriod(0);
+                entry.setPrioritizedMessages(true);
+                //entry.setExpireMessagesPeriod(0);
 
-                int queuePrefetchLimit = plugin.getConfig().getIntegerParam("queue_prefetch_limit",1);
+                int queuePrefetchLimit = plugin.getConfig().getIntegerParam("queue_prefetch_limit",100);
                 entry.setTopicPrefetch(queuePrefetchLimit);
 
                 PrefetchRatePendingMessageLimitStrategy queuePreFetchRate = new PrefetchRatePendingMessageLimitStrategy();
@@ -114,10 +115,11 @@ public class ActiveBroker {
 				entry.setPrioritizedMessages(true);
 				entry.setProducerFlowControl(true);
                 entry.setUseCache(false);
-                entry.setExpireMessagesPeriod(0);
+                entry.setPrioritizedMessages(true);
+                //entry.setExpireMessagesPeriod(0);
 
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
-				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",1);
+				int topicPrefetchLimit = plugin.getConfig().getIntegerParam("topic_prefetch_limit",100);
 				entry.setTopicPrefetch(topicPrefetchLimit);
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
 				PrefetchRatePendingMessageLimitStrategy topicPreFetchRate = new PrefetchRatePendingMessageLimitStrategy();
@@ -416,10 +418,11 @@ public class ActiveBroker {
 
 			bridge.setName(java.util.UUID.randomUUID().toString());
 			bridge.setDuplex(true);
+            bridge.setPrefetchSize(100);
             bridge.setNetworkTTL(messageTTL);
             bridge.setDecreaseNetworkConsumerPriority(false);
             bridge.setConduitSubscriptions(false);
-			updateTrustManager();
+            updateTrustManager();
 
 		} catch(Exception ex) {
 			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage());

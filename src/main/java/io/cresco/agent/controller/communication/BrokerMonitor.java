@@ -153,7 +153,13 @@ class BrokerMonitor implements Runnable {
                 }
 				Thread.sleep(5000);
 			}
+
 			logger.trace("agentpath: " + agentPath + " is being shutdown");
+
+            if(controllerEngine.getBrokeredAgents().containsKey(agentPath)) {
+                controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);
+            }
+
 			shutdown();
 		} catch(Exception ex) {
 			logger.error("Run {}", ex.getMessage());
