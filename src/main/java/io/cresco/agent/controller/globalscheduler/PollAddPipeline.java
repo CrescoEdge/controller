@@ -66,7 +66,7 @@ public class PollAddPipeline implements Runnable {
                     for (Map.Entry<String, String> entry : gnode.params.entrySet())
                     {
                         configparms.append(entry.getKey() + "=" + entry.getValue() + ",");
-                        //System.out.println(entry.getKey() + "/" + entry.getValue());
+                        //logger.info(entry.getKey() + "/" + entry.getValue());
                     }
                     if(configparms.length() > 0) {
                         configparms.deleteCharAt(configparms.length() -1);

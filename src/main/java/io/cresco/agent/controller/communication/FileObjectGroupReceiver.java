@@ -37,7 +37,7 @@ public class FileObjectGroupReceiver {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return fileList;
     }
@@ -61,7 +61,7 @@ public class FileObjectGroupReceiver {
                 isComplete = fileObjectMap.get(dataName).isFilePartComplete();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return isComplete;
     }
@@ -79,7 +79,7 @@ public class FileObjectGroupReceiver {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return orderedPartList;
     }
@@ -91,7 +91,7 @@ public class FileObjectGroupReceiver {
                 fileName = fileObjectMap.get(dataName).getFileName();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return fileName;
     }
@@ -103,7 +103,7 @@ public class FileObjectGroupReceiver {
                 fileHash = fileObjectMap.get(dataName).getFileMD5Hash();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return fileHash;
     }
@@ -129,7 +129,7 @@ public class FileObjectGroupReceiver {
 
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return isComplete;
     }

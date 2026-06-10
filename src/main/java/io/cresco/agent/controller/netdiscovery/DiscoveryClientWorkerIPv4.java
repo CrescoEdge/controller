@@ -209,7 +209,7 @@ class DiscoveryClientWorkerIPv4 {
                 }
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             logger.error("while not closed: {}", ex.getMessage());
         }
         return discoveredList;

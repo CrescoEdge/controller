@@ -522,7 +522,7 @@ public class MsgRouter {
                         break;
 
                     default:
-                        //System.out.println("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
+                        //logger.info("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
                         logger.error("DEFAULT ROUTE CASE " + routePath + " " + rm.printHeader() + " [" + rm.getParams() + "]");
                         break;
                 }
@@ -530,7 +530,7 @@ public class MsgRouter {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             logger.error("Controller : MsgRoute : Route Failed " + ex.toString() + " " + rm.getParams().toString());
 
         }
@@ -624,17 +624,17 @@ public class MsgRouter {
             // 001011 10 11 11
             String routeString = GM + RM + GC + RC + TXp + RXp + TXa + RXa + TXr + RXr + TXpe + RXpe + TXae + RXae + TXre + RXre;
             routePath = Integer.parseInt(routeString, 2);
-            //System.out.println("desc:" + rm.getParam("desc") + "\nroutePath:" + routePath + " RouteString:\n" + routeString + "\n" + rm.getParams());
+            //logger.info("desc:" + rm.getParam("desc") + "\nroutePath:" + routePath + " RouteString:\n" + routeString + "\n" + rm.getParams());
         } catch (Exception ex) {
             if(rm != null) {
                 logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " " + rm.getParams().toString());
             } else {
                 logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " RM=NULL");
             }
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             routePath = -1;
         }
-        //System.out.println("REGIONAL CONTROLLER ROUTEPATH=" + routePath + " MsgType=" + rm.getMsgType() + " Params=" + rm.getParams());
+        //logger.info("REGIONAL CONTROLLER ROUTEPATH=" + routePath + " MsgType=" + rm.getMsgType() + " Params=" + rm.getParams());
 
         return routePath;
     }
@@ -679,13 +679,13 @@ public class MsgRouter {
                     controllerEngine.getPluginBuilder().msgIn(rm);
                     isOk = true;
                 } catch(Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("Exception: " + ex.getMessage());
                 }
             }
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalAgent() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToLocalAgent() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -697,13 +697,13 @@ public class MsgRouter {
                     controllerEngine.getPluginAdmin().msgIn(rm);
                     isOk = true;
                 } catch(Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("Exception: " + ex.getMessage());
                 }
             }
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalPlugin() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToLocalPlugin() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -717,7 +717,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalRegionalController() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToLocalRegionalController() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -730,7 +730,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToRemoteRegionalController() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToRemoteRegionalController() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -743,7 +743,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToLocalRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
 
     }
@@ -757,7 +757,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToRemoteRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToRemoteRegion() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 
@@ -770,7 +770,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToLocalGlobal() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToLocalGlobal() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
 
     }
@@ -784,7 +784,7 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            System.out.println("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.info("forwardToRemoteGlobal(rm) BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
         }
     }
 

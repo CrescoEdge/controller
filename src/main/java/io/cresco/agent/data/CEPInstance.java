@@ -85,7 +85,7 @@ public class CEPInstance {
 
                         if (msg instanceof TextMessage) {
 
-                            //System.out.println(RXQueueName + " msg:" + ((TextMessage) msg).getText());
+                            //logger.info(RXQueueName + " msg:" + ((TextMessage) msg).getText());
                             InMemoryBroker.publish(inputTopic, ((TextMessage) msg).getText());
                             //String message = ((TextMessage) msg).getText();
                             //logger.error("YES!!! " + message);
@@ -93,7 +93,7 @@ public class CEPInstance {
                         }
                     } catch(Exception ex) {
 
-                        ex.printStackTrace();
+                        logger.error("Exception: " + ex.getMessage());
                     }
                 }
             };
@@ -103,7 +103,7 @@ public class CEPInstance {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
 
@@ -124,7 +124,7 @@ public class CEPInstance {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 
@@ -139,7 +139,7 @@ public class CEPInstance {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 
@@ -158,12 +158,12 @@ public class CEPInstance {
                 //start measurement
                     InMemoryBroker.publish(topicName, jsonPayload);
                 } else {
-                    System.out.println("input error : no schema");
+                    logger.info("input error : no schema");
                 }
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 
@@ -177,7 +177,7 @@ public class CEPInstance {
                     "define stream " + streamName + " (" + inputStreamDefinition + "); ";
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return sourceString;
@@ -191,7 +191,7 @@ public class CEPInstance {
                     "define stream " + streamName + " (" + outputStreamDefinition + "); ";
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return sinkString;

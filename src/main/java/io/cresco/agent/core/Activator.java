@@ -44,7 +44,7 @@ public class Activator implements BundleActivator
             //org.apache.commons.configuration.DefaultFileSystem
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
 
     }

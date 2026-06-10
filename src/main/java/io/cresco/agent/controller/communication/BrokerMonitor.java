@@ -95,7 +95,7 @@ class BrokerMonitor implements Runnable {
 			logger.error(getClass().getName() + " connectToBroker Error " + ex.toString());
 			StringWriter sw = new StringWriter();
 			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
+			logger.error("Exception: " + ex.getMessage());
 			logger.error(sw.toString()); // stack trace as a string
 		}
 		return isConnected;
@@ -154,7 +154,7 @@ class BrokerMonitor implements Runnable {
 				Thread.sleep(5000);
 			}
 
-			logger.trace("agentpath: " + agentPath + " is being shutdown");
+			logger.error("Tunnel monitor for agent [" + agentPath + "] detected 0 active bridges. Connection dropped, shutting down.");
 
             if(controllerEngine.getBrokeredAgents().containsKey(agentPath)) {
                 controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);

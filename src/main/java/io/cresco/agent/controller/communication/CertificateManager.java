@@ -141,7 +141,7 @@ public class CertificateManager {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             logger.error("CertificateChainGeneration() Error: " + ex.getMessage());
         }
 
@@ -205,7 +205,7 @@ public class CertificateManager {
                     X509Certificate x509cert = (X509Certificate) cert;
 
                     // Get subject
-                    Principal principal = x509cert.getSubjectDN();
+                    Principal principal = x509cert.getSubjectX500Principal();
                     //set alias to subject name to prevent overwriting in the cert chain
                     alias = principal.getName();
                 }
@@ -299,7 +299,7 @@ public class CertificateManager {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
     }
@@ -337,19 +337,7 @@ public class CertificateManager {
     }
 
     private void storeKeyAndCertificateChain(String alias, char[] password, Key key, X509Certificate[] chain) throws Exception{
-
-
-        //KeyStore keyStore=KeyStore.getInstance("jks");
-        //keyStore=KeyStore.getInstance("jks");
-        //keyStore.load(null,null);
         keyStore.setKeyEntry(alias, key, password, chain);
-
-        //trustStore.setKeyEntry(alias, key, password, chain);
-
-        //trustStore = keyStore;
-        //TODO trying to to save
-        //keyStore.store(new FileOutputStream(keystore),password);
-
     }
 
     private String getStringFromCert(X509Certificate cert) {
@@ -371,7 +359,7 @@ public class CertificateManager {
         try {
             /*
             byte[] valueDecoded = Base64.decodeBase64(bytesEncoded);
-System.out.println("Decoded value is " + new String(valueDecoded));
+logger.info("Decoded value is " + new String(valueDecoded));
              */
             CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
             InputStream inputStream = new ByteArrayInputStream(Base64.getDecoder().decode(certString));
@@ -469,13 +457,13 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             keyStore.store(keyStoreOut, keyStorePassword);
             trustStore.store(trustStoreOut, trustStorePassword);
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         } catch (CertificateException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         } catch (KeyStoreException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         }
     }
 
@@ -515,19 +503,19 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 chain[i] = (X509Certificate) keyStoreCertChain[i];
             return true;
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
             return false;
         } catch (CertificateException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
             return false;
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
             return false;
         } catch (KeyStoreException e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
             return false;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
             return false;
         }
     }
@@ -613,7 +601,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             signingKey = rootPrivateKey;
 
         }catch(Exception ex){
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 */
@@ -823,7 +811,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
 
             return outCert;
         }catch(Exception ex){
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return null;
     }
@@ -884,7 +872,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             signingKey = middlePrivateKey;
 
         }catch(Exception ex){
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 */

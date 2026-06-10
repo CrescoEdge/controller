@@ -35,13 +35,13 @@ public class StaticAgentLoader implements Runnable  {
                 if(agentID != null) {
 
                     if(startAgent(context, agentID)) {
-                        System.out.println("Started agent " + agentID);
+                        // System.out.println("Started agent " + agentID);
                     } else {
-                        System.out.println("Unable to start agent " + agentID);
+                        // System.out.println("Unable to start agent " + agentID);
                     }
 
                 } else {
-                    System.out.println("Could not init agent!");
+                    // System.out.println("Could not init agent!");
                 }
 
 
@@ -51,7 +51,7 @@ public class StaticAgentLoader implements Runnable  {
 
 
             } catch(Exception ex) {
-                ex.printStackTrace();
+                // ex.printStackTrace();
             }
 
     }
@@ -92,10 +92,10 @@ public class StaticAgentLoader implements Runnable  {
 
 
             } else {
-                System.out.println("NO CONFIG FILE " + agentConfig + " FOUND! ");
+                // System.out.println("NO CONFIG FILE " + agentConfig + " FOUND! ");
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return returnAgentID;
     }
@@ -115,14 +115,14 @@ public class StaticAgentLoader implements Runnable  {
 
 
                 } else {
-                    System.out.println("Could not Assign Configuration Admin!");
+                    // System.out.println("Could not Assign Configuration Admin!");
                 }
 
             } else {
-                System.out.println("Admin Does Not Exist!");
+                // System.out.println("Admin Does Not Exist!");
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
     }
 
@@ -139,18 +139,18 @@ public class StaticAgentLoader implements Runnable  {
                 servRefs = context.getServiceReferences(AgentService.class.getName(), filterString);
 
                 if (servRefs == null || servRefs.length == 0) {
-                    System.out.println("NULL FOUND NOTHING!");
+                    // System.out.println("NULL FOUND NOTHING!");
                 } else {
-                    System.out.println("Running Service Count: " + servRefs.length);
+                    // System.out.println("Running Service Count: " + servRefs.length);
 
                     for (ServiceReference sr : servRefs) {
                         boolean assign = servRefs[0].isAssignableTo(context.getBundle(), AgentService.class.getName());
                         if(assign) {
-                            System.out.println("Can Assign Service : " + assign);
+                            // System.out.println("Can Assign Service : " + assign);
                             AgentService as = (AgentService)context.getService(sr);
                             //LoaderService ls = (LoaderService) context.getService(sr);
                         } else {
-                            System.out.println("Can't Assign Service : " + assign);
+                            // System.out.println("Can't Assign Service : " + assign);
                         }
                         //Check agent here
 
@@ -161,7 +161,7 @@ public class StaticAgentLoader implements Runnable  {
                 Thread.sleep(1000);
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
         return isStarted;
     }

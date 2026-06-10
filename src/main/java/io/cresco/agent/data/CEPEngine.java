@@ -35,7 +35,7 @@ public class CEPEngine {
             sink.connect();
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
 
@@ -84,7 +84,7 @@ public class CEPEngine {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 
@@ -105,7 +105,7 @@ public class CEPEngine {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 
@@ -122,7 +122,7 @@ public class CEPEngine {
             isCreated = true;
 
             } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return isCreated;
     }
@@ -140,7 +140,7 @@ public class CEPEngine {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 

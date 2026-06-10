@@ -201,7 +201,7 @@ public class MockBundleContext implements BundleContext
 
         String requestedRef = (String)reference.getProperty("name");
 
-        System.out.println("reference requested : " + requestedRef);
+        // System.out.println("reference requested : " + requestedRef);
 
 
         if(requestedRef.equals("org.osgi.service.cm.ConfigurationAdmin")) {
@@ -223,7 +223,7 @@ public class MockBundleContext implements BundleContext
     @Override
     public ServiceReference<?> getServiceReference( String arg0 )
     {
-        System.out.println("Service Ref Request: " + arg0);
+        // System.out.println("Service Ref Request: " + arg0);
         return new MockServiceReference("org.osgi.service.cm.ConfigurationAdmin");
 
     }
@@ -238,7 +238,7 @@ public class MockBundleContext implements BundleContext
     @Override
     public ServiceReference<?>[] getServiceReferences( String arg0, String arg1 )
     {
-        System.out.println(arg0 + ":" + arg1);
+        // System.out.println(arg0 + ":" + arg1);
         ServiceReference<?>[] serviceReferences = new ServiceReference<?>[1];
         serviceReferences[0] = new MockServiceReference(arg0);
         return serviceReferences;

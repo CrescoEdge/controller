@@ -88,7 +88,7 @@ public class AppScheduler implements IncomingApp {
             logger.error("AppSchedulerEngine gPayloadQueue Error: " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); // stack trace as a string
         }
 
@@ -245,7 +245,7 @@ public class AppScheduler implements IncomingApp {
         catch(Exception ex) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
         }
@@ -293,7 +293,7 @@ public class AppScheduler implements IncomingApp {
 
         }
         catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return nodeResults;
     }

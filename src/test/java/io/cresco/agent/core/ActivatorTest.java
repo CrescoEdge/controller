@@ -14,7 +14,7 @@ class ActivatorTest {
             activator.start(bundleContext);
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            // ex.printStackTrace();
         }
 
     }

@@ -222,20 +222,20 @@ public class ActiveBroker {
 				//Performance greatly suffered under load
 				//broker.setDedicatedTaskRunner(true);
 
-				/*
-				LoggingBrokerPlugin lbp = new LoggingBrokerPlugin();
-				lbp.setLogAll(false);
-				lbp.setLogConnectionEvents(false);
-				lbp.setLogConsumerEvents(false);
-				lbp.setLogProducerEvents(false);
-				lbp.setLogInternalEvents(false);
-				lbp.setLogSessionEvents(false);
-				lbp.setLogTransactionEvents(false);
-				lbp.setPerDestinationLogger(false);
-				 */
-
-
-				//broker.setPlugins(new BrokerPlugin[]{lbp});
+				boolean enableBrokerLogging = plugin.getConfig().getBooleanParam("enable_broker_logging", true);
+				if (enableBrokerLogging) {
+					LoggingBrokerPlugin lbp = new LoggingBrokerPlugin();
+					lbp.setLogAll(false);
+					lbp.setLogConnectionEvents(true);
+					lbp.setLogConsumerEvents(false);
+					lbp.setLogProducerEvents(false);
+					lbp.setLogInternalEvents(true);
+					lbp.setLogSessionEvents(false);
+					lbp.setLogTransactionEvents(false);
+					lbp.setPerDestinationLogger(false);
+					broker.setPlugins(new BrokerPlugin[]{lbp});
+					logger.info("Enabled LoggingBrokerPlugin for Connection and Internal Events");
+				}
 				//LoggingBrokerPlugin
 				//LoggingBrokerPlugin
 				/*
@@ -287,7 +287,7 @@ public class ActiveBroker {
 				System.exit(0);
 			}
 		} catch(Exception ex) {
-			//ex.printStackTrace();
+			//logger.error("Exception: " + ex.getMessage());
 			logger.error("Init {}" + ex.getMessage());
 		}
 	}
@@ -428,7 +428,7 @@ public class ActiveBroker {
 			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage());
 			StringWriter sw = new StringWriter();
 			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
+			logger.error("Exception: " + ex.getMessage());
 			logger.error(sw.toString());
 		}
 		return bridge;

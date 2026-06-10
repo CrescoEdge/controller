@@ -164,7 +164,7 @@ public class GlobalExecutor implements Executor {
             logger.error("executeEXEC() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
         return null;
@@ -532,7 +532,7 @@ public class GlobalExecutor implements Executor {
 
         } catch (Exception e) {
             isSaved = false;
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         }
         ce.removeParam("jardata");
         ce.setParam("is_saved", String.valueOf(isSaved));
@@ -973,7 +973,7 @@ public class GlobalExecutor implements Executor {
             }
 
 
-            URL website = new URL(baseUrl + ce.getParam("agentcontroller"));
+            URL website = java.net.URI.create(baseUrl + ce.getParam("agentcontroller")).toURL();
 
             try (ReadableByteChannel rbc = Channels.newChannel(website.openStream())) {
                 //ReadableByteChannel rbc = Channels.newChannel(website.openStream());
@@ -1014,7 +1014,7 @@ public class GlobalExecutor implements Executor {
                         }
                     } catch (Exception ex) {
                         ce.setParam("error", ex.getMessage());
-                        ex.printStackTrace();
+                        logger.error("Exception: " + ex.getMessage());
                     }
 
                 } else {
@@ -1024,7 +1024,7 @@ public class GlobalExecutor implements Executor {
                 }
             } catch (Exception ex) {
                 ce.setParam("error", ex.getMessage());
-                ex.printStackTrace();
+                logger.error("Exception: " + ex.getMessage());
             }
 
 
@@ -1032,7 +1032,7 @@ public class GlobalExecutor implements Executor {
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return ce;
@@ -1100,7 +1100,7 @@ public class GlobalExecutor implements Executor {
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return ce;
@@ -1231,7 +1231,7 @@ public class GlobalExecutor implements Executor {
         String version;
         try{
             //String jarFile = AgentEngine.class.getProtectionDomain().getCodeSource().getLocation().getPath();
-            //System.out.println("JARFILE:" + jarFile);
+            //logger.info("JARFILE:" + jarFile);
             //File file = new File(jarFile.substring(5, (jarFile.length() )));
             File file = new File(jarFile);
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -1247,7 +1247,7 @@ public class GlobalExecutor implements Executor {
         catch(Exception ex)
         {
             String msg = "Unable to determine Plugin Version " + ex.toString();
-            System.err.println(msg);
+            logger.error(msg);
             version = "Unable to determine Version";
         }
         return version;
@@ -1280,7 +1280,7 @@ public class GlobalExecutor implements Executor {
         }
         catch (IOException e)
         {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         }
         return phm;
     }
@@ -1299,25 +1299,25 @@ public class GlobalExecutor implements Executor {
                     Attributes mainAttribs = mf.getMainAttributes();
                     version = mainAttribs.getValue("Implementation-Version");
                 } catch (Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("Exception: " + ex.getMessage());
                     String msg = "Unable to determine Plugin Version " + ex.toString();
-                    System.err.println(msg);
+                    logger.error(msg);
                     version = "Unable to determine Version";
                 }
                 if (fis != null) {
                     fis.close();
                 }
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.error("Exception: " + ex.getMessage());
                 String msg = "Unable to determine Plugin Version " + ex.toString();
-                System.err.println(msg);
+                logger.error(msg);
                 version = "Unable to determine Version";
             }
         }
         catch(Exception ex)
         {
             String msg = "Unable to determine Plugin Version " + ex.toString();
-            System.err.println(msg);
+            logger.error(msg);
             version = "Unable to determine Version";
         }
         return version;
@@ -1373,7 +1373,7 @@ public class GlobalExecutor implements Executor {
 
         Process p;
         try {
-            p = Runtime.getRuntime().exec(command);
+            p = Runtime.getRuntime().exec(command.split(" "));
             p.waitFor();
             BufferedReader reader =
                     new BufferedReader(new InputStreamReader(p.getInputStream()));
@@ -1387,7 +1387,7 @@ public class GlobalExecutor implements Executor {
                 reader.close();
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Exception: " + e.getMessage());
         }
 
         return output.toString();

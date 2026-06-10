@@ -123,7 +123,7 @@ public class ActiveBrokerManager implements Runnable  {
 				logger.error("Run {}", ex.getMessage());
 				StringWriter sw = new StringWriter();
 				PrintWriter pw = new PrintWriter(sw);
-				ex.printStackTrace(pw);
+				logger.error("Exception: " + ex.getMessage());
 				logger.error(sw.toString());
 			}
 		}

@@ -69,7 +69,7 @@ public class DBManager implements Runnable  {
 				}
 			} catch (Exception ex) {
 				logger.error("Run {}", ex.getMessage());
-                ex.printStackTrace();
+                logger.error("Exception: " + ex.getMessage());
 			}
 		}
 		//timer.cancel();

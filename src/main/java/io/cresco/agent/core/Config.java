@@ -82,7 +82,7 @@ public class Config {
             SubnodeConfiguration sObj = iniConfObj.getSection(section);
             return_param = Integer.parseInt(sObj.getString(param));
         } catch (Exception ex) {
-            System.out.println("AgentEngine : Config : Error : " + ex.toString());
+            // System.out.println("AgentEngine : Config : Error : " + ex.toString());
         }
         return return_param;
     }
@@ -93,7 +93,7 @@ public class Config {
             SubnodeConfiguration sObj = iniConfObj.getSection(section);
             return_param = sObj.getString(param);
         } catch (Exception ex) {
-            System.out.println("AgentEngine : Config : Error : " + ex.toString());
+            // System.out.println("AgentEngine : Config : Error : " + ex.toString());
         }
         return return_param;
     }

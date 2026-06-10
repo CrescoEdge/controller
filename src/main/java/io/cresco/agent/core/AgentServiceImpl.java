@@ -178,7 +178,7 @@ public class AgentServiceImpl implements AgentService {
             //enableMsg.setParam("location", location);
             configParams.put("location", location);
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             System.exit(0);
         }
         return configParams;
@@ -212,7 +212,7 @@ public class AgentServiceImpl implements AgentService {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             if(logger != null) {
                 logger.error(ex.getMessage());
             }
@@ -293,7 +293,7 @@ public class AgentServiceImpl implements AgentService {
 
 
             } catch(Exception ex) {
-                ex.printStackTrace();
+                logger.error("Exception: " + ex.getMessage());
             }
         }
     }).start();
@@ -345,7 +345,7 @@ public class AgentServiceImpl implements AgentService {
             String jarURLString = new File(AgentServiceImpl.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getPath();
             if(jarURLString.contains("!/")) {
                 jarURLString = "jar:file://" + jarURLString;
-                URL inputURL = new URL(jarURLString);
+                URL inputURL = java.net.URI.create(jarURLString).toURL();
                 JarInputStream jarStream = null;
 
                 try {
@@ -369,7 +369,7 @@ public class AgentServiceImpl implements AgentService {
                     
                     }
                 } catch(Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("Exception: " + ex.getMessage());
                 } finally {
 
                     if(jarStream != null) {
@@ -385,7 +385,7 @@ public class AgentServiceImpl implements AgentService {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
 
         }
         return version;
@@ -405,7 +405,7 @@ public class AgentServiceImpl implements AgentService {
             logger.error(msg.printHeader());
             logger.error(msg.getParams().toString());
 
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
     }
 

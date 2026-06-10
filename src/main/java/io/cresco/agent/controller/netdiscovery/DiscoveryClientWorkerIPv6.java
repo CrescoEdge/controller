@@ -151,17 +151,17 @@ public class DiscoveryClientWorkerIPv6 {
                                 //c = new MulticastSocket(null);
                                 c = new DatagramSocket(null);
                                 //c.setReuseAddress(true);
-                                //System.out.println("prebind1");
+                                //logger.info("prebind1");
                                 String hostAddress = interfaceAddress.getAddress().getHostAddress();
                                 if (hostAddress.contains("%")) {
                                     String[] hostScope = hostAddress.split("%");
                                     hostAddress = hostScope[0];
                                 }
                                 SocketAddress sa = new InetSocketAddress(hostAddress, 0);
-                                //System.out.println("prebind2");
+                                //logger.info("prebind2");
 
                                 c.bind(sa);
-                                //System.out.println("prebind3");
+                                //logger.info("prebind3");
 
                                 //start timer to clost discovery
                                 timer = new Timer();
@@ -228,7 +228,7 @@ public class DiscoveryClientWorkerIPv6 {
                             }
                         } catch (IOException ie) {
                             //eat exception we are closing port
-                            //System.out.println("DiscoveryClientWorkerIPv6 : getDiscoveryMap IO Error : " + ie.getMessage());
+                            //logger.info("DiscoveryClientWorkerIPv6 : getDiscoveryMap IO Error : " + ie.getMessage());
                         } catch (Exception e) {
                             StringWriter errors = new StringWriter();
                             e.printStackTrace(new PrintWriter(errors));

@@ -90,7 +90,7 @@ public class ResourceScheduler implements IncomingResource {
         {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
 
             logger.error("ResourceSchedulerEngine run() inner Error: " + ex.toString());

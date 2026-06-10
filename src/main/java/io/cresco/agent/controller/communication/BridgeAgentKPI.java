@@ -31,7 +31,7 @@ public class BridgeAgentKPI {
 
 
         while (!jmsTopicConnector.isConnected()) {
-            System.out.println("Not connected");
+            // System.out.println("Not connected");
             Thread.sleep(1000);
         }
 

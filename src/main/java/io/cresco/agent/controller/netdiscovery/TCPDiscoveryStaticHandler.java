@@ -84,9 +84,9 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         //ctx.close();
-        //System.out.println("channelInactive Thread" + Thread.currentThread() + " 0");
+        //logger.info("channelInactive Thread" + Thread.currentThread() + " 0");
         //ctx.close();
-        //System.out.println("channelInactive Thread" + Thread.currentThread() + " 1");
+        //logger.info("channelInactive Thread" + Thread.currentThread() + " 1");
         logger.debug("channelInactive Thread" + Thread.currentThread());
     }
 
@@ -95,10 +95,10 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         StringWriter sw = new StringWriter();
         PrintWriter pw = new PrintWriter(sw);
-        cause.printStackTrace(pw);
+        logger.error("Exception: " + cause.getMessage());
 
         logger.debug("Discovery Error " + sw);
-        //cause.printStackTrace();
+        //causlogger.error("Exception: " + e.getMessage());
         ctx.close();
         discoveredList = null;
     }

@@ -92,14 +92,14 @@ public class PollRemovePipeline implements Runnable {
                                 int statusCode = controllerEngine.getGDB().getINodeStatus(gnode.node_id);
                                 if (statusCode != 9) {
                                     if(statusCode == 8) {
-                                        logger.debug("8 PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        logger.debug("8 PollRemovePipeline thread " + Thread.currentThread().threadId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                         pipelineNodes.remove(gnode);
                                     } else if(statusCode > 19) {
                                         errorList.add(gnode);
                                         pipelineNodes.remove(gnode);
-                                        logger.error("19 PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        logger.error("19 PollRemovePipeline thread " + Thread.currentThread().threadId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                     } else {
-                                        logger.error("Other PollRemovePipeline thread " + Thread.currentThread().getId() + " : " + gnode.node_id + " status_code: " + statusCode);
+                                        logger.error("Other PollRemovePipeline thread " + Thread.currentThread().threadId() + " : " + gnode.node_id + " status_code: " + statusCode);
                                         pipelineNodes.remove(gnode);
                                     }
                                 }

@@ -64,7 +64,7 @@ public class PluginNode {
         for (Map.Entry<String, Object> entry : configMap.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
-            System.out.println(key + ":" + value);
+            logger.info(key + ":" + value);
         }
         */
         return strValue;
@@ -111,10 +111,10 @@ public class PluginNode {
         }
         */
 
-        //System.out.println("NAME: " + name);
-        //System.out.println("VERSION: " + version);
-        //System.out.println("JAR PATH: " + jarPath);
-        //System.out.println("MD5: " + MD5);
+        //logger.info("NAME: " + name);
+        //logger.info("VERSION: " + version);
+        //logger.info("JAR PATH: " + jarPath);
+        //logger.info("MD5: " + MD5);
 
         //public void addNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
         //

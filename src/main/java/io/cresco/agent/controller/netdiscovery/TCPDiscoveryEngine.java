@@ -70,6 +70,7 @@ public class TCPDiscoveryEngine implements Runnable {
                     .handler(new LoggingHandler(LogLevel.INFO))
                     .childHandler(new ChannelInitializer<SocketChannel>() {
                         @Override
+                        @SuppressWarnings("deprecation")
                         public void initChannel(SocketChannel ch) {
                             ChannelPipeline p = ch.pipeline();
 

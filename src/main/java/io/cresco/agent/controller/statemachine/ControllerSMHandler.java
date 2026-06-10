@@ -319,7 +319,7 @@ public class ControllerSMHandler {
                 try {
                     Thread.sleep(1000);
                 } catch (Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("Exception: " + ex.getMessage());
                 }
             }
         }
@@ -517,7 +517,7 @@ public class ControllerSMHandler {
 
 
                 default:
-                    //System.out.println("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
+                    //logger.info("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
                     logger.error("UNKNOWN CONFIG MODE " + configMode);
                     break;
             }
@@ -660,7 +660,7 @@ public class ControllerSMHandler {
             logger.error("isAgent Error " + ex.getMessage());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
 
@@ -828,7 +828,7 @@ public class ControllerSMHandler {
             logger.error("connectToGlobal() Error " + ex.getMessage());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
 
@@ -1249,7 +1249,7 @@ public class ControllerSMHandler {
 
             stateIdSubString = iG + iRh + iR + iAh + iA + iS;
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return stateIdSubString;
@@ -1448,7 +1448,7 @@ public class ControllerSMHandler {
 
 
                             } catch (Exception ex) {
-                                ex.printStackTrace();
+                                logger.error("Exception: " + ex.getMessage());
                             }
 
                             break;
@@ -1487,7 +1487,7 @@ public class ControllerSMHandler {
                                 plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
-                                ex.printStackTrace();
+                                logger.error("Exception: " + ex.getMessage());
                             }
 
                             break;
@@ -1579,7 +1579,7 @@ public class ControllerSMHandler {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage());
         }
 
@@ -1662,7 +1662,7 @@ public class ControllerSMHandler {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
             logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
         }
 

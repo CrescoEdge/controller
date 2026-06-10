@@ -49,7 +49,7 @@ public class DiscoveryCrypto {
 
         } catch(Exception ex) {
             logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return encryptedValue;
@@ -79,7 +79,7 @@ public class DiscoveryCrypto {
         }
         catch(Exception ex) {
             logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return decryptedValue;

@@ -71,6 +71,7 @@ public class TCPDiscoveryStatic {
                         .channel(NioSocketChannel.class)
                         .handler(new ChannelInitializer<SocketChannel>() {
                             @Override
+                            @SuppressWarnings("deprecation")
                             public void initChannel(SocketChannel ch) {
                                 ChannelPipeline p = ch.pipeline()
                                         .addFirst(new WriteTimeoutHandler(writeTimeout, TimeUnit.MILLISECONDS))
@@ -96,7 +97,7 @@ public class TCPDiscoveryStatic {
 
                 /*
                 for (Map.Entry<ChannelOption<?>, Object> option : b.register().channel().config().getOptions().entrySet()) {
-                    System.out.println("Option [" + option.getKey().name() + "]: " + option.getValue().toString());
+                    logger.info("Option [" + option.getKey().name() + "]: " + option.getValue().toString());
                 }
                  */
 

@@ -49,7 +49,7 @@ public class PerfControllerMonitor {
             me.shutdown();
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
     }
@@ -70,7 +70,7 @@ public class PerfControllerMonitor {
             logger.error("getResourceInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -137,7 +137,7 @@ public class PerfControllerMonitor {
             logger.error("getRegionResourceInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -182,7 +182,7 @@ public class PerfControllerMonitor {
             logger.error("getAgentResourceInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -238,7 +238,7 @@ public class PerfControllerMonitor {
             }
         } catch (Exception ex) {
             logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return response;
     }

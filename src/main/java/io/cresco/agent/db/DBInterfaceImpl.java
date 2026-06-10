@@ -84,7 +84,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPipelineObj " + ex.getMessage());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return gpay;
@@ -248,7 +248,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex) {
             //logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return nodeStatusMap;
     }
@@ -285,7 +285,7 @@ public class DBInterfaceImpl implements DBInterface {
             //queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress((gson.toJson(queryMap))));
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return queryReturn;
@@ -307,7 +307,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return gpay;
     }
@@ -538,7 +538,7 @@ public class DBInterfaceImpl implements DBInterface {
                             logger.error("getAgentList() Map " + ex.toString());
                             StringWriter sw = new StringWriter();
                             PrintWriter pw = new PrintWriter(sw);
-                            ex.printStackTrace(pw);
+                            logger.error("Exception: " + ex.getMessage());
                             logger.error(sw.toString()); //
                         }
                         regionArray.add(regionMap);
@@ -554,7 +554,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getAgentList() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -636,7 +636,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginListRepoSet() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -656,7 +656,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginListByType() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -680,7 +680,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginListByType() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -742,7 +742,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginListByType() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -786,7 +786,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getRegionList() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -820,7 +820,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginListByType() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -887,7 +887,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getAgentList() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -905,7 +905,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getPluginInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 
@@ -955,7 +955,7 @@ public class DBInterfaceImpl implements DBInterface {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
 
         return isUpdated;
@@ -1065,7 +1065,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getGPipeline() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
 
@@ -1086,7 +1086,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getGPipelineExport() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
 
@@ -1143,7 +1143,7 @@ public class DBInterfaceImpl implements DBInterface {
             logger.error("getIsAssignedInfo() " + ex.toString());
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString()); //
         }
 

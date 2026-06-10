@@ -187,7 +187,7 @@ public class AgentConsumer {
 
 									String filePartMD5Hash = plugin.getMD5(filePart.getAbsolutePath());
 
-									//System.out.println("INCOMING HASH: " + filePartMD5Hash);
+									//logger.info("INCOMING HASH: " + filePartMD5Hash);
 
 									boolean isPartComplete = false;
 
@@ -213,10 +213,10 @@ public class AgentConsumer {
 										for(String filePartName : orderedFilePartNameList) {
 											File partFile = new File(filePath.toAbsolutePath().toString(), filePartName);
 											if(partFile.exists()) {
-												//System.out.println("File Part : " + partFile.getName());
+												//logger.info("File Part : " + partFile.getName());
 												orderedFilePartList.add(partFile);
 											} else {
-												//System.out.println("File Part : " + partFile.getName() + " DOES NOT EXIST");
+												//logger.info("File Part : " + partFile.getName() + " DOES NOT EXIST");
 											}
 										}
 
@@ -225,10 +225,10 @@ public class AgentConsumer {
 
 											String localCombinedFilePath = combinedFile.getAbsolutePath();
 											String localCombinedFileHash = plugin.getMD5(localCombinedFilePath);
-											//System.out.println("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
+											//logger.info("File: " + localCombinedFileHash + " original_hash:" + combinedFileHash + " local_hash:" + localCombinedFileHash);
 
 											if(combinedFileHash.equals(localCombinedFileHash)) {
-												//System.out.println("WE HAVE A FILE!!! " + localCombinedFilePath);
+												//logger.info("WE HAVE A FILE!!! " + localCombinedFilePath);
 
 												MsgEvent me = null;
 												boolean isGroupComplete = false;
@@ -271,7 +271,7 @@ public class AgentConsumer {
 
 										} else {
 											logger.error("ERROR COMBINING FILE : " + combinedFileHash);
-											//System.out.println("ERROR COMBINING FILE : " + combinedFileHash);
+											//logger.info("ERROR COMBINING FILE : " + combinedFileHash);
 										}
 
 									}
@@ -295,7 +295,7 @@ public class AgentConsumer {
 					logger.error("onMessage Error : " + ex.getMessage());
 					StringWriter sw = new StringWriter();
 					PrintWriter pw = new PrintWriter(sw);
-					ex.printStackTrace(pw);
+					logger.error("Exception: " + ex.getMessage());
 					logger.error("Stack: " + sw);
 				}
 			}
@@ -328,7 +328,7 @@ public class AgentConsumer {
 			logger.error("Failure to Register File Message");
 			StringWriter sw = new StringWriter();
 			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
+			logger.error("Exception: " + ex.getMessage());
 			logger.error("Stack: " + sw);
 		}
 		return isRegistered;
@@ -341,7 +341,7 @@ public class AgentConsumer {
 			logger.error("Consumer Shutdown Error: " + ex.getMessage());
 			StringWriter sw = new StringWriter();
 			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
+			logger.error("Exception: " + ex.getMessage());
 			logger.error("Stack: " + sw);
 		}
 	}

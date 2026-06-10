@@ -108,7 +108,7 @@ public class ControllerStatePersistance {
             logger.error("preInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -138,7 +138,7 @@ public class ControllerStatePersistance {
             logger.error("standAloneInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -169,7 +169,7 @@ public class ControllerStatePersistance {
             logger.error("standAloneSuccess()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -202,7 +202,7 @@ public class ControllerStatePersistance {
             logger.error("agentInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -238,7 +238,7 @@ public class ControllerStatePersistance {
             logger.error("agentSuccess()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -271,7 +271,7 @@ public class ControllerStatePersistance {
             logger.error("regionInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -304,7 +304,7 @@ public class ControllerStatePersistance {
             logger.error("regionInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -341,7 +341,7 @@ public class ControllerStatePersistance {
             logger.error("regionInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -376,7 +376,7 @@ public class ControllerStatePersistance {
             logger.error("regionInit()");
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             logger.error(sw.toString());
         }
         return returnState;
@@ -409,7 +409,7 @@ public class ControllerStatePersistance {
                             }
                         } catch(Exception ex) {
 
-                            ex.printStackTrace();
+                            logger.error("Exception: " + ex.getMessage());
                         }
                     }
                 };
@@ -419,11 +419,11 @@ public class ControllerStatePersistance {
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.error("Exception: " + e.getMessage());
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return lid;
     }
@@ -447,7 +447,7 @@ public class ControllerStatePersistance {
                             }
                         } catch(Exception ex) {
 
-                            ex.printStackTrace();
+                            logger.error("Exception: " + ex.getMessage());
                         }
                     }
                 };
@@ -457,11 +457,11 @@ public class ControllerStatePersistance {
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.error("Exception: " + e.getMessage());
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("Exception: " + ex.getMessage());
         }
         return lid;
     }

@@ -215,7 +215,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -248,7 +248,7 @@ public class AgentExecutor implements Executor {
                         } catch (Exception e) {
                             StringWriter sw = new StringWriter();
                             PrintWriter pw = new PrintWriter(sw);
-                            e.printStackTrace(pw);
+                            logger.error("Exception: " + e.getMessage());
                             String sStackTrace = sw.toString(); // stack trace as a string
                             logger.error(sStackTrace);
 
@@ -273,7 +273,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -300,7 +300,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -339,7 +339,7 @@ public class AgentExecutor implements Executor {
         } catch (Exception ex) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -363,7 +363,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -385,7 +385,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -429,7 +429,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -451,7 +451,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -473,7 +473,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -495,7 +495,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -521,7 +521,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -574,7 +574,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -641,7 +641,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -737,7 +737,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -780,7 +780,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 
@@ -818,7 +818,7 @@ public class AgentExecutor implements Executor {
 
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
+            logger.error("Exception: " + ex.getMessage());
             String sStackTrace = sw.toString(); // stack trace as a string
             logger.error(sStackTrace);
 

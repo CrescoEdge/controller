@@ -100,7 +100,7 @@ public class DBEngine {
             //org.apache.derby.jdbc.EmbeddedDriver embeddedDriver = new EmbeddedDriver();
             //logger.info("Init DB 0.6 Class " + embeddedDriver.getClass().toString());
 
-            Class.forName(dbDriver).newInstance();
+            Class.forName(dbDriver).getDeclaredConstructor().newInstance();
 
             if ((dbUserName != null) && (dbPassword != null)) {
                 ds = setupDataSource(dbConnectionString, dbUserName, dbPassword);

@@ -111,7 +111,7 @@ public class DataPlaneLogger {
                     }
                 }
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.error("Exception: " + ex.getMessage());
                 logger.error("logToDataPlane() Error : " + ex.getMessage());
             }
         }
@@ -229,7 +229,7 @@ public class DataPlaneLogger {
                 logger.error("setLogLevel(): " + ex.getMessage());
                 StringWriter sw = new StringWriter();
                 PrintWriter pw = new PrintWriter(sw);
-                ex.printStackTrace(pw);
+                logger.error("Exception: " + ex.getMessage());
                 String sStackTrace = sw.toString(); // stack trace as a string
                 logger.error(sStackTrace);
             }
