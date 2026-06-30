@@ -87,4 +87,24 @@ public class MockServiceReference<S> implements ServiceReference<S>
         return 0;
     }
 
+    // Added in OSGi R7 (framework 1.9)
+    @Override
+    public java.util.Dictionary<String,Object> getProperties()
+    {
+        java.util.Hashtable<String,Object> dict = new java.util.Hashtable<>();
+        if (properties != null) {
+            for (Map.Entry<String,String> e : properties.entrySet()) {
+                dict.put(e.getKey(), e.getValue());
+            }
+        }
+        return dict;
+    }
+
+    // Added in OSGi R8 (framework 1.10)
+    @Override
+    public <A> A adapt( Class<A> type )
+    {
+        return null;
+    }
+
 }

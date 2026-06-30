@@ -81,10 +81,10 @@
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.osgi/osgi.core -->
-        <!-- OSGi API versions managed by cresco-parent; build-time only -> provided -->
+        <!-- OSGi R8 API versions managed by cresco-parent; build-time only -> provided -->
         <dependency>
             <groupId>org.osgi</groupId>
-            <artifactId>org.osgi.core</artifactId>
+            <artifactId>osgi.core</artifactId>
             <scope>provided</scope>
         </dependency>
 
