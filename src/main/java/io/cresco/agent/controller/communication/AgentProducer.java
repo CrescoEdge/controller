@@ -11,6 +11,8 @@ import java.io.StringWriter;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit; // Import TimeUnit
 
 public class AgentProducer {
@@ -25,6 +27,13 @@ public class AgentProducer {
     private String baseURI; // Base URI for creating workers
     private Timer timer; // Timer for cleaning up inactive workers
     private ActiveClient activeClient; // Reference to ActiveClient for connection status checks
+    // Dedicated, isolated sender for LIVENESS + CONTROL so telemetry/bulk floods can never starve
+    // agent-contact traffic (see MsgQoS / the control-plane-priority fix).
+    private ControlPlaneSender controlPlane;
+    // Bounded pool for BULK file transfers -- replaces an unbounded thread-per-message which, under
+    // load, exploded threads and starved the JVM (contributing to agent drops). CallerRuns gives
+    // natural backpressure on the (lowest-priority) bulk sender when the pool is saturated.
+    private ThreadPoolExecutor dataExecutor;
 
     private final int MAX_SEND_RETRIES_CONFIG; // Renamed to avoid conflict if attempt becomes effectively final
     private final long INITIAL_RETRY_DELAY_MS;
@@ -80,6 +89,16 @@ public class AgentProducer {
 
         try {
             producerWorkers = new ConcurrentHashMap<>();
+            controlPlane = new ControlPlaneSender(controllerEngine, URI);
+
+            int dataThreads = plugin.getConfig().getIntegerParam("agentproducer_data_threads", 8);
+            int dataQueueCap = plugin.getConfig().getIntegerParam("agentproducer_data_queue", 1000);
+            dataExecutor = new ThreadPoolExecutor(
+                    dataThreads, dataThreads, 60L, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(dataQueueCap),
+                    r -> { Thread t = new Thread(r, "cresco-dataproducer"); t.setDaemon(true); return t; },
+                    new ThreadPoolExecutor.CallerRunsPolicy());
+            dataExecutor.allowCoreThreadTimeOut(true);
 
             timer = new Timer("AgentProducerCleanupTimer", true); // Daemon timer
             timer.scheduleAtFixedRate(new ClearProducerTask(), WORKER_CLEANUP_DELAY_MS, WORKER_CLEANUP_INTERVAL_MS);
@@ -95,6 +114,12 @@ public class AgentProducer {
         if (timer != null) {
             timer.cancel();
             logger.debug("Cleanup timer cancelled.");
+        }
+        if (controlPlane != null) {
+            controlPlane.shutdown();
+        }
+        if (dataExecutor != null) {
+            dataExecutor.shutdown();
         }
 
         List<String> keys = new ArrayList<>(producerWorkers.keySet()); // Avoid CME
@@ -143,6 +168,20 @@ public class AgentProducer {
             return false; // Cannot proceed without a destination
         }
 
+        // QoS: liveness + control ride a dedicated, isolated control-plane sender so a flood of
+        // telemetry or bulk can never serialize behind, block, or evict agent-contact traffic.
+        // File payloads always take the bulk data path (handled in the worker loop below).
+        if (!sm.hasFiles()) {
+            MsgQoS.Tier tier = MsgQoS.classify(sm);
+            if (tier.isControlPlane()) {
+                boolean ok = controlPlane.send(dstPath, sm, tier);
+                if (!ok) {
+                    logger.error("Control-plane send failed to [{}] for {} message.", dstPath, sm.getMsgType());
+                }
+                return ok;
+            }
+        }
+
         for (int currentAttempt = 1; currentAttempt <= MAX_SEND_RETRIES_CONFIG; currentAttempt++) {
             ActiveProducerWorker apw = null;
             // Make attempt effectively final for use in lambda
@@ -185,7 +224,7 @@ public class AgentProducer {
                     apw.isActive = true;
 
                     if (sm.hasFiles()) {
-                        new Thread(new ActiveProducerWorkerData(controllerEngine, apw.getTXQueueName(), apw.getConnectionURI(), sm)).start();
+                        dataExecutor.execute(new ActiveProducerWorkerData(controllerEngine, apw.getTXQueueName(), apw.getConnectionURI(), sm));
                         isSent = true;
                         logger.debug("File message for [{}] queued for async sending (Attempt {}/{})", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
                         break;

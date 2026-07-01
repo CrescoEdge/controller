@@ -12,6 +12,10 @@ import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.DiscoveryNetworkConnector;
 import org.apache.activemq.network.NetworkConnector;
 import org.apache.activemq.util.ServiceStopper;
+import org.apache.activemq.usage.MemoryUsage;
+import org.apache.activemq.usage.StoreUsage;
+import org.apache.activemq.usage.SystemUsage;
+import org.apache.activemq.usage.TempUsage;
 import org.apache.commons.io.FileUtils;
 
 import javax.net.ssl.SSLContext;
@@ -92,7 +96,12 @@ public class ActiveBroker {
 				entry.setQueue(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
-				entry.setProducerFlowControl(true);
+				// QoS: producer flow control OFF so a backed-up destination never BLOCKS the producer
+				// (blocking would stall the liveness ping queued behind bulk, and priority does NOT
+				// bypass producer-side flow control). Priority now governs dispatch order; the
+				// pending-message-limit strategy below bounds NON-persistent memory (telemetry);
+				// persistent traffic (liveness/control/bulk) pages to the store.
+				entry.setProducerFlowControl(false);
                 entry.setUseCache(false);
                 entry.setPrioritizedMessages(true);
                 //entry.setExpireMessagesPeriod(0);
@@ -111,7 +120,8 @@ public class ActiveBroker {
                 entry.setTopic(">");
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
-				entry.setProducerFlowControl(true);
+				// QoS: see queue note above -- flow control OFF, priority governs, non-persistent bounded by eviction.
+				entry.setProducerFlowControl(false);
                 entry.setUseCache(false);
                 entry.setPrioritizedMessages(true);
                 //entry.setExpireMessagesPeriod(0);
@@ -204,6 +214,21 @@ public class ActiveBroker {
 				broker.setBrokerName(brokerName);
 				broker.setSchedulePeriodForDestinationPurge(2500);
 				broker.setDestinationPolicy(map);
+
+				// Generous broker-wide usage so aggregate pressure from many agents/telemetry never
+				// starves the control plane. With producer flow control OFF, these are soft ceilings:
+				// non-persistent spills via the pending-message-limit eviction, persistent pages to store.
+				SystemUsage systemUsage = new SystemUsage();
+				MemoryUsage memoryUsage = new MemoryUsage();
+				memoryUsage.setLimit(plugin.getConfig().getLongParam("broker_memory_limit", 256L * 1024 * 1024)); // 256 MB
+				StoreUsage storeUsage = new StoreUsage();
+				storeUsage.setLimit(plugin.getConfig().getLongParam("broker_store_limit", 8L * 1024 * 1024 * 1024)); // 8 GB
+				TempUsage tempUsage = new TempUsage();
+				tempUsage.setLimit(plugin.getConfig().getLongParam("broker_temp_limit", 4L * 1024 * 1024 * 1024)); // 4 GB
+				systemUsage.setMemoryUsage(memoryUsage);
+				systemUsage.setStoreUsage(storeUsage);
+				systemUsage.setTempUsage(tempUsage);
+				broker.setSystemUsage(systemUsage);
 				//broker.setManagementContext(mc);
 				broker.setSslContext(sslContextBroker);
 

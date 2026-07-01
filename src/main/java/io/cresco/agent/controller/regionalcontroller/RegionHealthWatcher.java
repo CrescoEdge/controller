@@ -34,6 +34,14 @@ public class RegionHealthWatcher {
     private long pingInterval; // Interval for active ping checks to Global
     private long pingTimeout; // Timeout for waiting for ping response from Global
 
+    // Liveness robustness: a single missed ping must NOT drop the global. Retry within a tick, and
+    // only declare the global lost after several CONSECUTIVE failed ticks. Guards against transient
+    // GC pauses / load bursts that briefly delay a pong.
+    private int pingRetries;      // extra attempts within one tick before counting a miss
+    private int pingMaxFailures;  // consecutive failed ticks required before globalControllerLost
+    private final java.util.concurrent.atomic.AtomicInteger consecutivePingFailures =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+
     private Set<String> registeredPeers = new HashSet<>(); // Add this field
 
 
@@ -51,6 +59,8 @@ public class RegionHealthWatcher {
         // Use separate config params for ping interval and timeout, or derive from wdTimer
         this.pingInterval = plugin.getConfig().getLongParam("region_ping_interval", watchDogInterval); // Ping Global as often as agent check by default
         this.pingTimeout = plugin.getConfig().getLongParam("region_ping_timeout", 5000L); // Default 5 second timeout for ping response from Global
+        this.pingRetries = plugin.getConfig().getIntegerParam("region_ping_retries", 2); // extra attempts within a tick
+        this.pingMaxFailures = plugin.getConfig().getIntegerParam("region_ping_max_failures", 3); // consecutive failed ticks before declaring lost
 
         logger.debug("RegionHealthWatcher Initializing");
         communicationsHealthTimer = new Timer("RegionCommHealthTimer", true); // Daemon thread
@@ -385,23 +395,43 @@ public class RegionHealthWatcher {
                     pingRequest.setParam("action", "ping");
                     pingRequest.setParam("desc", "region-ping-request"); // Identify the ping
 
-                    // Send RPC and wait for response with timeout
-                    MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
+                    // Retry within this tick before counting a miss; a single delayed pong (GC pause,
+                    // load burst) must never drop the global.
+                    MsgEvent pingResponse = null;
+                    for (int attempt = 0; attempt <= pingRetries && pingResponse == null; attempt++) {
+                        if (attempt > 0) {
+                            // small jittered backoff between in-tick retries
+                            try { Thread.sleep(150L + (long) (Math.random() * 150L)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                        }
+                        pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
+                    }
 
                     if (pingResponse == null) {
-                        // Timeout or other RPC failure
-                        logger.error("ActivePingTask: No PONG received from Global Controller [{}] within timeout ({}ms). Triggering recovery.",
-                                globalControllerPath, pingTimeout);
-                        controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask timeout to Global.");
+                        int fails = consecutivePingFailures.incrementAndGet();
+                        if (fails >= pingMaxFailures) {
+                            logger.error("ActivePingTask: No PONG from Global [{}] after {} consecutive failed ticks ({} in-tick attempts, {}ms each). Triggering recovery.",
+                                    globalControllerPath, fails, pingRetries + 1, pingTimeout);
+                            consecutivePingFailures.set(0);
+                            controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask " + fails + " consecutive ping failures to Global.");
+                        } else {
+                            logger.warn("ActivePingTask: No PONG from Global [{}] (consecutive failure {}/{}). Not dropping yet.",
+                                    globalControllerPath, fails, pingMaxFailures);
+                        }
                     } else {
-                        // We got a response, connection seems okay at application level
-                        logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
-                        // Optional: Log latency
+                        // Healthy pong -> reset the consecutive-failure counter.
+                        if (consecutivePingFailures.getAndSet(0) > 0) {
+                            logger.info("ActivePingTask: PONG from Global [{}] recovered after transient failures.", globalControllerPath);
+                        } else {
+                            logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
+                        }
                     }
                 } catch (Exception ex) {
-                    logger.error("ActivePingTask (Global) Error: {}", ex.getMessage(), ex);
-                    // Assume failure and trigger recovery on exception
-                    controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask exception to Global: " + ex.getMessage());
+                    int fails = consecutivePingFailures.incrementAndGet();
+                    logger.error("ActivePingTask (Global) Error (consecutive failure {}/{}): {}", fails, pingMaxFailures, ex.getMessage(), ex);
+                    if (fails >= pingMaxFailures) {
+                        consecutivePingFailures.set(0);
+                        controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask " + fails + " consecutive exceptions to Global: " + ex.getMessage());
+                    }
                 } finally {
                     activePingTimerActive.set(false); // Release lock
                 }

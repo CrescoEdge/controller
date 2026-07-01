@@ -3,6 +3,7 @@ package io.cresco.agent.data;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.communication.MsgQoS;
 import io.cresco.library.data.DataPlaneService;
 import io.cresco.library.data.FileObject;
 import io.cresco.library.data.TopicType;
@@ -412,21 +413,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 			Low (JMSPriority > 0 && < 4)
 			 */
 
-            String type = msgEventType.toString();
-
-            switch (type) {
-                case "WATCHDOG":
-                    priority = 9;
-                    deliveryMode = DeliveryMode.PERSISTENT;
-                    break;
-                case "CONFIG":
-                    priority = 8;
-                    deliveryMode = DeliveryMode.PERSISTENT;
-                    break;
-                case "EXEC":
-                    priority = 7;
-                    deliveryMode = DeliveryMode.PERSISTENT;
-                    break;
+            // QoS: the dataplane rides the same priority hierarchy as the MsgEvent fabric
+            // (LIVENESS > CONTROL > TELEMETRY > BULK). Control-plane messages are forced to their
+            // tier (high priority + persistent); the bulk data stream keeps the caller-supplied
+            // low priority + non-persistent so it can never starve control. The broker topic policy
+            // (prioritizedMessages + producer-flow-control OFF) makes this effective without blocking.
+            MsgQoS.Tier tier = MsgQoS.classify(msgEventType);
+            if (tier.isControlPlane()) {
+                priority = tier.priority;
+                deliveryMode = tier.deliveryMode;
             }
 
             while(!controllerEngine.cstate.isActive()) {
