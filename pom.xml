@@ -310,10 +310,14 @@
         </dependency>
         -->
 
+        <!-- provided: the SLF4J binding at runtime comes from Pax Logging (framework), not this
+             bundle. Compile-only here (was compile scope, which embedded a second SLF4J binding
+             into the controller and competed with Pax Logging). -->
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-slf4j-impl</artifactId>
             <version>2.23.1</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/com.google.code.gson/gson -->

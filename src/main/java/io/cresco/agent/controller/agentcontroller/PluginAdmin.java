@@ -228,11 +228,11 @@ public class PluginAdmin {
         try {
 
 
-            //set log level for file
+            //set log level for file (Pax Logging 2.x / log4j2 key)
             Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
-            log4jProps.put( "log4j.rootLogger", level.name().toUpperCase() + ", CONSOLE, FILE" );
+            log4jProps.put( "log4j2.rootLogger.level", level.name().toUpperCase() );
 
             logConfig.updateIfDifferent(log4jProps);
             isSet = true;
@@ -255,11 +255,13 @@ public class PluginAdmin {
         try {
 
 
-            //set log level for file
+            //set log level for file (Pax Logging 2.x / log4j2 logger entry)
             Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
-            log4jProps.put("log4j.logger." + logId, level.name().toUpperCase());
+            String id = paxLoggerId(logId);
+            log4jProps.put("log4j2.logger." + id + ".name", logId);
+            log4jProps.put("log4j2.logger." + id + ".level", level.name().toUpperCase());
 
             logConfig.updateIfDifferent(log4jProps);
             isSet = true;
@@ -291,10 +293,18 @@ public class PluginAdmin {
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
 
+            String id = paxLoggerId(logId);
             List<String> keys = Collections.list(log4jProps.keys());
-            String canidateKey = "log4j.logger." + logId;
-            if(keys.contains(canidateKey)) {
-                log4jProps.remove(canidateKey);
+            boolean changed = false;
+            if (keys.contains("log4j2.logger." + id + ".name")) {
+                log4jProps.remove("log4j2.logger." + id + ".name");
+                changed = true;
+            }
+            if (keys.contains("log4j2.logger." + id + ".level")) {
+                log4jProps.remove("log4j2.logger." + id + ".level");
+                changed = true;
+            }
+            if (changed) {
                 logConfig.updateIfDifferent(log4jProps);
             }
 
@@ -318,13 +328,44 @@ public class PluginAdmin {
         try {
             for (Map.Entry<String, String> entry : logMap.entrySet()) {
                 String logId = entry.getKey();
-                CLogger.Level logLevel = CLogger.Level.valueOf(entry.getValue());
-                setLogLevel(logId,logLevel);
+                CLogger.Level logLevel = toCLoggerLevel(entry.getValue());
+                if (logLevel != null) {
+                    setLogLevel(logId, logLevel);
+                }
             }
         } catch (Exception ex) {
             logger.error(ex.getMessage());
         }
 
+    }
+
+    /** Sanitize a logger name into a valid log4j2 property-key id segment (no dots/colons). */
+    private static String paxLoggerId(String logId) {
+        return logId.replaceAll("[^a-zA-Z0-9]", "_");
+    }
+
+    /**
+     * Map a level string to a CLogger.Level, tolerant of case and of log4j-style names
+     * (so getLogLevels() output can be fed straight back into setLogLevels()).
+     */
+    private static CLogger.Level toCLoggerLevel(String s) {
+        if (s == null) {
+            return null;
+        }
+        for (CLogger.Level l : CLogger.Level.values()) {
+            if (l.name().equalsIgnoreCase(s)) {
+                return l;
+            }
+        }
+        switch (s.trim().toUpperCase()) {
+            case "OFF":
+            case "FATAL":
+                return CLogger.Level.None;
+            case "ALL":
+                return CLogger.Level.Trace;
+            default:
+                return CLogger.Level.Info;
+        }
     }
 
     public Map<String,String> getLogLevels() {
@@ -338,13 +379,20 @@ public class PluginAdmin {
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
 
-            Enumeration<String> e = log4jProps.keys();
-            while(e.hasMoreElements()) {
-                String logId = e.nextElement();
-                String level = (String)log4jProps.get(logId);
-
-                System.out.println(logId.replace("log4j.logger.","") + ": " + level);
-                logMap.put(logId.replace("log4j.logger.",""),level);
+            // log4j2 logger entries are a pair: log4j2.logger.<id>.name and log4j2.logger.<id>.level
+            if (log4jProps != null) {
+                Enumeration<String> e = log4jProps.keys();
+                while (e.hasMoreElements()) {
+                    String key = e.nextElement();
+                    if (key.startsWith("log4j2.logger.") && key.endsWith(".name")) {
+                        String id = key.substring("log4j2.logger.".length(), key.length() - ".name".length());
+                        String name = (String) log4jProps.get(key);
+                        Object level = log4jProps.get("log4j2.logger." + id + ".level");
+                        if (name != null && level != null) {
+                            logMap.put(name, level.toString());
+                        }
+                    }
+                }
             }
 
         } catch (Exception ex) {
