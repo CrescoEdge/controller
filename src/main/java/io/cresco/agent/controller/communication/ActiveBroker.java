@@ -11,6 +11,7 @@ import org.apache.activemq.broker.util.LoggingBrokerPlugin;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.network.DiscoveryNetworkConnector;
 import org.apache.activemq.network.NetworkConnector;
+import org.apache.activemq.store.kahadb.KahaDBPersistenceAdapter;
 import org.apache.activemq.util.ServiceStopper;
 import org.apache.activemq.usage.MemoryUsage;
 import org.apache.activemq.usage.StoreUsage;
@@ -91,6 +92,9 @@ public class ActiveBroker {
 		        entry.setGcInactiveDestinations(true);
 		        entry.setInactiveTimeoutBeforeGC(15000);
                 entry.setMemoryLimit(64 * 1024 * 1024); // 64 MB memory limit per destination
+                // Dispatch cache: keeps recent messages in memory for fast dispatch instead of always
+                // reading from the store. Default ON (throughput); bounded by the memory limit + eviction.
+                boolean useCache = plugin.getConfig().getBooleanParam("activemq_use_cache", true);
 
                 // Queue
 				entry.setQueue(">");
@@ -102,7 +106,7 @@ public class ActiveBroker {
 				// pending-message-limit strategy below bounds NON-persistent memory (telemetry);
 				// persistent traffic (liveness/control/bulk) pages to the store.
 				entry.setProducerFlowControl(false);
-                entry.setUseCache(false);
+                entry.setUseCache(useCache);
                 entry.setPrioritizedMessages(true);
                 //entry.setExpireMessagesPeriod(0);
 
@@ -122,7 +126,7 @@ public class ActiveBroker {
 				entry.setPrioritizedMessages(true);
 				// QoS: see queue note above -- flow control OFF, priority governs, non-persistent bounded by eviction.
 				entry.setProducerFlowControl(false);
-                entry.setUseCache(false);
+                entry.setUseCache(useCache);
                 entry.setPrioritizedMessages(true);
                 //entry.setExpireMessagesPeriod(0);
 
@@ -215,6 +219,20 @@ public class ActiveBroker {
 				broker.setSchedulePeriodForDestinationPurge(2500);
 				broker.setDestinationPolicy(map);
 
+				// KahaDB with CONFIGURABLE journal disk syncs. Cresco uses persistence as a flow-control
+				// mechanism, not for crash durability -- so disk syncs default OFF, removing the per-write
+				// fsync latency that was the persistent-bulk throughput bottleneck (~50x on 256KB bulk in
+				// broker-bench). Set activemq_journal_disk_syncs=true to restore fsync-per-write durability.
+				KahaDBPersistenceAdapter kahaDB = new KahaDBPersistenceAdapter();
+				String amqDataPrefix = (cresco_data_location != null ? cresco_data_location : "cresco-data");
+				kahaDB.setDirectory(Paths.get(amqDataPrefix, "activemq-data", "kahadb").toFile());
+				kahaDB.setEnableJournalDiskSyncs(plugin.getConfig().getBooleanParam("activemq_journal_disk_syncs", false));
+				broker.setPersistenceAdapter(kahaDB);
+
+				// Scaling: default task runner uses a THREAD PER DESTINATION -> thread blowup at large
+				// agent counts. false = shared pool. Configurable in case a deployment prefers dedicated.
+				broker.setDedicatedTaskRunner(plugin.getConfig().getBooleanParam("activemq_dedicated_task_runner", false));
+
 				// Generous broker-wide usage so aggregate pressure from many agents/telemetry never
 				// starves the control plane. With producer flow control OFF, these are soft ceilings:
 				// non-persistent spills via the pending-message-limit eviction, persistent pages to store.
@@ -281,11 +299,19 @@ public class ActiveBroker {
 					connector.setUpdateClusterClients(true);
 					connector.setUpdateClusterClientsOnRemove(true);
 
+					// Throughput: default TCP socket buffers (~64KB) throttle large inter-node binary
+					// (measured 44 -> 1300+ MB/s in broker-bench). Match the client's large buffers.
+					// This is a SPEED knob, not backpressure -- TCP window + prefetch + usage limits still
+					// bound a fast producer to a slow consumer. Configurable for slow-edge deployments.
+					String txOpts = "?daemon=true"
+							+ "&socketBufferSize=" + plugin.getConfig().getIntegerParam("activemq_socket_buffer_size", 2 * 1024 * 1024)
+							+ "&wireFormat.maxFrameSize=" + plugin.getConfig().getLongParam("activemq_max_frame_size", 128L * 1024 * 1024);
+
 					if (plugin.isIPv6())
-						connector.setUri(new URI(transport + "://[::]:" + brokerPort + "?daemon=true"));
+						connector.setUri(new URI(transport + "://[::]:" + brokerPort + txOpts));
 
 					else
-						connector.setUri(new URI(transport + "://0.0.0.0:" + brokerPort + "?daemon=true"));
+						connector.setUri(new URI(transport + "://0.0.0.0:" + brokerPort + txOpts));
 
 					broker.addConnector(connector);
 
