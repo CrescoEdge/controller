@@ -15,7 +15,7 @@
 
     <properties>
         <!-- jdk, encoding, plugin & gson versions inherited from cresco-parent -->
-        <activemq.version>6.1.4</activemq.version>
+        <activemq.version>6.2.7</activemq.version>
         <netty.version>4.1.116.Final</netty.version>
         <mina.version>2.2.4</mina.version>
         <guava.version>33.4.0-jre</guava.version>
