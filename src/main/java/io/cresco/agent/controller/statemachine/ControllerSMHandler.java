@@ -319,7 +319,7 @@ public class ControllerSMHandler {
                 try {
                     Thread.sleep(1000);
                 } catch (Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("stopGlobal DB Manager shutdown wait ", ex);
                 }
             }
         }
@@ -657,11 +657,7 @@ public class ControllerSMHandler {
 
 
         } catch (Exception ex) {
-            logger.error("isAgent Error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("isAgent Error " + ex.getMessage(), ex);
         }
 
         return isInit;
@@ -825,11 +821,7 @@ public class ControllerSMHandler {
 
         }
         catch(Exception ex) {
-            logger.error("connectToGlobal() Error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("connectToGlobal() Error " + ex.getMessage(), ex);
         }
 
         return isInit;
@@ -910,11 +902,7 @@ public class ControllerSMHandler {
             isStarted = true;
         }
         catch (Exception ex) {
-            logger.error("startGlobalSchedulers() " + ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
-
+            logger.error("startGlobalSchedulers() " + ex.getMessage(), ex);
         }
         return isStarted;
     }
@@ -952,10 +940,7 @@ public class ControllerSMHandler {
             }
 
         } catch (Exception ex) {
-            logger.error("exchangeKeyWithBroker() " + ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
+            logger.error("exchangeKeyWithBroker() " + ex.getMessage(), ex);
         }
         return discoveryNode;
     }
@@ -998,10 +983,7 @@ public class ControllerSMHandler {
                     consumerAgentConnected = true;
                     logger.info("Agent ConsumerThread Started..");
                 } catch (Exception ex) {
-                    logger.error("Agent ConsumerThread " + ex.getMessage());
-                    StringWriter errors = new StringWriter();
-                    ex.printStackTrace(new PrintWriter(errors));
-                    logger.error(errors.toString());
+                    logger.error("Agent ConsumerThread " + ex.getMessage(), ex);
                 }
                 consumerAgentConnectCount++;
             }
@@ -1249,7 +1231,7 @@ public class ControllerSMHandler {
 
             stateIdSubString = iG + iRh + iR + iAh + iA + iS;
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("getConfigModeString() ", ex);
         }
 
         return stateIdSubString;
@@ -1448,7 +1430,7 @@ public class ControllerSMHandler {
 
 
                             } catch (Exception ex) {
-                                ex.printStackTrace();
+                                logger.error("stateUpdateTask() AGENT ", ex);
                             }
 
                             break;
@@ -1487,7 +1469,7 @@ public class ControllerSMHandler {
                                 plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
 
                             } catch (Exception ex) {
-                                ex.printStackTrace();
+                                logger.error("stateUpdateTask() REGION_GLOBAL ", ex);
                             }
 
                             break;
@@ -1579,8 +1561,7 @@ public class ControllerSMHandler {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage());
+            logger.error("Exception during Agent: " + localRegion + " unregistration with Global: " + globalRegion + "! " + ex.getMessage(), ex);
         }
 
         return isRegistered;
@@ -1662,8 +1643,7 @@ public class ControllerSMHandler {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage());
+            logger.error("Exception during Agent: " + localAgent + " registration with Region: " + localRegion + "! " + ex.getMessage(), ex);
         }
 
         return isRegistered;

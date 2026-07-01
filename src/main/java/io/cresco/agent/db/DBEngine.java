@@ -164,7 +164,11 @@ public class DBEngine {
             */
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            if(logger != null) {
+                logger.error("DBEngine.DBEngine()", ex);
+            } else {
+                ex.printStackTrace();
+            }
         }
     }
 
@@ -193,8 +197,7 @@ public class DBEngine {
 
                 }
                 else {
-                    System.out.println("Error code: " + e.getErrorCode());
-                    e.printStackTrace();
+                    logger.error("DBEngine.shutdown() SQL error code: {}", e.getErrorCode(), e);
                 }
             }
 
@@ -209,7 +212,7 @@ public class DBEngine {
 
         }
         catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.shutdown()", ex);
         }
         return isShutdown;
     }
@@ -239,7 +242,7 @@ public class DBEngine {
                 }
             }
         } catch (Exception ex) {
-            System.out.println("Schema is invalid");
+            logger.error("DBEngine.checkSchema() Schema is invalid", ex);
         }
         return isOk;
     }
@@ -404,8 +407,7 @@ public class DBEngine {
                     }
 
                     } else {
-                        System.out.println("WHY DOES AGENT: " + agent_id + " HAVE NO REGION!");
-                        Thread.dumpStack();
+                        logger.error("nodeUpdateStatus() WHY DOES AGENT: {} HAVE NO REGION!", agent_id, new Throwable());
                     }
 
                 }
@@ -415,7 +417,7 @@ public class DBEngine {
             isUpdated = true;
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.nodeUpdateStatus()", ex);
         }
         return isUpdated;
     }
@@ -476,7 +478,7 @@ public class DBEngine {
 
             conn.close();
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateNode()", ex);
         }
 
     }
@@ -568,7 +570,7 @@ public class DBEngine {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getDBExport()", ex);
         }
 
 
@@ -590,7 +592,7 @@ public class DBEngine {
             conn.close();
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addCStateEvent()", ex);
         }
 
     }
@@ -613,7 +615,7 @@ public class DBEngine {
 
             conn.close();
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateRNode()", ex);
         }
 
     }
@@ -636,7 +638,7 @@ public class DBEngine {
 
             conn.close();
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateANode()", ex);
         }
 
     }
@@ -672,7 +674,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getVNodeResourceList()", ex);
         }
         return inodeResourceList;
     }
@@ -709,7 +711,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getINodeResourceList()", ex);
         }
         return inodeResourceList;
     }
@@ -740,7 +742,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getINodeStatus()", ex);
         }
         return status_code;
     }
@@ -767,7 +769,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.setINodeStatusCode()", ex);
         }
         return queryReturn;
     }
@@ -800,7 +802,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getPNodePersistenceCode()", ex);
         }
         return status_code;
     }
@@ -844,7 +846,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getPNode()", ex);
         }
         return pNodeMap;
     }
@@ -883,7 +885,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getRNode()", ex);
         }
         return aNodeMap;
     }
@@ -922,7 +924,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getANode()", ex);
         }
         return aNodeMap;
     }
@@ -949,7 +951,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.setPNodePersistenceCode()", ex);
         }
         return queryReturn;
     }
@@ -968,7 +970,7 @@ public class DBEngine {
                         if (rs.next()) {
                             configParams = rs.getString(1);
                         } else {
-                            System.out.println("WHY IS RESULT SET EMPTY THIS NULL: AGENT_ID = " + agentId);
+                            logger.error("getRNodeFromAnode() WHY IS RESULT SET EMPTY THIS NULL: AGENT_ID = " + agentId);
                         }
 
                         rs.close();
@@ -981,11 +983,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
-            System.out.println(ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            System.out.println(errors.toString());
+            logger.error("DBEngine.getRNodeFromAnode()", ex);
         }
 
         return configParams;
@@ -1040,11 +1038,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
-            System.out.println(ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            System.out.println(errors.toString());
+            logger.error("DBEngine.getNodeConfigParams()", ex);
         }
         return configParams;
     }
@@ -1097,7 +1091,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getNodeCount()", ex);
         }
         return count;
     }
@@ -1128,7 +1122,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getResourceNodeSubmission()", ex);
         }
         return submission;
     }
@@ -1154,7 +1148,7 @@ public class DBEngine {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.setResourceNodeStatus()", ex);
         }
         return queryReturn;
     }
@@ -1179,7 +1173,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateResource()", ex);
         }
         return queryReturn;
     }
@@ -1208,7 +1202,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addRNode()", ex);
         }
 
     }
@@ -1224,7 +1218,7 @@ public class DBEngine {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.cleanANodesfromRNode()", ex);
         }
 
     }
@@ -1240,7 +1234,7 @@ public class DBEngine {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.cleanPnodesFromAnode()", ex);
         }
 
     }
@@ -1269,7 +1263,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addANode()", ex);
         }
 
     }
@@ -1304,7 +1298,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.assoicateANodetoRNodeExist()", ex);
         }
         return exist;
     }
@@ -1339,7 +1333,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.assoicatePNodetoANodeExist()", ex);
         }
         return exist;
     }
@@ -1361,7 +1355,7 @@ public class DBEngine {
 
                     conn.close();
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.error("DBEngine.assoicateANodetoRNode()", ex);
             }
         }
 
@@ -1385,7 +1379,7 @@ public class DBEngine {
 
                 conn.close();
             } catch (Exception ex) {
-                ex.printStackTrace();
+                logger.error("DBEngine.assoicatePNodetoANode()", ex);
             }
         }
 
@@ -1411,7 +1405,7 @@ public class DBEngine {
 
             conn.close();
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updatePNode()", ex);
         }
 
     }
@@ -1449,7 +1443,7 @@ public class DBEngine {
 
             conn.close();
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addPNode()", ex);
         }
         return status;
     }
@@ -1476,7 +1470,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateINodeAssignment()", ex);
         }
         return queryReturn;
     }
@@ -1509,12 +1503,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            //ex.printStackTrace();
-            System.out.println("inodeKPIExist()");
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            System.out.println(errors.toString());
-
+            logger.error("inodeKPIExist()", ex);
         }
         return exist;
     }
@@ -1538,7 +1527,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addInodeKPI()", ex);
         }
 
     }
@@ -1563,7 +1552,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateInodeKPI()", ex);
         }
         return queryReturn;
     }
@@ -1586,7 +1575,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addInode()", ex);
         }
 
     }
@@ -1610,7 +1599,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addVnode()", ex);
         }
 
     }
@@ -1640,7 +1629,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getResourceNodeStatus()", ex);
         }
         return status_code;
     }
@@ -1687,7 +1676,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("DBEngine.getInodeMap()", ex);
         }
 
         return inodeMap;
@@ -1737,7 +1726,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("DBEngine.getINodeKPIList()", ex);
         }
 
         return inodeKPIList;
@@ -1776,7 +1765,7 @@ public class DBEngine {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("DBEngine.getResourceNodeStatusMap()", ex);
         }
 
         return statusMap;
@@ -2019,7 +2008,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.initDB()", ex);
         }
     }
 
@@ -2053,11 +2042,10 @@ public class DBEngine {
         }
         catch (SQLException sqle) {
             //eat SQL exception, if tables does not exist this will throw
-            System.out.println("SQL EXCEPTION : "  + sqle.getMessage());
-            sqle.printStackTrace();
+            logger.error("DBEngine.tableExist() SQL EXCEPTION", sqle);
         }
         catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.tableExist()", ex);
         }
         return exist;
     }
@@ -2083,7 +2071,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.dropTable()", ex);
         }
         return result;
     }
@@ -2141,7 +2129,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.nodeExist()", ex);
         }
         return exist;
     }
@@ -2166,7 +2154,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.reassoicateANodes()", ex);
         }
 
     }
@@ -2191,7 +2179,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.reassoicatePNodes()", ex);
         }
         //return isRemoved;
     }
@@ -2223,7 +2211,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.purgeTransientPNodes()", ex);
         }
         //return isRemoved;
     }
@@ -2250,7 +2238,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.removeINode()", ex);
         }
         return isRemoved;
     }
@@ -2277,7 +2265,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.removeVNode()", ex);
         }
         return isRemoved;
     }
@@ -2319,7 +2307,7 @@ public class DBEngine {
         }
         catch(Exception ex) {
             //logger.error("removePipeline " + ex.getMessage());
-            ex.printStackTrace();
+            logger.error("DBEngine.removeResource()", ex);
         }
         return isRemoved;
     }
@@ -2372,7 +2360,7 @@ public class DBEngine {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getCSTATE()", ex);
         }
         return cstateMap;
     }
@@ -2450,7 +2438,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.removeNode()", ex);
         }
         return isRemoved;
     }
@@ -2490,7 +2478,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.updateWatchDogTS()", ex);
         }
         return queryReturn;
     }
@@ -2551,12 +2539,11 @@ public class DBEngine {
                     conn.close();
                 }
             } else {
-                System.out.println("getNodeList(regionId = " + regionId + " , agentId= " + agentId + ")");
-                Thread.dumpStack();
+                logger.error("getNodeList(regionId = {} , agentId= {})", regionId, agentId, new Throwable());
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getNodeList()", ex);
         }
         return nodeList;
     }
@@ -2608,7 +2595,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getPluginListMapByType()", ex);
         }
 
         return configMapList;
@@ -2672,8 +2659,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            System.out.println("QUERY STRING: [" + queryString + "]");
-            ex.printStackTrace();
+            logger.error("DBEngine.getNodeStatusCodeMap() QUERY STRING: [{}]", queryString, ex);
         }
         return nodeMap;
     }
@@ -2733,7 +2719,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getStaleNodeList()", ex);
         }
         return nodeList;
     }
@@ -2776,7 +2762,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.setNodeStatusCode()", ex);
         }
         return queryReturn;
     }
@@ -2802,7 +2788,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addResource()", ex);
         }
 
     }
@@ -2825,7 +2811,7 @@ public class DBEngine {
                 conn.close();
             }
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.addTenant()", ex);
         }
 
     }
@@ -2861,7 +2847,7 @@ public class DBEngine {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("DBEngine.getResourceNodeList()", ex);
         }
         return nodeList;
     }

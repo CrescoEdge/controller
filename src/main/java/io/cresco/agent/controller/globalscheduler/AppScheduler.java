@@ -9,8 +9,6 @@ import io.cresco.library.app.gPayload;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -86,10 +84,7 @@ public class AppScheduler implements IncomingApp {
         catch(Exception ex)
         {
             logger.error("AppSchedulerEngine gPayloadQueue Error: " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); // stack trace as a string
+            logger.error("AppScheduler.incomingMessage", ex);
         }
 
 
@@ -243,11 +238,7 @@ public class AppScheduler implements IncomingApp {
 
         }
         catch(Exception ex) {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("AppScheduler.buildEdgeMaps", ex);
         }
 
         return nodeEdgeList;
@@ -293,7 +284,7 @@ public class AppScheduler implements IncomingApp {
 
         }
         catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("AppScheduler.buildNodeMaps", ex);
         }
         return nodeResults;
     }

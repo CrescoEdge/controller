@@ -7,8 +7,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.File;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.util.*;
 
@@ -45,7 +43,7 @@ public class StaticPluginLoader implements Runnable  {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("StaticPluginLoader constructor ", ex);
         }
 
 
@@ -92,7 +90,7 @@ public class StaticPluginLoader implements Runnable  {
                                 }
 
                             } catch (Exception exe) {
-                                exe.printStackTrace();
+                                logger.error("StaticPluginLoader.run config plugin load ", exe);
                             }
                         }
 
@@ -276,8 +274,7 @@ public class StaticPluginLoader implements Runnable  {
                             }
 
                         } catch (Exception ex) {
-                            logger.error("Failed to restart plugin: " + pluginId);
-                            ex.printStackTrace();
+                            logger.error("Failed to restart plugin: " + pluginId, ex);
                         }
 
                     }
@@ -298,15 +295,7 @@ public class StaticPluginLoader implements Runnable  {
             }
 
         } catch(Exception ex) {
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            //String sStackTrace = sw.toString(); // stack trace as a string
-            //System.out.println(sStackTrace);
-
-            //ex.printStackTrace();
-            logger.error(sw.toString());
+            logger.error("StaticPluginLoader.run ", ex);
         }
 
     }

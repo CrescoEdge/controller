@@ -17,8 +17,6 @@ import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.BlobMessage;
 
 import java.io.File;
-import java.io.StringWriter;
-import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -292,11 +290,7 @@ public class AgentConsumer {
 						logger.error("non-Text message recieved!");
 					}
 				} catch(Exception ex) {
-					logger.error("onMessage Error : " + ex.getMessage());
-					StringWriter sw = new StringWriter();
-					PrintWriter pw = new PrintWriter(sw);
-					ex.printStackTrace(pw);
-					logger.error("Stack: " + sw);
+					logger.error("AgentConsumer.onMessage Error : " + ex.getMessage(), ex);
 				}
 			}
 		});
@@ -316,7 +310,7 @@ public class AgentConsumer {
 				fileObjectMap.put(fileObject.getDataName(), fileObject);
 			}
 
-			FileObjectGroupReceiver fileObjectGroupReceiver = new FileObjectGroupReceiver(me,fileObjectMap,fileGroup);
+			FileObjectGroupReceiver fileObjectGroupReceiver = new FileObjectGroupReceiver(plugin,me,fileObjectMap,fileGroup);
 
 			synchronized (lockGroupMap) {
 				fileGroupMap.put(fileGroup,fileObjectGroupReceiver);
@@ -325,11 +319,7 @@ public class AgentConsumer {
 
 
 		} catch (Exception ex) {
-			logger.error("Failure to Register File Message");
-			StringWriter sw = new StringWriter();
-			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
-			logger.error("Stack: " + sw);
+			logger.error("AgentConsumer.registerIncomingFiles Failure to Register File Message", ex);
 		}
 		return isRegistered;
 	}
@@ -338,11 +328,7 @@ public class AgentConsumer {
 		try {
 			consumer.close();
 		} catch (Exception ex) {
-			logger.error("Consumer Shutdown Error: " + ex.getMessage());
-			StringWriter sw = new StringWriter();
-			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
-			logger.error("Stack: " + sw);
+			logger.error("AgentConsumer.shutdown Consumer Shutdown Error: " + ex.getMessage(), ex);
 		}
 	}
 

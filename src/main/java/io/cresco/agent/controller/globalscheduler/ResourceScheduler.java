@@ -6,8 +6,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutorService;
@@ -88,12 +86,8 @@ public class ResourceScheduler implements IncomingResource {
         }
         catch(Exception ex)
         {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
-
             logger.error("ResourceSchedulerEngine run() inner Error: " + ex.toString());
+            logger.error("ResourceScheduler.incomingMessage", ex);
         }
 
     }

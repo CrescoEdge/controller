@@ -7,8 +7,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.*;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -174,7 +172,7 @@ public class UDPDiscoveryEngine implements Runnable {
                 }
             } catch (Exception ex) {
                 logger.error("Run : Interface = {} : Error = {}", networkInterface.getDisplayName(), ex.getMessage());
-                ex.printStackTrace();
+                logger.error("DiscoveryEngineWorker.run", ex);
             }
         }
 
@@ -309,9 +307,7 @@ public class UDPDiscoveryEngine implements Runnable {
                         }
                     } catch (Exception ex) {
                         logger.error("sendPacket() " + ex.getMessage());
-                        StringWriter errors = new StringWriter();
-                        ex.printStackTrace(new PrintWriter(errors));
-                        logger.error(errors.toString());
+                        logger.error("DiscoveryEngineWorker.sendPacket", ex);
                         packet = null;
                     }
                 } else {

@@ -211,13 +211,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("getlog Error: " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getlog Error: " + ex.getMessage(), ex);
 
         }
 
@@ -246,11 +240,7 @@ public class AgentExecutor implements Executor {
                             ce.setParam("status_desc","wrote data part");
 
                         } catch (Exception e) {
-                            StringWriter sw = new StringWriter();
-                            PrintWriter pw = new PrintWriter(sw);
-                            e.printStackTrace(pw);
-                            String sStackTrace = sw.toString(); // stack trace as a string
-                            logger.error(sStackTrace);
+                            logger.error("getFileData() inputStream ", e);
 
                             ce.setParam("status","9");
                             ce.setParam("status_desc","inputStream failure");
@@ -271,11 +261,7 @@ public class AgentExecutor implements Executor {
 
         } catch (Exception ex) {
 
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getFileData() ", ex);
 
             ce.setParam("status","9");
             ce.setParam("status_desc","getFileData() failure");
@@ -296,15 +282,9 @@ public class AgentExecutor implements Executor {
             ce.setParam("broadcast_discovery","data");
 
         } catch (Exception ex) {
-            logger.error("getBroadcastDiscovery " + ex.getMessage());
+            logger.error("getBroadcastDiscovery " + ex.getMessage(), ex);
 
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
             ce.setParam("broadcast_discovery","unknown");
 
@@ -337,11 +317,7 @@ public class AgentExecutor implements Executor {
             }
 
         } catch (Exception ex) {
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getFileInfo() ", ex);
 
             ce.setParam("status","9");
             ce.setParam("status_desc","getFileInfo() failure");
@@ -359,13 +335,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("stopController " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("stopController " + ex.getMessage(), ex);
 
         }
 
@@ -381,13 +351,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("restartController " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("restartController " + ex.getMessage(), ex);
 
         }
 
@@ -425,13 +389,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("restartController " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("restartController " + ex.getMessage(), ex);
 
         }
 
@@ -447,13 +405,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("restartController " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("restartController " + ex.getMessage(), ex);
 
         }
 
@@ -469,13 +421,7 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("killJVM " + ex.getMessage());
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("killJVM " + ex.getMessage(), ex);
 
         }
 
@@ -490,16 +436,9 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("getControllerStatus Error: " + ex.getMessage());
+            logger.error("getControllerStatus Error: " + ex.getMessage(), ex);
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
             ce.setParam("controller_status","unknown");
         }
@@ -516,16 +455,9 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("isControllerActive: " + ex.getMessage());
+            logger.error("isControllerActive: " + ex.getMessage(), ex);
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
             ce.setParam("is_controller_active",Boolean.FALSE.toString());
         }
@@ -567,18 +499,11 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("cepadd Error: " + ex.getMessage());
+            logger.error("cepadd Error: " + ex.getMessage(), ex);
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
 
         }
@@ -634,18 +559,11 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("pluginadd Error: " + ex.getMessage());
+            logger.error("pluginadd Error: " + ex.getMessage(), ex);
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
         }
 
@@ -730,18 +648,11 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("pluginadd Error: " + ex.getMessage());
+            logger.error("pluginadd Error: " + ex.getMessage(), ex);
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
 
         }
@@ -773,18 +684,11 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("pluginadd Error: " + ex.getMessage());
+            logger.error("pluginadd Error: " + ex.getMessage(), ex);
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
         }
 
@@ -811,18 +715,11 @@ public class AgentExecutor implements Executor {
 
         } catch(Exception ex) {
 
-            logger.error("pluginadd Error: " + ex.getMessage());
+            logger.error("pluginadd Error: " + ex.getMessage(), ex);
             ce.setParam("status_code", "9");
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
-
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-
-            ce.setParam("error",sStackTrace);
+            ce.setParam("error", ex.getMessage());
 
 
         }

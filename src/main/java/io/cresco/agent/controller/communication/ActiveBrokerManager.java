@@ -6,8 +6,6 @@ import io.cresco.agent.controller.netdiscovery.DiscoveryType;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
@@ -120,11 +118,7 @@ public class ActiveBrokerManager implements Runnable  {
 				}
 			}
 			catch (Exception ex) {
-				logger.error("Run {}", ex.getMessage());
-				StringWriter sw = new StringWriter();
-				PrintWriter pw = new PrintWriter(sw);
-				ex.printStackTrace(pw);
-				logger.error(sw.toString());
+				logger.error("ActiveBrokerManager.run Run {}", ex.getMessage(), ex);
 			}
 		}
 		timer.cancel();

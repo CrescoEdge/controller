@@ -48,8 +48,7 @@ public class DiscoveryCrypto {
             //logger.info("enc: [" + encryptedValue + "] key:[" + secKey + "]");
 
         } catch(Exception ex) {
-            logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("DiscoveryCrypto.encrypt", ex);
         }
 
         return encryptedValue;
@@ -78,8 +77,7 @@ public class DiscoveryCrypto {
             //logger.info("bad!");
         }
         catch(Exception ex) {
-            logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("DiscoveryCrypto.decrypt", ex);
         }
 
         return decryptedValue;

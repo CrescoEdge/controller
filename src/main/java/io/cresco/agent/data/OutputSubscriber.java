@@ -62,7 +62,7 @@ public class OutputSubscriber implements InMemoryBroker.Subscriber {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("OutputSubscriber.onMessage error", ex);
         }
 
     }

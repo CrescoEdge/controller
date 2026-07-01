@@ -49,7 +49,7 @@ public class PerfControllerMonitor {
             me.shutdown();
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("PerfControllerMonitor.shutdown ", ex);
         }
 
     }
@@ -67,11 +67,7 @@ public class PerfControllerMonitor {
             }
 
         } catch(Exception ex) {
-            logger.error("getResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -134,11 +130,7 @@ public class PerfControllerMonitor {
 
 
         } catch(Exception ex) {
-            logger.error("getRegionResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getRegionResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -179,11 +171,7 @@ public class PerfControllerMonitor {
             queryReturn = gson.toJson(queryMap);
 
         } catch(Exception ex) {
-            logger.error("getAgentResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getAgentResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -237,8 +225,7 @@ public class PerfControllerMonitor {
                 }
             }
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("getSysInfo ", ex);
         }
         return response;
     }

@@ -141,8 +141,7 @@ public class CertificateManager {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
-            logger.error("CertificateChainGeneration() Error: " + ex.getMessage());
+            logger.error("CertificateManager.<init> CertificateChainGeneration() Error: " + ex.getMessage(), ex);
         }
 
     }
@@ -299,7 +298,7 @@ public class CertificateManager {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CertificateManager.generateCertChain failure", ex);
         }
 
     }
@@ -358,10 +357,7 @@ public class CertificateManager {
             certString = Base64.getEncoder().encodeToString(cert.getEncoded());
 
         } catch(Exception ex) {
-            logger.error("getStringfromCert : error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            ex.printStackTrace(new PrintWriter(sw));
-            logger.error(sw.toString());
+            logger.error("getStringfromCert : error " + ex.getMessage(), ex);
         }
         return certString;
     }
@@ -380,11 +376,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 inputStream.close();
             }
         } catch(Exception ex) {
-            logger.error("getCertsfromString : error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            ex.printStackTrace(new PrintWriter(sw));
-            logger.error(sw.toString());
-        } 
+            logger.error("getCertsfromString : error " + ex.getMessage(), ex);
+        }
         return cert;
     }
 
@@ -400,10 +393,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
 
         } catch(Exception ex) {
-            logger.error("getCertsfromJson : error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            ex.printStackTrace(new PrintWriter(sw));
-            logger.error(sw.toString());
+            logger.error("getCertsfromJson : error " + ex.getMessage(), ex);
         }
         return certs;
     }
@@ -418,10 +408,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
 
         } catch(Exception ex) {
-            logger.error("getStringsfromCerts : error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            ex.printStackTrace(new PrintWriter(sw));
-            logger.error(sw.toString());
+            logger.error("getStringsfromCerts : error " + ex.getMessage(), ex);
         }
         return certStrings;
     }
@@ -434,10 +421,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             certJson = gc.toJson(certArray);
 
         } catch(Exception ex) {
-            logger.error("getJsonFromCerts : error " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            ex.printStackTrace(new PrintWriter(sw));
-            logger.error(sw.toString());
+            logger.error("getJsonFromCerts : error " + ex.getMessage(), ex);
         }
         return certJson;
     }
@@ -469,13 +453,13 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             keyStore.store(keyStoreOut, keyStorePassword);
             trustStore.store(trustStoreOut, trustStorePassword);
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.saveKeyAndTrustStore IOException", e);
         } catch (CertificateException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.saveKeyAndTrustStore CertificateException", e);
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.saveKeyAndTrustStore NoSuchAlgorithmException", e);
         } catch (KeyStoreException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.saveKeyAndTrustStore KeyStoreException", e);
         }
     }
 
@@ -515,19 +499,19 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 chain[i] = (X509Certificate) keyStoreCertChain[i];
             return true;
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.loadKeyAndTrustStore IOException", e);
             return false;
         } catch (CertificateException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.loadKeyAndTrustStore CertificateException", e);
             return false;
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.loadKeyAndTrustStore NoSuchAlgorithmException", e);
             return false;
         } catch (KeyStoreException e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.loadKeyAndTrustStore KeyStoreException", e);
             return false;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("CertificateManager.loadKeyAndTrustStore Exception", e);
             return false;
         }
     }

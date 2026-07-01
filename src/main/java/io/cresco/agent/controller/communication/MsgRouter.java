@@ -530,8 +530,7 @@ public class MsgRouter {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
-            logger.error("Controller : MsgRoute : Route Failed " + ex.toString() + " " + rm.getParams().toString());
+            logger.error("MsgRouter.route Route Failed " + ex.toString() + " " + rm.getParams().toString(), ex);
 
         }
         finally
@@ -631,7 +630,7 @@ public class MsgRouter {
             } else {
                 logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " RM=NULL");
             }
-            ex.printStackTrace();
+            logger.error("MsgRouter.getRoutePath getRoutePath failure", ex);
             routePath = -1;
         }
         //System.out.println("REGIONAL CONTROLLER ROUTEPATH=" + routePath + " MsgType=" + rm.getMsgType() + " Params=" + rm.getParams());

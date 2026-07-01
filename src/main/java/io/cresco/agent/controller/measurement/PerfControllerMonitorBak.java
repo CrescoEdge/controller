@@ -11,8 +11,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import jakarta.jms.*;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -88,11 +86,7 @@ public class PerfControllerMonitorBak {
             }
 
         } catch(Exception ex) {
-            logger.error("getResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -155,11 +149,7 @@ public class PerfControllerMonitorBak {
 
 
         } catch(Exception ex) {
-            logger.error("getRegionResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getRegionResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -200,11 +190,7 @@ public class PerfControllerMonitorBak {
             queryReturn = gson.toJson(queryMap);
 
         } catch(Exception ex) {
-            logger.error("getAgentResourceInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getAgentResourceInfo() ", ex);
         }
 
         return queryReturn;
@@ -312,7 +298,7 @@ public class PerfControllerMonitorBak {
 
                 } catch(Exception ex) {
 
-                    ex.printStackTrace();
+                    logger.error("setKpiListener onMessage ", ex);
                 }
             }
         };

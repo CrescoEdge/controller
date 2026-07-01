@@ -6,9 +6,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
-
 public class PollAddPlugin implements Runnable {
 
 	private String resource_id  = null;
@@ -74,9 +71,7 @@ public class PollAddPlugin implements Runnable {
 			   controllerEngine.getGDB().setINodeStatusCode(inode_id,41,"iNode Failed Scheduling Exception.");
 
                logger.error("PollAddPlugin: Error " + ex.getMessage());
-               StringWriter errors = new StringWriter();
-               ex.printStackTrace(new PrintWriter(errors));
-               logger.error("PollAddPlugin: Trace " + errors.toString());
+               logger.error("PollAddPlugin.run", ex);
 
            }
 	    }

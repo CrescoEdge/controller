@@ -35,7 +35,7 @@ public class CEPEngine {
             sink.connect();
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPEngine constructor error", ex);
         }
 
 
@@ -84,7 +84,7 @@ public class CEPEngine {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPEngine.shutdown error", ex);
         }
     }
 
@@ -105,7 +105,7 @@ public class CEPEngine {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPEngine.clear error", ex);
         }
     }
 
@@ -122,7 +122,7 @@ public class CEPEngine {
             isCreated = true;
 
             } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPEngine.createCEP error", ex);
         }
         return isCreated;
     }
@@ -140,7 +140,7 @@ public class CEPEngine {
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPEngine.input error", ex);
         }
     }
 

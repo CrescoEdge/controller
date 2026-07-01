@@ -212,9 +212,10 @@ public class AgentServiceImpl implements AgentService {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
             if(logger != null) {
-                logger.error(ex.getMessage());
+                logger.error("getAgentDataDirectory()", ex);
+            } else {
+                ex.printStackTrace();
             }
         }
         return agentDataDirectory;
@@ -293,7 +294,7 @@ public class AgentServiceImpl implements AgentService {
 
 
             } catch(Exception ex) {
-                ex.printStackTrace();
+                logger.error("activate() controller startup thread", ex);
             }
         }
     }).start();
@@ -369,7 +370,7 @@ public class AgentServiceImpl implements AgentService {
                     
                     }
                 } catch(Exception ex) {
-                    ex.printStackTrace();
+                    logger.error("getControllerVersion() manifest read", ex);
                 } finally {
 
                     if(jarStream != null) {
@@ -385,7 +386,7 @@ public class AgentServiceImpl implements AgentService {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("getControllerVersion()", ex);
 
         }
         return version;
@@ -405,7 +406,7 @@ public class AgentServiceImpl implements AgentService {
             logger.error(msg.printHeader());
             logger.error(msg.getParams().toString());
 
-            ex.printStackTrace();
+            logger.error("msgOut()", ex);
         }
     }
 

@@ -2,6 +2,8 @@ package io.cresco.agent.controller.communication;
 
 import io.cresco.library.data.FileObject;
 import io.cresco.library.messaging.MsgEvent;
+import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.utilities.CLogger;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -11,12 +13,16 @@ import java.util.Map;
 
 public class FileObjectGroupReceiver {
 
+    private PluginBuilder plugin;
+    private CLogger logger;
     private Map<String, FileObject> fileObjectMap;
     private MsgEvent me;
     private String fileGroup;
     private List<String> fileCompleteList;
 
-    public FileObjectGroupReceiver(MsgEvent me, Map<String, FileObject> fileObjectMap, String fileGroup) {
+    public FileObjectGroupReceiver(PluginBuilder plugin, MsgEvent me, Map<String, FileObject> fileObjectMap, String fileGroup) {
+        this.plugin = plugin;
+        this.logger = plugin.getLogger(FileObjectGroupReceiver.class.getName(), CLogger.Level.Info);
         this.fileObjectMap = fileObjectMap;
         this.me = me;
         this.fileGroup = fileGroup;
@@ -37,7 +43,7 @@ public class FileObjectGroupReceiver {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.getFileList failure", ex);
         }
         return fileList;
     }
@@ -61,7 +67,7 @@ public class FileObjectGroupReceiver {
                 isComplete = fileObjectMap.get(dataName).isFilePartComplete();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.isFilePartComplete failure", ex);
         }
         return isComplete;
     }
@@ -79,7 +85,7 @@ public class FileObjectGroupReceiver {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.getOrderedPartList failure", ex);
         }
         return orderedPartList;
     }
@@ -91,7 +97,7 @@ public class FileObjectGroupReceiver {
                 fileName = fileObjectMap.get(dataName).getFileName();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.getFileName failure", ex);
         }
         return fileName;
     }
@@ -103,7 +109,7 @@ public class FileObjectGroupReceiver {
                 fileHash = fileObjectMap.get(dataName).getFileMD5Hash();
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.getFileMD5Hash failure", ex);
         }
         return fileHash;
     }
@@ -129,7 +135,7 @@ public class FileObjectGroupReceiver {
 
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("FileObjectGroupReceiver.isFileGroupComplete failure", ex);
         }
         return isComplete;
     }

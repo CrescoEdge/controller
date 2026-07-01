@@ -68,8 +68,7 @@ public class DBManager implements Runnable  {
 					Thread.sleep(1000);
 				}
 			} catch (Exception ex) {
-				logger.error("Run {}", ex.getMessage());
-                ex.printStackTrace();
+				logger.error("DBManager.run {}", ex.getMessage(), ex);
 			}
 		}
 		//timer.cancel();

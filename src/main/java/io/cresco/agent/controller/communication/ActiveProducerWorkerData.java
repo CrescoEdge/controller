@@ -9,8 +9,6 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.ActiveMQSession;
 import jakarta.jms.*;
 import java.io.File;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -52,8 +50,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 
 		} catch (Exception e) {
-			logger.error("Constructor {}", e.getMessage());
-			e.printStackTrace();
+			logger.error("ActiveProducerWorkerData.<init> Constructor {}", e.getMessage(), e);
 		}
 	}
 
@@ -143,11 +140,7 @@ public class ActiveProducerWorkerData implements Runnable {
 							dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
 
 						} catch (JMSException jmse) {
-							jmse.printStackTrace();
-							logger.error("sendMessage Data: jmse {} ", jmse.getMessage());
-							StringWriter errors = new StringWriter();
-							jmse.printStackTrace(new PrintWriter(errors));
-							logger.error(errors.toString());
+							logger.error("ActiveProducerWorkerData.run sendMessage Data: jmse {} ", jmse.getMessage(), jmse);
 
 							try {
 								logger.error("Rebuilding Session");
@@ -157,12 +150,10 @@ public class ActiveProducerWorkerData implements Runnable {
 								dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 								dataProducer.send(bytesMessage, DeliveryMode.PERSISTENT, 0, 0);
 							} catch (Exception ex) {
-								logger.error("Rebuilding Session Error " + ex.getMessage());
-								ex.printStackTrace();
+								logger.error("ActiveProducerWorkerData.run Rebuilding Session Error " + ex.getMessage(), ex);
 							}
 						} catch (Exception ex) {
-							logger.error("General send failure : " + ex.getMessage());
-							ex.printStackTrace();
+							logger.error("ActiveProducerWorkerData.run General send failure : " + ex.getMessage(), ex);
 						} finally {
 							if(dataProducer != null) {
 								dataProducer.close();
@@ -176,16 +167,10 @@ public class ActiveProducerWorkerData implements Runnable {
 				}
 
 			} catch (JMSException jmse) {
-				logger.error("run() sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage());
-				StringWriter errors = new StringWriter();
-				jmse.printStackTrace(new PrintWriter(errors));
-				logger.error(errors.toString());
+				logger.error("ActiveProducerWorkerData.run sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage(), jmse);
 			}
 			catch (Exception ex) {
-				logger.error("ERROR SENDING FILE MESSAGE");
-				StringWriter errors = new StringWriter();
-				ex.printStackTrace(new PrintWriter(errors));
-				logger.error(errors.toString());
+				logger.error("ActiveProducerWorkerData.run ERROR SENDING FILE MESSAGE", ex);
 			} finally{
 				try {
 					if (dataProducer != null) {
@@ -195,18 +180,14 @@ public class ActiveProducerWorkerData implements Runnable {
 						dataSess.close();
 					}
 				}catch (Exception ex) {
-					logger.error("Can't Close data producer");
-					ex.printStackTrace();
+					logger.error("ActiveProducerWorkerData.run Can't Close data producer", ex);
 				}
 			}
 
 
 
 		} catch (Exception ex) {
-			logger.error("run(): " +  ex.getMessage());
-			StringWriter errors = new StringWriter();
-			ex.printStackTrace(new PrintWriter(errors));
-			logger.error(errors.toString());
+			logger.error("ActiveProducerWorkerData.run run(): " +  ex.getMessage(), ex);
 		}
 	}
 

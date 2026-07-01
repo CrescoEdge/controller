@@ -167,12 +167,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("logDPSetEnabled() " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("logDPSetEnabled() " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -187,12 +182,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("logDPIsEnabled() " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("logDPIsEnabled() " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -213,12 +203,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("setDPLogLevel " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("setDPLogLevel " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -240,12 +225,7 @@ public class PluginAdmin {
             logger.info("Set RootLoglevel: " + level.name());
 
         } catch (Exception ex) {
-            logger.error("setLogLevel() " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("setLogLevel() " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -269,12 +249,7 @@ public class PluginAdmin {
             logger.info("Set loglevel: " + level.name()  + " for log_id : " + logId);
 
         } catch (Exception ex) {
-            logger.error("setLogLevel() " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("setLogLevel() " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -313,12 +288,7 @@ public class PluginAdmin {
             logger.info("Log for log_id : " + logId + " removed.");
 
         } catch (Exception ex) {
-            logger.error("removeLogLevel " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("removeLogLevel " + ex.getMessage(), ex);
         }
         return isSet;
     }
@@ -396,12 +366,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("getLogLevels() " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getLogLevels() " + ex.getMessage(), ex);
         }
         return logMap;
 
@@ -424,11 +389,7 @@ public class PluginAdmin {
                     }
                 } }
         } catch (Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("pluginTypeActive() ", ex);
         }
         return exists;
     }
@@ -443,11 +404,7 @@ public class PluginAdmin {
                 context.ungetService(sr);
             }
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("serviceExist() ", ex);
         }
         return exists;
     }
@@ -514,10 +471,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error("jarIsBundle() " + ex.getMessage());
-            logger.error("jarIsBundle() " + errors);
+            logger.error("jarIsBundle() " + ex.getMessage(), ex);
 
         }
         return returnMap;
@@ -590,12 +544,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("jarIsEmbedded-Agent()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("jarIsEmbedded-Agent()", ex);
         }
         return returnMap;
     }
@@ -650,12 +599,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("jarIsAbsolutePath()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("jarIsAbsolutePath()", ex);
         }
         return returnMap;
     }
@@ -707,12 +651,7 @@ public class PluginAdmin {
                 }
             }
         } catch (Exception ex) {
-            logger.error("getJarFromLocalCache()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getJarFromLocalCache()", ex);
         }
 
         return returnMap;
@@ -739,12 +678,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("getJarFromRepo()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getJarFromRepo()", ex);
         }
 
         return isFound;
@@ -765,12 +699,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-            logger.error("validatePluginMap()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("validatePluginMap()", ex);
         }
         return validatedMap;
     }
@@ -802,12 +731,7 @@ public class PluginAdmin {
             }
 
         } catch(Exception ex) {
-            logger.error("localPluginMap()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("localPluginMap()", ex);
         }
         return validatedMap;
     }
@@ -875,12 +799,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-            logger.error("remotePluginMap()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("remotePluginMap()", ex);
         }
         return validatedMap;
     }
@@ -956,12 +875,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-            logger.error("addBundle()");
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("addBundle()", ex);
         }
         return bundleID;
     }
@@ -984,11 +898,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("startBundle() ", ex);
         }
         return  isStarted;
     }
@@ -999,11 +909,7 @@ public class PluginAdmin {
             context.getBundle(bundleID).stop();
             isStopped = true;
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("stopBundle() ", ex);
         }
         return  isStopped;
     }
@@ -1014,11 +920,7 @@ public class PluginAdmin {
             context.getBundle(bundleID).uninstall();
             isRemoved = true;
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("removeBundle() ", ex);
         }
         return  isRemoved;
     }
@@ -1154,10 +1056,7 @@ public class PluginAdmin {
             }
 
         } catch(Exception ex) {
-
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error("stopPlugin() " + errors.toString());
+            logger.error("stopPlugin() ", ex);
         }
         return  isStopped;
     }
@@ -1314,7 +1213,7 @@ public class PluginAdmin {
 
                             }
                         } else {
-                            System.out.println("Could not create config pluginName " + map.get("pluginname") + " for jar " + map.get("jarfile"));
+                            logger.info("Could not create config pluginName " + map.get("pluginname") + " for jar " + map.get("jarfile"));
                         }
                         //controllerEngine.getPluginAdmin().startBundle(bundleID);
                         //String pluginID = controllerEngine.getPluginAdmin().addConfig(pluginName,jarFile, map);
@@ -1328,11 +1227,7 @@ public class PluginAdmin {
                 }
 
             } catch (Exception ex) {
-               StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("addPlugin() ", ex);
             }
         } else {
             logger.error("PLUGIN LIMIT REACHED! PLUGIN COUNT= " + pluginCount());
@@ -1347,11 +1242,7 @@ public class PluginAdmin {
             configuration.update(properties);
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("addDirectConfig() ", ex);
         }
 
     }
@@ -1398,11 +1289,7 @@ public class PluginAdmin {
 
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("addConfig() ", ex);
         }
 
         return isAdded;
@@ -1451,12 +1338,7 @@ public class PluginAdmin {
                                     statusDesc = "Plugin Active";
                                 }
                             } catch(Exception ex) {
-                                logger.error("Could not start!");
-                               StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+                                logger.error("Could not start!", ex);
                             }
 
                             synchronized (lockPlugin) {
@@ -1484,11 +1366,7 @@ public class PluginAdmin {
                 logger.error("startPlugin : Start plugin timeout");
             }
         } catch (Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("startPlugin() ", ex);
         }
         return isStarted;
     }
@@ -1505,11 +1383,7 @@ public class PluginAdmin {
             }
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("pluginExist() ", ex);
         }
 
 
@@ -1535,11 +1409,7 @@ public class PluginAdmin {
             }
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getPluginStatus() ", ex);
         }
         return statusMap;
     }
@@ -1694,11 +1564,7 @@ public class PluginAdmin {
                 logger.error("COULD NOT START PLUGIN COULD NOT GET SERVICE");
             }
         } catch (Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("checkService() ", ex);
         }
         return isStarted;
     }
@@ -1718,11 +1584,7 @@ public class PluginAdmin {
                 logger.error("installInternalBundleJars() Bundle = null");
             }
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("installInternalBundleJars() ", ex);
         }
 
         if(installedBundle == null) {
@@ -1817,11 +1679,7 @@ public class PluginAdmin {
                 }
             }
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getPluginJarPath() ", ex);
         }
 
         return jarFilePath;
@@ -1849,11 +1707,7 @@ public class PluginAdmin {
             }
 
         } catch(Exception ex) {
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getRepoCacheDir() ", ex);
         }
         return repoDirPath;
     }
@@ -1868,7 +1722,7 @@ public class PluginAdmin {
             jarPath = path.toAbsolutePath().toString();
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("pluginUpdate() ", ex);
         }
         return jarPath;
     }
@@ -1942,11 +1796,7 @@ public class PluginAdmin {
         }
         catch(Exception ex) {
             //System.out.println("getPlugin " + ex.getMessage());
-           StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getPlugin() ", ex);
         }
         //return isFound;
         return jarPath;
@@ -1998,12 +1848,7 @@ public class PluginAdmin {
             }
 
         } catch (Exception ex) {
-            logger.error("getPnode()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
+            logger.error("getPnode()", ex);
         }
         return pNode;
     }

@@ -124,8 +124,7 @@ public class ControllerEngine {
 
             isStarted = true;
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("ControllerEngine.start ", ex);
         }
         return isStarted;
     }
@@ -160,8 +159,7 @@ public class ControllerEngine {
 
             isStopped = true;
         } catch (Exception ex) {
-            logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("ControllerEngine.stop ", ex);
         }
         return isStopped;
     }
@@ -480,8 +478,7 @@ public class ControllerEngine {
             }
             msgRouter.route(msg);
         } catch (Exception ex) {
-        logger.error(ex.getMessage());
-        ex.printStackTrace();
+        logger.error("ControllerEngine.msgIn ", ex);
         }
     }
 

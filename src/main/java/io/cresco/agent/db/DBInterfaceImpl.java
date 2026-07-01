@@ -10,8 +10,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
@@ -81,11 +79,7 @@ public class DBInterfaceImpl implements DBInterface {
 
         }
         catch(Exception ex) {
-            logger.error("getPipelineObj " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("getPipelineObj", ex);
         }
         return gpay;
     }
@@ -247,8 +241,7 @@ public class DBInterfaceImpl implements DBInterface {
 
         }
         catch(Exception ex) {
-            //logger.error(ex.getMessage());
-            ex.printStackTrace();
+            logger.error("getEdgeHealthStatus()", ex);
         }
         return nodeStatusMap;
     }
@@ -285,7 +278,7 @@ public class DBInterfaceImpl implements DBInterface {
             //queryReturn = DatatypeConverter.printBase64Binary(controllerEngine.getGDB().gdb.stringCompress((gson.toJson(queryMap))));
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("getPipelineInfo()", ex);
         }
 
         return queryReturn;
@@ -307,7 +300,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            ex.printStackTrace();
+            logger.error("createPipelineRecord()", ex);
         }
         return gpay;
     }
@@ -356,10 +349,7 @@ public class DBInterfaceImpl implements DBInterface {
                 }
                 catch(Exception ex)
                 {
-                    logger.error("createPipelineNodes() Nodes: " + ex.toString());
-                    StringWriter errors = new StringWriter();
-                    ex.printStackTrace(new PrintWriter(errors));
-                    logger.error(errors.toString());
+                    logger.error("createPipelineNodes() Nodes", ex);
                 }
             }
 
@@ -414,10 +404,7 @@ public class DBInterfaceImpl implements DBInterface {
                 }
                 catch(Exception ex)
                 {
-                    logger.error("createPipelineNodes() Edges: " + ex.toString());
-                    StringWriter errors = new StringWriter();
-                    ex.printStackTrace(new PrintWriter(errors));
-                    logger.error(errors.toString());
+                    logger.error("createPipelineNodes() Edges", ex);
                 }
             }
 
@@ -431,10 +418,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("createPipelineNodes(): " + ex.toString());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error(errors.toString());
+            logger.error("createPipelineNodes()", ex);
         }
         gpay.status_code = "1";
         gpay.status_desc = "Failed to create Pipeline.";
@@ -524,10 +508,7 @@ public class DBInterfaceImpl implements DBInterface {
                                 regionMap.put("environment",params.get("environment"));
 
                             } catch(Exception ex) {
-                                logger.error(ex.getMessage());
-                                StringWriter errors = new StringWriter();
-                                ex.printStackTrace(new PrintWriter(errors));
-                                logger.error(errors.toString());
+                                logger.error("getAgentList() configParams", ex);
                                 regionMap.put("location","unknown");
                                 regionMap.put("platform","unknown");
                                 regionMap.put("environment","unknown");
@@ -535,11 +516,7 @@ public class DBInterfaceImpl implements DBInterface {
 
 
                         } catch (Exception ex) {
-                            logger.error("getAgentList() Map " + ex.toString());
-                            StringWriter sw = new StringWriter();
-                            PrintWriter pw = new PrintWriter(sw);
-                            ex.printStackTrace(pw);
-                            logger.error(sw.toString()); //
+                            logger.error("getAgentList() Map", ex);
                         }
                         regionArray.add(regionMap);
                     }
@@ -551,11 +528,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getAgentList() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getAgentList()", ex);
         }
 
         return queryMap;
@@ -633,11 +606,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginListRepoSet() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginListRepoSet()", ex);
         }
 
         return pluginRepoMap;
@@ -653,11 +622,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginListMapByType()", ex);
         }
 
         return  configMapList;
@@ -677,11 +642,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginListByType()", ex);
         }
 
         return queryReturn;
@@ -739,11 +700,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginListRepoInventory()", ex);
         }
 
         return repoList;
@@ -783,11 +740,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getRegionList() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getRegionList()", ex);
         }
 
         return queryMap;
@@ -817,11 +770,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginListByType() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginListRepo()", ex);
         }
 
         return returnString;
@@ -884,11 +833,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getAgentList() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginList()", ex);
         }
 
         return queryReturn;
@@ -902,11 +847,7 @@ public class DBInterfaceImpl implements DBInterface {
         }
         catch(Exception ex)
         {
-            logger.error("getPluginInfo() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("getPluginInfo()", ex);
         }
 
         return queryReturn;
@@ -955,7 +896,7 @@ public class DBInterfaceImpl implements DBInterface {
             }
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("updateKPI()", ex);
         }
 
         return isUpdated;
@@ -1062,11 +1003,7 @@ public class DBInterfaceImpl implements DBInterface {
             }
 
         } catch(Exception ex) {
-            logger.error("getGPipeline() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("getGPipeline()", ex);
         }
 
         return queryReturn;
@@ -1083,11 +1020,7 @@ public class DBInterfaceImpl implements DBInterface {
             //}
 
         } catch(Exception ex) {
-            logger.error("getGPipelineExport() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("getGPipelineExport()", ex);
         }
 
         return queryReturn;

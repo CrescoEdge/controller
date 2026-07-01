@@ -161,11 +161,7 @@ public class GlobalExecutor implements Executor {
                     return null;
             }
         } catch (Exception ex) {
-            logger.error("executeEXEC() " + ex.toString());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("executeEXEC() ", ex);
         }
         return null;
     }
@@ -532,7 +528,7 @@ public class GlobalExecutor implements Executor {
 
         } catch (Exception e) {
             isSaved = false;
-            e.printStackTrace();
+            logger.error("saveToRepo() ", e);
         }
         ce.removeParam("jardata");
         ce.setParam("is_saved", String.valueOf(isSaved));
@@ -1014,7 +1010,7 @@ public class GlobalExecutor implements Executor {
                         }
                     } catch (Exception ex) {
                         ce.setParam("error", ex.getMessage());
-                        ex.printStackTrace();
+                        logger.error("pluginDownload() transfer ", ex);
                     }
 
                 } else {
@@ -1024,7 +1020,7 @@ public class GlobalExecutor implements Executor {
                 }
             } catch (Exception ex) {
                 ce.setParam("error", ex.getMessage());
-                ex.printStackTrace();
+                logger.error("pluginDownload() channel ", ex);
             }
 
 
@@ -1032,7 +1028,7 @@ public class GlobalExecutor implements Executor {
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
-            ex.printStackTrace();
+            logger.error("pluginDownload() ", ex);
         }
 
         return ce;
@@ -1100,7 +1096,7 @@ public class GlobalExecutor implements Executor {
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
-            ex.printStackTrace();
+            logger.error("gPipelineSubmit() ", ex);
         }
 
         return ce;
@@ -1247,7 +1243,7 @@ public class GlobalExecutor implements Executor {
         catch(Exception ex)
         {
             String msg = "Unable to determine Plugin Version " + ex.toString();
-            System.err.println(msg);
+            logger.error(msg);
             version = "Unable to determine Version";
         }
         return version;
@@ -1280,7 +1276,7 @@ public class GlobalExecutor implements Executor {
         }
         catch (IOException e)
         {
-            e.printStackTrace();
+            logger.error("getPluginParamMap() ", e);
         }
         return phm;
     }
@@ -1299,25 +1295,23 @@ public class GlobalExecutor implements Executor {
                     Attributes mainAttribs = mf.getMainAttributes();
                     version = mainAttribs.getValue("Implementation-Version");
                 } catch (Exception ex) {
-                    ex.printStackTrace();
                     String msg = "Unable to determine Plugin Version " + ex.toString();
-                    System.err.println(msg);
+                    logger.error(msg, ex);
                     version = "Unable to determine Version";
                 }
                 if (fis != null) {
                     fis.close();
                 }
             } catch (Exception ex) {
-                ex.printStackTrace();
                 String msg = "Unable to determine Plugin Version " + ex.toString();
-                System.err.println(msg);
+                logger.error(msg, ex);
                 version = "Unable to determine Version";
             }
         }
         catch(Exception ex)
         {
             String msg = "Unable to determine Plugin Version " + ex.toString();
-            System.err.println(msg);
+            logger.error(msg);
             version = "Unable to determine Version";
         }
         return version;
@@ -1387,7 +1381,7 @@ public class GlobalExecutor implements Executor {
                 reader.close();
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("executeCommand() ", e);
         }
 
         return output.toString();

@@ -16,8 +16,6 @@ import org.apache.commons.io.FileUtils;
 
 import javax.net.ssl.SSLContext;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.DatagramSocket;
 import java.net.ServerSocket;
 import java.net.URI;
@@ -425,11 +423,7 @@ public class ActiveBroker {
             updateTrustManager();
 
 		} catch(Exception ex) {
-			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage());
-			StringWriter sw = new StringWriter();
-			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
-			logger.error(sw.toString());
+			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage(), ex);
 		}
 		return bridge;
 	}

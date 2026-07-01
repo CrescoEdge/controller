@@ -7,8 +7,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -230,10 +228,8 @@ public class DiscoveryClientWorkerIPv6 {
                             //eat exception we are closing port
                             //System.out.println("DiscoveryClientWorkerIPv6 : getDiscoveryMap IO Error : " + ie.getMessage());
                         } catch (Exception e) {
-                            StringWriter errors = new StringWriter();
-                            e.printStackTrace(new PrintWriter(errors));
                             logger.error("getDiscoveryMap {}", e.getMessage());
-                            logger.error("getDiscoveryMap {}", errors.toString());
+                            logger.error("DiscoveryClientWorkerIPv6.discover getDiscoveryMap", e);
                         }
                     }
                 }

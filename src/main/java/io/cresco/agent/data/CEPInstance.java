@@ -93,7 +93,7 @@ public class CEPInstance {
                         }
                     } catch(Exception ex) {
 
-                        ex.printStackTrace();
+                        logger.error("CEPInstance.onMessage error", ex);
                     }
                 }
             };
@@ -103,7 +103,7 @@ public class CEPInstance {
 
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance constructor error", ex);
         }
 
 
@@ -124,7 +124,7 @@ public class CEPInstance {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance.shutdown error", ex);
         }
     }
 
@@ -139,7 +139,7 @@ public class CEPInstance {
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance.clear error", ex);
         }
     }
 
@@ -158,12 +158,12 @@ public class CEPInstance {
                 //start measurement
                     InMemoryBroker.publish(topicName, jsonPayload);
                 } else {
-                    System.out.println("input error : no schema");
+                    logger.info("input error : no schema");
                 }
 
 
         } catch(Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance.input error", ex);
         }
     }
 
@@ -177,7 +177,7 @@ public class CEPInstance {
                     "define stream " + streamName + " (" + inputStreamDefinition + "); ";
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance.getSourceString error", ex);
         }
 
         return sourceString;
@@ -191,7 +191,7 @@ public class CEPInstance {
                     "define stream " + streamName + " (" + outputStreamDefinition + "); ";
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("CEPInstance.getSinkString error", ex);
         }
 
         return sinkString;

@@ -6,8 +6,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import jakarta.jms.*;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -111,8 +109,8 @@ public class DataPlaneLogger {
                     }
                 }
             } catch (Exception ex) {
-                ex.printStackTrace();
                 logger.error("logToDataPlane() Error : " + ex.getMessage());
+                logger.error("DataPlaneLogger.logToDataPlane error", ex);
             }
         }
     }
@@ -227,11 +225,7 @@ public class DataPlaneLogger {
                 }
             } catch (Exception ex) {
                 logger.error("setLogLevel(): " + ex.getMessage());
-                StringWriter sw = new StringWriter();
-                PrintWriter pw = new PrintWriter(sw);
-                ex.printStackTrace(pw);
-                String sStackTrace = sw.toString(); // stack trace as a string
-                logger.error(sStackTrace);
+                logger.error("DataPlaneLogger.setLogLevel error", ex);
             }
         return isSet;
     }

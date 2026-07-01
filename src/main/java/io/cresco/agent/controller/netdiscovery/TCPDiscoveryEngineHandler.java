@@ -85,7 +85,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         logger.error("exeception Thread" + Thread.currentThread() + " 0");
-        cause.printStackTrace();
+        logger.error("TCPDiscoveryEngineHandler.exceptionCaught", cause);
         ctx.close();
         logger.error("exeception Thread" + Thread.currentThread() + " 1");
     }

@@ -8,8 +8,6 @@ import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
@@ -220,11 +218,7 @@ public class RegionalExecutor implements Executor {
                 }
 
         } catch(Exception ex) {
-            logger.error("sendGlobalMsg() Error : " + ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString()); //
+            logger.error("sendGlobalMsg() Error : ", ex);
         }
 
     }

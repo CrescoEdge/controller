@@ -8,8 +8,6 @@ import io.cresco.library.utilities.CLogger;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.InetSocketAddress;
 import java.util.List;
 
@@ -93,11 +91,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
 
-        StringWriter sw = new StringWriter();
-        PrintWriter pw = new PrintWriter(sw);
-        cause.printStackTrace(pw);
-
-        logger.debug("Discovery Error " + sw);
+        logger.debug("Discovery Error", cause);
         //cause.printStackTrace();
         ctx.close();
         discoveredList = null;
@@ -140,9 +134,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
         } catch (Exception ex) {
             logger.error("TCPDiscoveryStatic discover Error: " + ex.getMessage());
-            StringWriter errors = new StringWriter();
-            ex.printStackTrace(new PrintWriter(errors));
-            logger.error("TCPDiscoveryStatic discover Dump: " + errors);
+            logger.error("TCPDiscoveryStaticHandler.genDiscoverMsg", ex);
         }
 
         return sme;

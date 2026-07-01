@@ -6,8 +6,6 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.activemq.network.NetworkBridge;
 import org.apache.activemq.network.NetworkConnector;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 
@@ -92,11 +90,7 @@ class BrokerMonitor implements Runnable {
 			}
 
         } catch(Exception ex) {
-			logger.error(getClass().getName() + " connectToBroker Error " + ex.toString());
-			StringWriter sw = new StringWriter();
-			PrintWriter pw = new PrintWriter(sw);
-			ex.printStackTrace(pw);
-			logger.error(sw.toString()); // stack trace as a string
+			logger.error(getClass().getName() + " connectToBroker Error " + ex.toString(), ex);
 		}
 		return isConnected;
 	}
@@ -162,10 +156,7 @@ class BrokerMonitor implements Runnable {
 
 			shutdown();
 		} catch(Exception ex) {
-			logger.error("Run {}", ex.getMessage());
-			StringWriter errors = new StringWriter();
-			ex.printStackTrace(new PrintWriter(errors));
-			logger.error(errors.toString());
+			logger.error("BrokerMonitor.run Run {}", ex.getMessage(), ex);
 		}
 	}
 }

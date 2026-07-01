@@ -6,8 +6,6 @@ import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -200,17 +198,15 @@ class DiscoveryClientWorkerIPv4 {
                         // Eat the exception, closing the port
                         logger.error("IOException  " + ie.getMessage());
                     } catch (Exception e) {
-                        StringWriter errors = new StringWriter();
-                        e.printStackTrace(new PrintWriter(errors));
                         logger.error("getDiscoveryMap {}", e.getMessage());
-                        logger.error("getDiscoveryMap {}", errors.toString());
+                        logger.error("DiscoveryClientWorkerIPv4.discover getDiscoveryMap", e);
                         //return errors.toString();
                     }
                 }
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
             logger.error("while not closed: {}", ex.getMessage());
+            logger.error("DiscoveryClientWorkerIPv4.discover", ex);
         }
         return discoveredList;
     }

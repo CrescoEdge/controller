@@ -8,8 +8,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 
 import jakarta.jms.*;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.Map;
 
 public class ControllerStatePersistance {
@@ -105,11 +103,7 @@ public class ControllerStatePersistance {
                 returnState = true;
             }
         } catch (Exception ex) {
-            logger.error("preInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("preInit()", ex);
         }
         return returnState;
     }
@@ -135,11 +129,7 @@ public class ControllerStatePersistance {
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             returnState = true;
         } catch (Exception ex) {
-            logger.error("standAloneInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("standAloneInit()", ex);
         }
         return returnState;
     }
@@ -166,11 +156,7 @@ public class ControllerStatePersistance {
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("standAloneSuccess()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("standAloneSuccess()", ex);
         }
         return returnState;
     }
@@ -199,11 +185,7 @@ public class ControllerStatePersistance {
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("agentInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("agentInit()", ex);
         }
         return returnState;
     }
@@ -235,11 +217,7 @@ public class ControllerStatePersistance {
             //}
 
         } catch (Exception ex) {
-            logger.error("agentSuccess()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("agentSuccess()", ex);
         }
         return returnState;
     }
@@ -268,11 +246,7 @@ public class ControllerStatePersistance {
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("regionInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("regionInit()", ex);
         }
         return returnState;
     }
@@ -301,11 +275,7 @@ public class ControllerStatePersistance {
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("regionInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("regionSuccess()", ex);
         }
         return returnState;
     }
@@ -338,11 +308,7 @@ public class ControllerStatePersistance {
             //}
 
         } catch (Exception ex) {
-            logger.error("regionInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("regionGlobalSuccess()", ex);
         }
         return returnState;
     }
@@ -373,11 +339,7 @@ public class ControllerStatePersistance {
             returnState = true;
 
         } catch (Exception ex) {
-            logger.error("regionInit()");
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            logger.error(sw.toString());
+            logger.error("globalSuccess()", ex);
         }
         return returnState;
     }
@@ -409,7 +371,7 @@ public class ControllerStatePersistance {
                             }
                         } catch(Exception ex) {
 
-                            ex.printStackTrace();
+                            logger.error("registerRegionalListener() onMessage", ex);
                         }
                     }
                 };
@@ -419,11 +381,11 @@ public class ControllerStatePersistance {
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.error("registerRegionalListener() addMessageListener", e);
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("registerRegionalListener()", ex);
         }
         return lid;
     }
@@ -447,7 +409,7 @@ public class ControllerStatePersistance {
                             }
                         } catch(Exception ex) {
 
-                            ex.printStackTrace();
+                            logger.error("registerGlobalListener() onMessage", ex);
                         }
                     }
                 };
@@ -457,11 +419,11 @@ public class ControllerStatePersistance {
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
-                e.printStackTrace();
+                logger.error("registerGlobalListener() addMessageListener", e);
             }
 
         } catch (Exception ex) {
-            ex.printStackTrace();
+            logger.error("registerGlobalListener()", ex);
         }
         return lid;
     }
