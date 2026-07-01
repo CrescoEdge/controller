@@ -93,8 +93,12 @@ public class ActiveBroker {
 		        entry.setInactiveTimeoutBeforeGC(15000);
                 entry.setMemoryLimit(64 * 1024 * 1024); // 64 MB memory limit per destination
                 // Dispatch cache: keeps recent messages in memory for fast dispatch instead of always
-                // reading from the store. Default ON (throughput); bounded by the memory limit + eviction.
-                boolean useCache = plugin.getConfig().getBooleanParam("activemq_use_cache", true);
+                // reading from the store. Cresco keeps this OFF by design (default false): benchmarking
+                // showed it gives NO throughput gain on the single-node vm:// dataplane/control paths
+                // (identical MB/s cache on vs off), while an in-memory cache adds memory pressure under
+                // the flow-control-off + generous-systemUsage policy used here. Set activemq_use_cache=true
+                // only if a future persistent/multi-node workload measurably benefits.
+                boolean useCache = plugin.getConfig().getBooleanParam("activemq_use_cache", false);
 
                 // Queue
 				entry.setQueue(">");
