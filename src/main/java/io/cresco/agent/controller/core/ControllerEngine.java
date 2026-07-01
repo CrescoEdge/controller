@@ -4,6 +4,7 @@ import io.cresco.agent.controller.agentcontroller.AgentExecutor;
 import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.agent.controller.agentcontroller.PluginAdmin;
 import io.cresco.agent.controller.communication.*;
+import io.cresco.agent.controller.health.CrescoHealthExecutor;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
@@ -84,6 +85,8 @@ public class ControllerEngine {
 
     private ControllerSMHandler controllerSMHandler;
 
+    private CrescoHealthExecutor healthExecutor;
+
 
     public ControllerEngine(ControllerStateImp cstate, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
 
@@ -122,6 +125,19 @@ public class ControllerEngine {
 
             controllerSM.start();
 
+            // Start the health executor: discovers HealthCheck services and runs them with grace/
+            // sticky/cache. Guarded so a missing Felix HC api bundle cannot block controller start.
+            try {
+                this.healthExecutor = new CrescoHealthExecutor(plugin.getBundleContext(), plugin);
+                this.healthExecutor.start();
+                io.cresco.agent.controller.health.LocalHealthChecks.register(plugin.getBundleContext(), this);
+                io.cresco.agent.controller.health.LinkHealthChecks.register(plugin.getBundleContext(), this);
+                // HC->MINA bridge: a grace-protected link:parent CRITICAL fires the MINA loss event.
+                this.healthExecutor.addListener(new io.cresco.agent.controller.health.HealthMinaBridge(this));
+            } catch (Throwable t) {
+                logger.error("Health executor failed to start: {}", String.valueOf(t));
+            }
+
             isStarted = true;
         } catch (Exception ex) {
             logger.error("ControllerEngine.start ", ex);
@@ -132,6 +148,10 @@ public class ControllerEngine {
     public boolean stop() {
         boolean isStopped = false;
         try {
+
+            if (healthExecutor != null) {
+                healthExecutor.shutdown();
+            }
 
             logger.info("Stopping all plugins.");
             pluginAdmin.stopAllPlugins();
@@ -487,6 +507,8 @@ public class ControllerEngine {
     }
 
     public PluginAdmin getPluginAdmin() { return pluginAdmin; }
+
+    public CrescoHealthExecutor getHealthExecutor() { return healthExecutor; }
 
     public MeasurementEngine getMeasurementEngine() {
         return this.measurementEngine;

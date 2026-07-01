@@ -32,12 +32,23 @@ public class ControllerStateImp implements ControllerState {
 		this.controllerStatePersistance = new ControllerStatePersistance(plugin,dbe);
 	}
 
+	// The active (serving) modes. Was missing REGION (a region-only controller reported not-active).
 	public boolean isActive() {
-		return ((currentMode == ControllerMode.STANDALONE) || (currentMode == ControllerMode.AGENT) || (currentMode == ControllerMode.GLOBAL) || (currentMode == ControllerMode.REGION_GLOBAL));
+		return ((currentMode == ControllerMode.STANDALONE)
+				|| (currentMode == ControllerMode.AGENT)
+				|| (currentMode == ControllerMode.REGION)
+				|| (currentMode == ControllerMode.REGION_GLOBAL)
+				|| (currentMode == ControllerMode.GLOBAL));
 	}
 
+	// The failed modes. Was buggy: it listed REGION_GLOBAL (the healthy active state) so a
+	// region+global reported isActive() && isFailed() at once; and it omitted REGION_FAILED.
 	public boolean isFailed() {
-		return ((currentMode == ControllerMode.AGENT_FAILED) || (currentMode == ControllerMode.GLOBAL_FAILED) || (currentMode == ControllerMode.REGION_GLOBAL) || (currentMode == ControllerMode.REGION_GLOBAL_FAILED) || (currentMode == ControllerMode.STANDALONE_FAILED));
+		return ((currentMode == ControllerMode.STANDALONE_FAILED)
+				|| (currentMode == ControllerMode.AGENT_FAILED)
+				|| (currentMode == ControllerMode.REGION_FAILED)
+				|| (currentMode == ControllerMode.REGION_GLOBAL_FAILED)
+				|| (currentMode == ControllerMode.GLOBAL_FAILED));
 	}
 
 	public synchronized ControllerMode getControllerState() {

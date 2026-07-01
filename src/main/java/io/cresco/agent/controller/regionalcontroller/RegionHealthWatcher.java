@@ -34,15 +34,18 @@ public class RegionHealthWatcher {
     private long pingInterval; // Interval for active ping checks to Global
     private long pingTimeout; // Timeout for waiting for ping response from Global
 
-    // Liveness robustness: a single missed ping must NOT drop the global. Retry within a tick, and
-    // only declare the global lost after several CONSECUTIVE failed ticks. Guards against transient
-    // GC pauses / load bursts that briefly delay a pong.
-    private int pingRetries;      // extra attempts within one tick before counting a miss
-    private int pingMaxFailures;  // consecutive failed ticks required before globalControllerLost
-    private final java.util.concurrent.atomic.AtomicInteger consecutivePingFailures =
-            new java.util.concurrent.atomic.AtomicInteger(0);
+    // In-tick ping retry: a single delayed pong (GC pause / load burst) must not even register as a
+    // miss. The failure DECISION and the anti-flap tolerance that used to live here (a
+    // consecutive-missed-ticks counter) now live in HC: ParentLinkHealthCheck + the executor grace
+    // window decide when the global is really lost.
+    private int pingRetries;      // extra attempts within one tick before recording a miss
 
     private Set<String> registeredPeers = new HashSet<>(); // Add this field
+
+    // Health->state moved to HC: transport-only. Stamps the last successful pong from the global
+    // (parent) controller; ParentLinkHealthCheck reads it and the HC->MINA bridge fires
+    // globalControllerLost after the grace window.
+    private volatile long lastGlobalPongTs;
 
 
     public RegionHealthWatcher(ControllerEngine controllerEngine) {
@@ -57,10 +60,9 @@ public class RegionHealthWatcher {
         long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
 
         // Use separate config params for ping interval and timeout, or derive from wdTimer
-        this.pingInterval = plugin.getConfig().getLongParam("region_ping_interval", watchDogInterval); // Ping Global as often as agent check by default
+        this.pingInterval = plugin.getConfig().getLongParam("region_ping_interval", 5000L); // ping cadence (also caps link-failure detection latency)
         this.pingTimeout = plugin.getConfig().getLongParam("region_ping_timeout", 5000L); // Default 5 second timeout for ping response from Global
         this.pingRetries = plugin.getConfig().getIntegerParam("region_ping_retries", 2); // extra attempts within a tick
-        this.pingMaxFailures = plugin.getConfig().getIntegerParam("region_ping_max_failures", 3); // consecutive failed ticks before declaring lost
 
         logger.debug("RegionHealthWatcher Initializing");
         communicationsHealthTimer = new Timer("RegionCommHealthTimer", true); // Daemon thread
@@ -80,8 +82,13 @@ public class RegionHealthWatcher {
         }
         // --- END NEW ---
 
+        this.lastGlobalPongTs = System.currentTimeMillis();
         logger.info("Initialized");
     }
+
+    public long getLastGlobalPongTs() { return lastGlobalPongTs; }
+
+    public long getPingIntervalMs() { return pingInterval; }
 
     public void shutdown() {
 
@@ -267,21 +274,18 @@ public class RegionHealthWatcher {
                             logger.error("CommunicationHealthWatcherTask: Broker shutdown or unhealthy detected!");
                         }
 
-                        // Check connection to Global Controller (if applicable) via ActiveClient
+                        // Local component health (broker/broker-manager) is now surfaced by the
+                        // "broker" local HealthCheck, and the global connection by "link:parent".
+                        // This task logs only; the HC->MINA bridge owns state transitions.
                         if (controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL) {
-                            String globalUri = controllerEngine.getActiveClient().getFaultTriggerURI(); // Assuming fault URI is set to global
+                            String globalUri = controllerEngine.getActiveClient().getFaultTriggerURI();
                             if (globalUri == null || !controllerEngine.getActiveClient().isConnectionActive(globalUri)) {
-                                isHealthy = false;
-                                logger.error("CommunicationHealthWatcherTask: Connection to Global Controller appears down (checked via ActiveClient). URI: {}", globalUri);
-                                // Trigger state machine failure directly here as ActivePing might also fail
-                                controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: CommunicationHealthWatcherTask detected inactive Global connection.");
+                                logger.warn("CommunicationHealthWatcherTask: Global connection appears down (HC decides). URI: {}", globalUri);
                             }
                         }
 
                         if (!isHealthy) {
-                            logger.error("CommunicationHealthWatcherTask: System has become unhealthy, triggering globalControllerLost.");
-                            // Use the state machine's failure mechanism
-                            controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: CommunicationHealthWatcherTask detected unhealthy local component.");
+                            logger.warn("CommunicationHealthWatcherTask: local component unhealthy (HC decides recovery).");
                         } else {
                             logger.trace("CommunicationHealthWatcherTask: Local components appear healthy.");
                         }
@@ -407,31 +411,19 @@ public class RegionHealthWatcher {
                     }
 
                     if (pingResponse == null) {
-                        int fails = consecutivePingFailures.incrementAndGet();
-                        if (fails >= pingMaxFailures) {
-                            logger.error("ActivePingTask: No PONG from Global [{}] after {} consecutive failed ticks ({} in-tick attempts, {}ms each). Triggering recovery.",
-                                    globalControllerPath, fails, pingRetries + 1, pingTimeout);
-                            consecutivePingFailures.set(0);
-                            controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask " + fails + " consecutive ping failures to Global.");
-                        } else {
-                            logger.warn("ActivePingTask: No PONG from Global [{}] (consecutive failure {}/{}). Not dropping yet.",
-                                    globalControllerPath, fails, pingMaxFailures);
-                        }
+                        // Transport-only: record the miss. ParentLinkHealthCheck sees the stale
+                        // lastGlobalPongTs and the HC->MINA bridge fires globalControllerLost after
+                        // the grace window. No direct state transition here.
+                        logger.warn("ActivePingTask: No PONG from Global [{}] within {}ms x{} attempts (miss recorded; HC decides).",
+                                globalControllerPath, pingTimeout, pingRetries + 1);
                     } else {
-                        // Healthy pong -> reset the consecutive-failure counter.
-                        if (consecutivePingFailures.getAndSet(0) > 0) {
-                            logger.info("ActivePingTask: PONG from Global [{}] recovered after transient failures.", globalControllerPath);
-                        } else {
-                            logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
-                        }
+                        // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
+                        lastGlobalPongTs = System.currentTimeMillis();
+                        logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
                     }
                 } catch (Exception ex) {
-                    int fails = consecutivePingFailures.incrementAndGet();
-                    logger.error("ActivePingTask (Global) Error (consecutive failure {}/{}): {}", fails, pingMaxFailures, ex.getMessage(), ex);
-                    if (fails >= pingMaxFailures) {
-                        consecutivePingFailures.set(0);
-                        controllerEngine.getControllerSM().globalControllerLost("RegionHealthWatcher: ActivePingTask " + fails + " consecutive exceptions to Global: " + ex.getMessage());
-                    }
+                    // Transport-only: log; HC owns the failure decision.
+                    logger.warn("ActivePingTask (Global) Error (miss recorded; HC decides): {}", ex.getMessage());
                 } finally {
                     activePingTimerActive.set(false); // Release lock
                 }

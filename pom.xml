@@ -100,6 +100,17 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Felix Health Check API. Provisioned as an installed bundle at runtime (agent resources);
+             compile-only here. The controller registers org.apache.felix.hc.api.HealthCheck services
+             and runs them via a controller-owned executor (HC core bundle not provisioned in Cresco's
+             minimal Felix). provided => imported (not embedded), wired to the installed api bundle. -->
+        <dependency>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>org.apache.felix.healthcheck.api</artifactId>
+            <version>2.0.4</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-configuration2 -->
         <dependency>
             <groupId>commons-configuration</groupId>

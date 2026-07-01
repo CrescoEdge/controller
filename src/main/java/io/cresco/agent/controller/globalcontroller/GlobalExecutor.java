@@ -156,6 +156,13 @@ public class GlobalExecutor implements Executor {
                 case "getisassignmentinfo":
                     return getIsAssignment(ce);
 
+                case "ping":
+                    // Liveness ping from a region (region->global link check). The global must answer
+                    // it, exactly as a region answers an agent's ping — otherwise the region never
+                    // gets a PONG and its link:parent health check flaps to CRITICAL. (This handler
+                    // was missing: "Unknown configtype found: ping EXEC".)
+                    return pingReply(ce);
+
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
                     return null;
@@ -164,6 +171,13 @@ public class GlobalExecutor implements Executor {
             logger.error("executeEXEC() ", ex);
         }
         return null;
+    }
+
+    private MsgEvent pingReply(MsgEvent msg) {
+        msg.setParam("action", "pong");
+        msg.setParam("remote_ts", String.valueOf(System.currentTimeMillis()));
+        msg.setParam("type", "global_controller");
+        return msg;
     }
     @Override
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {

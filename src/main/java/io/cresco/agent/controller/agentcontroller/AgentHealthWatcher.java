@@ -37,6 +37,11 @@ public class AgentHealthWatcher {
     private long pingInterval; // Interval for active ping checks
     private long pingTimeout; // Timeout for waiting for ping response
 
+    // Health->state moved to HC: this watcher is now transport-only. It stamps the last successful
+    // pong from the regional (parent) controller; ParentLinkHealthCheck reads it and the HC->MINA
+    // bridge fires regionalControllerLost after the grace window (no single-missed-ping drop).
+    private volatile long lastParentPongTs;
+
     private AtomicBoolean communicationsHealthTimerActive = new AtomicBoolean();
     // New AtomicBoolean for ping timer
     private AtomicBoolean activePingTimerActive = new AtomicBoolean();
@@ -49,10 +54,12 @@ public class AgentHealthWatcher {
         // Use watchdog_interval from config for consistency
         this.wdTimer = plugin.getConfig().getIntegerParam("watchdog_interval", 15000);
         // Use separate config params for ping interval and timeout, or derive from wdTimer
-        this.pingInterval = plugin.getConfig().getLongParam("agent_ping_interval", (long)wdTimer); // Ping as often as watchdog update by default
+        this.pingInterval = plugin.getConfig().getLongParam("agent_ping_interval", 5000L); // ping cadence (also caps link-failure detection latency)
         this.pingTimeout = plugin.getConfig().getLongParam("agent_ping_timeout", 5000L); // Default 5 second timeout for ping response
 
         this.startTS = System.currentTimeMillis();
+        // Initialise to creation time so a freshly-created watcher is not instantly "stale".
+        this.lastParentPongTs = System.currentTimeMillis();
         this.communicationsHealthTimer = new Timer("AgentCommHealthTimer", true); // Daemon thread
         this.communicationsHealthTimer.scheduleAtFixedRate(new CommunicationHealthWatcherTask(), 5000, wdTimer);
 
@@ -67,6 +74,10 @@ public class AgentHealthWatcher {
         this.gson = new Gson();
         // Removed watchDogTimerString initialization
     }
+
+    public long getLastParentPongTs() { return lastParentPongTs; }
+
+    public long getPingIntervalMs() { return pingInterval; }
 
     public void shutdown() {
         if (communicationsHealthTimer != null) {
@@ -172,10 +183,10 @@ public class AgentHealthWatcher {
                         return; // Exit if already running
                     }
                     try {
+                        // Health of this connection is now surfaced by the "dataplane" local check and
+                        // the "link:parent" check; this task no longer fires state transitions.
                         if (!controllerEngine.getActiveClient().isFaultURIActive()) {
-                            logger.error("CommunicationHealthWatcherTask: Connection to Regional Controller appears down (isFaultURIActive() == false). Triggering recovery.");
-                            // Trigger state machine failure
-                            controllerEngine.getControllerSM().regionalControllerLost("AgentHealthWatcher: CommunicationHealthWatcherTask detected inactive connection.");
+                            logger.warn("CommunicationHealthWatcherTask: fault URI inactive (HC decides recovery).");
                         } else {
                             logger.trace("CommunicationHealthWatcherTask: Connection to Regional Controller appears active.");
                         }
@@ -216,19 +227,20 @@ public class AgentHealthWatcher {
                     MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
 
                     if (pingResponse == null) {
-                        // Timeout or other RPC failure
-                        logger.error("ActivePingTask: No PONG received from Regional Controller [{}] within timeout ({}ms). Triggering recovery.",
+                        // Transport-only: record the miss. The failure DECISION now lives in HC —
+                        // ParentLinkHealthCheck sees the stale lastParentPongTs and the HC->MINA
+                        // bridge fires regionalControllerLost after the grace window. No direct state
+                        // transition here (that direct call was the single-missed-ping drop bug).
+                        logger.warn("ActivePingTask: No PONG from Regional Controller [{}] within {}ms (miss recorded; HC decides).",
                                 controllerEngine.cstate.getRegionalControllerPath(), pingTimeout);
-                        controllerEngine.getControllerSM().regionalControllerLost("AgentHealthWatcher: ActivePingTask timeout.");
                     } else {
-                        // We got a response, connection seems okay at application level
+                        // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
+                        lastParentPongTs = System.currentTimeMillis();
                         logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());
-                        // Optional: Log latency = System.currentTimeMillis() - Long.parseLong(pingResponse.getParam("remote_ts"));
                     }
                 } catch (Exception ex) {
-                    logger.error("ActivePingTask Error: {}", ex.getMessage(), ex);
-                    // Assume failure and trigger recovery on exception
-                    controllerEngine.getControllerSM().regionalControllerLost("AgentHealthWatcher: ActivePingTask exception: " + ex.getMessage());
+                    // Transport-only: log; HC (ParentLinkHealthCheck + bridge) owns the failure decision.
+                    logger.warn("ActivePingTask Error (miss recorded; HC decides): {}", ex.getMessage());
                 } finally {
                     activePingTimerActive.set(false); // Release lock
                 }

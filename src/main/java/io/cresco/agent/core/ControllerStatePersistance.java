@@ -56,13 +56,11 @@ public class ControllerStatePersistance {
                 logger.warn("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 //return unregisterRegion(localRegion,globalRegion);
             case REGION_FAILED:
-                logger.error("REGION_FAILED: NOT IMPLEMENTED : " + currentDesc);
-                break;
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_FAILED:
-                logger.error("REGION_GLOBAL_FAILED: NOT IMPLEMENTED : " + currentDesc);
-                break;
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL:
                 return regionGlobalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_INIT:
@@ -74,11 +72,35 @@ public class ControllerStatePersistance {
                 logger.warn("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
                 break;
 
+            // Transient failure states (a MINA loss event immediately re-inits). Record the
+            // transition for audit and accept it, rather than logging "INVALID MODE" and returning
+            // false. The in-memory MINA transition proceeds regardless of this return value.
+            case STANDALONE_FAILED:
+            case AGENT_FAILED:
+            case GLOBAL_FAILED:
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+
             default:
                 logger.warn("setControllerState() INVALID MODE : " + currentMode.name() + " DESC: " + currentDesc);
                 break;
         }
         return false;
+    }
+
+    /**
+     * Record a transient state transition (a _FAILED state that immediately re-inits) as a cstate
+     * event for audit, and accept it. These states used to log "NOT IMPLEMENTED"/"INVALID MODE" and
+     * return false — noisy, and the DB never saw the transition. The MINA transition proceeds
+     * regardless of this return value; recording keeps the audit trail complete.
+     */
+    private boolean recordTransientState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+        try {
+            dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+            return true;
+        } catch (Exception ex) {
+            logger.error("recordTransientState({}) : {}", currentMode.name(), ex.getMessage());
+            return false;
+        }
     }
 
     public boolean preInit(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent){

@@ -1414,6 +1414,25 @@ public class PluginAdmin {
         return statusMap;
     }
 
+    /**
+     * Snapshot of in-memory plugin health: pluginID -&gt; status_code (see {@link PluginNode}).
+     * Read from the live pluginMap under the plugin lock; feeds the "plugins" HealthCheck via
+     * {@code StatusAdapter.fromPluginStatusCode}.
+     */
+    public Map<String,Integer> getPluginStatusCodes() {
+        Map<String,Integer> out = new HashMap<>();
+        try {
+            synchronized (lockPlugin) {
+                for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
+                    out.put(e.getKey(), e.getValue().getStatus_code());
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("getPluginStatusCodes() ", ex);
+        }
+        return out;
+    }
+
     public String getPluginList() {
 
 
