@@ -116,7 +116,7 @@ public class StaticPluginLoader implements Runnable  {
                                     if (map == null) {
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
+                                        map.put("jarfile", "repo.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
@@ -138,7 +138,7 @@ public class StaticPluginLoader implements Runnable  {
                                     if (map == null) {
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
+                                        map.put("jarfile", "wsapi.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
@@ -163,7 +163,7 @@ public class StaticPluginLoader implements Runnable  {
                                     if (map == null) {
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "repo-1.2-SNAPSHOT.jar");
+                                        map.put("jarfile", "repo.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
@@ -186,7 +186,7 @@ public class StaticPluginLoader implements Runnable  {
                                     if (map == null) {
                                         map = new HashMap<>();
                                         map.put("pluginname", pluginName);
-                                        map.put("jarfile", "wsapi-1.2-SNAPSHOT.jar");
+                                        map.put("jarfile", "wsapi.jar");
                                         map.put("persistence_code", "20");
                                         map.put("inode_id", generatePluginId(pluginName));
                                     }
@@ -218,7 +218,7 @@ public class StaticPluginLoader implements Runnable  {
                                     map = new HashMap<>();
                                     map.put("pluginname", pluginName);
                                     // CORRECTED JARFILE NAME
-                                    map.put("jarfile", "stunnel-1.2-SNAPSHOT.jar");
+                                    map.put("jarfile", "stunnel.jar");
                                     map.put("persistence_code", "20");
                                     map.put("inode_id", generatePluginId(pluginName));
                                 }
@@ -246,7 +246,7 @@ public class StaticPluginLoader implements Runnable  {
 
                                     map = new HashMap<>();
                                     map.put("pluginname", pluginName);
-                                    map.put("jarfile", "sysinfo-1.2-SNAPSHOT.jar");
+                                    map.put("jarfile", "sysinfo.jar");
                                     map.put("persistence_code", "20");
                                     map.put("inode_id", generatePluginId(pluginName));
                                 }

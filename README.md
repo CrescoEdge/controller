@@ -18,7 +18,7 @@ mvn package bundle:bundle
 Built with **JDK 21**. The `bundle:bundle` goal is required: it rewrites the jar into a
 proper OSGi bundle (with `Bundle-SymbolicName`, `Export-Package`, and embedded
 dependencies). A plain `mvn package`/`install` produces a non-bundle jar that the agent
-cannot start. Output: `target/controller-1.2-SNAPSHOT.jar`.
+cannot start. Output: `target/controller-1.3-SNAPSHOT.jar`.
 
 Requires `io.cresco:library` in your local Maven repository — build [library](https://github.com/CrescoEdge/library) first.
 
