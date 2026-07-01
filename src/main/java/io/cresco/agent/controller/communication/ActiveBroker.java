@@ -88,10 +88,18 @@ public class ActiveBroker {
 				*/
 
 
+				// Every broker/destination tuning lever below is configurable; the defaults preserve
+				// the shipped behavior. Nothing hardcoded -- each knob is overridable via plugin config.
+				boolean producerFlowControl = plugin.getConfig().getBooleanParam("activemq_producer_flow_control", false);
+				boolean prioritizedMessages = plugin.getConfig().getBooleanParam("activemq_prioritized_messages", true);
+				long destinationMemoryLimit = plugin.getConfig().getLongParam("activemq_destination_memory_limit", 64L * 1024 * 1024);
+				boolean gcInactiveDestinations = plugin.getConfig().getBooleanParam("activemq_gc_inactive_destinations", true);
+				int inactiveTimeoutBeforeGC = plugin.getConfig().getIntegerParam("activemq_inactive_timeout_before_gc", 15000);
+
 				PolicyEntry entry = new PolicyEntry();
-		        entry.setGcInactiveDestinations(true);
-		        entry.setInactiveTimeoutBeforeGC(15000);
-                entry.setMemoryLimit(64 * 1024 * 1024); // 64 MB memory limit per destination
+		        entry.setGcInactiveDestinations(gcInactiveDestinations);
+		        entry.setInactiveTimeoutBeforeGC(inactiveTimeoutBeforeGC);
+                entry.setMemoryLimit(destinationMemoryLimit); // configurable per-destination memory limit
                 // Dispatch cache: keeps recent messages in memory for fast dispatch instead of always
                 // reading from the store. Cresco keeps this OFF by design (default false): benchmarking
                 // showed it gives NO throughput gain on the single-node vm:// dataplane/control paths
@@ -109,9 +117,9 @@ public class ActiveBroker {
 				// bypass producer-side flow control). Priority now governs dispatch order; the
 				// pending-message-limit strategy below bounds NON-persistent memory (telemetry);
 				// persistent traffic (liveness/control/bulk) pages to the store.
-				entry.setProducerFlowControl(false);
+				entry.setProducerFlowControl(producerFlowControl);
                 entry.setUseCache(useCache);
-                entry.setPrioritizedMessages(true);
+                entry.setPrioritizedMessages(prioritizedMessages);
                 //entry.setExpireMessagesPeriod(0);
 
                 int queuePrefetchLimit = plugin.getConfig().getIntegerParam("queue_prefetch_limit",100);
@@ -129,9 +137,9 @@ public class ActiveBroker {
 				//enable prioritization of messages in queues
 				entry.setPrioritizedMessages(true);
 				// QoS: see queue note above -- flow control OFF, priority governs, non-persistent bounded by eviction.
-				entry.setProducerFlowControl(false);
+				entry.setProducerFlowControl(producerFlowControl);
                 entry.setUseCache(useCache);
-                entry.setPrioritizedMessages(true);
+                entry.setPrioritizedMessages(prioritizedMessages);
                 //entry.setExpireMessagesPeriod(0);
 
 				//configure prefetch rate ratio to prevent exhaustion of resources from slow consumers
@@ -218,9 +226,9 @@ public class ActiveBroker {
 				broker = new SslBrokerService();
 				//broker.setUseShutdownHook(true);
 				broker.setUseShutdownHook(false);
-				broker.setPersistent(true);
+				broker.setPersistent(plugin.getConfig().getBooleanParam("activemq_persistent", true));
 				broker.setBrokerName(brokerName);
-				broker.setSchedulePeriodForDestinationPurge(2500);
+				broker.setSchedulePeriodForDestinationPurge(plugin.getConfig().getIntegerParam("activemq_destination_purge_period", 2500));
 				broker.setDestinationPolicy(map);
 
 				// KahaDB with CONFIGURABLE journal disk syncs. Cresco uses persistence as a flow-control
