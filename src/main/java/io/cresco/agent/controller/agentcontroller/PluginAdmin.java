@@ -19,6 +19,7 @@ import org.apache.commons.io.FileUtils;
 import org.osgi.framework.*;
 import org.osgi.service.cm.Configuration;
 import org.osgi.service.cm.ConfigurationAdmin;
+import org.osgi.util.tracker.ServiceTracker;
 
 import java.io.*;
 import java.lang.reflect.Type;
@@ -48,7 +49,11 @@ public class PluginAdmin {
 
     private AgentService agentService;
     private BundleContext context;
-    private ConfigurationAdmin confAdmin;
+    // ConfigurationAdmin and CoreState are consumed via ServiceTrackers so a restart of those
+    // service providers does not leave us holding a stale, invalid reference.
+    private ServiceTracker<ConfigurationAdmin, ConfigurationAdmin> confAdminTracker;
+    private ServiceTracker<CoreState, CoreState> coreStateTracker;
+    private static final long SERVICE_WAIT_MS = 30000L;
     private Map<String,Configuration> configMap;
     private Map<String,PluginNode> pluginMap;
     private Map<Long,List<String>> bundleMap;
@@ -99,24 +104,36 @@ public class PluginAdmin {
                 .build();
 
 
-        ServiceReference configurationAdminReference = null;
+        this.confAdminTracker = new ServiceTracker<>(context, ConfigurationAdmin.class, null);
+        this.confAdminTracker.open();
+        this.coreStateTracker = new ServiceTracker<>(context, CoreState.class, null);
+        this.coreStateTracker.open();
 
-        configurationAdminReference = context.getServiceReference(ConfigurationAdmin.class.getName());
+    }
 
-        if (configurationAdminReference != null) {
-
-            boolean assign = configurationAdminReference.isAssignableTo(context.getBundle(), ConfigurationAdmin.class.getName());
-
-            if (assign) {
-                confAdmin = (ConfigurationAdmin) context.getService(configurationAdminReference);
-            } else {
-                logger.error("Could not Assign Configuration Admin!");
+    /**
+     * Current ConfigurationAdmin from the ServiceTracker, waiting briefly if it is momentarily
+     * unavailable (e.g. its provider bundle is restarting). Returns null only if it never appears.
+     */
+    private ConfigurationAdmin getConfigurationAdmin() {
+        ConfigurationAdmin ca = confAdminTracker.getService();
+        if (ca == null) {
+            try {
+                ca = confAdminTracker.waitForService(SERVICE_WAIT_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
             }
-
-        } else {
-            logger.error("Admin Does Not Exist!");
         }
+        if (ca == null) {
+            logger.error("ConfigurationAdmin service is not available");
+        }
+        return ca;
+    }
 
+    /** Close the service trackers; call when the controller is shutting down. */
+    public void close() {
+        try { if (confAdminTracker != null) confAdminTracker.close(); } catch (Exception ex) { /* ignore */ }
+        try { if (coreStateTracker != null) coreStateTracker.close(); } catch (Exception ex) { /* ignore */ }
     }
 
     public void clearDataPlaneLogger() {
@@ -124,33 +141,19 @@ public class PluginAdmin {
     }
 
     public CoreState getCoreState() {
-
-        CoreState coreState = null;
         try {
-
-            ServiceReference coreStateReference = null;
-
-            coreStateReference = context.getServiceReference(CoreState.class.getName());
-
-            if (coreStateReference != null) {
-
-                boolean assign = coreStateReference.isAssignableTo(context.getBundle(), CoreState.class.getName());
-
-                if (assign) {
-                    coreState = (CoreState) context.getService(coreStateReference);
-
-                } else {
-                    logger.error("Could not attached to CoreState");
-                }
-
-            } else {
-                logger.error("CoreState does not exist!");
+            CoreState coreState = coreStateTracker.getService();
+            if (coreState == null) {
+                coreState = coreStateTracker.waitForService(SERVICE_WAIT_MS);
             }
-
-        } catch (Exception ex) {
-            ex.printStackTrace();
+            if (coreState == null) {
+                logger.error("CoreState service is not available");
+            }
+            return coreState;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return null;
         }
-        return coreState;
     }
 
     public boolean logDPSetEnabled(String sessionId, boolean isEnabled) {
@@ -226,7 +229,7 @@ public class PluginAdmin {
 
 
             //set log level for file
-            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+            Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
             log4jProps.put( "log4j.rootLogger", level.name().toUpperCase() + ", CONSOLE, FILE" );
@@ -253,7 +256,7 @@ public class PluginAdmin {
 
 
             //set log level for file
-            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+            Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
             log4jProps.put("log4j.logger." + logId, level.name().toUpperCase());
@@ -284,7 +287,7 @@ public class PluginAdmin {
             }
 
             //set log level for file
-            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+            Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
 
@@ -331,7 +334,7 @@ public class PluginAdmin {
 
             logMap = new HashMap<>();
 
-            Configuration logConfig = confAdmin.getConfiguration("org.ops4j.pax.logging", null);
+            Configuration logConfig = getConfigurationAdmin().getConfiguration("org.ops4j.pax.logging", null);
 
             Dictionary<String, Object> log4jProps = logConfig.getProperties();
 
@@ -1051,7 +1054,7 @@ public class PluginAdmin {
 
                 if (pid != null) {
 
-                    Configuration pluginConfig = confAdmin.getConfiguration(pid);
+                    Configuration pluginConfig = getConfigurationAdmin().getConfiguration(pid);
                     if(pluginConfig != null) {
 
                         pluginConfig.delete();
@@ -1137,7 +1140,7 @@ public class PluginAdmin {
 
                 if ((jarFilePath != null) && (pid != null)) {
 
-                    Configuration pluginConfig = confAdmin.getConfiguration(pid);
+                    Configuration pluginConfig = getConfigurationAdmin().getConfiguration(pid);
                     if(pluginConfig != null) {
 
                         pluginConfig.delete();
@@ -1292,7 +1295,7 @@ public class PluginAdmin {
     public void addDirectConfig(String factoryPid, Dictionary<String, Object> properties) {
 
         try {
-            Configuration configuration = confAdmin.createFactoryConfiguration(factoryPid, null);
+            Configuration configuration = getConfigurationAdmin().createFactoryConfiguration(factoryPid, null);
             configuration.update(properties);
 
         } catch(Exception ex) {
@@ -1323,9 +1326,9 @@ public class PluginAdmin {
                         String configString = pid + "|" + bsn + "|" + version;
 
 
-                        //Configuration configuration = confAdmin.createFactoryConfiguration(configString, null);
+                        //Configuration configuration = getConfigurationAdmin().createFactoryConfiguration(configString, null);
 
-                        Configuration configuration = confAdmin.createFactoryConfiguration(map.get("pluginname") + ".Plugin", null);
+                        Configuration configuration = getConfigurationAdmin().createFactoryConfiguration(map.get("pluginname") + ".Plugin", null);
 
 
                         Dictionary properties = new Hashtable();

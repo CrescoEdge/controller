@@ -136,6 +136,8 @@ public class ControllerEngine {
 
             logger.info("Stopping all plugins.");
             pluginAdmin.stopAllPlugins();
+            // release the ConfigurationAdmin/CoreState service trackers
+            pluginAdmin.close();
 
             logger.info("Setting controller to stopped state");
             if(controllerSM != null) {
