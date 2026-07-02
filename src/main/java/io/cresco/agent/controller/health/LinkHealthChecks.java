@@ -27,5 +27,13 @@ public final class LinkHealthChecks {
         props.put(HealthCheck.ASYNC_INTERVAL_IN_SEC, String.valueOf(intervalSec));
         props.put(HealthTags.HC_GRACE_IN_SEC, String.valueOf(graceSec));
         bc.registerService(HealthCheck.class, new ParentLinkHealthCheck(ce), props);
+
+        // Parent-link QUALITY (degraded) — reads the LinkMetrics measurement subsystem. Separate check
+        // so a degraded-but-live link surfaces as WARN without touching the liveness verdict above.
+        Dictionary<String, Object> qprops = new Hashtable<>();
+        qprops.put(HealthCheck.NAME, HealthTags.LINK_QUALITY);
+        qprops.put(HealthCheck.TAGS, new String[]{HealthTags.LINK, HealthTags.LINK_QUALITY});
+        qprops.put(HealthCheck.ASYNC_INTERVAL_IN_SEC, String.valueOf(intervalSec));
+        bc.registerService(HealthCheck.class, new LinkQualityHealthCheck(ce), qprops);
     }
 }

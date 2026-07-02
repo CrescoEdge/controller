@@ -70,6 +70,10 @@ public class ControllerEngine {
     private PluginAdmin pluginAdmin;
     private AgentExecutor executor;
     private MeasurementEngine measurementEngine;
+    // Network link measurement + automated tuning (measurement subsystem + controller control loop).
+    private io.cresco.agent.controller.netmetrics.LinkMetricsRegistry linkMetricsRegistry;
+    private io.cresco.agent.controller.netmetrics.NetTuningProfile netTuningProfile;
+    private io.cresco.agent.controller.netmetrics.AutoTuner autoTuner;
     private MsgRouter msgRouter;
     private ControllerSM controllerSM;
 
@@ -504,6 +508,13 @@ public class ControllerEngine {
     public MeasurementEngine getMeasurementEngine() {
         return this.measurementEngine;
     }
+    public io.cresco.agent.controller.netmetrics.LinkMetricsRegistry getLinkMetricsRegistry() { return this.linkMetricsRegistry; }
+    public void setLinkMetricsRegistry(io.cresco.agent.controller.netmetrics.LinkMetricsRegistry r) { this.linkMetricsRegistry = r; }
+    public io.cresco.agent.controller.netmetrics.NetTuningProfile getNetTuningProfile() { return this.netTuningProfile; }
+    public void setNetTuningProfile(io.cresco.agent.controller.netmetrics.NetTuningProfile p) { this.netTuningProfile = p; }
+    public io.cresco.agent.controller.netmetrics.AutoTuner getAutoTuner() { return this.autoTuner; }
+    public void setAutoTuner(io.cresco.agent.controller.netmetrics.AutoTuner t) { this.autoTuner = t; }
+
     public void setMeasurementEngine(MeasurementEngine measurementEngine) {
         this.measurementEngine = measurementEngine;
     }

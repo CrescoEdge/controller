@@ -23,6 +23,9 @@ public final class HealthTags {
     /** Sub-tag: the link to this node's parent controller (agent->region, region->global). */
     public static final String LINK_PARENT = "link:parent";
 
+    /** Sub-tag: parent-link QUALITY (continuous metrics degraded) — distinct from LINK_PARENT liveness. */
+    public static final String LINK_QUALITY = "link:quality";
+
     /** Sub-tag prefix: the link to a child node (region's agents, global's regions). */
     public static final String LINK_CHILD = "link:child";
 

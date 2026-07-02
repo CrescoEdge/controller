@@ -49,6 +49,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     private Map<String,DataPlanePersistantInstance> messageConfigMap;
     private final AtomicBoolean lockMessage = new AtomicBoolean();
 
+    // Dataplane sharding: split a topic type into N shard-topics (global.event.0..N-1) so ActiveMQ
+    // per-destination demand-forwarding can spread cross-node traffic across parallel bridge
+    // connectors. N=1 (default) => original single-topic behavior, zero change. Producers/destinations
+    // for shard topics are cached by physical topic name.
+    private int dataPlaneShards = 1;
+    // Per-shard DEDICATED broker connection/session (parallel agent->region sockets). Each shard's
+    // producers/consumers ride shardSessions[shard] so shard traffic spreads across sockets/cores
+    // instead of funneling through the single pooled session. Enabled with dataplane_parallel_connections.
+    private boolean parallelConnections = false;
+    private final Map<Integer, ActiveMQSession> shardSessions = Collections.synchronizedMap(new HashMap<>());
+    private final Map<String, Destination> shardDestMap = Collections.synchronizedMap(new HashMap<>());
+    private final Map<String, MessageProducer> shardProducerMap = Collections.synchronizedMap(new HashMap<>());
+
     private String URI;
 
     private Path journalPath;
@@ -72,6 +85,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         gson = new Gson();
 
+        // Dataplane shard count (default 1 = unsharded, original behavior). Must match across all
+        // agents in the fabric so publisher/subscriber derive the same shard topic from a shared key.
+        dataPlaneShards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
+        // Give each shard its own dedicated broker connection (parallel sockets) rather than
+        // multiplexing all shards over the single pooled session. Default on when sharding is enabled.
+        parallelConnections = plugin.getConfig().getBooleanParam("dataplane_parallel_connections", dataPlaneShards > 1);
+        if (dataPlaneShards > 1) {
+            logger.info("Dataplane sharding enabled: " + dataPlaneShards + " shards per topic type, "
+                    + "parallel_connections=" + parallelConnections);
+        }
 
         agentTopic = getDestination(TopicType.AGENT);
         regionTopic = getDestination(TopicType.REGION);
@@ -272,6 +295,146 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return listenerId;
     }
 
+    // --- Measurement: record producer send-latency + tx bytes onto the uplink (the local broker
+    //     connection = the parent link for an agent). Send dwell time rises under broker flow-control
+    //     pressure -> a direct saturation signal the AutoTuner consumes. ---
+    private void recordUplinkSend(long startNanos, Message message) {
+        try {
+            io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+            if (reg == null) return;
+            io.cresco.agent.controller.netmetrics.LinkMetrics lm =
+                    reg.forPath(io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine));
+            lm.recordSendLatency((System.nanoTime() - startNanos) / 1_000_000.0);
+            // tx bytes: a JMS int property is readable even on a just-sent (write-mode) message, unlike
+            // getBodyLength(); the wsapi/stunnel producers stamp "dp_bytes" with the payload length.
+            try {
+                if (message.propertyExists("dp_bytes")) lm.addTxBytes(message.getIntProperty("dp_bytes"));
+            } catch (Exception ignore) { }
+        } catch (Exception ignore) { }
+    }
+
+    // --- Dataplane sharding ---
+
+    @Override
+    public int getDataPlaneShardCount() { return dataPlaneShards; }
+
+    // Physical topic name for (type, shard): base name when unsharded, base.<shard> when sharded.
+    private String shardedTopicName(TopicType topicType, int shard) {
+        String base = getTopicName(topicType);
+        if (dataPlaneShards <= 1) return base;
+        return base + "." + Math.floorMod(shard, dataPlaneShards);
+    }
+
+    // A shard's session: its own dedicated broker connection when parallelConnections is on, else the
+    // shared pooled session. This is the agent->region parallelism: shard i rides its own socket/core.
+    private ActiveMQSession getShardSession(int shard) {
+        if (!parallelConnections) return getSession();
+        Integer key = Math.floorMod(shard, dataPlaneShards);
+        ActiveMQSession s = shardSessions.get(key);
+        try {
+            if (s == null || s.isClosed()) {
+                synchronized (shardSessions) {
+                    s = shardSessions.get(key);
+                    if (s == null || s.isClosed()) {
+                        while (!controllerEngine.getActiveClient().isFaultURIActive()) { Thread.sleep(1000); }
+                        s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                        if (s != null) {
+                            shardSessions.put(key, s);
+                            logger.info("Opened dedicated dataplane connection for shard " + key);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("getShardSession(" + shard + ") error", ex);
+        }
+        return s;
+    }
+
+    private Destination getShardDestination(String topicName, ActiveMQSession session) {
+        return shardDestMap.computeIfAbsent(topicName, tn -> {
+            try {
+                return (session != null) ? session.createTopic(tn) : null;
+            } catch (Exception ex) {
+                logger.error("getShardDestination(" + tn + ") error", ex);
+                return null;
+            }
+        });
+    }
+
+    private MessageProducer getShardProducer(String topicName, int shard) {
+        MessageProducer p = shardProducerMap.get(topicName);
+        if (p != null) return p;
+        try {
+            ActiveMQSession s = getShardSession(shard);
+            Destination d = getShardDestination(topicName, s);
+            if (s != null && d != null) {
+                synchronized (shardProducerMap) {
+                    p = shardProducerMap.get(topicName);
+                    if (p == null) {
+                        p = s.createProducer(d);
+                        p.setTimeToLive(300000L);
+                        p.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+                        shardProducerMap.put(topicName, p);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("getShardProducer(" + topicName + ") error", ex);
+        }
+        return p;
+    }
+
+    @Override
+    public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, int shard) {
+        if (dataPlaneShards <= 1) {
+            return addMessageListener(topicType, messageListener, selectorString);
+        }
+        String listenerId = null;
+        try {
+            String topicName = shardedTopicName(topicType, shard);
+            ActiveMQSession s = getShardSession(shard);
+            Destination dest = getShardDestination(topicName, s);
+            MessageConsumer consumer = (s != null && dest != null)
+                    ? ((selectorString == null) ? s.createConsumer(dest) : s.createConsumer(dest, selectorString))
+                    : null;
+            if (consumer != null) {
+                consumer.setMessageListener(messageListener);
+                listenerId = UUID.randomUUID().toString();
+                synchronized (lockMessage) {
+                    messageConsumerMap.put(listenerId, consumer);
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("DataPlaneServiceImpl.addMessageListener(shard) error", ex);
+        }
+        return listenerId;
+    }
+
+    @Override
+    public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive, int shard) {
+        if (dataPlaneShards <= 1) {
+            return sendMessage(topicType, message, deliveryMode, priority, timeToLive);
+        }
+        try {
+            while(!controllerEngine.cstate.isActive()) {
+                Thread.sleep(1000);
+            }
+            String topicName = shardedTopicName(topicType, shard);
+            MessageProducer producer = getShardProducer(topicName, shard);
+            if (producer != null) {
+                long t0 = System.nanoTime();
+                producer.send(message, deliveryMode, priority, timeToLive);
+                recordUplinkSend(t0, message);
+                return true;
+            }
+            return false;
+        } catch (Exception ex) {
+            logger.error("DataPlaneServiceImpl.sendMessage(shard) error", ex);
+            return false;
+        }
+    }
+
     public void updateConnections(String URI)  {
 
         //set new URI
@@ -301,6 +464,27 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 globalProducer.close();
                 globalProducer = null;
 
+            }
+
+            // drop sharded producer/destination caches and close the dedicated shard connections
+            synchronized (shardProducerMap) {
+                for (MessageProducer p : shardProducerMap.values()) {
+                    try { if (p != null) p.close(); } catch (Exception ignore) {}
+                }
+                shardProducerMap.clear();
+            }
+            shardDestMap.clear();
+            synchronized (shardSessions) {
+                for (ActiveMQSession ss : shardSessions.values()) {
+                    try {
+                        if (ss != null) {
+                            jakarta.jms.Connection c = ss.getConnection();
+                            ss.close();
+                            if (c != null) c.close();
+                        }
+                    } catch (Exception ignore) {}
+                }
+                shardSessions.clear();
             }
 
         } catch (Exception ex) {
@@ -468,7 +652,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         globalProducer = getMessageProducer(topicType);
                     }
                     if(globalProducer != null) {
+                        long gt0 = System.nanoTime();
                         globalProducer.send(message, deliveryMode, priority, timeToLive);
+                        recordUplinkSend(gt0, message);
                     }
                     break;
             }

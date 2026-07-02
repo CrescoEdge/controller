@@ -40,6 +40,12 @@ public class ActiveBroker {
 	private final String transport;
 	private String verifyTransport = "";
 
+	// Parallel inter-broker bridge connections, keyed by remote host. A single duplex network
+	// connector funnels all cross-node traffic through one TLS socket (one core) -> the multi-node
+	// throughput cliff. Multiple connectors spread load across sockets/cores. Tracked per host so
+	// they can be added/removed dynamically at runtime. broker_bridge_connections sets the default.
+	private final Map<String, List<NetworkConnector>> bridgeGroups = new HashMap<>();
+
 	public ActiveBroker(ControllerEngine controllerEngine, String brokerName) {
 		this.controllerEngine = controllerEngine;
 		this.plugin = controllerEngine.getPluginBuilder();
@@ -453,14 +459,30 @@ public class ActiveBroker {
 	}
 
 
+	// Remove a bridge connector AND its parallel siblings (the whole per-host group). BrokerMonitor
+	// holds only the primary; stopping it must tear down every parallel connector to that host.
 	public boolean removeNetworkConnector(NetworkConnector bridge) {
 		boolean isRemoved = false;
 		try {
-			bridge.stop();
-			while(!bridge.isStopped()) {
-				Thread.sleep(1000);
+			List<NetworkConnector> toRemove;
+			synchronized (bridgeGroups) {
+				String host = null;
+				for (Map.Entry<String, List<NetworkConnector>> e : bridgeGroups.entrySet()) {
+					if (e.getValue().contains(bridge)) { host = e.getKey(); break; }
+				}
+				toRemove = (host != null) ? bridgeGroups.remove(host)
+						: new ArrayList<>(java.util.Collections.singletonList(bridge));
 			}
-			broker.removeNetworkConnector(bridge);
+			for (NetworkConnector nc : toRemove) {
+				try {
+					nc.stop();
+					int wait = 0;
+					while(!nc.isStopped() && wait++ < 10) { Thread.sleep(1000); }
+					broker.removeNetworkConnector(nc);
+				} catch (Exception e) {
+					logger.error("removeNetworkConnector member {}", e.getMessage());
+				}
+			}
 			isRemoved = true;
 		}
 		catch(Exception ex) {
@@ -470,32 +492,116 @@ public class ActiveBroker {
 
 	}
 
+	// Create the bridge group to a remote host. Count comes from broker_bridge_connections (default 1,
+	// = shipped single-connector behavior). Returns the PRIMARY connector (index 0) un-started so the
+	// existing BrokerMonitor connect path starts+monitors it; any extra connectors are started here.
 	public NetworkConnector AddNetworkConnector(String hostname) {
-		NetworkConnector bridge = null;
-		try {
+		int count = Math.max(1, plugin.getConfig().getIntegerParam("broker_bridge_connections", 1));
+		// When the dataplane is sharded, use exactly one connector per shard so each shard forwards
+		// over its own TLS socket (the destination filter in buildConnector binds connector i to
+		// global.event.i). Without that 1:1 binding, only one connector actually forwards -> no gain.
+		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
+		if (shards > 1) count = shards;
+		List<NetworkConnector> group = addBridgeConnectors(hostname, count, false);
+		return group.isEmpty() ? null : group.get(0);
+	}
 
-			int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
-            int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
+	// Build one duplex connector to hostname. When sharding is on, PARTITION destinations so each
+	// connector forwards exactly one shard-topic: connector i owns global.event.i; connector 0 also
+	// carries everything else (control queues, advisories, unsharded topics) by excluding the other
+	// shards. This gives one TLS socket per shard -> real cross-node parallelism, no duplicates.
+	private NetworkConnector buildConnector(String hostname, int index) throws Exception {
+		int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
+		int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
+		URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
+		NetworkConnector bridge = broker.addNetworkConnector(uri);
+		bridge.setName("cresco-bridge-" + hostname + "-" + index + "-" + java.util.UUID.randomUUID());
+		bridge.setDuplex(true);
+		bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
+		bridge.setNetworkTTL(messageTTL);
+		bridge.setDecreaseNetworkConsumerPriority(false);
+		bridge.setConduitSubscriptions(false);
 
-
-            URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
-
-			logger.debug("Connector URI: " + uri);
-
-			bridge = broker.addNetworkConnector(uri);
-
-			bridge.setName(java.util.UUID.randomUUID().toString());
-			bridge.setDuplex(true);
-            bridge.setPrefetchSize(100);
-            bridge.setNetworkTTL(messageTTL);
-            bridge.setDecreaseNetworkConsumerPriority(false);
-            bridge.setConduitSubscriptions(false);
-            updateTrustManager();
-
-		} catch(Exception ex) {
-			logger.error("NetworkConnector AddNetworkConnector: {}", ex.getMessage(), ex);
+		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
+		String shardBase = plugin.getConfig().getStringParam("dataplane_shard_topic", "global.event");
+		if (shards > 1) {
+			if (index == 0) {
+				// connector 0 forwards everything EXCEPT the shards owned by the other connectors
+				List<ActiveMQDestination> excluded = new ArrayList<>();
+				for (int s = 1; s < shards; s++) {
+					excluded.add(new org.apache.activemq.command.ActiveMQTopic(shardBase + "." + s));
+				}
+				bridge.setExcludedDestinations(excluded);
+			} else if (index < shards) {
+				// connector i forwards ONLY its shard topic
+				List<ActiveMQDestination> mine = new ArrayList<>();
+				mine.add(new org.apache.activemq.command.ActiveMQTopic(shardBase + "." + index));
+				bridge.setDynamicallyIncludedDestinations(mine);
+			}
 		}
 		return bridge;
+	}
+
+	// Add `count` connectors to a host's group. startAll=true starts every new connector (runtime add);
+	// startAll=false leaves the very first primary un-started for BrokerMonitor, starting the rest.
+	private List<NetworkConnector> addBridgeConnectors(String hostname, int count, boolean startAll) {
+		synchronized (bridgeGroups) {
+			List<NetworkConnector> group = bridgeGroups.computeIfAbsent(hostname, k -> new ArrayList<>());
+			try {
+				int startIndex = group.size();
+				for (int i = 0; i < count; i++) {
+					int idx = startIndex + i;
+					NetworkConnector bridge = buildConnector(hostname, idx);
+					group.add(bridge);
+					if (startAll || idx > 0) {
+						bridge.start();
+					}
+				}
+				updateTrustManager();
+			} catch (Exception ex) {
+				logger.error("NetworkConnector addBridgeConnectors: {}", ex.getMessage(), ex);
+			}
+			return group;
+		}
+	}
+
+	// --- Dynamic runtime control of bridge parallelism ---
+
+	// Add `count` more parallel connectors to an already-bridged host, live. Returns the new group size.
+	public int addBridgeConnections(String hostname, int count) {
+		List<NetworkConnector> group = addBridgeConnectors(hostname, Math.max(0, count), true);
+		logger.info("addBridgeConnections: host=" + hostname + " added=" + count + " total=" + group.size());
+		return group.size();
+	}
+
+	// Remove up to `count` parallel connectors from a host (never drops below 1). Returns new group size.
+	public int removeBridgeConnections(String hostname, int count) {
+		synchronized (bridgeGroups) {
+			List<NetworkConnector> group = bridgeGroups.get(hostname);
+			if (group == null || group.isEmpty()) return 0;
+			int removable = Math.max(0, Math.min(count, group.size() - 1)); // keep >=1
+			for (int i = 0; i < removable; i++) {
+				NetworkConnector nc = group.remove(group.size() - 1);
+				try {
+					nc.stop();
+					int wait = 0;
+					while (!nc.isStopped() && wait++ < 10) { Thread.sleep(1000); }
+					broker.removeNetworkConnector(nc);
+				} catch (Exception e) {
+					logger.error("removeBridgeConnections member {}", e.getMessage());
+				}
+			}
+			logger.info("removeBridgeConnections: host=" + hostname + " removed=" + removable + " total=" + group.size());
+			return group.size();
+		}
+	}
+
+	// Current parallel-connector count for a host (0 if not bridged).
+	public int getBridgeConnectionCount(String hostname) {
+		synchronized (bridgeGroups) {
+			List<NetworkConnector> group = bridgeGroups.get(hostname);
+			return group == null ? 0 : group.size();
+		}
 	}
 
     public List<NetworkConnector> getNetworkConnectors() {

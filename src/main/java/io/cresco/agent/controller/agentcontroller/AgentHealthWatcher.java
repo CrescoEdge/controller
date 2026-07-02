@@ -225,7 +225,11 @@ public class AgentHealthWatcher {
                     // mesh health: advertise our rolled-up health up to the region on the ping.
                     io.cresco.agent.controller.health.MeshHealthPing.advertiseChild(controllerEngine, pingRequest);
 
-                    // Send RPC and wait for response with timeout
+                    // Send RPC and wait for response with timeout. This synchronous agent->region->agent
+                    // round trip is a free, continuous RTT probe on the parent link (measurement subsystem);
+                    // time it and feed LinkMetrics. It is end-to-end APPLICATION path latency (incl. broker
+                    // enqueue/dequeue + queueing), which is what a cost-aware router actually wants.
+                    long pingT0 = System.nanoTime();
                     MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
 
                     if (pingResponse == null) {
@@ -238,6 +242,14 @@ public class AgentHealthWatcher {
                     } else {
                         // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
                         lastParentPongTs = System.currentTimeMillis();
+                        // measurement: harvest the round-trip time onto the parent link.
+                        try {
+                            io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+                            if (reg != null) {
+                                reg.forPath(io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine))
+                                        .recordRtt((System.nanoTime() - pingT0) / 1_000_000.0);
+                            }
+                        } catch (Exception ignore) { }
                         // mesh health: record the region's advertised health carried back on the pong.
                         io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
                         logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());

@@ -97,6 +97,40 @@ public class ActiveClient {
         return activeMQSession;
     }
 
+    // Create a session on a DEDICATED, non-pooled connection to URI (its own TCP socket), separate
+    // from the single pooled control-plane connection. Used to give each parallel dataplane shard its
+    // own connection/core instead of multiplexing everything over one socket (the agent->region
+    // throughput funnel). The caller owns the lifecycle and closes it via the session's connection.
+    public ActiveMQSession createDedicatedSession(String URI, boolean transacted, int acknowledgeMode) {
+        try {
+            ActiveMQSslConnectionFactory factory = connectionFactoryMap.computeIfAbsent(URI, key -> {
+                logger.info("createDedicatedSession: initializing factory for URI [{}]", key);
+                return initConnectionFactory(key);
+            });
+            if (factory == null) {
+                logger.error("createDedicatedSession: null factory for URI [{}]", URI);
+                return null;
+            }
+            ActiveMQConnection conn = (ActiveMQConnection) factory.createConnection();
+            conn.setExceptionListener(new ConnectionExceptionListener(URI));
+            conn.start();
+            int attempts = 0;
+            while (!conn.isStarted() && attempts < MAX_CONNECTION_START_ATTEMPTS) {
+                Thread.sleep(CONNECTION_START_RETRY_DELAY_MS);
+                attempts++;
+            }
+            if (!conn.isStarted()) {
+                logger.error("createDedicatedSession: connection to [{}] failed to start", URI);
+                try { conn.close(); } catch (JMSException ignore) {}
+                return null;
+            }
+            return (ActiveMQSession) conn.createSession(transacted, acknowledgeMode);
+        } catch (Exception ex) {
+            logger.error("createDedicatedSession error for URI [{}]: {}", URI, ex.getMessage(), ex);
+            return null;
+        }
+    }
+
     public String getStringFromError(Exception ex) {
         StringWriter errors = new StringWriter();
         ex.printStackTrace(new PrintWriter(errors));

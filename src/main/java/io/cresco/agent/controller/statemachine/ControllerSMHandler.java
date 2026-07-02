@@ -535,6 +535,18 @@ public class ControllerSMHandler {
                     controllerEngine.setMeasurementEngine(new MeasurementEngine(plugin));
                     logger.info("MeasurementEngine initialized");
 
+                    // Network link measurement (Micrometer via MeasurementEngine) + the controller-resident
+                    // AutoTuner control loop (metrics always published; buffer/block/connection actuation
+                    // gated by net_autotune). The registry is fed by the health-ping RTT harvest and the
+                    // dataplane send instrumentation; a Felix HealthCheck reads it for a degraded verdict.
+                    controllerEngine.setLinkMetricsRegistry(
+                            new io.cresco.agent.controller.netmetrics.LinkMetricsRegistry(controllerEngine.getMeasurementEngine()));
+                    controllerEngine.setNetTuningProfile(new io.cresco.agent.controller.netmetrics.NetTuningProfile(plugin));
+                    controllerEngine.setAutoTuner(new io.cresco.agent.controller.netmetrics.AutoTuner(
+                            controllerEngine, controllerEngine.getLinkMetricsRegistry(), controllerEngine.getNetTuningProfile()));
+                    controllerEngine.getAutoTuner().start();
+                    logger.info("Net link metrics + AutoTuner initialized");
+
                     //send measurement info out
                     controllerEngine.setPerfControllerMonitor(new PerfControllerMonitor(controllerEngine));
                     //don't start this yet, otherwise agents will be listening for all KPIs
