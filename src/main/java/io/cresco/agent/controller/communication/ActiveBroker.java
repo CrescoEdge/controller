@@ -92,7 +92,7 @@ public class ActiveBroker {
 				// the shipped behavior. Nothing hardcoded -- each knob is overridable via plugin config.
 				boolean producerFlowControl = plugin.getConfig().getBooleanParam("activemq_producer_flow_control", false);
 				boolean prioritizedMessages = plugin.getConfig().getBooleanParam("activemq_prioritized_messages", true);
-				long destinationMemoryLimit = plugin.getConfig().getLongParam("activemq_destination_memory_limit", 64L * 1024 * 1024);
+				long destinationMemoryLimit = plugin.getConfig().getLongParam("activemq_destination_memory_limit", 256L * 1024 * 1024);
 				boolean gcInactiveDestinations = plugin.getConfig().getBooleanParam("activemq_gc_inactive_destinations", true);
 				int inactiveTimeoutBeforeGC = plugin.getConfig().getIntegerParam("activemq_inactive_timeout_before_gc", 15000);
 
@@ -250,7 +250,14 @@ public class ActiveBroker {
 				// non-persistent spills via the pending-message-limit eviction, persistent pages to store.
 				SystemUsage systemUsage = new SystemUsage();
 				MemoryUsage memoryUsage = new MemoryUsage();
-				memoryUsage.setLimit(plugin.getConfig().getLongParam("broker_memory_limit", 256L * 1024 * 1024)); // 256 MB
+				// Non-persistent buffering headroom. The old 256MB fixed default filled under a few
+				// concurrent large-message dataplane streams -> the pending-message eviction throttle
+				// collapsed aggregate throughput (measured ~16 MB/s at 4x256KB streams vs ~470 with
+				// headroom). Default to half the JVM max heap (floor 512MB) so concurrent streams don't
+				// hit the eviction cliff; override with broker_memory_limit. Priority QoS still governs
+				// dispatch order under pressure, so control traffic is not starved.
+				long defaultBrokerMem = Math.max(512L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 2);
+				memoryUsage.setLimit(plugin.getConfig().getLongParam("broker_memory_limit", defaultBrokerMem));
 				StoreUsage storeUsage = new StoreUsage();
 				storeUsage.setLimit(plugin.getConfig().getLongParam("broker_store_limit", 8L * 1024 * 1024 * 1024)); // 8 GB
 				TempUsage tempUsage = new TempUsage();
