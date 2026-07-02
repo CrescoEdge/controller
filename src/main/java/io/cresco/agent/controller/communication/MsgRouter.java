@@ -86,6 +86,21 @@ public class MsgRouter {
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
+                // Cost-aware routing hook: publish this hop's uplink cost (srtt + backpressure + inverse
+                // throughput) into the message trail. The routing tree is strictly deterministic, so
+                // min-cost SELECTION only has alternates to choose from where redundant federation bridges
+                // exist (region<->region / multi-global) -- there a selector reads costOf()/lowestCostEdge().
+                // Gated; default off. See docs/link-metrics-design.md.
+                if (plugin.getConfig().getBooleanParam("net_cost_routing", false)) {
+                    try {
+                        io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+                        if (reg != null) {
+                            String up = io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine);
+                            rm.setParam("linkcost-" + plugin.getAgent(), String.format("%.2f", reg.costOf(up)));
+                        }
+                    } catch (Exception ignore) { }
+                }
+
                 //if(rm.paramsContains("inodemap")) {
                 //    logger.error("MESSAGE HEADER [" + rm.printHeader() + "] Route Path: [" + routePath + "]");
                 //}

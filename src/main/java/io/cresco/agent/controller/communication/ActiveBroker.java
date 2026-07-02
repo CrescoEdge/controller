@@ -39,6 +39,7 @@ public class ActiveBroker {
 	private SslBrokerService broker;
 	private final String transport;
 	private String verifyTransport = "";
+	private final String brokerName;
 
 	// Parallel inter-broker bridge connections, keyed by remote host. A single duplex network
 	// connector funnels all cross-node traffic through one TLS socket (one core) -> the multi-node
@@ -48,6 +49,7 @@ public class ActiveBroker {
 
 	public ActiveBroker(ControllerEngine controllerEngine, String brokerName) {
 		this.controllerEngine = controllerEngine;
+		this.brokerName = brokerName;
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveBroker.class.getName(),CLogger.Level.Info);
 		transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
@@ -368,6 +370,26 @@ public class ActiveBroker {
 
 	public int getBrokerPort() {
 		return plugin.getConfig().getIntegerParam("broker_port",32010);
+	}
+
+	// Total pending (undispatched) message count across this broker's topics — the cheapest, highest-
+	// signal native congestion indicator. Read in-process from ActiveMQ's DestinationViewMBean via the
+	// platform MBeanServer (JMX is on by default; only the remote connector is disabled). A growing
+	// backlog = a saturated downstream path; the AutoTuner + link:quality health check consume it.
+	public long getBrokerPendingBacklog() {
+		long total = 0;
+		try {
+			javax.management.MBeanServer mbs = java.lang.management.ManagementFactory.getPlatformMBeanServer();
+			javax.management.ObjectName q = new javax.management.ObjectName(
+					"org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=Topic,destinationName=*");
+			for (javax.management.ObjectName on : mbs.queryNames(q, null)) {
+				Object qs = mbs.getAttribute(on, "QueueSize");
+				if (qs instanceof Number) total += ((Number) qs).longValue();
+			}
+		} catch (Exception ignore) {
+			// JMX unavailable or broker not up yet -> report 0 (no signal)
+		}
+		return total;
 	}
 
 	public ActiveMQDestination[] getBrokerDestinations() {

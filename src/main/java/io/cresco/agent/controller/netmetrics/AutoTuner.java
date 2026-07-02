@@ -42,6 +42,9 @@ public class AutoTuner implements Runnable {
     private final long backlogHigh;
     private final long cooldownMs;
     private final double bdpSafety;
+    // Capacity ceiling for the uplink (bits/sec). OSHI/sysinfo can supply the real NIC link speed; for
+    // now it's config-provided (0 = unknown -> utilization not computed). Used as a hint + BDP cap.
+    private final long linkSpeedCeilingBps;
     private final ConcurrentHashMap<String, Long> lastConnAction = new ConcurrentHashMap<>();
     private long lastProfileVersionBroadcast = -1;
 
@@ -58,6 +61,7 @@ public class AutoTuner implements Runnable {
         this.backlogHigh = plugin.getConfig().getLongParam("net_autotune_backlog_high", 500L);
         this.cooldownMs = plugin.getConfig().getLongParam("net_autotune_cooldown_ms", 15000L);
         this.bdpSafety = plugin.getConfig().getDoubleParam("net_autotune_bdp_safety", 3.0);
+        this.linkSpeedCeilingBps = plugin.getConfig().getLongParam("net_link_speed_bps", 0L);
     }
 
     // The loop ALWAYS runs to publish measurements into Micrometer; only the ACTUATION (buffer/block
@@ -78,6 +82,14 @@ public class AutoTuner implements Runnable {
     @Override
     public void run() {
         try {
+            // congestion + capacity: poll the broker's pending backlog and set the NIC ceiling onto the
+            // uplink edge before assessing saturation. (Item 1: JMX backlog; Item 3: capacity ceiling.)
+            try {
+                LinkMetrics up = registry.forPath(LinkMetricsRegistry.parentLinkKey(ce));
+                if (ce.getBroker() != null) up.setPendingBacklog(ce.getBroker().getBrokerPendingBacklog());
+                if (linkSpeedCeilingBps > 0) up.setLinkSpeedCeilingBps(linkSpeedCeilingBps);
+            } catch (Exception ignore) { }
+
             double peakTx = 0, peakRtt = 0;
             boolean anySaturated = false, allIdle = true;
 
@@ -166,13 +178,22 @@ public class AutoTuner implements Runnable {
         if (v == lastProfileVersionBroadcast) return;
         lastProfileVersionBroadcast = v;
         try {
-            MsgEvent tuning = plugin.getAgentMsgEvent(MsgEvent.Type.CONFIG);
-            tuning.setParam("action", "nettuning");
-            for (Map.Entry<String, String> e : profile.snapshot().entrySet()) {
-                tuning.setParam(e.getKey(), e.getValue());
+            Map<String, String> snap = profile.snapshot();
+            int sent = 0;
+            // target the local wsapi + stunnel plugins by id (a CONFIG to the agent wouldn't reach them)
+            for (String pname : new String[]{"io.cresco.wsapi", "io.cresco.stunnel"}) {
+                for (Map<String, String> pm : ce.getGDB().getPluginListMapByType("pluginname", pname)) {
+                    if (plugin.getRegion().equals(pm.get("region")) && plugin.getAgent().equals(pm.get("agent"))) {
+                        MsgEvent tuning = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.CONFIG,
+                                pm.get("region"), pm.get("agent"), pm.get("pluginid"));
+                        tuning.setParam("action", "nettuning");
+                        for (Map.Entry<String, String> e : snap.entrySet()) tuning.setParam(e.getKey(), e.getValue());
+                        plugin.msgOut(tuning);
+                        sent++;
+                    }
+                }
             }
-            plugin.msgOut(tuning);
-            logger.debug("AutoTuner broadcast tuning v" + v + " to local plugins");
+            logger.info("AutoTuner broadcast tuning v" + v + " to " + sent + " local plugins: " + profile);
         } catch (Exception ex) {
             logger.debug("AutoTuner broadcast failed: " + ex.getMessage());
         }

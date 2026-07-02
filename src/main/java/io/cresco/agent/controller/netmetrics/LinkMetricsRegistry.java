@@ -39,6 +39,23 @@ public class LinkMetricsRegistry {
     public Collection<LinkMetrics> all() { return links.values(); }
     public int size() { return links.size(); }
 
+    // --- Cost model (for a cost-aware router; only actionable where redundant federation bridges exist) ---
+
+    /** Composite cost of an edge (lower = better); {@link Double#MAX_VALUE} if unknown. */
+    public double costOf(String path) {
+        LinkMetrics lm = links.get(path);
+        return (lm == null) ? Double.MAX_VALUE : lm.cost();
+    }
+
+    /** Lowest-cost known edge, or null — the pick a cost-aware selector would make among alternates. */
+    public LinkMetrics lowestCostEdge() {
+        LinkMetrics best = null;
+        for (LinkMetrics lm : links.values()) {
+            if (best == null || lm.cost() < best.cost()) best = lm;
+        }
+        return best;
+    }
+
     /**
      * The single, stable key for this node's parent (uplink) edge, used by the RTT harvest, the
      * dataplane send instrumentation, and the link:quality health check so they all agree.
