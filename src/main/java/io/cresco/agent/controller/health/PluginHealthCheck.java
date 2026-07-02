@@ -32,6 +32,7 @@ public class PluginHealthCheck implements HealthCheck {
             if (codes.isEmpty()) {
                 return new Result(Result.Status.OK, "no plugins loaded");
             }
+            Map<String, String> names = pa.getPluginNames();
             Result.Status worst = Result.Status.OK;
             StringBuilder detail = new StringBuilder();
             for (Map.Entry<String, Integer> e : codes.entrySet()) {
@@ -42,7 +43,15 @@ public class PluginHealthCheck implements HealthCheck {
                 if (detail.length() > 0) {
                     detail.append(", ");
                 }
-                detail.append(e.getKey()).append('=').append(e.getValue()).append('(').append(s).append(')');
+                // label by friendly name, keeping a short pluginID slice to disambiguate/correlate
+                String pluginID = e.getKey();
+                String name = names.get(pluginID);
+                if (name == null || name.isEmpty()) {
+                    name = pluginID;
+                }
+                String shortId = pluginID.length() > 8 ? pluginID.substring(0, 8) : pluginID;
+                detail.append(name).append('[').append(shortId).append("]=")
+                        .append(e.getValue()).append('(').append(s).append(')');
             }
             return new Result(worst, codes.size() + " plugin(s): " + detail);
         } catch (Throwable t) {

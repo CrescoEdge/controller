@@ -21,12 +21,10 @@ public class ActiveProducerWorkerData implements Runnable {
 	private PluginBuilder plugin;
 	private String producerWorkerName;
 	private CLogger logger;
-	private ActiveMQSession sess;
 
 	private Gson gson;
 	public boolean isActive;
 	private String TXQueueName;
-	private Destination destination;
 
 	private String URI;
 
@@ -43,11 +41,6 @@ public class ActiveProducerWorkerData implements Runnable {
 		try {
 			this.TXQueueName = TXQueueName;
 			gson = new Gson();
-
-			sess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-
-			destination = sess.createQueue(TXQueueName);
-
 
 		} catch (Exception e) {
 			logger.error("ActiveProducerWorkerData.<init> Constructor {}", e.getMessage(), e);
@@ -144,6 +137,8 @@ public class ActiveProducerWorkerData implements Runnable {
 
 							try {
 								logger.error("Rebuilding Session");
+								// close the broken session before replacing it so we don't leak it
+								try { if (dataSess != null) dataSess.close(); } catch (Exception ignore) { /* already broken */ }
 								dataSess = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
 								dataProducer = dataSess.createProducer(dataDestination);
 								dataProducer.setTimeToLive(0);

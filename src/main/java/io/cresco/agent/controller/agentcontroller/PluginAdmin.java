@@ -1433,6 +1433,25 @@ public class PluginAdmin {
         return out;
     }
 
+    /**
+     * Snapshot of pluginID -&gt; friendly plugin name ({@link PluginNode#getName()}, e.g.
+     * {@code io.cresco.wsapi}). Companion to {@link #getPluginStatusCodes()} so the "plugins"
+     * HealthCheck can label plugins by name instead of by opaque pluginID.
+     */
+    public Map<String,String> getPluginNames() {
+        Map<String,String> out = new HashMap<>();
+        try {
+            synchronized (lockPlugin) {
+                for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
+                    out.put(e.getKey(), e.getValue().getName());
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("getPluginNames() ", ex);
+        }
+        return out;
+    }
+
     public String getPluginList() {
 
 
