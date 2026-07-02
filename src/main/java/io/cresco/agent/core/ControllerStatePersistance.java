@@ -39,22 +39,19 @@ public class ControllerStatePersistance {
             case STANDALONE:
                 return standAloneSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case STANDALONE_SHUTDOWN:
-                logger.warn("STANDALONE_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
-                break;
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_INIT:
                 return agentInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT:
                 return agentSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case AGENT_SHUTDOWN:
-                logger.warn("AGENT_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
-                //return unregisterAgent(localRegion, localAgent);
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_INIT:
                 return regionInit(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION:
                 return regionSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_SHUTDOWN:
-                logger.warn("REGION_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
-                //return unregisterRegion(localRegion,globalRegion);
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_FAILED:
                 return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case REGION_GLOBAL_INIT:
@@ -69,8 +66,7 @@ public class ControllerStatePersistance {
             case GLOBAL:
                 return globalSuccess(currentMode,currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
             case GLOBAL_SHUTDOWN:
-                logger.warn("GLOBAL_SHUTDOWN: NOT IMPLEMENTED : " + currentDesc);
-                break;
+                return recordTransientState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 
             // Transient failure states (a MINA loss event immediately re-inits). Record the
             // transition for audit and accept it, rather than logging "INVALID MODE" and returning

@@ -222,6 +222,8 @@ public class AgentHealthWatcher {
                     }
                     pingRequest.setParam("action", "ping");
                     pingRequest.setParam("desc", "agent-ping-request"); // Identify the ping
+                    // mesh health: advertise our rolled-up health up to the region on the ping.
+                    io.cresco.agent.controller.health.MeshHealthPing.advertiseChild(controllerEngine, pingRequest);
 
                     // Send RPC and wait for response with timeout
                     MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
@@ -236,6 +238,8 @@ public class AgentHealthWatcher {
                     } else {
                         // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
                         lastParentPongTs = System.currentTimeMillis();
+                        // mesh health: record the region's advertised health carried back on the pong.
+                        io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
                         logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());
                     }
                 } catch (Exception ex) {

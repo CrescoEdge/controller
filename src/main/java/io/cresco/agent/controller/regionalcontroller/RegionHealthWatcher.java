@@ -398,6 +398,8 @@ public class RegionHealthWatcher {
                     }
                     pingRequest.setParam("action", "ping");
                     pingRequest.setParam("desc", "region-ping-request"); // Identify the ping
+                    // mesh health: advertise our rolled-up health (local + subtree) up to the global.
+                    io.cresco.agent.controller.health.MeshHealthPing.advertiseChild(controllerEngine, pingRequest);
 
                     // Retry within this tick before counting a miss; a single delayed pong (GC pause,
                     // load burst) must never drop the global.
@@ -419,6 +421,8 @@ public class RegionHealthWatcher {
                     } else {
                         // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
                         lastGlobalPongTs = System.currentTimeMillis();
+                        // mesh health: record the global's advertised health carried back on the pong.
+                        io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
                         logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
                     }
                 } catch (Exception ex) {

@@ -35,6 +35,10 @@ public class HealthMinaBridge implements HealthListener {
             if (tags == null || !tags.contains(HealthTags.LINK_PARENT)) {
                 return; // only the parent link drives a state transition
             }
+            // Parent link is lost: drop any stale recorded parent health so recovery re-logs cleanly.
+            if (ce.getMeshHealth() != null) {
+                ce.getMeshHealth().resetParent();
+            }
             ControllerMode mode = (ce.cstate != null) ? ce.cstate.getControllerState() : null;
             if (mode == ControllerMode.AGENT) {
                 logger.error("HC bridge: link:parent CRITICAL in AGENT -> regionalControllerLost");

@@ -87,6 +87,8 @@ public class ControllerEngine {
 
     private CrescoHealthExecutor healthExecutor;
 
+    private io.cresco.agent.controller.health.MeshHealth meshHealth;
+
 
     public ControllerEngine(ControllerStateImp cstate, PluginBuilder pluginBuilder, PluginAdmin pluginAdmin, DBInterfaceImpl gdb){
 
@@ -128,10 +130,13 @@ public class ControllerEngine {
             // Start the health executor: discovers HealthCheck services and runs them with grace/
             // sticky/cache. Guarded so a missing Felix HC api bundle cannot block controller start.
             try {
+                this.meshHealth = new io.cresco.agent.controller.health.MeshHealth();
                 this.healthExecutor = new CrescoHealthExecutor(plugin.getBundleContext(), plugin);
                 this.healthExecutor.start();
                 io.cresco.agent.controller.health.LocalHealthChecks.register(plugin.getBundleContext(), this);
                 io.cresco.agent.controller.health.LinkHealthChecks.register(plugin.getBundleContext(), this);
+                // mesh rollup: children advertise health on the ping, this node rolls it up (subtree check).
+                io.cresco.agent.controller.health.MeshHealthChecks.register(plugin.getBundleContext(), this);
                 // HC->MINA bridge: a grace-protected link:parent CRITICAL fires the MINA loss event.
                 this.healthExecutor.addListener(new io.cresco.agent.controller.health.HealthMinaBridge(this));
             } catch (Throwable t) {
@@ -509,6 +514,8 @@ public class ControllerEngine {
     public PluginAdmin getPluginAdmin() { return pluginAdmin; }
 
     public CrescoHealthExecutor getHealthExecutor() { return healthExecutor; }
+
+    public io.cresco.agent.controller.health.MeshHealth getMeshHealth() { return meshHealth; }
 
     public MeasurementEngine getMeasurementEngine() {
         return this.measurementEngine;

@@ -174,9 +174,13 @@ public class GlobalExecutor implements Executor {
     }
 
     private MsgEvent pingReply(MsgEvent msg) {
+        // mesh health: record the region's advertised rolled-up health carried on the ping...
+        io.cresco.agent.controller.health.MeshHealthPing.recordChild(controllerEngine, msg);
         msg.setParam("action", "pong");
         msg.setParam("remote_ts", String.valueOf(System.currentTimeMillis()));
         msg.setParam("type", "global_controller");
+        // ...and advertise our own rolled-up health back down on the pong.
+        io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
         return msg;
     }
     @Override

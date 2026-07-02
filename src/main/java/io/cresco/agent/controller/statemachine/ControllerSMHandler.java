@@ -126,6 +126,9 @@ public class ControllerSMHandler {
     })
     public void globalControllerLost(StateContext context, String desc) {
         logger.error("GLOBAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
+        // Drop stale recorded parent health so recovery re-logs (covers the BrokeredAgent-driven
+        // region->global loss path, which does not go through the HC->MINA bridge).
+        if (controllerEngine.getMeshHealth() != null) { controllerEngine.getMeshHealth().resetParent(); }
 
         if(context.getCurrentState().getId().equals(REGION_GLOBAL)) {
             controllerEngine.cstate.setRegionalGlobalFailed(desc);
@@ -146,6 +149,7 @@ public class ControllerSMHandler {
     })
     public void regionalControllerLost(StateContext context) {
         logger.error("REGIONAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
+        if (controllerEngine.getMeshHealth() != null) { controllerEngine.getMeshHealth().resetParent(); }
 
         if(context.getCurrentState().getId().equals(AGENT)) {
             controllerEngine.cstate.setAgentFailed("AgentWatcher Failed");
@@ -475,7 +479,10 @@ public class ControllerSMHandler {
                     //next try and connect to global controller
 
                     while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
-                        DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), 32005);
+                        // global discovery port is configurable (default 32005) so multiple globals can
+                        // coexist (e.g. same-host multi-global mesh); a region targets ITS global's port.
+                        int globalPort = plugin.getConfig().getIntegerParam("global_controller_port", 32005);
+                        DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort);
 
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1

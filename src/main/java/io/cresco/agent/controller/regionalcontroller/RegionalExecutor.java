@@ -157,9 +157,13 @@ public class RegionalExecutor implements Executor {
 
     private MsgEvent pingReply(MsgEvent msg) {
         logger.debug("ping message type found");
+        // mesh health: record the agent's advertised rolled-up health carried on the ping...
+        io.cresco.agent.controller.health.MeshHealthPing.recordChild(controllerEngine, msg);
         msg.setParam("action","pong");
         msg.setParam("remote_ts", String.valueOf(System.currentTimeMillis()));
         msg.setParam("type", "agent_controller");
+        // ...and advertise our own rolled-up health back down on the pong.
+        io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
         logger.debug("Returning communication details to Cresco agent");
         return msg;
     }
