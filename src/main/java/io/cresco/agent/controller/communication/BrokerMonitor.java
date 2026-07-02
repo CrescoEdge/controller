@@ -95,30 +95,6 @@ class BrokerMonitor implements Runnable {
 		return isConnected;
 	}
 	  
-	// Time a lightweight ping RPC to the brokered peer and record the RTT onto the federation edge
-	// (keyed by peer path). Same free application-path latency the health watchers harvest, but for
-	// the federation bridges — the only place a cost-aware router has alternate paths to choose from.
-	private void probeFederationRtt() {
-		try {
-			io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
-			if (reg == null) return;
-			String[] parts = agentPath.split("_", 2);
-			if (parts.length != 2) return;
-			io.cresco.library.messaging.MsgEvent ping =
-					plugin.getGlobalAgentMsgEvent(io.cresco.library.messaging.MsgEvent.Type.EXEC, parts[0], parts[1]);
-			ping.setParam("action", "ping");
-			ping.setParam("desc", "federation-edge-probe");
-			long t0 = System.nanoTime();
-			io.cresco.library.messaging.MsgEvent resp =
-					plugin.sendRPC(ping, plugin.getConfig().getLongParam("net_federation_probe_timeout", 5000L));
-			if (resp != null) {
-				reg.forPath(agentPath).recordRtt((System.nanoTime() - t0) / 1_000_000.0);
-			}
-		} catch (Exception ex) {
-			logger.debug("probeFederationRtt error: " + ex.getMessage());
-		}
-	}
-
 	public void stopBridge() {
 		logger.trace("Stopping Bridge : " + agentPath);
 		try {
@@ -169,12 +145,6 @@ class BrokerMonitor implements Runnable {
 					//}
 
                 }
-				// federation-edge RTT probe (region<->region / region<->global) -- the edges a cost-aware
-				// router can actually choose between. Lightweight app-level echo on this existing 5s loop;
-				// feeds LinkMetrics keyed by the peer path. Gated (only meaningful with redundant bridges).
-				if (plugin.getConfig().getBooleanParam("net_federation_probe", false)) {
-					probeFederationRtt();
-				}
 				Thread.sleep(5000);
 			}
 

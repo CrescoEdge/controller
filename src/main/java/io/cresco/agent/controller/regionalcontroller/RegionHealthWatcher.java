@@ -403,6 +403,7 @@ public class RegionHealthWatcher {
 
                     // Retry within this tick before counting a miss; a single delayed pong (GC pause,
                     // load burst) must never drop the global.
+                    long pingT0 = System.nanoTime();
                     MsgEvent pingResponse = null;
                     for (int attempt = 0; attempt <= pingRetries && pingResponse == null; attempt++) {
                         if (attempt > 0) {
@@ -421,6 +422,14 @@ public class RegionHealthWatcher {
                     } else {
                         // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
                         lastGlobalPongTs = System.currentTimeMillis();
+                        // measurement: harvest the region->global FEDERATION-edge RTT (this link rides a
+                        // broker-to-broker bridge). Same free application-path timing as the agent harvest.
+                        try {
+                            io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+                            if (reg != null && globalControllerPath != null) {
+                                reg.forPath(globalControllerPath).recordRtt((System.nanoTime() - pingT0) / 1_000_000.0);
+                            }
+                        } catch (Exception ignore) { }
                         // mesh health: record the global's advertised health carried back on the pong.
                         io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
                         logger.debug("ActivePingTask: Received PONG from Global Controller [{}]. Connection healthy.", globalControllerPath);
