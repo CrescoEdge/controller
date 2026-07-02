@@ -110,7 +110,7 @@ public class LinkMetrics {
 
     @Override
     public String toString() {
-        return String.format("Link[%s] srtt=%.2fms jitter=%.2fms rttHi=%.2fms tx=%.1fMB/s rx=%.1fMB/s sendLat=%.2fms backlog=%d samples=%d",
-                path, srtt, rttvar, getRttHigh(), txBytesPerSec / 1e6, rxBytesPerSec / 1e6, sendLatencyEwma, pendingBacklog, rttSamples.get());
+        return String.format("Link[%s] srtt=%.2fms jitter=%.2fms rttHi=%.2fms tx=%.1fMB/s rx=%.1fMB/s sendLat=%.2fms backlog=%d ceilingBps=%d util=%.2f samples=%d",
+                path, srtt, rttvar, getRttHigh(), txBytesPerSec / 1e6, rxBytesPerSec / 1e6, sendLatencyEwma, pendingBacklog, linkSpeedCeilingBps, getUtilization(), rttSamples.get());
     }
 }

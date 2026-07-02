@@ -11,6 +11,7 @@ public class MsgRouter {
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
     private CLogger logger;
+    private volatile boolean loggedCost = false;
 
     public MsgRouter(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -96,7 +97,9 @@ public class MsgRouter {
                         io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
                         if (reg != null) {
                             String up = io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine);
-                            rm.setParam("linkcost-" + plugin.getAgent(), String.format("%.2f", reg.costOf(up)));
+                            String cost = String.format("%.2f", reg.costOf(up));
+                            rm.setParam("linkcost-" + plugin.getAgent(), cost);
+                            if (!loggedCost) { loggedCost = true; logger.info("cost-routing: annotated linkcost-" + plugin.getAgent() + "=" + cost); }
                         }
                     } catch (Exception ignore) { }
                 }

@@ -382,11 +382,18 @@ public class ActiveBroker {
 			javax.management.MBeanServer mbs = java.lang.management.ManagementFactory.getPlatformMBeanServer();
 			javax.management.ObjectName q = new javax.management.ObjectName(
 					"org.apache.activemq:type=Broker,brokerName=" + brokerName + ",destinationType=Topic,destinationName=*");
-			for (javax.management.ObjectName on : mbs.queryNames(q, null)) {
+			java.util.Set<javax.management.ObjectName> names = mbs.queryNames(q, null);
+			for (javax.management.ObjectName on : names) {
 				Object qs = mbs.getAttribute(on, "QueueSize");
 				if (qs instanceof Number) total += ((Number) qs).longValue();
 			}
-		} catch (Exception ignore) {
+			if (plugin.getConfig().getBooleanParam("net_metrics_log", false)) {
+				logger.info("backlog JMX query: matched " + names.size() + " topic MBeans, total QueueSize=" + total);
+			}
+		} catch (Exception ex) {
+			if (plugin.getConfig().getBooleanParam("net_metrics_log", false)) {
+				logger.info("backlog JMX query FAILED: " + ex);
+			}
 			// JMX unavailable or broker not up yet -> report 0 (no signal)
 		}
 		return total;
