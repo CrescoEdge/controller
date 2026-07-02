@@ -56,7 +56,6 @@ public class ControllerEngine {
     private boolean DiscoveryActive = false;
     private boolean UDPDiscoveryActive = false;
     private boolean TCPDiscoveryActive = false;
-    private boolean DBManagerActive = false;
 
     private PerfControllerMonitor perfControllerMonitor;
     private PerfMonitorNet perfMonitorNet;
@@ -81,7 +80,6 @@ public class ControllerEngine {
     //private Thread globalControllerManagerThread;
     private Thread discoveryUDPEngineThread;
     private Thread discoveryTCPEngineThread;
-    private Thread DBManagerThread;
 
     private ControllerSMHandler controllerSMHandler;
 
@@ -416,20 +414,6 @@ public class ControllerEngine {
         this.gdb = gdb;
     }
 
-    public boolean isDBManagerActive() {
-        return DBManagerActive;
-    }
-    public void setDBManagerActive(boolean DBManagerActive) {
-        this.DBManagerActive = DBManagerActive;
-    }
-
-    public void setDBManagerThread(Thread DBManagerThread) {
-        this.DBManagerThread = DBManagerThread;
-    }
-
-    public Thread getDBManagerThread() {
-        return DBManagerThread;
-    }
 
     public boolean isDiscoveryActive() {
         return this.DiscoveryActive;

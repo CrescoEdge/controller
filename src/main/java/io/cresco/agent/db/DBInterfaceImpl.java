@@ -12,8 +12,6 @@ import io.cresco.library.utilities.CLogger;
 
 import java.lang.reflect.Type;
 import java.util.*;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DBInterfaceImpl implements DBInterface {
@@ -26,15 +24,12 @@ public class DBInterfaceImpl implements DBInterface {
     private Type type;
     private Type mapType;
 
-    public BlockingQueue<String> importQueue;
-
     public DBInterfaceImpl(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
         this.dbe = dbe; // Assign the DBEngine instance
         //this.dbe = new DBEngine(plugin);
 
-        this.importQueue = new LinkedBlockingQueue<>();
         this.gson = new Gson();
         this.type = new TypeToken<Map<String, List<Map<String, String>>>>() {
         }.getType();
@@ -539,10 +534,6 @@ public class DBInterfaceImpl implements DBInterface {
     }
 
     public int getPNodePersistenceCode(String plugin) { return dbe.getPNodePersistenceCode(plugin); }
-
-    public int setPNodePersistenceCode(String plugin, int persistence_code) {
-        return dbe.setPNodePersistenceCode(plugin,persistence_code);
-    }
 
     public Map<String,List<pNode>> getPluginListRepoSet() {
 
@@ -1208,9 +1199,5 @@ public class DBInterfaceImpl implements DBInterface {
         return null;
     }
 
-    public boolean setDBImport(String exportData) {
-        logger.error("boolean setDBImport(String exportData)");
-        return false;
-    }
 
 }

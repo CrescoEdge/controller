@@ -929,33 +929,6 @@ public class DBEngine {
         return aNodeMap;
     }
 
-    public int setPNodePersistenceCode(String plugin, int persistence_code) {
-        int queryReturn = -1;
-        try {
-
-            String queryString = null;
-
-
-            queryString = "UPDATE pnode SET persistence_code=" + persistence_code + "' " +
-                    "WHERE plugin_id='" + plugin + "'";
-
-            try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-
-                    queryReturn = stmt.executeUpdate(queryString);
-
-                    stmt.close();
-                }
-
-                conn.close();
-            }
-
-        } catch(Exception ex) {
-            logger.error("DBEngine.setPNodePersistenceCode()", ex);
-        }
-        return queryReturn;
-    }
-
     public String getRNodeFromAnode(String agentId) {
         String configParams = null;
         try {

@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import io.cresco.agent.controller.agentcontroller.AgentHealthWatcher;
 import io.cresco.agent.controller.communication.*;
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.controller.db.DBManager;
 import io.cresco.agent.controller.globalcontroller.GlobalHealthWatcher;
 import io.cresco.agent.controller.globalscheduler.AppScheduler;
 import io.cresco.agent.controller.globalscheduler.ResourceScheduler;
@@ -314,18 +313,6 @@ public class ControllerSMHandler {
         logger.info("Shutting down Broker");
         if(controllerEngine.getBroker() != null) {
             controllerEngine.getBroker().stopBroker();
-        }
-
-        controllerEngine.setDBManagerActive(false);
-        if(controllerEngine.getDBManagerThread() != null) {
-            while (controllerEngine.getDBManagerThread().isAlive()) {
-                logger.info("Waiting on DB Manager Shutdown");
-                try {
-                    Thread.sleep(1000);
-                } catch (Exception ex) {
-                    logger.error("stopGlobal DB Manager shutdown wait ", ex);
-                }
-            }
         }
 
         logger.debug("stopGlobal Complete");
@@ -748,20 +735,6 @@ public class ControllerSMHandler {
                 brokerAddress = "localhost";
             }
 
-            //it's not clear that dbmanager does anything current;y
-            /*
-            logger.debug("Starting DB Manager");
-            controllerEngine.setDBManagerThread(new Thread(new DBManager(controllerEngine, controllerEngine.getGDB().importQueue)));
-            controllerEngine.getDBManagerThread().start();
-
-            //started by DBInterfaceImpl
-            while (!controllerEngine.isDBManagerActive()) {
-                logger.info("isDBManagerActive() = false");
-                Thread.sleep(1000);
-            }
-             */
-
-            //DB manager only used for regional and global
             logger.debug("Starting Broker Manager");
 
             if(initIOChannels(brokerAddress)) {

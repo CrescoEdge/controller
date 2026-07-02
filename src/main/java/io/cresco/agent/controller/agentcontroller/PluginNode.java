@@ -180,10 +180,6 @@ public class PluginNode {
         return watchdog_ts;
     }
 
-    public void setWatchDogTimer(long watchdogtimer) {
-        this.watchdog_period = watchdog_period;
-    }
-
     public long getRuntime() {
         return runtime;
     }

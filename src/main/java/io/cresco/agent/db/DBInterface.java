@@ -47,7 +47,6 @@ public interface DBInterface {
     int getINodeStatus(String INodeId);
     boolean removePipeline(String pipelineId);
     List<String> getNodeList(String region, String agent);
-    boolean setDBImport(String exportData);
     Map<String, NodeStatusType> getNodeStatus(String region, String agent, String plugin);
     Map<String,String> getEdgeParamsNoTx(String edgeId);
     String getINodeParams(String iNode_id);
