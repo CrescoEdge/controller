@@ -883,6 +883,7 @@ public class DBInterfaceImpl implements DBInterface {
                     } else {
                         dbe.updateInodeKPI(inode_id, params.get("perf"));
                     }
+                    isUpdated = true; // was hardcoded false regardless of success
                 }
             }
 

@@ -55,7 +55,8 @@ public class FileObjectGroupReceiver {
     public boolean setDestFilePart(String dataName, String filePartName, String filePartMD5Hash) {
         boolean isSetPart = false;
         if(fileObjectMap.containsKey(dataName)) {
-            fileObjectMap.get(dataName).setDestFilePart(filePartName,filePartMD5Hash);
+            // was ignoring the delegate result and always returning false
+            isSetPart = fileObjectMap.get(dataName).setDestFilePart(filePartName,filePartMD5Hash);
         }
         return isSetPart;
     }

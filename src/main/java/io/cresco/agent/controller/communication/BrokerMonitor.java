@@ -16,7 +16,7 @@ class BrokerMonitor implements Runnable {
 	private String agentPath;
 	private NetworkConnector bridge;
 
-	public boolean MonitorActive;
+	public volatile boolean MonitorActive;
 
 	public BrokerMonitor(ControllerEngine controllerEngine, String agentPath) {
 		this.controllerEngine = controllerEngine;

@@ -24,7 +24,6 @@ public class ActiveBrokerManager implements Runnable  {
 		this.logger = plugin.getLogger(ActiveBrokerManager.class.getName(),CLogger.Level.Info);
 
 		logger.debug("Active Broker Manger initialized");
-		this.plugin = plugin;
 		timer = new Timer();
 		timer.scheduleAtFixedRate(new BrokerWatchDog(logger), 500, 5000);//remote
 	}

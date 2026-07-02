@@ -1117,6 +1117,7 @@ public class ControllerSMHandler {
             //pick lowest number canidate
             for (DiscoveryNode tmpDiscoveryNode : discoveryNodeList) {
                 if (tmpDiscoveryNode.discovered_agent_count < agent_count) {
+                    agent_count = tmpDiscoveryNode.discovered_agent_count; // was never updated -> always picked the LAST node
                     discoveryNodeCanidate = tmpDiscoveryNode;
                 }
             }
