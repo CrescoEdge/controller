@@ -213,7 +213,19 @@ public class ControllerSMHandler {
         //stop internal update timer
         stateUpdateTimer.cancel();
 
-        logger.error("STOP CALLED REGION");
+        // Graceful shutdown: if this region is federated to a global, unregister from it
+        // (region_disable RPC) and tear down the region->global link WHILE THE BROKER IS STILL ALIVE,
+        // so the global records a clean departure instead of aging the region to STALE/LOST. Mirrors
+        // stopAgent()'s unregister. Skipped for REGION_GLOBAL_FAILED (link already down) and for a
+        // plain REGION with no global parent (nothing to unregister from). isRegionalGlobalShutdown()
+        // stops net discovery + the region health watcher and calls unregisterRegion().
+        if (cstate.getControllerState() == ControllerMode.REGION_GLOBAL) {
+            if (!isRegionalGlobalShutdown()) {
+                logger.error("!isRegionalGlobalShutdown() Dirty Shutdown!");
+            }
+        }
+
+        logger.info("STOP CALLED REGION");
         cstate.setRegionShutdown("Shutdown Called");
     }
 
@@ -811,12 +823,18 @@ public class ControllerSMHandler {
 
         boolean isShutdown = false;
         try {
-            stopNetDiscoveryEngine();
-            controllerEngine.getRegionHealthWatcher().shutdown();
-            controllerEngine.setRegionHealthWatcher(null);
-            //controllerEngine.getActiveClient().shutdown();
+            // Unregister from the global FIRST, while the region health watcher is still alive.
+            // MsgRouter routes regional messages via ControllerEngine.getRegionHealthWatcher(), so
+            // nulling it before sending the region_disable RPC (the old order) NPEs the route and the
+            // unregister silently fails -- the global then ages the region to STALE/LOST. Tear the
+            // watcher + net discovery down AFTER the RPC round-trips.
+            unregisterRegion(cstate.getRegion(), cstate.getGlobalRegion());
 
-            unregisterRegion(cstate.getRegion(),cstate.getGlobalRegion());
+            stopNetDiscoveryEngine();
+            if (controllerEngine.getRegionHealthWatcher() != null) {
+                controllerEngine.getRegionHealthWatcher().shutdown();
+                controllerEngine.setRegionHealthWatcher(null);
+            }
 
             isShutdown = true;
         } catch (Exception ex) {
