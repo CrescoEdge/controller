@@ -74,6 +74,60 @@ public class PerfControllerMonitor {
 
     }
 
+    /**
+     * B-2 metrics unification: ONE cross-bundle metrics inventory for this node. Merges (1) the
+     * controller's own Micrometer metrics (jvm, processor, netlink, controller gauges/timers via
+     * {@link MeasurementEngine#getAllMetrics()}), (2) each local plugin's Micrometer metrics — pulled
+     * with the standard {@code getmetrics} EXEC, so wsapi/stunnel/etc. fold into the same view — and
+     * (3) the resource summary (cpu/mem/disk, i.e. processor performance) from the sysinfo/KPI path.
+     * Returns unified JSON. Plugins that don't answer {@code getmetrics} are simply skipped.
+     */
+    public String getMetricInventory(boolean includePlugins, boolean includeResource) {
+        java.util.Map<String, Object> inventory = new java.util.LinkedHashMap<>();
+        try {
+            String region = plugin.getRegion(), agent = plugin.getAgent();
+            java.util.Map<String, Object> bySource = new java.util.LinkedHashMap<>();
+
+            // 1) controller's own Micrometer metrics (all groups) -- always, fast, no RPC
+            if (me != null) {
+                bySource.put(region + "_" + agent + ":io.cresco.agent.controller", me.getAllMetrics());
+            }
+
+            // 2) each LOCAL plugin's metrics via the standard getmetrics EXEC (cross-bundle unification).
+            //    Opt-in: non-metric plugins don't answer, so this adds up-to-timeout per plugin.
+            if (includePlugins) {
+                java.util.List<String> pluginIds = controllerEngine.getGDB().getNodeList(region, agent);
+                if (pluginIds != null) {
+                    for (String pid : pluginIds) {
+                        try {
+                            io.cresco.library.messaging.MsgEvent req =
+                                    plugin.getGlobalPluginMsgEvent(io.cresco.library.messaging.MsgEvent.Type.EXEC, region, agent, pid);
+                            req.setParam("action", "getmetrics");
+                            io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, 600);
+                            if (resp != null && resp.getParam("metrics") != null) {
+                                bySource.put(region + "_" + agent + ":" + pid, gson.fromJson(resp.getParam("metrics"), Object.class));
+                            }
+                        } catch (Exception ignore) { /* plugin does not expose metrics -> skip */ }
+                    }
+                }
+            }
+
+            inventory.put("node", region + "_" + agent);
+            inventory.put("metrics_by_source", bySource);
+
+            // 3) resource summary (cpu/mem/disk = processor performance) from the sysinfo/KPI path (opt-in)
+            if (includeResource) {
+                try {
+                    String res = getResourceInfo(region, agent);
+                    if (res != null) inventory.put("resource_summary", gson.fromJson(res, Object.class));
+                } catch (Exception ignore) { }
+            }
+        } catch (Exception ex) {
+            logger.error("getMetricInventory", ex);
+        }
+        return gson.toJson(inventory);
+    }
+
     private String getRegionResourceInfo(String actionRegion) {
         String queryReturn = null;
 

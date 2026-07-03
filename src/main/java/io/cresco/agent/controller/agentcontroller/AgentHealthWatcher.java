@@ -237,8 +237,11 @@ public class AgentHealthWatcher {
                         // ParentLinkHealthCheck sees the stale lastParentPongTs and the HC->MINA
                         // bridge fires regionalControllerLost after the grace window. No direct state
                         // transition here (that direct call was the single-missed-ping drop bug).
+                        // parent path may be null during the brief AGENT_INIT window before it is populated;
+                        // show a readable placeholder instead of "[null]".
+                        String parentPath = controllerEngine.cstate.getRegionalControllerPath();
                         logger.warn("ActivePingTask: No PONG from Regional Controller [{}] within {}ms (miss recorded; HC decides).",
-                                controllerEngine.cstate.getRegionalControllerPath(), pingTimeout);
+                                (parentPath != null ? parentPath : "<pending-init>"), pingTimeout);
                     } else {
                         // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
                         lastParentPongTs = System.currentTimeMillis();

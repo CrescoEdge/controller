@@ -573,14 +573,16 @@ public class MsgRouter {
                 GC = "1";
             }
 
-            String RM = "0";
-            if(rm.isRegional()) {
-                RM = "1";
-            }
-            String GM = "0";
-            if(rm.isGlobal()) {
-                RM = "1";
-            }
+            // Message-scope route bits. IMPORTANT (do NOT "fix" GM to be set on isGlobal):
+            // A global message is intentionally routed through the REGIONAL (RM) handling cases.
+            // GM is the top positional bit in routeString below; it is a RESERVED placeholder that
+            // keeps every routePath value aligned with the switch(routePath) case numbers (which top
+            // out at 29679, i.e. GM always 0). No GM=1 case exists — setting GM here would push global
+            // traffic to routePath >= 32768, which the switch's default only logs-and-drops (silent
+            // loss of global control-plane traffic). Splitting global vs regional routing is a full
+            // routing-table rework (new GM cases + a routing test matrix), not this one line.
+            String RM = (rm.isRegional() || rm.isGlobal()) ? "1" : "0";
+            String GM = "0"; // reserved positional bit only (see note above); never set to 1
 
             String RXre = "0";
             String RXr = "0";

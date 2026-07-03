@@ -144,6 +144,9 @@ public class GlobalExecutor implements Executor {
                 case "plugininventory":
                     return pluginInventory(ce);
 
+                case "getmetricinventory":
+                    return getMetricInventory(ce);
+
                 case "getgpipeline":
                     return getGPipeline(ce);
 
@@ -607,6 +610,30 @@ public class GlobalExecutor implements Executor {
             ce.setParam("error", ex.getMessage());
         }
 
+        return ce;
+    }
+
+    // B-2: unified cross-bundle metrics inventory for this node (controller Micrometer metrics +
+    // local plugin metrics + resource summary). See PerfControllerMonitor.getMetricInventory().
+    private MsgEvent getMetricInventory(MsgEvent ce) {
+        try {
+            if (controllerEngine.getPerfControllerMonitor() != null) {
+                // both opt-in: the controller's own Micrometer view (jvm/processor/netlink/controller)
+                // is always returned and fast; the cross-bundle plugin query and the legacy sysinfo
+                // resource summary each add per-target RPC latency, so they are requested explicitly.
+                boolean incPlugins = "true".equalsIgnoreCase(ce.getParam("action_include_plugins"));
+                boolean incResource = "true".equalsIgnoreCase(ce.getParam("action_include_resource"));
+                ce.setParam("metricinventory",
+                        controllerEngine.getPerfControllerMonitor().getMetricInventory(incPlugins, incResource));
+                ce.setParam("status", "10");
+            } else {
+                ce.setParam("status", "9");
+                ce.setParam("status_desc", "measurements disabled (enable_controllermon=false)");
+            }
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getMetricInventory() " + ex.getMessage());
+        }
         return ce;
     }
 
