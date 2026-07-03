@@ -24,14 +24,18 @@ mutual-TLS *binding* of identity at the broker, regional-CA *issuance*, tenant d
   client presenting a **tenantB cert but a spoofed `tenantA` username is treated as tenantB**
   (broker log: `mTLS identity bound from certificate: CrescoIdentity{tenant=tenantB…}` →
   `DENY READ 'tenantA.stream' … outside tenant 'tenantB'`). Anti-spoof, end to end.
-- **Remaining boundary — mutual TLS *across the federation* needs trust distribution.** Enabling
-  `broker_require_client_auth` fabric-wide currently blocks a region from joining (the region↔global
-  mutual handshake) because trust anchors are strict per-node (peer-cert model) and each node does not
-  yet hold the peer's cert/CA at join time. This is not a defect in the binding — it is the fundamental
-  fact that mutual TLS requires *distributed trust*, which is exactly the regional-CA issuance +
-  trust-bundle distribution layer (Phase 1). Until that lands, the proven federated-secure default is
-  `broker_security_enabled` (tenant authorization + identity); `broker_require_client_auth` is for a
-  single broker or a pre-distributed-trust deployment.
+- **Fabric-wide mutual TLS via regional CAs — SHIPPED + PROVEN (2026-07-03).** The trust-distribution
+  boundary is closed. Regional-CA enrollment (`security_regional_ca`) rides the existing
+  discovery-secret-authenticated cert exchange: the responder (a region/global acting as issuer) signs
+  the joiner a leaf under its CA (`RegionCA` / `CertificateManager.issueEnrollment`, region stamps
+  identity) and returns the chain; the joiner installs it (`installEnrollment`) and trusts the issuing
+  CA that rides inside the chain — so trust is **O(regions)** (region-CA certs), not O(nodes²). With
+  every node then presenting a CA-signed leaf, `broker_require_client_auth` validates any peer by chain.
+  Proven: `run/tests/regional_ca_mtls_test.sh` **10/10** — a global establishes a region CA, two regions
+  (tenantA, tenantB) enroll + install global-CA-signed identities and **bridge to the global under
+  mutual TLS**, 0 TLS trust failures, healthy federation RTT. (Key fix: `ActiveClient.refreshTrust`
+  rebuilds only *network* factories and preserves `vm://localhost` — closing it dropped the RPC reply
+  consumer and the ping PONG never returned.)
 **Supersedes:** the "B-7 broker-auth" item in `broken-and-untouched-report.md` (which framed this as
 a single broker-auth switch). It is not one switch — it is a distributed security fabric.
 
@@ -167,8 +171,8 @@ The scaling insight: **separate issuance from trust distribution.**
 |-------|-------------|------|------|
 | **0 ✅ DONE** | Identity-bearing leaf DN; `io.cresco.library.security` identity/chain-verify + **sign/verify** primitive | additive, none | n/a |
 | **2 ✅ SHIPPED** | `CrescoAuthorizationBroker` tenant ACLs (proven in federated mesh) + broker mutual-TLS `needClientAuth` cert-DN binding (proven single-broker) | high (fabric) | `broker_security_enabled`, `broker_require_client_auth` |
-| **1 ← NEXT** | Region-CA issuance (CSR at enrollment) + trust-bundle distribution — the prerequisite for fabric-wide mutual TLS (§ "Remaining boundary") | medium | `security_regional_ca` |
-| 3 | Tenant destination namespacing + bridge tenant filtering (multi-tenant dataplane isolation) | high | `tenant_namespacing` |
+| **1 ✅ SHIPPED** | Region-CA issuance at enrollment (over the discovery-secret exchange) + chain-based trust — fabric-wide mutual TLS proven (`regional_ca_mtls_test.sh` 10/10) | medium | `security_regional_ca` |
+| **3 ← NEXT** | Tenant destination namespacing + bridge tenant filtering (multi-tenant dataplane isolation); cross-region region-CA bundle distribution (global→regions, global↔global) | high | `tenant_namespacing` |
 | 4 | Revocation/rotation automation; selective payload encryption | medium | per-feature |
 
 **Phase 2 is the fabric-breaking one** — mТLS + ACLs mean a misconfigured principal/ACL denies real
