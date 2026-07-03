@@ -45,6 +45,36 @@ public class ActiveClient {
     }
 
 
+    /**
+     * Drop cached connection factories and connections so subsequent connections are rebuilt with the
+     * CURRENT key/trust managers. Needed after a regional-CA enrollment swaps this node's identity and
+     * adds the region CA to the truststore: the factories snapshot their SSL material at creation, so
+     * without this the client keeps presenting/validating with the pre-enrollment certificates.
+     */
+    public void refreshTrust() {
+        try {
+            // Only NETWORK (non-vm) connections carry TLS material that changes at enrollment. The local
+            // vm://localhost connection is the agent's own in-JVM broker consumer/producer (no TLS) and
+            // MUST NOT be torn down — closing it drops the RPC reply consumer and the node goes deaf.
+            int refreshed = 0;
+            for (String uri : new java.util.ArrayList<>(connectionMap.keySet())) {
+                if (uri != null && !uri.startsWith("vm://")) {
+                    ActiveMQConnection c = connectionMap.remove(uri);
+                    if (c != null) { try { c.close(); } catch (Exception ignore) {} }
+                    refreshed++;
+                }
+            }
+            for (String uri : new java.util.ArrayList<>(connectionFactoryMap.keySet())) {
+                if (uri != null && !uri.startsWith("vm://")) {
+                    connectionFactoryMap.remove(uri);
+                }
+            }
+            logger.info("ActiveClient trust refreshed — " + refreshed + " network connection(s) rebuilt with current certificates; vm:// preserved");
+        } catch (Exception ex) {
+            logger.error("refreshTrust error: " + ex.getMessage());
+        }
+    }
+
     private void setFaultTriggerURI(String faultTriggerURI) {
         this.faultTriggerURI = faultTriggerURI;
     }

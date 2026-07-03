@@ -199,12 +199,17 @@ public class DiscoveryProcessor {
 	public boolean setCertTrust(String remoteAgentPath, String remoteCertString) {
 		boolean isSet = false;
 		try {
-			Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
-			controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath,certs);
-			isSet = true;
-
+			if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
+				// Regional-CA (Option C): the response carries THIS node's region-signed identity —
+				// install it (swap our cert chain, trust the issuing CA that rides in the chain).
+				isSet = controllerEngine.getCertificateManager().installEnrollment(remoteCertString);
+			} else {
+				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
+				controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath, certs);
+				isSet = true;
+			}
 		} catch(Exception ex) {
-			logger.error("configureCertTrust Error " + ex.getMessage());
+			logger.error("setCertTrust Error " + ex.getMessage());
 		}
 		return isSet;
 	}
@@ -212,10 +217,18 @@ public class DiscoveryProcessor {
 	private String configureCertTrust(String remoteAgentPath, String remoteCertString) {
 		String localCertString = null;
 		try {
-			Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
-			controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath,certs);
-			controllerEngine.getBroker().updateTrustManager();
-			localCertString = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
+			if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
+				// Regional-CA (Option C): act as the issuing authority — sign the joiner a leaf under our
+				// region CA and return the chain for it to install. We trust the joiner via our own CA
+				// (no per-node truststore entry needed), so trust material stays O(regions), not O(nodes^2).
+				localCertString = controllerEngine.getCertificateManager().issueEnrollment(remoteCertString);
+				controllerEngine.getBroker().updateTrustManager();
+			} else {
+				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
+				controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath, certs);
+				controllerEngine.getBroker().updateTrustManager();
+				localCertString = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
+			}
 		} catch(Exception ex) {
 			logger.error("configureCertTrust Error " + ex.getMessage());
 		}

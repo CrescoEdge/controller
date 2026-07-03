@@ -3,6 +3,7 @@ package io.cresco.agent.controller.communication;
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.plugin.PluginBuilder;
+import io.cresco.library.security.CrescoIdentity;
 import io.cresco.library.utilities.CLogger;
 
 import org.bouncycastle.asn1.x500.X500Name;
@@ -44,6 +45,9 @@ public class CertificateManager {
     private int YEARS_VALID = 3;
     private X509Certificate[] chain;
     private CLogger logger;
+    // Regional-CA (distributed-trust Option C): set on a region/global controller acting as an issuing
+    // authority. When present this node can sign enrolling nodes' leaf certificates (issueEnrollment).
+    private RegionCA regionCA;
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
@@ -437,6 +441,115 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("getJsonFromCerts : error " + ex.getMessage(), ex);
         }
         return certJson;
+    }
+
+    // ----- Regional-CA enrollment (distributed-trust Option C) -----
+
+    /** True if this controller is an issuing authority (holds a region CA). */
+    public boolean isRegionCA() {
+        return regionCA != null;
+    }
+
+    /**
+     * Make this controller a region CA: generate the CA, trust it, and re-issue this controller's OWN
+     * identity under it so peers that trust the region CA cert also trust this controller's broker.
+     * Idempotent. Called at startup when {@code security_regional_ca} is enabled on a region/global.
+     */
+    public synchronized void ensureRegionCA() {
+        if (regionCA != null) {
+            return;
+        }
+        try {
+            String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String region = controllerEngine.cstate.getRegion();
+            String agent = controllerEngine.cstate.getAgent();
+            regionCA = RegionCA.generate(tenant, region, keySize, YEARS_VALID);
+            addCertificatesToTrustStore("localRegionCA-" + region, new X509Certificate[]{ regionCA.caCert() });
+            // self-enroll: replace our self-signed leaf with one signed by our own region CA
+            PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+            if (myKey != null && getPublicCertificate() != null && getPublicCertificate()[0] != null) {
+                X509Certificate[] selfChain = regionCA.enroll(getPublicCertificate()[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
+                this.chain = selfChain;
+                storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, selfChain);
+            }
+            try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+            logger.info("Region CA established for region '" + region + "' (tenant=" + tenant + "); own identity re-issued under it");
+        } catch (Exception ex) {
+            logger.error("ensureRegionCA error: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Issue a region-CA-signed leaf for an enrolling node. The joiner presents its self-signed cert
+     * (identity-bearing DN + public key); we take ONLY its public key and STAMP the identity from the
+     * authenticated join (a regional CA forces its own tenant; a global preserves the region's tenant).
+     * Returns the region-signed chain [leaf, regionCA, root] as JSON for the joiner to install.
+     */
+    public String issueEnrollment(String joinerCertJson) {
+        try {
+            ensureRegionCA();
+            if (regionCA == null) {
+                return null;
+            }
+            X509Certificate[] joinerCerts = getCertsfromJson(joinerCertJson);
+            if (joinerCerts == null || joinerCerts[0] == null) {
+                logger.error("issueEnrollment: no joiner certificate");
+                return null;
+            }
+            CrescoIdentity claimed = CrescoIdentity.fromCertificate(joinerCerts[0]);
+            String tenant = (claimed != null && claimed.getTenant() != null) ? claimed.getTenant()
+                    : plugin.getConfig().getStringParam("tenant_id", "default");
+            String region = (claimed != null && claimed.getRegion() != null) ? claimed.getRegion() : "unknown";
+            String agent  = (claimed != null && claimed.getAgent()  != null) ? claimed.getAgent()  : "unknown";
+            // Stricter: a purely-regional CA stamps ITS tenant (an agent cannot cross tenants). A global
+            // federates multiple tenants, so it preserves the joining region's tenant.
+            boolean isGlobal = controllerEngine.cstate.isGlobalController();
+            if (!isGlobal) {
+                tenant = plugin.getConfig().getStringParam("tenant_id", tenant);
+            }
+            X509Certificate[] signed = regionCA.enroll(joinerCerts[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
+            logger.info("Enrolled node " + region + "_" + agent + " (tenant=" + tenant + ") under region CA");
+            return getJsonFromCerts(signed);
+        } catch (Exception ex) {
+            logger.error("issueEnrollment error: " + ex.getMessage(), ex);
+            return null;
+        }
+    }
+
+    /**
+     * Install a region-CA-signed identity received at enrollment: keep our private key, swap our cert
+     * chain to the region-signed one, trust the issuing CA (which rides inside the chain), and refresh
+     * the live broker + client SSL contexts so the new identity and anchor take effect immediately.
+     */
+    public boolean installEnrollment(String chainJson) {
+        try {
+            X509Certificate[] signedChain = getCertsfromJson(chainJson);
+            if (signedChain == null || signedChain[0] == null) {
+                logger.error("installEnrollment: empty enrollment chain");
+                return false;
+            }
+            PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+            if (myKey == null) {
+                logger.error("installEnrollment: no private key for alias " + keyStoreAlias);
+                return false;
+            }
+            this.chain = signedChain;
+            storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, signedChain);
+            // trust the issuing CA (chain[1]) and its root (chain[2]) — the O(regions) trust anchors
+            if (signedChain.length > 1 && signedChain[1] != null) {
+                addCertificatesToTrustStore("issuingCA-" + signedChain[1].getSerialNumber(),
+                        signedChain.length > 2 && signedChain[2] != null
+                                ? new X509Certificate[]{ signedChain[1], signedChain[2] }
+                                : new X509Certificate[]{ signedChain[1] });
+            }
+            try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+            try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
+            logger.info("Installed region-CA-signed identity: " + CrescoIdentity.fromCertificate(signedChain[0]));
+            return true;
+        } catch (Exception ex) {
+            logger.error("installEnrollment error: " + ex.getMessage(), ex);
+            return false;
+        }
     }
 
     public void saveKeyAndTrustStore() {
