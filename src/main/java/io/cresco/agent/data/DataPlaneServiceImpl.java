@@ -64,6 +64,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     private String URI;
 
+    // Tenant namespacing for the dataplane (the second controlled channel besides MsgEvent). When on, every
+    // dataplane topic is qualified T.<tenant>.<topic> so a tenant's agent/region/global streams are isolated
+    // per tenant at every broker; same-tenant cross-region flow still works via demand-forwarding, while a
+    // cross-tenant subscribe is denied by the broker ACL. Default off -> raw topic names, unchanged.
+    private boolean tenantNamespacing = false;
+    private String localTenant = "default";
+
     private Path journalPath;
 
     private Type typeOfListFileObject;
@@ -87,6 +94,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         // Dataplane shard count (default 1 = unsharded, original behavior). Must match across all
         // agents in the fabric so publisher/subscriber derive the same shard topic from a shared key.
+        tenantNamespacing = plugin.getConfig().getBooleanParam("tenant_namespacing", false);
+        localTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+
         dataPlaneShards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
         // Give each shard its own dedicated broker connection (parallel sockets) rather than
         // multiplexing all shards over the single pooled session. Default on when sharding is enabled.
@@ -685,6 +695,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             case GLOBAL:
                 topicNameString = globalTopicName;
                 break;
+        }
+        if (tenantNamespacing && topicNameString != null) {
+            topicNameString = io.cresco.library.security.TenantNamespace.qualify(localTenant, topicNameString);
         }
         return topicNameString;
     }

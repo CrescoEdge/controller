@@ -985,7 +985,20 @@ public class ControllerSMHandler {
                     }
 
                     if(URI != null) {
-                        controllerEngine.getActiveClient().initActiveAgentConsumer(cstate.getAgentPath(), URI);
+                        // Tenant namespacing: the inbox queue is tenant-qualified. An infra controller on
+                        // vm:// (its own broker) is a multi-tenant relay -> it consumes the T.*.<agentPath>
+                        // WILDCARD so it receives every tenant's traffic regardless of the stamped tenant. A
+                        // leaf agent (network client, ACL-enforced) consumes only its own T.<tenant>.<agentPath>.
+                        String rxQueue = cstate.getAgentPath();
+                        if (plugin.getConfig().getBooleanParam("tenant_namespacing", false)) {
+                            if (URI.startsWith("vm")) {
+                                rxQueue = io.cresco.library.security.TenantNamespace.wildcard(rxQueue);
+                            } else {
+                                rxQueue = io.cresco.library.security.TenantNamespace.qualify(
+                                        plugin.getConfig().getStringParam("tenant_id", "default"), rxQueue);
+                            }
+                        }
+                        controllerEngine.getActiveClient().initActiveAgentConsumer(rxQueue, URI);
                         //check to see if there is an dataPlaneService, if so reset connections
                         if(controllerEngine.getDataPlaneService() == null) {
                             dataPlaneService = new DataPlaneServiceImpl(controllerEngine, URI);

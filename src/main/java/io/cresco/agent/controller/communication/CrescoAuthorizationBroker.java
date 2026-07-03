@@ -46,6 +46,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
 
     private final CLogger logger;
     private final Set<String> sharedPrefixes;
+    private final Set<String> superuserTenants;
     private final boolean logAllow;
 
     public CrescoAuthorizationBroker(PluginBuilder plugin) {
@@ -57,8 +58,26 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
             String t = s.trim();
             if (!t.isEmpty()) this.sharedPrefixes.add(t);
         }
+        // Tenants whose network clients are granted the cross-tenant SUPERUSER role (god view). The local
+        // controller vm:// and broker bridges are already exempt; this is for an explicit superuser CLIENT
+        // (e.g. a fabric-admin dashboard) that connects over the network and must see every tenant.
+        String su = plugin.getConfig().getStringParam("broker_superuser_tenants", "cresco-system");
+        this.superuserTenants = new HashSet<>();
+        for (String s : su.split(",")) {
+            String t = s.trim();
+            if (!t.isEmpty()) this.superuserTenants.add(t);
+        }
         this.logAllow = plugin.getConfig().getBooleanParam("broker_security_log_allow", false);
-        logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes);
+        logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes
+                + " superuser tenants=" + this.superuserTenants);
+    }
+
+    /** Authorization role for a resolved identity: SUPERUSER for a configured superuser tenant, else TENANT. */
+    private TenantPolicy.Role roleOf(CrescoIdentity id) {
+        if (id != null && id.getTenant() != null && superuserTenants.contains(id.getTenant())) {
+            return TenantPolicy.Role.SUPERUSER;
+        }
+        return TenantPolicy.Role.TENANT;
     }
 
     @Override
@@ -119,7 +138,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
         }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
-        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes);
+        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id));
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
             logger.warn("DENY " + access + " '" + name + "' for " + who + " : " + d.reason);

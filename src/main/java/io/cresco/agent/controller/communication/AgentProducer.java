@@ -40,6 +40,12 @@ public class AgentProducer {
     private final long WORKER_CLEANUP_INTERVAL_MS;
     private final long WORKER_CLEANUP_DELAY_MS;
 
+    // Tenant namespacing (default off -> raw names, fabric unchanged). When on, every outbound MsgEvent is
+    // stamped with the origin tenant (once, at origin) and its forward destination is qualified with THAT
+    // tenant, so isolation holds end-to-end and every relay qualifies identically. See TenantNamespace.
+    private final boolean tenantNamespacing;
+    private final String localTenant;
+
 
     private class ClearProducerTask extends TimerTask {
         public void run() {
@@ -85,6 +91,9 @@ public class AgentProducer {
         this.INITIAL_RETRY_DELAY_MS = plugin.getConfig().getLongParam("agentproducer_initial_retry_delay", 500L);
         this.WORKER_CLEANUP_INTERVAL_MS = plugin.getConfig().getLongParam("agentproducer_worker_cleanup_interval", 30000L);
         this.WORKER_CLEANUP_DELAY_MS = plugin.getConfig().getLongParam("agentproducer_worker_cleanup_delay", 15000L);
+
+        this.tenantNamespacing = plugin.getConfig().getBooleanParam("tenant_namespacing", false);
+        this.localTenant = plugin.getConfig().getStringParam("tenant_id", "default");
 
 
         try {
@@ -166,6 +175,20 @@ public class AgentProducer {
         if (dstPath == null) {
             logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", sm.getParams());
             return false; // Cannot proceed without a destination
+        }
+
+        // Tenant namespacing: stamp the origin tenant once (at origin the param is absent -> use local
+        // tenant; at a relay it is already present and preserved), then qualify the always-raw forward
+        // destination with the MESSAGE's tenant. Every hop derives the same qualified queue, and the
+        // destination agent (same tenant) consumes on exactly that name; a cross-tenant send lands in a
+        // queue nobody consumes, so isolation is automatic and the broker ACL denies it besides.
+        if (tenantNamespacing) {
+            String msgTenant = sm.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
+            if (msgTenant == null || msgTenant.isEmpty()) {
+                msgTenant = localTenant;
+                sm.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, msgTenant);
+            }
+            dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
         }
 
         // QoS: liveness + control ride a dedicated, isolated control-plane sender so a flood of
