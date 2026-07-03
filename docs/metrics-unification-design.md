@@ -151,10 +151,23 @@ A future phase may deprecate the ad-hoc `perf` blob once all readers move to `ge
 |--------|-------|--------|------|
 | controller | regional | `brokered.agent.count` | gauge |
 | controller | global | `incoming.resource.queue`, `incoming.application.queue` | gauge |
-| sysinfo | processor | `system.cpu.count`, `system.cpu.load` | gauge |
-| sysinfo | memory | `memory.total`, `memory.available` | gauge (bytes) |
-| sysinfo | disk | `disk.total`, `disk.available` | gauge (bytes) |
-| sysinfo | network | `net.bytes.sent`, `net.bytes.recv` | gauge (bytes) |
+| sysinfo | processor | `system.cpu.count`, `system.cpu.load`, `system.load.average.1m`, `cpu.context.switches`, `cpu.interrupts` | gauge |
+| sysinfo | memory | `memory.total`, `memory.available`, `memory.swap.total`, `memory.swap.used` | gauge (bytes) |
+| sysinfo | disk | `disk.total`, `disk.available`, `disk.read.bytes`, `disk.write.bytes` | gauge (bytes) |
+| sysinfo | network | `net.bytes.sent`, `net.bytes.recv`, `net.packets.sent`, `net.packets.recv` | gauge |
+| sysinfo | sensors | `sensor.cpu.temperature`, `sensor.cpu.voltage`, `sensor.fan.max.rpm` | gauge |
+| sysinfo | power | `power.remaining.percent`, `power.remaining.seconds` | gauge |
+| sysinfo | system | `system.uptime.seconds`, `system.process.count`, `system.thread.count` | gauge |
+
+**OSHI upgraded 4.2.1 → 7.3.2 (latest; JNA 5.19.1).** The old 4.2.1 bundled a pre-arm64 JNA (5.5.0) with
+no arm64 native lib, so hardware calls threw `UnsatisfiedLinkError` on arm64 hosts and sysinfo reported
+zeros there. 7.3.2 ships arm64 macOS/Linux native libs (verified: `darwin-aarch64/libjnidispatch.jnilib`
+embedded in the bundle), so real values now flow on arm64 (e.g. cpu temp 45°C, 14 cores, 36 GB, uptime).
+The upgrade also unlocked the `sensors`, `power`, and `system` groups and the load-average / swap / disk-IO
+/ packet counters above — measurements OSHI 4.2.1 didn't expose. API migration (arrays→Lists,
+`getProcessorIdentifier()`, `getVersionInfo()`, `ProcessSorting`) was confined to `SysInfoBuilder`
+(the only OSHI user). Each read stays guarded so a metric OSHI can't supply on a given platform degrades
+to 0 without dropping sysinfo from the inventory.
 | wsapi | wsapi | `wsapi.dataplane.connections`, `wsapi.dataplane.bytes` | gauge |
 | repo | repo | `repo.plugin.count`, `repo.bytes` | gauge |
 | stunnel | stunnel | `stunnel.active.tunnels/clients/targets` (existing) | gauge |
