@@ -245,6 +245,20 @@ public class ActiveClient {
                     controllerEngine.getCertificateManager().getTrustManagers(),
                     new SecureRandom()
             );
+
+            // Tenant identity on the connection. When broker security is enabled, a NETWORK client
+            // (agent -> regional broker; not the local vm:// path) asserts its identity as
+            // "tenant|region|agent" via the JMS username so the broker's CrescoAuthorizationBroker can
+            // authorize it. OFF by default -> anonymous connections, exactly as before. (Cryptographic
+            // binding of this identity is the mutual-TLS/cert-DN path; see distributed-identity design.)
+            PluginBuilder pb = controllerEngine.getPluginBuilder();
+            if (pb.getConfig().getBooleanParam("broker_security_enabled", false) && !URI.startsWith("vm://")) {
+                String tenant = pb.getConfig().getStringParam("tenant_id", "default");
+                String username = tenant + "|" + controllerEngine.cstate.getRegion() + "|" + controllerEngine.cstate.getAgent();
+                activeMQSslConnectionFactory.setUserName(username);
+                activeMQSslConnectionFactory.setPassword(pb.getConfig().getStringParam("broker_security_secret", "cresco"));
+                logger.info("Broker security: asserting identity [{}] on connection to [{}]", username, URI);
+            }
             logger.info("ConnectionFactory initialized successfully for URI: {}", URI);
         } catch (Exception ex) {
             logger.error("initConnectionFactory Exception for URI [{}]: {}", URI, ex.getMessage(), ex);

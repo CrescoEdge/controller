@@ -268,11 +268,24 @@ public class CertificateManager {
 
             //create end user cert signed by Intermediate CA
             KeyPair endUserCertKeyPair = generateKeyPair();
+            // Identity-bearing leaf: bind tenant/region/agent into the subject DN so the broker (and
+            // any peer) can cryptographically identify this node from its certificate rather than a
+            // spoofable connection username. Falls back to the legacy UUID CN before identity is known.
+            String leafDN;
+            String idTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String idRegion = controllerEngine.cstate.getRegion();
+            String idAgent = controllerEngine.cstate.getAgent();
+            if (idRegion != null && idAgent != null) {
+                leafDN = io.cresco.library.security.CrescoIdentity.of(idTenant, idRegion, idAgent, null).toX500Name();
+                logger.info("Issuing identity-bearing leaf certificate: " + leafDN);
+            } else {
+                leafDN = "CN=endUserCert-" + functionName;
+            }
             builder = new JcaX509v3CertificateBuilder(
                     intermedCA, //here intermedCA is issuer authority
                     BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
                     new DateTime().plusYears(YEARS_VALID).toDate(),
-                    new X500Name("CN=endUserCert-" + functionName), endUserCertKeyPair.getPublic());
+                    new X500Name(leafDN), endUserCertKeyPair.getPublic());
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
             X509Certificate endUserCert = new JcaX509CertificateConverter().getCertificate(builder

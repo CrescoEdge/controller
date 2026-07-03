@@ -312,9 +312,16 @@ public class ActiveBroker {
 				broker.getManagementContext().setCreateConnector(true);
                 */
 
-				//authorizationPlugin = new CrescoAuthorizationPlugin();
-				//authenticationPlugin = new CrescoAuthenticationPlugin();
-				//broker.setPlugins(new BrokerPlugin[]{authorizationPlugin,authenticationPlugin});
+				// Tenant isolation: install the Cresco authorization broker plugin so every consumer/
+				// producer/send is checked against per-connection identity (see CrescoAuthorizationBroker
+				// + TenantPolicy). OFF by default -> broker behaves exactly as before; enable per-region
+				// with broker_security_enabled. Must be set before broker.start().
+				if (plugin.getConfig().getBooleanParam("broker_security_enabled", false)) {
+					broker.setPlugins(new org.apache.activemq.broker.BrokerPlugin[]{
+							new CrescoAuthorizationBroker(plugin)
+					});
+					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
+				}
 				//<amq:transportConnector uri="ssl://localhost:61616" />
 
 				if(enable_broker_transport) {
@@ -333,6 +340,15 @@ public class ActiveBroker {
 					String txOpts = "?daemon=true"
 							+ "&socketBufferSize=" + plugin.getConfig().getIntegerParam("activemq_socket_buffer_size", 2 * 1024 * 1024)
 							+ "&wireFormat.maxFrameSize=" + plugin.getConfig().getLongParam("activemq_max_frame_size", 128L * 1024 * 1024);
+
+					// Mutual TLS: require every network client to present a certificate the broker's trust
+					// managers validate, so identity is cryptographically bound (not a self-asserted
+					// username). The CrescoAuthorizationBroker then derives the principal from the cert DN.
+					// Gated separately from broker_security_enabled so authz can run without mTLS if wanted.
+					if (plugin.getConfig().getBooleanParam("broker_require_client_auth", false)) {
+						txOpts += "&needClientAuth=true";
+						logger.info("Broker mutual-TLS ENABLED — clients must present a trusted certificate (needClientAuth)");
+					}
 
 					if (plugin.isIPv6())
 						connector.setUri(new URI(transport + "://[::]:" + brokerPort + txOpts));
