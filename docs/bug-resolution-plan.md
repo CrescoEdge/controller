@@ -1,17 +1,19 @@
 # Cresco — bug resolution plan
 
-> **STATUS (verified in-tree 2026-07-02): 11 of 13 resolved; only B13 open.**
+> **STATUS (verified in-tree 2026-07-03): 13 of 13 resolved.**
 > - **Fixed in place (kept):** B1, B2 (`MsgEvent` src-identity ctors), B8 (`pNode.addRepos`).
 > - **Deleted (dead + unwanted):** B3, B4, B5, B7, B9.
 > - **Gone via rewrite/removal:** B6 + B12 (wsapi `repolist` gutted; one dangling `//` at
 >   `PluginExecutor.java:78`), B10 (`WSInterface` Netty rewrite), B11 (`DBManager` removed).
-> - **Open:** **B13** — stunnel `SocketControllerSM` decorative → `gettunnelstatus`/`listtunnels`
->   report a static `pluginActive`. Recommend *replace the status source* (report from real
->   `SocketController` state), not wiring the UMPLE model. Needs a keep/cut call.
+> - **Resolved (stunnel `ca6291a`):** **B13** — the status source was replaced (the recommended
+>   fix): `SocketController.getTunnelStatus()` reports real `ACTIVE`/`RECOVERING`/`DOWN`/`UNKNOWN`
+>   from live channel state, `gettunnelstatus`/`listtunnels` call it, and the decorative
+>   `SocketControllerSM` was retired from the live path (kept only as the UMPLE doc model).
 >
-> PR1 (Tier-1) and PR2 (Tier-2) below are **done**; PR3 is down to B13. See the four-bucket
-> re-tagging of the wider Appendix A tail in `broken-and-untouched-report.md` §B-3, and the
-> broker-auth security gap surfaced there as **B-7**.
+> PR1 (Tier-1), PR2 (Tier-2), and PR3 (B13) below are all **done**. See the four-bucket
+> re-tagging of the wider Appendix A tail in `broken-and-untouched-report.md` §B-3, the
+> broker-auth security gap surfaced there as **B-7** (shipped + proven), and the startup
+> PKIX race **B-1** (shipped + proven, `run/tests/b1_startup_race_test.sh`).
 
 Derived from the code-reference dead-code sweep (see `README.md` Appendix A). Each item was
 **re-verified against live call paths** before ranking — several appendix entries were
@@ -35,7 +37,7 @@ the honest resolution for buggy code that never runs). Effort: S ≤30 min, M �
 | B10 | clientlib `WSInterface.serverListening` always true | 2 | Partial (dead branch) | Fix | S |
 | B11 | Regional→global DB import (DBManager) unfinished | 3 | No (start block commented) | Delete or Implement | M/L |
 | B12 | wsapi `repolist` action stubbed (`//todo fix`) | 3 | Yes (returns nothing useful) | Delete or Implement | M |
-| B13 | stunnel `SocketControllerSM` never advanced | 3 | Yes (status always `pluginActive`) | Replace status source or Implement | L |
+| B13 | stunnel `SocketControllerSM` never advanced | 3 | Yes (status always `pluginActive`) | **Done ✅** (replaced status source, `ca6291a`) | L |
 
 ---
 
@@ -167,6 +169,13 @@ These are not one-line bugs; each needs a keep-or-cut decision before implementa
     wsapi-native repo listing is actually needed.
 
 ### B13 — stunnel `SocketControllerSM` is decorative (never advanced)
+- **RESOLVED (stunnel `ca6291a`, 2026-07-03):** took the recommended "replace the status source" path.
+  `SocketController.getTunnelStatus(id)` now derives `ACTIVE`/`RECOVERING`/`DOWN`/`UNKNOWN` from real
+  channel state (open listener ⇒ ACTIVE; SRC-config present but listener down ⇒ RECOVERING if a
+  reconnect/health-check is scheduled, else DOWN; no config ⇒ UNKNOWN), and `PluginExecutor`'s
+  `gettunnelstatus` + `listtunnels` call it. The SM was retired from the live path (no callers of its
+  transition methods) and left only as the UMPLE documentation model. The rest of this section is the
+  original analysis, kept for context.
 - **Location:** `stunnel/.../state/SocketControllerSM.java` — all 12 transition methods
   (`incomingSrcTunnelConfig`, `srcFailure`, `recoveredTunnel`, …) are never invoked; only the initial
   `pluginActive` state is read via `getState().name()`.

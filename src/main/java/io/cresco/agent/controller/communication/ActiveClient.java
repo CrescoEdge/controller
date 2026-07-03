@@ -75,6 +75,67 @@ public class ActiveClient {
         }
     }
 
+    /**
+     * B-1: Confirm a remote broker's TLS endpoint is actually TRUST-ready before we hand its URI to the
+     * ActiveMQ failover transport. On a rapid same-host bring-up the agent can reach the connect step a
+     * beat before the regional broker's certificate has been installed in our truststore (discovery cert
+     * exchange still settling) or before the broker's TLS transport is fully up. The failover transport's
+     * first handshake then fails with "PKIX path building failed: unable to find valid certification path"
+     * and dumps full reconnect stack traces before the mesh self-heals — false-alarm log noise, not a real
+     * fault. This probe performs a bounded, QUIET TLS handshake with our CURRENT key/trust managers (the
+     * same material the real connection uses, minus hostname verification — which is off, see
+     * verifyHostName=false), so the failover transport only ever touches a ready endpoint.
+     *
+     * Bounded and non-blocking-forever: if the endpoint is not confirmed ready within maxWaitMs we log one
+     * WARN and return false; the caller proceeds anyway and the failover transport retries exactly as
+     * before — so this can only ADD a quiet grace window, never make startup worse. In the common
+     * (non-raced) case the first probe handshakes in milliseconds and returns immediately.
+     *
+     * @return true if a clean TLS handshake completed within the window; false if we gave up (caller proceeds).
+     */
+    public boolean waitForBrokerTlsReady(String host, int port, long maxWaitMs) {
+        String probeHost = (host == null) ? null : host.replace("[", "").replace("]", "");
+        if (probeHost == null || probeHost.isEmpty()) {
+            logger.warn("waitForBrokerTlsReady: no host to probe — skipping");
+            return false;
+        }
+        logger.info("Probing broker TLS readiness [{}:{}] before first connect (up to {}ms) to avoid a startup PKIX race", probeHost, port, maxWaitMs);
+        long deadline = System.currentTimeMillis() + maxWaitMs;
+        int attempt = 0;
+        String lastError = null;
+        while (System.currentTimeMillis() < deadline) {
+            attempt++;
+            try {
+                javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
+                ctx.init(controllerEngine.getCertificateManager().getKeyManagers(),
+                        controllerEngine.getCertificateManager().getTrustManagers(),
+                        new SecureRandom());
+                try (javax.net.ssl.SSLSocket socket =
+                             (javax.net.ssl.SSLSocket) ctx.getSocketFactory().createSocket()) {
+                    socket.connect(new java.net.InetSocketAddress(probeHost, port), 3000);
+                    socket.setSoTimeout(3000);
+                    socket.startHandshake(); // throws until TCP is up AND our truststore trusts the broker cert
+                }
+                if (attempt > 1) {
+                    logger.info("Broker TLS endpoint [{}:{}] became trust-ready after {} probe attempt(s)", probeHost, port, attempt);
+                }
+                return true;
+            } catch (Exception ex) {
+                lastError = ex.getMessage();
+                logger.debug("Broker TLS endpoint [{}:{}] not trust-ready yet (probe {}): {}", probeHost, port, attempt, lastError);
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        logger.warn("Broker TLS endpoint [{}:{}] not confirmed trust-ready within {}ms ({} probe attempt(s)) — proceeding; failover transport will retry. Last: {}",
+                probeHost, port, maxWaitMs, attempt, lastError);
+        return false;
+    }
+
     private void setFaultTriggerURI(String faultTriggerURI) {
         this.faultTriggerURI = faultTriggerURI;
     }

@@ -971,6 +971,17 @@ public class ControllerSMHandler {
                         URI = "vm://localhost";
                     } else {
                         URI = "failover:(" + transport +"://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
+
+                        // B-1: on a same-host bring-up the regional broker's cert may not be trust-ready the
+                        // instant we connect, making the failover transport's first handshake fail with PKIX
+                        // and dump reconnect stacks before self-healing. Gate the first connect on a quiet
+                        // trust-ready TLS probe so the transport only ever touches a ready endpoint. Only
+                        // meaningful for TLS transports; bounded, and a no-op once the endpoint is up.
+                        if (transport != null && transport.contains("ssl")
+                                && plugin.getConfig().getBooleanParam("broker_tls_ready_probe", true)) {
+                            long tlsReadyWaitMs = plugin.getConfig().getLongParam("broker_tls_ready_wait_ms", 15000L);
+                            controllerEngine.getActiveClient().waitForBrokerTlsReady(brokerAddress, discoveryPort, tlsReadyWaitMs);
+                        }
                     }
 
                     if(URI != null) {

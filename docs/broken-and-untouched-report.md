@@ -41,6 +41,24 @@ My own fixes are confirmed still in history and intact:
 Ordered by severity. "Severity" is operational impact, not effort.
 
 ### B-1 — Transient SSL/PKIX handshake race on rapid same-host launch
+- **STATUS: FIXED + PROVEN (2026-07-03).** The agent's first remote broker connect is now gated on a
+  quiet **trust-ready TLS probe** so the ActiveMQ failover transport only ever touches a ready endpoint.
+  New `ActiveClient.waitForBrokerTlsReady(host, port, maxWaitMs)` opens a bounded, DEBUG-level TLS
+  handshake to the regional broker using the node's **current** key/trust managers (the same material
+  the real connection uses; hostname verification off, matching `verifyHostName=false`) and returns the
+  instant the endpoint trusts-and-handshakes; `ControllerSMHandler.initIOChannels` calls it before
+  `initActiveAgentConsumer` on the remote (non-`vm://`) TLS path. Flags: `broker_tls_ready_probe`
+  (default **true**), `broker_tls_ready_wait_ms` (default **15000**). Bounded by construction — if the
+  endpoint never becomes ready it logs one WARN and falls through to the failover transport exactly as
+  before (no worse than the old behavior); in the common non-raced case the first probe handshakes in
+  milliseconds. Result: the failover transport no longer sees a failing first handshake, so the PKIX
+  reconnect stack-trace spam is eliminated at the source. Proven by `run/tests/b1_startup_race_test.sh`
+  4/4 (gate engages on the real first-connect path; flag toggles it off cleanly; **zero** PKIX/failover
+  reconnect stacks; agent registers), with `tenant_isolation_mesh_test.sh` 10/10 and
+  `regional_ca_mtls_test.sh` 10/10 confirming no regression on the secured/federated connect paths.
+  **Scope note:** the region→global path is a broker-to-broker **bridge** (`static:()` in `ActiveBroker`),
+  not a client connect through `initIOChannels`; its trust is exchanged during global discovery before
+  the bridge starts, so it is out of scope for this gate and was not the B-1 locus.
 - **Severity:** Low (self-healing) / Medium (log noise, false alarm potential).
 - **Symptom:** On multi-tier bring-up on a single host, a freshly-launched agent's first
   ActiveMQ TLS connection to its regional broker (`nio+ssl://127.0.0.1:<brokerport>`) fails
@@ -110,10 +128,12 @@ Ordered by severity. "Severity" is operational impact, not effort.
     `//` at `PluginExecutor.java:78` remains); B10 (`WSInterface` rewritten for Netty — the
     always-true `serverListening` branch no longer exists); B11 (`DBManager` regional→global
     import removed — only a comment in `DbHealthCheck` remembers it).
-  - **Still open:** **B13** (stunnel `SocketControllerSM` is decorative — transition methods
-    never fired, so `gettunnelstatus`/`listtunnels` always report `pluginActive`). Recommend
-    *replace the status source* — report from real `SocketController` state — over wiring the
-    UMPLE model. Needs a keep/cut call.
+  - **RESOLVED (stunnel `ca6291a`, 2026-07-03 reconcile):** **B13** — the status source was replaced
+    (the recommended fix). `SocketController.getTunnelStatus()` now returns real `ACTIVE` /
+    `RECOVERING` / `DOWN` / `UNKNOWN` from live channel state, and `PluginExecutor`'s `gettunnelstatus`
+    and `listtunnels` both call it (no more static `pluginActive`). The decorative `SocketControllerSM`
+    was retired from the live path (no callers of its transition methods) and kept only as the UMPLE
+    documentation model. Enumerated bug plan B1–B13 is now **13/13 resolved**.
 - **The four buckets** (apply this lens to the remainder of Appendix A that is *not* an
   enumerated bug — do **not** treat them uniformly):
   - **A. Truly dead — opportunistic-delete only, low value.** Superseded variants / no-caller
@@ -280,4 +300,4 @@ git -C code/controller merge-base --is-ancestor 44fa242 HEAD && echo "session-le
 
 1. **`AgentNode`** — restore anyway, or leave deleted? (Recommendation: leave deleted.)
 2. **Metrics unification (B-2)** — approve as a standalone design-first project, or keep as-is?
-3. **B-1 hardening** — schedule after the Conscrypt/BoringSSL TLS work settles, then re-test.
+3. ~~**B-1 hardening**~~ — **DONE (2026-07-03):** trust-ready connect gate shipped + proven (see B-1 above).
