@@ -78,6 +78,17 @@ public final class RegionCA {
         return new X509Certificate[]{leaf, caCert, rootCert};
     }
 
+    /**
+     * Enroll a node under this region. The identity is <b>stamped by the region</b> from its own
+     * authenticated join context (tenant/region), NOT taken from whatever the joining node's
+     * self-signed certificate claimed — so a node cannot enroll itself into a tenant/region it does
+     * not belong to. Only the node's public key is taken from the join; the region decides identity.
+     * Returns the region-signed chain [leaf, regionCA, root] the node installs as its identity.
+     */
+    public X509Certificate[] enroll(PublicKey nodePublicKey, String tenant, String region, String agent, int validityYears) throws Exception {
+        return issueLeaf(nodePublicKey, CrescoIdentity.of(tenant, region, agent, null), validityYears);
+    }
+
     /** The region's trust anchors [regionCA, root] — this is what gets distributed to other regions. */
     public X509Certificate[] caChain() {
         return new X509Certificate[]{caCert, rootCert};
