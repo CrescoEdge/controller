@@ -3,9 +3,11 @@ package io.cresco.agent.controller.agentcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.capability.CapabilityInventory;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
 import io.cresco.agent.controller.netdiscovery.DiscoveryNode;
 import io.cresco.agent.core.Config;
+import io.cresco.library.capability.*;
 import io.cresco.library.core.CoreState;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
@@ -20,6 +22,38 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@CrescoCapabilities(namespace = "agent", target = "agent", routingParams = {"region", "agent"},
+        summary = "Agent controller: manages plugins on a single agent node, controller lifecycle, log/file access, CEP rules, and agent-local queries.")
+@CrescoActions({
+    // --- CONFIG (agent-local mutations) ---
+    @CrescoAction(name = "pluginadd", type = "CONFIG", summary = "Add/start a plugin bundle on this agent.", why = "Deploy a plugin locally.", params = {@CrescoParam(name = "configparams", required = true, compressed = true, type = "object"), @CrescoParam(name = "edges", compressed = true, type = "object")}, returns = {@CrescoReturn(name = "status_code"), @CrescoReturn(name = "pluginid")}),
+    @CrescoAction(name = "pluginremove", type = "CONFIG", summary = "Stop/remove a plugin on this agent.", why = "Undeploy a plugin locally.", params = @CrescoParam(name = "pluginid", required = true), returns = @CrescoReturn(name = "status_code")),
+    @CrescoAction(name = "pluginlist", type = "CONFIG", summary = "List all plugins on this agent.", why = "Discover locally-deployed plugins.", returns = @CrescoReturn(name = "plugin_list", type = "object", compressed = true)),
+    @CrescoAction(name = "pluginstatus", type = "CONFIG", summary = "Get the status of one plugin on this agent.", why = "Health-check a local plugin.", params = @CrescoParam(name = "pluginid", required = true), returns = @CrescoReturn(name = "plugin_status", type = "object", compressed = true)),
+    @CrescoAction(name = "pluginupload", type = "CONFIG", summary = "Upload a plugin JAR and register it.", why = "Provision a plugin artifact onto this agent.", params = {@CrescoParam(name = "configparams", required = true, compressed = true, type = "object"), @CrescoParam(name = "jardata", type = "binary", required = true)}, returns = @CrescoReturn(name = "is_updated", type = "boolean")),
+    @CrescoAction(name = "pluginrepopull", type = "CONFIG", summary = "Validate a set of plugins against the repo.", why = "Ensure required plugin artifacts are available before deploy.", params = @CrescoParam(name = "configparams", required = true, compressed = true, type = "object"), returns = @CrescoReturn(name = "is_updated", type = "boolean")),
+    @CrescoAction(name = "setloglevel", type = "CONFIG", summary = "Set the log level for a class/session (Trace/Debug/Info/Warn/Error).", why = "Adjust logging verbosity at runtime.", params = {@CrescoParam(name = "session_id", required = true), @CrescoParam(name = "loglevel", required = true), @CrescoParam(name = "baseclassname")}, returns = @CrescoReturn(name = "status_code")),
+    @CrescoAction(name = "getislogdp", type = "CONFIG", summary = "Query whether dataplane log streaming is enabled for a session.", why = "Check live log-stream state.", params = @CrescoParam(name = "session_id", required = true), returns = @CrescoReturn(name = "islogdp", type = "boolean")),
+    @CrescoAction(name = "setlogdp", type = "CONFIG", summary = "Enable/disable dataplane log streaming for a session.", why = "Turn live log streaming on/off.", params = {@CrescoParam(name = "session_id", required = true), @CrescoParam(name = "setlogdp", type = "boolean", required = true)}, returns = @CrescoReturn(name = "status_code")),
+    @CrescoAction(name = "controllerupdate", type = "CONFIG", summary = "Stage a controller JAR for the next restart.", why = "In-place controller upgrade.", params = @CrescoParam(name = "jar_file_path", required = true)),
+    @CrescoAction(name = "stopcontroller", type = "CONFIG", summary = "Stop this agent's controller (async).", why = "Graceful controller shutdown."),
+    @CrescoAction(name = "restartcontroller", type = "CONFIG", summary = "Restart this agent's controller (async).", why = "Recover/refresh the controller."),
+    @CrescoAction(name = "restartframework", type = "CONFIG", summary = "Restart the OSGi framework (async).", why = "Full agent framework restart."),
+    @CrescoAction(name = "killjvm", type = "CONFIG", summary = "Kill the agent JVM (async).", why = "Hard stop of the agent process."),
+    @CrescoAction(name = "cepadd", type = "CONFIG", summary = "Add a Complex-Event-Processing rule to the dataplane.", why = "Install a streaming query over dataplane events.", params = @CrescoParam(name = "cepparams", required = true, compressed = true, type = "object", description = "{input_stream,output_stream,query,...}"), returns = @CrescoReturn(name = "cepid")),
+    @CrescoAction(name = "getagentinfo", type = "CONFIG", summary = "Return the agent's data-directory path.", why = "Locate the agent's on-disk data location.", returns = @CrescoReturn(name = "agent-data", description = "data directory path")),
+    // --- EXEC (agent-local reads) ---
+    @CrescoAction(name = "getlog", summary = "Fetch this agent's main log (compressed inline or as a file).", why = "Retrieve agent logs for diagnostics.", params = @CrescoParam(name = "action_inmessage", type = "boolean", description = "true=compress into reply; else attach file"), returns = @CrescoReturn(name = "log", type = "binary", compressed = true)),
+    @CrescoAction(name = "getfileinfo", summary = "Return metadata (md5, size) for a file on this agent.", why = "Prepare a chunked file transfer / verify a file.", params = @CrescoParam(name = "filepath", required = true), returns = {@CrescoReturn(name = "md5"), @CrescoReturn(name = "size", type = "integer")}),
+    @CrescoAction(name = "getfiledata", summary = "Stream a chunk of a file on this agent (seek+read).", why = "Transfer large files in parts.", params = {@CrescoParam(name = "filepath", required = true), @CrescoParam(name = "skiplength", type = "integer", required = true), @CrescoParam(name = "partsize", type = "integer", required = true)}, returns = @CrescoReturn(name = "payload", type = "binary", compressed = true)),
+    @CrescoAction(name = "getcontrollerstatus", summary = "Return this agent's controller state code.", why = "Check controller lifecycle state.", returns = @CrescoReturn(name = "controller_status", type = "integer")),
+    @CrescoAction(name = "iscontrolleractive", summary = "Return whether this agent's controller is active.", why = "Readiness check.", returns = @CrescoReturn(name = "is_controller_active", type = "boolean")),
+    @CrescoAction(name = "getbroadcastdiscovery", summary = "Return this agent's network discovery list.", why = "Inspect discovered neighbors.", returns = @CrescoReturn(name = "broadcast_discovery", type = "object")),
+    @CrescoAction(name = "listagents", summary = "List agents in this agent's region.", why = "Local discovery of sibling agents.", params = @CrescoParam(name = "action_region"), returns = @CrescoReturn(name = "agentslist", type = "object", compressed = true)),
+    @CrescoAction(name = "getmetricinventory", summary = "Return this node's unified metric inventory (node scope).", why = "Node-local metrics; the controller fan-out calls this on each agent.", params = {@CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_resource", type = "boolean")}, returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "getcapabilities", summary = "Return the agent controller's self-describing capability document.", why = "Discovery of the agent-local API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
+    @CrescoAction(name = "getcapabilityinventory", summary = "Return this node's capability inventory (node scope): controller tiers + local plugins + OSGi surface.", why = "Node-local capability catalog; the controller fan-out calls this on each agent.", params = {@CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_osgi", type = "boolean")}, returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
+})
 public class AgentExecutor implements Executor {
 
     private ControllerEngine controllerEngine;
@@ -144,6 +178,10 @@ public class AgentExecutor implements Executor {
                     return listAgents(incoming);
                 case "getmetricinventory":
                     return getMetricInventory(incoming);
+                case "getcapabilities":
+                    return CapabilityResponder.respond(incoming, this);
+                case "getcapabilityinventory":
+                    return getCapabilityInventory(incoming);
 
                 default:
                     logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -171,6 +209,22 @@ public class AgentExecutor implements Executor {
         } catch (Exception ex) {
             ce.setParam("error", ex.getMessage());
             logger.error("getMetricInventory() " + ex.getMessage());
+        }
+        return ce;
+    }
+
+    // Node-scoped capability inventory for this agent (controller tiers + local plugins + OSGi surface).
+    // The controller's region/global fan-out calls this on each agent.
+    private MsgEvent getCapabilityInventory(MsgEvent ce) {
+        try {
+            boolean incPlugins = !"false".equalsIgnoreCase(ce.getParam("action_include_plugins"));
+            boolean incOsgi = "true".equalsIgnoreCase(ce.getParam("action_include_osgi"));
+            ce.setParam("capabilityinventory",
+                    new CapabilityInventory(controllerEngine).getCapabilityInventory("node", incPlugins, incOsgi));
+            ce.setParam("status", "10");
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getCapabilityInventory() " + ex.getMessage());
         }
         return ce;
     }

@@ -3,6 +3,7 @@ package io.cresco.agent.controller.regionalcontroller;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
+import io.cresco.library.capability.*;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
@@ -12,6 +13,16 @@ import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
 
+@CrescoCapabilities(namespace = "regional", target = "regional", routingParams = {"region", "agent"},
+        summary = "Regional controller: registers agents in its region, answers liveness pings, and forwards region-scoped queries to the global control API.")
+@CrescoActions({
+    @CrescoAction(name = "agent_enable", type = "CONFIG", summary = "Register an agent in this region.", why = "Agent onboarding into the regional registry.", returns = @CrescoReturn(name = "is_registered", type = "boolean")),
+    @CrescoAction(name = "agent_disable", type = "CONFIG", summary = "Unregister an agent from this region.", why = "Agent removal from the regional registry.", returns = @CrescoReturn(name = "is_unregistered", type = "boolean")),
+    @CrescoAction(name = "ping", summary = "Liveness ping; replies pong and exchanges mesh health.", why = "Health/RTT probe between agent and region.", returns = @CrescoReturn(name = "action", description = "pong")),
+    @CrescoAction(name = "getmetricinventory", summary = "Return this region node's unified metric inventory (node scope).", why = "Node-local metrics; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "getcapabilities", summary = "Return the regional controller's self-describing capability document.", why = "Discovery of the regional API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
+    @CrescoAction(name = "getcapabilityinventory", summary = "Return this region node's capability inventory (node scope).", why = "Node-local capability catalog; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
+})
 public class RegionalExecutor implements Executor {
 
     private ControllerEngine controllerEngine;
@@ -90,8 +101,10 @@ public class RegionalExecutor implements Executor {
                     return pingReply(incoming);
 
                 case "getmetricinventory":
-                    // B-2 unified metrics: the region node answers its node-scoped inventory so the
-                    // global/region fan-out can aggregate it. GlobalExecutor already implements it.
+                case "getcapabilities":
+                case "getcapabilityinventory":
+                    // Unified metric/capability inventory: the region node answers its node-scoped view so
+                    // the global/region fan-out can aggregate it. GlobalExecutor implements all three.
                     return globalExecutor.executeEXEC(incoming);
 
                 default:

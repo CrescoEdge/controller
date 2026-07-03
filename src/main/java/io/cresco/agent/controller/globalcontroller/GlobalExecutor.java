@@ -3,8 +3,10 @@ package io.cresco.agent.controller.globalcontroller;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.controller.capability.CapabilityInventory;
 import io.cresco.agent.controller.globalscheduler.PollRemovePipeline;
 import io.cresco.library.app.gPayload;
+import io.cresco.library.capability.*;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
 import io.cresco.library.plugin.PluginBuilder;
@@ -22,6 +24,44 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.jar.*;
 
+@CrescoCapabilities(namespace = "global", target = "global",
+        summary = "Global controller: fabric-wide registry, discovery, resource inventory, and global application (pipeline) scheduling. The entry point for cross-region orchestration.")
+@CrescoActions({
+    // --- CONFIG (mutations to the global registry / scheduling) ---
+    @CrescoAction(name = "region_enable", type = "CONFIG", summary = "Register a region in the global registry.", why = "Called when a region federates with the global; makes it visible to placement.", returns = @CrescoReturn(name = "is_registered", type = "boolean")),
+    @CrescoAction(name = "region_disable", type = "CONFIG", summary = "Unregister a region from the global registry.", why = "Called on graceful region shutdown.", returns = @CrescoReturn(name = "is_unregistered", type = "boolean")),
+    @CrescoAction(name = "regionalimport", type = "CONFIG", summary = "Register/import a regional node into the global DB.", why = "Internal region onboarding."),
+    @CrescoAction(name = "addplugin", type = "CONFIG", summary = "Schedule an iNode (plugin instance) for deployment.", why = "Placement step: queues a plugin to be added on a target agent.", params = {@CrescoParam(name = "inode_id", required = true), @CrescoParam(name = "resource_id", required = true), @CrescoParam(name = "configparams", compressed = true, type = "object")}, returns = {@CrescoReturn(name = "status_code"), @CrescoReturn(name = "status_desc")}),
+    @CrescoAction(name = "removeplugin", type = "CONFIG", summary = "Schedule an iNode (plugin instance) for removal.", why = "Placement step: queues a plugin to be removed.", params = {@CrescoParam(name = "inode_id", required = true), @CrescoParam(name = "resource_id", required = true)}, returns = {@CrescoReturn(name = "status_code"), @CrescoReturn(name = "status_desc")}),
+    @CrescoAction(name = "gpipelinesubmit", type = "CONFIG", summary = "Submit a global application pipeline (multi-plugin app) for scheduling.", why = "The main way to deploy a distributed application onto the fabric.", params = {@CrescoParam(name = "action_gpipeline", required = true, compressed = true, type = "object", description = "compressed JSON pipeline (CADL)"), @CrescoParam(name = "action_tenantid", description = "tenant id")}, returns = @CrescoReturn(name = "gpipeline_id", description = "assigned pipeline id")),
+    @CrescoAction(name = "gpipelineremove", type = "CONFIG", summary = "Remove/undeploy a global pipeline by id.", why = "Tear down a distributed application.", params = @CrescoParam(name = "action_pipelineid", required = true), returns = @CrescoReturn(name = "success", type = "boolean")),
+    @CrescoAction(name = "plugindownload", type = "CONFIG", summary = "Download a plugin JAR from a URL into the repo (cache-checked).", why = "Fetch an external plugin artifact before deployment.", params = {@CrescoParam(name = "pluginurl", required = true), @CrescoParam(name = "agentcontroller", required = true), @CrescoParam(name = "forceplugindownload", type = "boolean")}, returns = @CrescoReturn(name = "hasplugin", type = "boolean")),
+    @CrescoAction(name = "setinodestatus", type = "CONFIG", summary = "Set the status of an iNode (plugin instance) in the DB.", why = "Lifecycle bookkeeping for a deployed plugin.", params = {@CrescoParam(name = "action_inodeid", required = true), @CrescoParam(name = "action_statuscode", required = true), @CrescoParam(name = "action_statusdesc")}, returns = @CrescoReturn(name = "success", type = "boolean")),
+    @CrescoAction(name = "savetorepo", type = "CONFIG", summary = "Save/replicate a plugin JAR to all repo instances.", why = "Publish a plugin artifact fabric-wide.", params = {@CrescoParam(name = "configparams", required = true, compressed = true, type = "object", description = "{pluginname,md5,version}"), @CrescoParam(name = "jardata", type = "binary", required = true)}, returns = @CrescoReturn(name = "is_saved", type = "boolean")),
+    // --- EXEC (reads / discovery) ---
+    @CrescoAction(name = "listregions", summary = "List all regions in the fabric plus live inter-broker bridge info.", why = "Top-level discovery: what regions exist and how they're connected.", returns = @CrescoReturn(name = "regionslist", type = "object", compressed = true)),
+    @CrescoAction(name = "listagents", summary = "List agents in the fabric, optionally filtered by region.", why = "Call before targeting a command to discover which agents are online; agents are the unit of plugin placement.", params = @CrescoParam(name = "action_region", description = "region filter; omit for all"), returns = @CrescoReturn(name = "agentslist", type = "object", compressed = true)),
+    @CrescoAction(name = "listplugins", summary = "List plugin instances, optionally filtered by region/agent.", why = "Discover what plugins are deployed and where.", params = {@CrescoParam(name = "action_region"), @CrescoParam(name = "action_agent")}, returns = @CrescoReturn(name = "pluginslist", type = "object", compressed = true)),
+    @CrescoAction(name = "listpluginsbytype", summary = "List plugin instances matching a key=value (e.g. pluginname=io.cresco.repo).", why = "Find all instances of a given plugin type across the fabric.", params = {@CrescoParam(name = "action_plugintype_id", required = true), @CrescoParam(name = "action_plugintype_value", required = true)}, returns = @CrescoReturn(name = "pluginsbytypelist", type = "object", compressed = true)),
+    @CrescoAction(name = "listpluginsrepo", summary = "List all plugins available across the fabric's repos.", why = "Discover deployable plugin artifacts.", returns = @CrescoReturn(name = "listpluginsrepo", type = "object", compressed = true)),
+    @CrescoAction(name = "listrepoinstances", summary = "List all repo plugin instances in the fabric.", why = "Find repo servers to pull/publish artifacts from.", returns = @CrescoReturn(name = "listrepoinstances", type = "object", compressed = true)),
+    @CrescoAction(name = "plugininfo", summary = "Get metadata for a specific plugin instance.", why = "Inspect a deployed plugin's config/state.", params = {@CrescoParam(name = "action_region", required = true), @CrescoParam(name = "action_agent", required = true), @CrescoParam(name = "action_plugin", required = true)}, returns = @CrescoReturn(name = "plugininfo", type = "object", compressed = true)),
+    @CrescoAction(name = "pluginkpi", summary = "Get the metrics attached to a specific plugin instance.", why = "Read a plugin's KPI/metric attachment.", params = {@CrescoParam(name = "action_region", required = true), @CrescoParam(name = "action_agent", required = true), @CrescoParam(name = "action_plugin", required = true)}, returns = @CrescoReturn(name = "pluginkpi", type = "object", compressed = true)),
+    @CrescoAction(name = "resourceinfo", summary = "Get aggregated resource info (cpu/mem/disk) for a region/agent or the whole fabric.", why = "Resource-aware placement / capacity view.", params = {@CrescoParam(name = "action_region"), @CrescoParam(name = "action_agent")}, returns = @CrescoReturn(name = "resourceinfo", type = "object", compressed = true)),
+    @CrescoAction(name = "netresourceinfo", summary = "Get network-wide resource totals.", why = "Fabric-level capacity summary.", returns = @CrescoReturn(name = "netresourceinfo", type = "object")),
+    @CrescoAction(name = "getenvstatus", summary = "Count nodes matching an environment index key=value.", why = "Query fabric composition by environment attribute.", params = {@CrescoParam(name = "environment_id", required = true), @CrescoParam(name = "environment_value", required = true)}, returns = @CrescoReturn(name = "count", type = "integer")),
+    @CrescoAction(name = "getinodestatus", summary = "Get an iNode (plugin instance) status map from the DB.", why = "Check the lifecycle state of a scheduled/deployed plugin.", params = @CrescoParam(name = "inode_id", required = true), returns = @CrescoReturn(name = "inodemap", type = "object", compressed = true)),
+    @CrescoAction(name = "resourceinventory", summary = "Get fabric resource totals.", why = "High-level capacity inventory.", returns = @CrescoReturn(name = "resourceinventory", type = "object")),
+    @CrescoAction(name = "plugininventory", summary = "List plugins in the local repo jar directory (name=version).", why = "See which plugin artifacts this global node holds locally.", returns = @CrescoReturn(name = "pluginlist", description = "name=version CSV")),
+    @CrescoAction(name = "getmetricinventory", summary = "Return the unified metric inventory (controller + all plugins + resource summary).", why = "One call for all fabric metrics; scope controls mesh fan-out.", params = {@CrescoParam(name = "action_scope", description = "node|region|global"), @CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_resource", type = "boolean")}, returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "getgpipeline", summary = "Get a pipeline definition by id.", why = "Inspect a deployed application's structure.", params = @CrescoParam(name = "action_pipelineid", required = true), returns = @CrescoReturn(name = "gpipeline", type = "object", compressed = true)),
+    @CrescoAction(name = "getgpipelineexport", summary = "Get a pipeline in export (portable) format.", why = "Export an application for re-deployment elsewhere.", params = @CrescoParam(name = "action_pipelineid", required = true), returns = @CrescoReturn(name = "gpipeline", type = "object", compressed = true)),
+    @CrescoAction(name = "getgpipelinestatus", summary = "Get status of one pipeline or all pipelines.", why = "Monitor deployed applications.", params = @CrescoParam(name = "action_pipeline", description = "pipeline id; omit for all"), returns = @CrescoReturn(name = "pipelineinfo", type = "object", compressed = true)),
+    @CrescoAction(name = "getisassignmentinfo", summary = "Check assignment info for an iNode/resource.", why = "Placement diagnostics.", params = {@CrescoParam(name = "action_inodeid", required = true), @CrescoParam(name = "action_resourceid", required = true)}, returns = {@CrescoReturn(name = "isassignmentinfo", compressed = true), @CrescoReturn(name = "isassignmentresourceinfo", compressed = true)}),
+    @CrescoAction(name = "ping", summary = "Liveness ping; replies pong and exchanges mesh health.", why = "Health/RTT probe between region and global.", returns = @CrescoReturn(name = "action", description = "pong")),
+    @CrescoAction(name = "getcapabilities", summary = "Return the global controller's self-describing capability document (its actions as LLM tool specs).", why = "Discovery of the global control-plane API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
+    @CrescoAction(name = "getcapabilityinventory", summary = "Return the fabric-wide capability inventory: controller tiers + every plugin's actions + OSGi surface, as one LLM tool catalog.", why = "One call to discover everything the fabric can do; scope=node|region|global fans out across the mesh.", params = {@CrescoParam(name = "action_scope", description = "node|region|global"), @CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_osgi", type = "boolean")}, returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
+})
 public class GlobalExecutor implements Executor {
 
     private ControllerEngine controllerEngine;
@@ -165,6 +205,12 @@ public class GlobalExecutor implements Executor {
                     // gets a PONG and its link:parent health check flaps to CRITICAL. (This handler
                     // was missing: "Unknown configtype found: ping EXEC".)
                     return pingReply(ce);
+
+                case "getcapabilities":
+                    return CapabilityResponder.respond(ce, this);
+
+                case "getcapabilityinventory":
+                    return getCapabilityInventory(ce);
 
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
@@ -635,6 +681,23 @@ public class GlobalExecutor implements Executor {
         } catch (Exception ex) {
             ce.setParam("error", ex.getMessage());
             logger.error("getMetricInventory() " + ex.getMessage());
+        }
+        return ce;
+    }
+
+    // Capability inventory: controller tiers + every local plugin's getcapabilities + OSGi surface, with
+    // scope=node|region|global fan-out — one LLM tool catalog for the fabric. Plugins default ON; OSGi opt-in.
+    private MsgEvent getCapabilityInventory(MsgEvent ce) {
+        try {
+            boolean incPlugins = !"false".equalsIgnoreCase(ce.getParam("action_include_plugins"));
+            boolean incOsgi = "true".equalsIgnoreCase(ce.getParam("action_include_osgi"));
+            String scope = ce.getParam("action_scope") != null ? ce.getParam("action_scope") : "node";
+            ce.setParam("capabilityinventory",
+                    new CapabilityInventory(controllerEngine).getCapabilityInventory(scope, incPlugins, incOsgi));
+            ce.setParam("status", "10");
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getCapabilityInventory() " + ex.getMessage());
         }
         return ce;
     }
