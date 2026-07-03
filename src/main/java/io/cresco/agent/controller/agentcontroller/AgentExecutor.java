@@ -142,6 +142,8 @@ public class AgentExecutor implements Executor {
                     return getBroadcastDiscovery(incoming);
                 case "listagents":
                     return listAgents(incoming);
+                case "getmetricinventory":
+                    return getMetricInventory(incoming);
 
                 default:
                     logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
@@ -150,6 +152,28 @@ public class AgentExecutor implements Executor {
             }
             return null;
         }
+
+    // B-2 unified metrics: every node's controller answers getmetricinventory (node scope) so the
+    // global/region fan-out in PerfControllerMonitor can aggregate the whole mesh. Mirrors the global
+    // handler; scope is forced to node here (a leaf agent does not re-fan-out).
+    private MsgEvent getMetricInventory(MsgEvent ce) {
+        try {
+            if (controllerEngine.getPerfControllerMonitor() != null) {
+                boolean incPlugins = !"false".equalsIgnoreCase(ce.getParam("action_include_plugins"));
+                boolean incResource = "true".equalsIgnoreCase(ce.getParam("action_include_resource"));
+                ce.setParam("metricinventory",
+                        controllerEngine.getPerfControllerMonitor().getMetricInventory("node", incPlugins, incResource));
+                ce.setParam("status", "10");
+            } else {
+                ce.setParam("status", "9");
+                ce.setParam("status_desc", "measurements disabled (enable_controllermon=false)");
+            }
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getMetricInventory() " + ex.getMessage());
+        }
+        return ce;
+    }
 
 
     @Override

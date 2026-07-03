@@ -83,6 +83,32 @@ public class PerfControllerMonitor {
      * Returns unified JSON. Plugins that don't answer {@code getmetrics} are simply skipped.
      */
     public String getMetricInventory(boolean includePlugins, boolean includeResource) {
+        return getMetricInventory("node", includePlugins, includeResource);
+    }
+
+    /**
+     * Scope-aware unified inventory. {@code scope=node} is this controller only; {@code region} fans out
+     * to every agent in this controller's region; {@code global} fans out across the whole mesh. Fan-out
+     * reuses the ordinary EXEC/RPC path (getmetricinventory scope=node to each agent's controller) so it
+     * adds no new routing surface and never blocks the control plane; unreachable/slow nodes are skipped.
+     */
+    public String getMetricInventory(String scope, boolean includePlugins, boolean includeResource) {
+        String s = (scope == null) ? "node" : scope.toLowerCase();
+        java.util.Map<String, Object> inventory = nodeInventory(includePlugins, includeResource);
+        inventory.put("scope", s);
+        try {
+            if (s.equals("region") || s.equals("global")) {
+                java.util.Map<String, Object> children = fanOut(s, includePlugins, includeResource);
+                if (!children.isEmpty()) { inventory.put("children", children); }
+            }
+        } catch (Exception ex) {
+            logger.error("getMetricInventory fan-out", ex);
+        }
+        return gson.toJson(inventory);
+    }
+
+    /** This controller's own metrics + its LOCAL plugins + (opt) resource summary — no cross-node RPC. */
+    private java.util.Map<String, Object> nodeInventory(boolean includePlugins, boolean includeResource) {
         java.util.Map<String, Object> inventory = new java.util.LinkedHashMap<>();
         try {
             String region = plugin.getRegion(), agent = plugin.getAgent();
@@ -94,8 +120,10 @@ public class PerfControllerMonitor {
             }
 
             // 2) each LOCAL plugin's metrics via the standard getmetrics EXEC (cross-bundle unification).
-            //    Opt-in: non-metric plugins don't answer, so this adds up-to-timeout per plugin.
+            //    Timeout is generous enough for plugins whose collection is not instantaneous (sysinfo's
+            //    OSHI enumeration of filesystems/NICs can take >0.5s on the first call).
             if (includePlugins) {
+                int pluginTimeoutMs = plugin.getConfig().getIntegerParam("metrics_rpc_timeout_ms", 2500);
                 java.util.List<String> pluginIds = controllerEngine.getGDB().getNodeList(region, agent);
                 if (pluginIds != null) {
                     for (String pid : pluginIds) {
@@ -103,9 +131,10 @@ public class PerfControllerMonitor {
                             io.cresco.library.messaging.MsgEvent req =
                                     plugin.getGlobalPluginMsgEvent(io.cresco.library.messaging.MsgEvent.Type.EXEC, region, agent, pid);
                             req.setParam("action", "getmetrics");
-                            io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, 600);
-                            if (resp != null && resp.getParam("metrics") != null) {
-                                bySource.put(region + "_" + agent + ":" + pid, gson.fromJson(resp.getParam("metrics"), Object.class));
+                            io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, pluginTimeoutMs);
+                            String m = (resp != null) ? resp.getParam("metrics") : null;
+                            if (m != null) {
+                                bySource.put(region + "_" + agent + ":" + pid, gson.fromJson(m, Object.class));
                             }
                         } catch (Exception ignore) { /* plugin does not expose metrics -> skip */ }
                     }
@@ -115,7 +144,7 @@ public class PerfControllerMonitor {
             inventory.put("node", region + "_" + agent);
             inventory.put("metrics_by_source", bySource);
 
-            // 3) resource summary (cpu/mem/disk = processor performance) from the sysinfo/KPI path (opt-in)
+            // 3) resource summary (cpu/mem/disk) from the sysinfo path (opt-in, back-compat with resourceinfo)
             if (includeResource) {
                 try {
                     String res = getResourceInfo(region, agent);
@@ -123,9 +152,66 @@ public class PerfControllerMonitor {
                 } catch (Exception ignore) { }
             }
         } catch (Exception ex) {
-            logger.error("getMetricInventory", ex);
+            logger.error("nodeInventory", ex);
         }
-        return gson.toJson(inventory);
+        return inventory;
+    }
+
+    /** Fan getmetricinventory(scope=node) out to each agent in region/global scope; skip self + failures. */
+    private java.util.Map<String, Object> fanOut(String scope, boolean includePlugins, boolean includeResource) {
+        java.util.Map<String, Object> children = new java.util.LinkedHashMap<>();
+        String myRegion = plugin.getRegion(), myAgent = plugin.getAgent();
+        java.util.List<String[]> targets = new java.util.ArrayList<>();
+        try {
+            if (scope.equals("region")) {
+                java.util.List<String> agents = controllerEngine.getGDB().getNodeList(myRegion, null);
+                if (agents != null) { for (String a : agents) { targets.add(new String[]{myRegion, a}); } }
+            } else { // global: every agent in every region
+                java.util.List<String> regions = controllerEngine.getGDB().getNodeList(null, null);
+                if (regions != null) {
+                    for (String r : regions) {
+                        java.util.List<String> agents = controllerEngine.getGDB().getNodeList(r, null);
+                        if (agents != null) { for (String a : agents) { targets.add(new String[]{r, a}); } }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("fanOut target enumeration", ex);
+        }
+        final int childTimeoutMs = plugin.getConfig().getIntegerParam("metrics_fanout_timeout_ms", 12000);
+        // Query children CONCURRENTLY: each child runs its own node-scoped inventory (which itself may
+        // wait on a couple of non-metric plugins), so serial fan-out would stack those waits and blow the
+        // caller's budget. A short-lived thread per child keeps whole-mesh scope bounded by the slowest
+        // single node, not the sum.
+        java.util.List<Thread> threads = new java.util.ArrayList<>();
+        final java.util.Map<String, Object> synched = java.util.Collections.synchronizedMap(children);
+        for (String[] t : targets) {
+            final String r = t[0], a = t[1];
+            if (r == null || a == null || (r.equals(myRegion) && a.equals(myAgent))) { continue; }
+            Thread th = new Thread(() -> {
+                try {
+                    io.cresco.library.messaging.MsgEvent req =
+                            plugin.getGlobalAgentMsgEvent(io.cresco.library.messaging.MsgEvent.Type.EXEC, r, a);
+                    req.setParam("action", "getmetricinventory");
+                    req.setParam("action_scope", "node");
+                    req.setParam("action_include_plugins", includePlugins ? "true" : "false");
+                    if (includeResource) { req.setParam("action_include_resource", "true"); }
+                    io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, childTimeoutMs);
+                    String mi = (resp != null) ? resp.getParam("metricinventory") : null;
+                    if (mi != null) { synched.put(r + "_" + a, gson.fromJson(mi, Object.class)); }
+                } catch (Exception ignore) { /* unreachable/slow node -> skip */ }
+            }, "metric-fanout-" + r + "_" + a);
+            th.setDaemon(true);
+            threads.add(th);
+            th.start();
+        }
+        long deadline = System.currentTimeMillis() + childTimeoutMs + 1000L;
+        for (Thread th : threads) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) { break; }
+            try { th.join(remaining); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+        }
+        return children;
     }
 
     private String getRegionResourceInfo(String actionRegion) {
@@ -263,7 +349,10 @@ public class PerfControllerMonitor {
                             MsgEvent sysInfoRequest = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pluginID);
                             sysInfoRequest.setParam("action", "getsysinfo");
 
-                            MsgEvent sysInfoResponse = plugin.sendRPC(sysInfoRequest);
+                            // Bound this RPC: an unbounded sendRPC here can stall the whole metric
+                            // inventory / resourceinfo query if the sysinfo plugin is slow or mid-restart.
+                            int sysInfoTimeoutMs = plugin.getConfig().getIntegerParam("resource_rpc_timeout_ms", 3000);
+                            MsgEvent sysInfoResponse = plugin.sendRPC(sysInfoRequest, sysInfoTimeoutMs);
 
                             if (sysInfoResponse != null) {
                                 String perfString = sysInfoResponse.getCompressedParam("perf");
@@ -372,36 +461,42 @@ public class PerfControllerMonitor {
         me.setTimer("message.transaction.time", "The timer for messages", "controller");
     }
 
+    // B-2 metrics unification: un-stubbed. The original gauges referenced schedule queues that were
+    // removed; per the "bind to signals by role, not to a specific field" rule these now track live,
+    // always-present role signals. Registered against the shared Micrometer registry and surfaced via
+    // MeasurementEngine#getAllMetrics() with setExisting (same pattern as initJVMMetrics). Harmless on
+    // roles where the signal is empty (a region's brokered map is empty on a leaf agent -> reads 0).
     public void initRegionalMetrics() {
-
-        if(controllerEngine.getBrokeredAgents() != null) {
-
-            /*
-            Gauge.builder("brokered.agent.count", controllerEngine.getBrokeredAgents(), ConcurrentHashMap::size)
-                    .description("The number of currently brokered agents.")
-                    .register(crescoMeterRegistry);
-
-             */
+        try {
+            io.micrometer.core.instrument.Gauge
+                    .builder("brokered.agent.count", controllerEngine,
+                            ce -> { var m = ce.getBrokeredAgents(); return m == null ? 0 : m.size(); })
+                    .description("Agents currently brokered by this regional controller.")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("brokered.agent.count", "regional");
+        } catch (Exception ex) {
+            logger.error("initRegionalMetrics ", ex);
         }
     }
 
     public void initGlobalMetrics() {
+        try {
+            io.micrometer.core.instrument.Gauge
+                    .builder("reachable.agent.count", controllerEngine,
+                            ce -> { var l = ce.reachableAgents(); return l == null ? 0 : l.size(); })
+                    .description("Agents reachable from this controller's view of the mesh.")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("reachable.agent.count", "global");
 
-        /*
-        if(controllerEngine.getResourceScheduleQueue() != null) {
-            Gauge.builder("incoming.resource.queue", controllerEngine.getResourceScheduleQueue(), BlockingQueue::size)
-                    .description("The number of queued incoming resources to be scheduled.")
-                    .register(crescoMeterRegistry);
+            io.micrometer.core.instrument.Gauge
+                    .builder("incoming.candidate.brokers", controllerEngine,
+                            ce -> { var q = ce.getIncomingCanidateBrokers(); return q == null ? 0 : q.size(); })
+                    .description("Depth of the discovery candidate-broker queue awaiting processing.")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("incoming.candidate.brokers", "global");
+        } catch (Exception ex) {
+            logger.error("initGlobalMetrics ", ex);
         }
-
-
-        if(controllerEngine.getAppScheduleQueue() != null) {
-            Gauge.builder("incoming.application.queue", controllerEngine.getAppScheduleQueue(), BlockingQueue::size)
-                    .description("The number of queued incoming applications to be scheduled.")
-                    .register(crescoMeterRegistry);
-        }
-        */
-
     }
 
 

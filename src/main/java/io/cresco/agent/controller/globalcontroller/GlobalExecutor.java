@@ -618,13 +618,15 @@ public class GlobalExecutor implements Executor {
     private MsgEvent getMetricInventory(MsgEvent ce) {
         try {
             if (controllerEngine.getPerfControllerMonitor() != null) {
-                // both opt-in: the controller's own Micrometer view (jvm/processor/netlink/controller)
-                // is always returned and fast; the cross-bundle plugin query and the legacy sysinfo
-                // resource summary each add per-target RPC latency, so they are requested explicitly.
-                boolean incPlugins = "true".equalsIgnoreCase(ce.getParam("action_include_plugins"));
+                // Plugin metrics default ON so a plain getmetricinventory returns the whole node view
+                // (controller groups + every local plugin); pass action_include_plugins=false to opt out.
+                // Resource summary stays opt-in (it adds sysinfo RPC latency). action_scope =
+                // node|region|global controls mesh fan-out (default node).
+                boolean incPlugins = !"false".equalsIgnoreCase(ce.getParam("action_include_plugins"));
                 boolean incResource = "true".equalsIgnoreCase(ce.getParam("action_include_resource"));
+                String scope = ce.getParam("action_scope") != null ? ce.getParam("action_scope") : "node";
                 ce.setParam("metricinventory",
-                        controllerEngine.getPerfControllerMonitor().getMetricInventory(incPlugins, incResource));
+                        controllerEngine.getPerfControllerMonitor().getMetricInventory(scope, incPlugins, incResource));
                 ce.setParam("status", "10");
             } else {
                 ce.setParam("status", "9");

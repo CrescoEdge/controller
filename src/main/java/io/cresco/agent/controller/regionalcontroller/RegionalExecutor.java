@@ -89,6 +89,11 @@ public class RegionalExecutor implements Executor {
                 case "ping":
                     return pingReply(incoming);
 
+                case "getmetricinventory":
+                    // B-2 unified metrics: the region node answers its node-scoped inventory so the
+                    // global/region fan-out can aggregate it. GlobalExecutor already implements it.
+                    return globalExecutor.executeEXEC(incoming);
+
                 default:
                     logger.error("RegionalCommandExec Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
                     return null;
