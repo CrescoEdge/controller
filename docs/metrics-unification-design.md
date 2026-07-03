@@ -158,6 +158,8 @@ A future phase may deprecate the ad-hoc `perf` blob once all readers move to `ge
 | sysinfo | sensors | `sensor.cpu.temperature`, `sensor.cpu.voltage`, `sensor.fan.max.rpm` | gauge |
 | sysinfo | power | `power.remaining.percent`, `power.remaining.seconds` | gauge |
 | sysinfo | system | `system.uptime.seconds`, `system.process.count`, `system.thread.count` | gauge |
+| sysinfo | gpu | `gpu.count`, `gpu.vram.total` | gauge (VRAM = capacity, not live GPU load — OSHI can't) |
+| sysinfo | devices | `usb.device.count`, `display.count`, `soundcard.count` | gauge |
 
 **OSHI upgraded 4.2.1 → 7.3.2 (latest; JNA 5.19.1).** The old 4.2.1 bundled a pre-arm64 JNA (5.5.0) with
 no arm64 native lib, so hardware calls threw `UnsatisfiedLinkError` on arm64 hosts and sysinfo reported
