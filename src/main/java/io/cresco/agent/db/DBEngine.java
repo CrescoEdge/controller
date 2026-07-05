@@ -8,7 +8,6 @@ import io.cresco.library.utilities.CLogger;
 import org.apache.commons.dbcp2.*;
 import org.apache.commons.pool2.ObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPool;
-import org.apache.derby.jdbc.EmbeddedDriver;
 
 import javax.sql.DataSource;
 import java.io.*;
@@ -204,11 +203,17 @@ public class DBEngine {
             //unload drivers
             //DriverManager.getConnection("jdbc:derby:;shutdown=true");
 
-            Driver d = new org.apache.derby.jdbc.EmbeddedDriver();
-            DriverManager.deregisterDriver(d);
-
-            Driver da= new org.apache.derby.jdbc.AutoloadedDriver();
-            DriverManager.deregisterDriver(da);
+            // Deregister every registered Derby JDBC driver so the engine can unload cleanly.
+            // Enumerate rather than instantiating named driver classes: Derby 10.15+ reorganized
+            // the org.apache.derby.jdbc.* layout (AutoloadedDriver is no longer a public class).
+            Enumeration<Driver> derbyDrivers = DriverManager.getDrivers();
+            while (derbyDrivers.hasMoreElements()) {
+                Driver drv = derbyDrivers.nextElement();
+                if (drv.getClass().getName().startsWith("org.apache.derby.")) {
+                    try { DriverManager.deregisterDriver(drv); }
+                    catch (SQLException ignore) { /* best-effort on shutdown */ }
+                }
+            }
 
         }
         catch (Exception ex) {

@@ -1,21 +1,25 @@
 package io.cresco.agent.core;
 
-import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.HierarchicalINIConfiguration;
-import org.apache.commons.configuration.SubnodeConfiguration;
+import org.apache.commons.configuration2.INIConfiguration;
+import org.apache.commons.configuration2.SubnodeConfiguration;
+import org.apache.commons.configuration2.convert.DisabledListDelimiterHandler;
+import org.apache.commons.configuration2.ex.ConfigurationException;
+import org.apache.commons.configuration2.io.FileHandler;
 
 import java.io.File;
 import java.util.*;
 
 public class Config {
 
-    private HierarchicalINIConfiguration iniConfObj;
+    private INIConfiguration iniConfObj;
 
     public Config(String configFile) throws ConfigurationException {
-        iniConfObj = new HierarchicalINIConfiguration(configFile);
-        iniConfObj.setDelimiterParsingDisabled(true);
-        iniConfObj.setAutoSave(true);
-
+        // commons-configuration2: build the INI config then load via FileHandler.
+        // DisabledListDelimiterHandler preserves values verbatim (v1's setDelimiterParsingDisabled(true)).
+        iniConfObj = new INIConfiguration();
+        iniConfObj.setListDelimiterHandler(new DisabledListDelimiterHandler());
+        FileHandler fileHandler = new FileHandler(iniConfObj);
+        fileHandler.load(new File(configFile));
     }
 
     public String getPluginConfigString() {
