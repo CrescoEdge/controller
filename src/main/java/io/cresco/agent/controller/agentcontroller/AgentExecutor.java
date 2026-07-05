@@ -40,7 +40,9 @@ import java.util.Map;
     @CrescoAction(name = "restartcontroller", type = "CONFIG", summary = "Restart this agent's controller (async).", why = "Recover/refresh the controller."),
     @CrescoAction(name = "restartframework", type = "CONFIG", summary = "Restart the OSGi framework (async).", why = "Full agent framework restart."),
     @CrescoAction(name = "killjvm", type = "CONFIG", summary = "Kill the agent JVM (async).", why = "Hard stop of the agent process."),
-    @CrescoAction(name = "cepadd", type = "CONFIG", summary = "Add a Complex-Event-Processing rule to the dataplane.", why = "Install a streaming query over dataplane events.", params = @CrescoParam(name = "cepparams", required = true, compressed = true, type = "object", description = "{input_stream,output_stream,query,...}"), returns = @CrescoReturn(name = "cepid")),
+    @CrescoAction(name = "cepadd", type = "CONFIG", summary = "Add a Complex-Event-Processing rule to the dataplane.", why = "Install a streaming query over dataplane events.", params = @CrescoParam(name = "cepparams", required = true, compressed = true, type = "object", description = "{input_stream,input_stream_desc,output_stream,output_stream_desc,query}"), returns = @CrescoReturn(name = "cepid", description = "id of the created CEP")),
+    @CrescoAction(name = "cepremove", type = "CONFIG", summary = "Remove a Complex-Event-Processing rule by id.", why = "Tear down a streaming query and free its resources.", params = @CrescoParam(name = "cepid", required = true, description = "id returned by cepadd"), returns = @CrescoReturn(name = "status_code", description = "10 removed")),
+    @CrescoAction(name = "cepinput", type = "CONFIG", summary = "Feed a single JSON event into a CEP input stream.", why = "Inject an event into a streaming query over RPC (dataplane feed alternative).", params = {@CrescoParam(name = "cep_input_stream", required = true, description = "the CEP input stream name"), @CrescoParam(name = "cep_payload", required = true, compressed = true, type = "object", description = "the JSON event payload")}, returns = @CrescoReturn(name = "status_code", description = "10 accepted")),
     @CrescoAction(name = "getagentinfo", type = "CONFIG", summary = "Return the agent's data-directory path.", why = "Locate the agent's on-disk data location.", returns = @CrescoReturn(name = "agent-data", description = "data directory path")),
     // --- EXEC (agent-local reads) ---
     @CrescoAction(name = "getlog", summary = "Fetch this agent's main log (compressed inline or as a file).", why = "Retrieve agent logs for diagnostics.", params = @CrescoParam(name = "action_inmessage", type = "boolean", description = "true=compress into reply; else attach file"), returns = @CrescoReturn(name = "log", type = "binary", compressed = true)),
@@ -123,6 +125,12 @@ public class AgentExecutor implements Executor {
 
             case "cepadd":
                 return cepAdd(incoming);
+
+            case "cepremove":
+                return cepRemove(incoming);
+
+            case "cepinput":
+                return cepInput(incoming);
 
             case "getagentinfo":
                 return getAgentInfo(incoming);
@@ -550,10 +558,9 @@ public class AgentExecutor implements Executor {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             String configParamsJson = ce.getCompressedParam("cepparams");
-            logger.error(configParamsJson);
             logger.trace("addCEP configParamsJson: " + configParamsJson);
             Map<String, String> params = gson.fromJson(configParamsJson, type);
-            logger.error(params.toString());
+            logger.debug("addCEP params: " + params);
             String input_stream = params.get("input_stream");
             String input_stream_desc = params.get("input_stream_desc");
             String output_stream = params.get("output_stream");
@@ -587,6 +594,45 @@ public class AgentExecutor implements Executor {
         }
 
         return null;
+    }
+
+    private MsgEvent cepRemove(MsgEvent ce) {
+        try {
+            String cepId = ce.getParam("cepid");
+            if (cepId == null) {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "cepid NULL");
+            } else {
+                boolean removed = plugin.getAgentService().getDataPlaneService().removeCEP(cepId);
+                ce.setParam("status_code", removed ? "10" : "9");
+                ce.setParam("status_desc", removed ? "CEP removed" : "CEP could not be removed");
+            }
+        } catch (Exception ex) {
+            logger.error("cepremove Error: " + ex.getMessage(), ex);
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "cepremove exception [" + ex.getMessage() + "]");
+        }
+        return ce;
+    }
+
+    private MsgEvent cepInput(MsgEvent ce) {
+        try {
+            String streamName = ce.getParam("cep_input_stream");
+            String payload = ce.getCompressedParam("cep_payload");
+            if (streamName == null || payload == null) {
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", "cep_input_stream or cep_payload NULL");
+            } else {
+                plugin.getAgentService().getDataPlaneService().inputCEP(streamName, payload);
+                ce.setParam("status_code", "10");
+                ce.setParam("status_desc", "event accepted");
+            }
+        } catch (Exception ex) {
+            logger.error("cepinput Error: " + ex.getMessage(), ex);
+            ce.setParam("status_code", "9");
+            ce.setParam("status_desc", "cepinput exception [" + ex.getMessage() + "]");
+        }
+        return ce;
     }
 
     private MsgEvent pluginAdd(MsgEvent ce) {
