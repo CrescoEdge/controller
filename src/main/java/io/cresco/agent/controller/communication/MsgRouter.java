@@ -13,6 +13,20 @@ public class MsgRouter {
     private CLogger logger;
     private volatile boolean loggedCost = false;
 
+    // --- Source / segment routing (W4) ---------------------------------------------------------
+    // The data-plane half of performance-aware routing. Instead of naming only the final destination
+    // and letting the ActiveMQ network-of-brokers pick the hops, the ingress can attach an ordered
+    // stack of node waypoints ("region,agent" each, ';'-separated). Each waypoint's controller pops
+    // itself and re-addresses forwardDst to the next waypoint (a normal ActiveMQ leg); when the stack
+    // empties, the true destination (this node + the saved dst-plugin) is restored and delivered
+    // locally. This lets a route-computer force a message down a chosen path (e.g. via a low-latency
+    // region, or around a congested one) rather than ActiveMQ's default shortest-broker-hop route.
+    // Gated by net_source_routing (default off); a message with no SRCROUTE param is untouched.
+    public static final String SRCROUTE = "srcroute";            // "r1,a1;rg,gc;r2,a2" (remaining hops)
+    public static final String SRCROUTE_DST_PLUGIN = "srcroute_dst_plugin"; // preserved final dst plugin
+    private static final int SRCROUTE_MAX_HOPS = 16;             // safety bound on the stack length
+    private volatile boolean loggedSrcRoute = false;
+
     public MsgRouter(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -84,6 +98,18 @@ public class MsgRouter {
             rm = getTTL(rm);
 
             if(rm != null) {
+
+                // Source/segment routing: if this message carries a waypoint stack and this node is the
+                // current head, pop-and-forward to the next waypoint. Returns true when the message was
+                // re-forwarded (nothing more to do here); false to continue to normal routing (either the
+                // final waypoint reached with the true dst restored, or no/irrelevant source route).
+                if (plugin.getConfig().getBooleanParam("net_source_routing", false)
+                        && rm.getParam(SRCROUTE) != null) {
+                    if (advanceSourceRoute(rm)) {
+                        return; // forwarded to the next waypoint; finally-block still records the timer
+                    }
+                }
+
                 int routePath = getRoutePath(rm);
                 rm.setParam("routepath-" + plugin.getAgent(), String.valueOf(routePath));
 
@@ -558,6 +584,75 @@ public class MsgRouter {
             }
         }
 
+    }
+
+    /**
+     * Advance a source-routed message by one waypoint. The {@link #SRCROUTE} param is an ordered,
+     * ';'-separated stack of "region,agent" node waypoints (the hops still to visit); the message's
+     * forwardDst is always the head of that stack, so ActiveMQ delivers the message here because this
+     * node IS the head. We pop ourselves and:
+     *   - if waypoints remain: re-address forwardDst to the next waypoint and forward it (one ActiveMQ
+     *     leg) -> return true (message consumed here).
+     *   - if the stack is now empty: this is the final waypoint; restore the true destination
+     *     (this node + the saved dst-plugin), drop the routing headers, and return false so normal
+     *     routing delivers it locally.
+     * Defensive: if the head is not this node, leave the message alone (return false) and let normal
+     * routing carry it toward forwardDst. TTL (getTTL) still bounds total hops; the stack is also
+     * length-capped. Any parse error falls back to normal routing (return false) — never drops silently.
+     */
+    private boolean advanceSourceRoute(MsgEvent rm) {
+        try {
+            String path = rm.getParam(SRCROUTE);
+            if (path == null || path.isEmpty()) return false;
+
+            java.util.List<String> hops = new java.util.ArrayList<>();
+            for (String h : path.split(";")) { h = h.trim(); if (!h.isEmpty()) hops.add(h); }
+            if (hops.isEmpty()) { rm.removeParam(SRCROUTE); return false; }
+            if (hops.size() > SRCROUTE_MAX_HOPS) {
+                logger.error("source-routing: stack too long (" + hops.size() + " > " + SRCROUTE_MAX_HOPS + "), dropping route header");
+                rm.removeParam(SRCROUTE); rm.removeParam(SRCROUTE_DST_PLUGIN);
+                return false;
+            }
+
+            String me = plugin.getRegion() + "," + plugin.getAgent();
+            // The head must be this node (ActiveMQ delivered here because forwardDst=head=me). If not,
+            // this node is only a transit broker at the ActiveMQ layer — let normal routing continue.
+            if (!hops.get(0).equals(me)) return false;
+
+            // Prove the path taken: stamp this waypoint into the trail (visible on the final message).
+            rm.setParam("srcroute-hop-" + plugin.getAgent(), me);
+            hops.remove(0); // pop myself
+
+            if (hops.isEmpty()) {
+                // Final waypoint: restore the true destination and deliver locally.
+                String dstPlugin = rm.getParam(SRCROUTE_DST_PLUGIN);
+                rm.removeParam(SRCROUTE);
+                rm.removeParam(SRCROUTE_DST_PLUGIN);
+                rm.setForwardDst(plugin.getRegion(), plugin.getAgent(),
+                        (dstPlugin != null && !dstPlugin.isEmpty()) ? dstPlugin : null);
+                if (!loggedSrcRoute) { loggedSrcRoute = true; logger.info("source-routing: active (final-hop delivery at " + me + ")"); }
+                return false; // continue to normal routing -> local delivery
+            } else {
+                // More waypoints: re-address to the next hop and forward one ActiveMQ leg.
+                String next = hops.get(0);
+                int comma = next.indexOf(',');
+                if (comma <= 0 || comma >= next.length() - 1) {
+                    logger.error("source-routing: malformed next hop '" + next + "', dropping route header");
+                    rm.removeParam(SRCROUTE); rm.removeParam(SRCROUTE_DST_PLUGIN);
+                    return false;
+                }
+                String nextRegion = next.substring(0, comma);
+                String nextAgent = next.substring(comma + 1);
+                rm.setParam(SRCROUTE, String.join(";", hops));
+                rm.setForwardDst(nextRegion, nextAgent, null);
+                if (!loggedSrcRoute) { loggedSrcRoute = true; logger.info("source-routing: active (forwarding " + me + " -> " + next + ")"); }
+                controllerEngine.getActiveClient().sendMessage(rm);
+                return true; // consumed here
+            }
+        } catch (Exception ex) {
+            logger.error("advanceSourceRoute error: " + ex.getMessage(), ex);
+            return false; // never drop silently — fall back to normal routing
+        }
     }
 
     private int getRoutePath(MsgEvent rm) {

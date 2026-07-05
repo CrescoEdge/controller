@@ -138,9 +138,23 @@ public class RegionHealthWatcher {
             for (String peerAddress : regionalPeers) {
                 peerAddress = peerAddress.trim();
                 try {
+                    // A peer entry may be "host" (discovered on this node's own netdiscoveryport — the
+                    // multi-host default where every region uses 32005) OR "host:port" (required
+                    // same-host, where regions run on distinct discovery ports to avoid bind clashes).
+                    String peerHost = peerAddress;
+                    int peerPort = plugin.getConfig().getIntegerParam("netdiscoveryport", 32005);
+                    int colon = peerAddress.lastIndexOf(':');
+                    if (colon > 0 && colon < peerAddress.length() - 1) {
+                        try {
+                            peerPort = Integer.parseInt(peerAddress.substring(colon + 1).trim());
+                            peerHost = peerAddress.substring(0, colon).trim();
+                        } catch (NumberFormatException nfe) {
+                            logger.warn("regional_peers entry '{}' has a non-numeric port; using default {}", peerAddress, peerPort);
+                        }
+                    }
                     // Discover the peer first to get its proper agent path
                     TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("peer_discovery_timeout",5000), peerAddress, true); // 5 sec timeout
+                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("peer_discovery_timeout",5000), peerHost, peerPort, true); // 5 sec timeout
 
                     if (discovered != null && !discovered.isEmpty()) {
                         DiscoveryNode peerNode = discovered.get(0);
