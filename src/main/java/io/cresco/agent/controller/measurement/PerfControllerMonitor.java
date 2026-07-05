@@ -38,9 +38,29 @@ public class PerfControllerMonitor {
         //start metrics for controller
         initJVMMetrics();
         initControllerMetrics();
+        initCEPMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
 
+    }
+
+    // CEP (Siddhi) runs in-process in the controller's DataPlaneService (the standalone cep plugin
+    // was removed). Expose its active-query count as a gauge so it folds into getmetricinventory,
+    // consistent with how every plugin exposes its own MeasurementEngine gauges.
+    public void initCEPMetrics() {
+        try {
+            io.micrometer.core.instrument.Gauge
+                    .builder("cep.queries.active", controllerEngine, ce -> {
+                        io.cresco.library.data.DataPlaneService dps = ce.getDataPlaneService();
+                        return (dps instanceof io.cresco.agent.data.DataPlaneServiceImpl)
+                                ? ((io.cresco.agent.data.DataPlaneServiceImpl) dps).getActiveCEPCount() : 0;
+                    })
+                    .description("Active Complex-Event-Processing queries in the embedded Siddhi engine.")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("cep.queries.active", "cep");
+        } catch (Exception ex) {
+            logger.error("initCEPMetrics ", ex);
+        }
     }
 
     public void shutdown() {

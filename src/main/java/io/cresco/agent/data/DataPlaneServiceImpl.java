@@ -930,6 +930,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return cepEngine.removeCEP(cepId);
     }
 
+    /** Active CEP query count — for the controller's central metrics + cep HealthCheck. */
+    public int getActiveCEPCount() {
+        return (cepEngine != null) ? cepEngine.getActiveCount() : 0;
+    }
+
+    /** Whether the embedded CEP (Siddhi) engine is initialized and ready. */
+    public boolean isCEPReady() {
+        return (cepEngine != null) && cepEngine.isReady();
+    }
+
     public Path getJournalPath() {
 	    return journalPath;
 	}

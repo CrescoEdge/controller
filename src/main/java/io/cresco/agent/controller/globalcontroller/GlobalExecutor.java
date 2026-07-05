@@ -54,6 +54,7 @@ import java.util.jar.*;
     @CrescoAction(name = "resourceinventory", summary = "Get fabric resource totals.", why = "High-level capacity inventory.", returns = @CrescoReturn(name = "resourceinventory", type = "object")),
     @CrescoAction(name = "plugininventory", summary = "List plugins in the local repo jar directory (name=version).", why = "See which plugin artifacts this global node holds locally.", returns = @CrescoReturn(name = "pluginlist", description = "name=version CSV")),
     @CrescoAction(name = "getmetricinventory", summary = "Return the unified metric inventory (controller + all plugins + resource summary).", why = "One call for all fabric metrics; scope controls mesh fan-out.", params = {@CrescoParam(name = "action_scope", description = "node|region|global"), @CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_resource", type = "boolean")}, returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "gethealthinventory", summary = "Return this node's health inventory (all Felix HealthCheck results).", why = "The queryable parallel of getmetricinventory for the central health system.", returns = @CrescoReturn(name = "healthinventory", type = "object", description = "{node, aggregate, checks:[{name,status,rawStatus,message,tags,lastRunTs}]}")),
     @CrescoAction(name = "getgpipeline", summary = "Get a pipeline definition by id.", why = "Inspect a deployed application's structure.", params = @CrescoParam(name = "action_pipelineid", required = true), returns = @CrescoReturn(name = "gpipeline", type = "object", compressed = true)),
     @CrescoAction(name = "getgpipelineexport", summary = "Get a pipeline in export (portable) format.", why = "Export an application for re-deployment elsewhere.", params = @CrescoParam(name = "action_pipelineid", required = true), returns = @CrescoReturn(name = "gpipeline", type = "object", compressed = true)),
     @CrescoAction(name = "getgpipelinestatus", summary = "Get status of one pipeline or all pipelines.", why = "Monitor deployed applications.", params = @CrescoParam(name = "action_pipeline", description = "pipeline id; omit for all"), returns = @CrescoReturn(name = "pipelineinfo", type = "object", compressed = true)),
@@ -186,6 +187,9 @@ public class GlobalExecutor implements Executor {
 
                 case "getmetricinventory":
                     return getMetricInventory(ce);
+
+                case "gethealthinventory":
+                    return getHealthInventory(ce);
 
                 case "getgpipeline":
                     return getGPipeline(ce);
@@ -681,6 +685,20 @@ public class GlobalExecutor implements Executor {
         } catch (Exception ex) {
             ce.setParam("error", ex.getMessage());
             logger.error("getMetricInventory() " + ex.getMessage());
+        }
+        return ce;
+    }
+
+    // Central health: this node's health inventory (every discovered Felix HealthCheck snapshot).
+    // Queryable parallel of getMetricInventory so metrics AND health are both readable over MsgEvent.
+    private MsgEvent getHealthInventory(MsgEvent ce) {
+        try {
+            ce.setParam("healthinventory",
+                    io.cresco.agent.controller.health.HealthInventory.node(controllerEngine));
+            ce.setParam("status", "10");
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getHealthInventory() " + ex.getMessage());
         }
         return ce;
     }

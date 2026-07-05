@@ -20,6 +20,7 @@ import java.util.Map;
     @CrescoAction(name = "agent_disable", type = "CONFIG", summary = "Unregister an agent from this region.", why = "Agent removal from the regional registry.", returns = @CrescoReturn(name = "is_unregistered", type = "boolean")),
     @CrescoAction(name = "ping", summary = "Liveness ping; replies pong and exchanges mesh health.", why = "Health/RTT probe between agent and region.", returns = @CrescoReturn(name = "action", description = "pong")),
     @CrescoAction(name = "getmetricinventory", summary = "Return this region node's unified metric inventory (node scope).", why = "Node-local metrics; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "gethealthinventory", summary = "Return this region node's health inventory (all Felix HealthCheck results).", why = "The queryable parallel of getmetricinventory for the central health system.", returns = @CrescoReturn(name = "healthinventory", type = "object", description = "{node, aggregate, checks:[...]}")),
     @CrescoAction(name = "getcapabilities", summary = "Return the regional controller's self-describing capability document.", why = "Discovery of the regional API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
     @CrescoAction(name = "getcapabilityinventory", summary = "Return this region node's capability inventory (node scope).", why = "Node-local capability catalog; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
 })
@@ -101,10 +102,11 @@ public class RegionalExecutor implements Executor {
                     return pingReply(incoming);
 
                 case "getmetricinventory":
+                case "gethealthinventory":
                 case "getcapabilities":
                 case "getcapabilityinventory":
-                    // Unified metric/capability inventory: the region node answers its node-scoped view so
-                    // the global/region fan-out can aggregate it. GlobalExecutor implements all three.
+                    // Unified metric/health/capability inventory: the region node answers its node-scoped
+                    // view so the global/region fan-out can aggregate it. GlobalExecutor implements them.
                     return globalExecutor.executeEXEC(incoming);
 
                 default:

@@ -53,6 +53,7 @@ import java.util.Map;
     @CrescoAction(name = "getbroadcastdiscovery", summary = "Return this agent's network discovery list.", why = "Inspect discovered neighbors.", returns = @CrescoReturn(name = "broadcast_discovery", type = "object")),
     @CrescoAction(name = "listagents", summary = "List agents in this agent's region.", why = "Local discovery of sibling agents.", params = @CrescoParam(name = "action_region"), returns = @CrescoReturn(name = "agentslist", type = "object", compressed = true)),
     @CrescoAction(name = "getmetricinventory", summary = "Return this node's unified metric inventory (node scope).", why = "Node-local metrics; the controller fan-out calls this on each agent.", params = {@CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_resource", type = "boolean")}, returns = @CrescoReturn(name = "metricinventory", type = "object")),
+    @CrescoAction(name = "gethealthinventory", summary = "Return this node's health inventory (all Felix HealthCheck results, node scope).", why = "Node-local health; the parallel of getmetricinventory for the central health system.", returns = @CrescoReturn(name = "healthinventory", type = "object", description = "{node, aggregate, checks:[{name,status,rawStatus,message,tags,lastRunTs}]}")),
     @CrescoAction(name = "getcapabilities", summary = "Return the agent controller's self-describing capability document.", why = "Discovery of the agent-local API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
     @CrescoAction(name = "getcapabilityinventory", summary = "Return this node's capability inventory (node scope): controller tiers + local plugins + OSGi surface.", why = "Node-local capability catalog; the controller fan-out calls this on each agent.", params = {@CrescoParam(name = "action_include_plugins", type = "boolean"), @CrescoParam(name = "action_include_osgi", type = "boolean")}, returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
 })
@@ -186,6 +187,8 @@ public class AgentExecutor implements Executor {
                     return listAgents(incoming);
                 case "getmetricinventory":
                     return getMetricInventory(incoming);
+                case "gethealthinventory":
+                    return getHealthInventory(incoming);
                 case "getcapabilities":
                     return CapabilityResponder.respond(incoming, this);
                 case "getcapabilityinventory":
@@ -217,6 +220,21 @@ public class AgentExecutor implements Executor {
         } catch (Exception ex) {
             ce.setParam("error", ex.getMessage());
             logger.error("getMetricInventory() " + ex.getMessage());
+        }
+        return ce;
+    }
+
+    // Central health: return this node's health inventory (every discovered Felix HealthCheck's
+    // snapshot). The queryable parallel of getMetricInventory — metrics AND health are now both
+    // readable over MsgEvent, node-scoped here (a leaf agent does not re-fan-out).
+    private MsgEvent getHealthInventory(MsgEvent ce) {
+        try {
+            ce.setParam("healthinventory",
+                    io.cresco.agent.controller.health.HealthInventory.node(controllerEngine));
+            ce.setParam("status", "10");
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getHealthInventory() " + ex.getMessage());
         }
         return ce;
     }

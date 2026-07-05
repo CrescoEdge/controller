@@ -58,6 +58,16 @@ public class CEPEngine {
         init.start();
     }
 
+    /** Number of active CEP queries (for central metrics + the controller's cep HealthCheck). */
+    public int getActiveCount() {
+        return cepMap.size();
+    }
+
+    /** Whether the Siddhi engine has finished initializing (ready to accept queries). */
+    public boolean isReady() {
+        return siddhiManager != null;
+    }
+
     // Block until the background SiddhiManager init completes (or times out).
     private boolean awaitSiddhi() {
         try {
