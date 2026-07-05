@@ -65,11 +65,21 @@ public class CEPInstance {
             String sourceString = getSourceString(inputStreamDefinition, inputTopic, inputStreamName);
             String sinkString = getSinkString(outputStreamDefinition, outputTopic,outputStreamName);
 
-            //Generating runtime
-            siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(sourceString + " " + sinkString + " " + queryString);
+            //Generating runtime. Siddhi resolves the @source/@sink/@map extensions and any
+            //math:/str:/json:/map:/... functions in the query via the thread-context
+            //classloader; pin it to Siddhi's classloader (the library bundle) so every bundled
+            //extension is visible, otherwise parsing fails intermittently with
+            //ExtensionNotFoundException even for the core inMemory source/sink.
+            ClassLoader prevTccl = Thread.currentThread().getContextClassLoader();
+            try {
+                Thread.currentThread().setContextClassLoader(SiddhiManager.class.getClassLoader());
+                siddhiAppRuntime = siddhiManager.createSiddhiAppRuntime(sourceString + " " + sinkString + " " + queryString);
 
-            //Starting event processing
-            siddhiAppRuntime.start();
+                //Starting event processing
+                siddhiAppRuntime.start();
+            } finally {
+                Thread.currentThread().setContextClassLoader(prevTccl);
+            }
 
             //create an output subscriber
             outputSubscriber = new OutputSubscriber(plugin,cepId,outputTopic,outputStreamName);
@@ -98,8 +108,12 @@ public class CEPInstance {
                 }
             };
 
-            //subscribe to input
-            listenerId= pluginBuilder.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"stream_name='" + inputStreamName + "'");
+            //subscribe to input on the GLOBAL sharded dataplane -- the same topic/shard the
+            //wsapi dataplane endpoint publishes on -- so any external client can feed this CEP's
+            //input stream by sending dataplane messages with stream_name=<inputStreamName>.
+            io.cresco.library.data.DataPlaneService dps = pluginBuilder.getAgentService().getDataPlaneService();
+            listenerId = dps.addMessageListener(TopicType.GLOBAL, ml,
+                    "stream_name='" + inputStreamName + "'", dps.shardFor(inputStreamName));
 
 
         } catch (Exception ex) {

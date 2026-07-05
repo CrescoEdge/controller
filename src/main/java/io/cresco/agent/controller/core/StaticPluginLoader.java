@@ -257,6 +257,44 @@ public class StaticPluginLoader implements Runnable  {
 
                     }
 
+                    // Auto-load the executor plugin (run processes/shells with dataplane-attached stdio).
+                    if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.executor")) {
+                        if (plugin.getConfig().getBooleanParam("enable_executor", true)) {
+                            String pluginName = "io.cresco.executor";
+                            Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+                            if(map == null) {
+                                map = getPluginConfigMap(pluginName);
+                                if (map == null) {
+                                    map = new HashMap<>();
+                                    map.put("pluginname", pluginName);
+                                    map.put("jarfile", "executor.jar");
+                                    map.put("persistence_code", "20");
+                                    map.put("inode_id", generatePluginId(pluginName));
+                                }
+                            }
+                            String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
+                        }
+                    }
+
+                    // Auto-load the filerepo plugin (mesh-native file/artifact distribution).
+                    if(!controllerEngine.getPluginAdmin().pluginTypeActive("io.cresco.filerepo")) {
+                        if (plugin.getConfig().getBooleanParam("enable_filerepo", true)) {
+                            String pluginName = "io.cresco.filerepo";
+                            Map<String, Object> map = getPluginConfigMapbyName(systemPluginConfigList,pluginName);
+                            if(map == null) {
+                                map = getPluginConfigMap(pluginName);
+                                if (map == null) {
+                                    map = new HashMap<>();
+                                    map.put("pluginname", pluginName);
+                                    map.put("jarfile", "filerepo.jar");
+                                    map.put("persistence_code", "20");
+                                    map.put("inode_id", generatePluginId(pluginName));
+                                }
+                            }
+                            String pluginId = controllerEngine.getPluginAdmin().addPlugin(map);
+                        }
+                    }
+
                     for (String pluginId : pluginList) {
 
                         try {

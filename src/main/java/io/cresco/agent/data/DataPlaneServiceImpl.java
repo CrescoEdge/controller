@@ -161,8 +161,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     public void shutdown() {
 	    try {
-	        logger.info("Shutting down CEPEngine");
-	        cepEngine.shutdown();
+	        if(cepEngine != null) cepEngine.shutdown();
 
             List<String> listeners = null;
             synchronized (lockMessage) {
@@ -899,32 +898,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
 
-    /*
-    private String getCEPPluginId() {
-	    String pluginId = null;
-	    try {
-            List<Map<String, String>> configMapList = controllerEngine.getGDB().getPluginListMapByType("pluginname", "io.cresco.cep");
-            if(configMapList.size() > 1) {
-                logger.error("CEP Plugin Count (" + configMapList.size() + ") > 1 not allowed");
-            }
-
-            for (Map<String, String> configMap : configMapList) {
-                if ((configMap.get("region").equals(plugin.getRegion())) && (configMap.get("agent").equals(plugin.getAgent()))) {
-                    pluginId = configMap.get("pluginid");
-                }
-            }
-        } catch (Exception ex) {
-	        logger.error(ex.getMessage());
-            StringWriter sw = new StringWriter();
-            PrintWriter pw = new PrintWriter(sw);
-            ex.printStackTrace(pw);
-            String sStackTrace = sw.toString(); // stack trace as a string
-            logger.error(sStackTrace);
-        }
-        return pluginId;
-    }
-     */
-
+    // CEP runs in-process in the controller (Siddhi embedded via the library). The Siddhi extraction
+    // to a standalone cep plugin was reverted: the plugin builds but Felix SCR would not activate its
+    // component with Siddhi's full runtime tail embedded. Keeping the proven in-process engine.
     public String createCEP(String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
         String cepId = UUID.randomUUID().toString();
         if(cepEngine.createCEP(cepId,inputStreamName,inputStreamDefinition,outputStreamName,outputStreamDefinition,queryString)) {
@@ -932,52 +908,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } else {
             return null;
         }
-	}
-
-	/*
-    public String createCEP2(String inputStreamName, String inputStreamDefinition, String outputStreamName, String outputStreamDefinition, String queryString) {
-
-	    String pluginId = getCEPPluginId();
-        String cepId = null;
-
-        if(pluginId != null) {
-
-            cepId = UUID.randomUUID().toString();
-
-            MsgEvent createQuery = plugin.getPluginMsgEvent(MsgEvent.Type.CONFIG, pluginId);
-            createQuery.setParam("action", "queryadd");
-
-            createQuery.setParam("input_stream_name", inputStreamName);
-            createQuery.setParam("input_stream_definition", inputStreamDefinition);
-            createQuery.setParam("output_stream_name", outputStreamName);
-            createQuery.setParam("output_stream_definition", outputStreamDefinition);
-            createQuery.setParam("query_id", cepId);
-            createQuery.setParam("query", queryString);
-
-            MsgEvent response = plugin.sendRPC(createQuery);
-            if(response != null) {
-                if(response.paramsContains("status_code")) {
-                    int statusCode = Integer.parseInt(response.getParam("status_code"));
-                    if(statusCode != 10) {
-                        logger.error("Unable to create CEP Instance status_code: " + statusCode + " status_desc: " + response.getParam("status_desc"));
-                        return null;
-                    }
-                } else {
-                    logger.error("Unable to create CEP Instance no status_code ");
-                    return null;
-                }
-            } else {
-                logger.error("Unable to create CEP Instance RPC message was null ");
-                return null;
-            }
-
-        } else {
-            logger.error("No CEP Engine found on agent!");
-        }
-        return cepId;
-
     }
-    */
 
     public void inputCEP(String streamName, String jsonPayload) {
 
@@ -986,7 +917,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             tickle.setText(jsonPayload);
             tickle.setStringProperty("stream_name", streamName);
 
-            plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, tickle);
+            // Feed on the GLOBAL sharded dataplane (same topic/shard CEPInstance now listens on).
+            sendMessage(TopicType.GLOBAL, tickle, jakarta.jms.DeliveryMode.NON_PERSISTENT, 0, 0, shardFor(streamName));
 
         } catch (Exception ex) {
 	        logger.error("inputCEP Error: " + ex.getMessage());
@@ -997,30 +929,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public boolean removeCEP(String cepId) {
         return cepEngine.removeCEP(cepId);
     }
-
-    /*
-    public boolean removeCEP(String cepId) {
-
-	    boolean isRemoved = false;
-
-        String pluginId = getCEPPluginId();
-
-        if(pluginId != null) {
-            MsgEvent deleteQuery = plugin.getPluginMsgEvent(MsgEvent.Type.CONFIG, pluginId);
-            deleteQuery.setParam("action", "querydel");
-            deleteQuery.setParam("query_id", cepId);
-
-            MsgEvent response = plugin.sendRPC(deleteQuery);
-
-            if (response != null) {
-                if (response.getParam("iscleared") != null) {
-
-                }
-            }
-        }
-        return isRemoved;
-    }
-     */
 
     public Path getJournalPath() {
 	    return journalPath;

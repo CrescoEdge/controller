@@ -34,10 +34,14 @@ public class OutputSubscriber implements InMemoryBroker.Subscriber {
         try {
 
             //logger.error((String)msg);
-            TextMessage tm = plugin.getAgentService().getDataPlaneService().createTextMessage();
+            io.cresco.library.data.DataPlaneService dps = plugin.getAgentService().getDataPlaneService();
+            TextMessage tm = dps.createTextMessage();
             tm.setText((String)msg);
             tm.setStringProperty("stream_name",streamName);
-            plugin.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT,tm);
+            //emit CEP results on the GLOBAL sharded dataplane (shard derived from the output
+            //stream name, matching the wsapi subscriber) so external clients receive them.
+            dps.sendMessage(TopicType.GLOBAL, tm, jakarta.jms.DeliveryMode.NON_PERSISTENT, 0, 0,
+                    dps.shardFor(streamName));
 
             /*
             if(!outputList.isEmpty()) {
