@@ -523,6 +523,12 @@ public class ControllerEngine {
     private io.cresco.agent.controller.netmetrics.PathTable pathTable;
     public io.cresco.agent.controller.netmetrics.PathTable getPathTable() { return this.pathTable; }
     public void setPathTable(io.cresco.agent.controller.netmetrics.PathTable t) { this.pathTable = t; }
+    private io.cresco.agent.controller.netmetrics.CoordinatorRegistry coordinatorRegistry;
+    public io.cresco.agent.controller.netmetrics.CoordinatorRegistry getCoordinatorRegistry() { return this.coordinatorRegistry; }
+    public void setCoordinatorRegistry(io.cresco.agent.controller.netmetrics.CoordinatorRegistry c) { this.coordinatorRegistry = c; }
+    private io.cresco.agent.controller.globalscheduler.CoordinatorConsensus coordinatorConsensus;
+    public io.cresco.agent.controller.globalscheduler.CoordinatorConsensus getCoordinatorConsensus() { return this.coordinatorConsensus; }
+    public void setCoordinatorConsensus(io.cresco.agent.controller.globalscheduler.CoordinatorConsensus c) { this.coordinatorConsensus = c; }
 
     public void setMeasurementEngine(MeasurementEngine measurementEngine) {
         this.measurementEngine = measurementEngine;

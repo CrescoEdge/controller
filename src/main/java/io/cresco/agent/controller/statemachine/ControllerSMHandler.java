@@ -592,6 +592,17 @@ public class ControllerSMHandler {
                     controllerEngine.setPathTable(new io.cresco.agent.controller.netmetrics.PathTable(hysteresisMs));
                     logger.info("Dataplane route-state sharing initialized (advertise " + advMs + "ms, stale " + staleMs + "ms)");
 
+                    // Multi-coordinator: enumerate all role=global nodes from the shared RouteView and elect a
+                    // deterministic leader (Phase C/W3 + E/W6). Consensus adds epoch fencing + majority quorum
+                    // for strong duties (Phase D/W5). No node holds a scalar "the global" any more.
+                    controllerEngine.setCoordinatorRegistry(
+                            new io.cresco.agent.controller.netmetrics.CoordinatorRegistry(controllerEngine));
+                    long coordLeaseMs = plugin.getConfig().getIntegerParam("coordinator_lease_sec", 15) * 1000L;
+                    controllerEngine.setCoordinatorConsensus(
+                            new io.cresco.agent.controller.globalscheduler.CoordinatorConsensus(
+                                    controllerEngine, controllerEngine.getCoordinatorRegistry(), coordLeaseMs));
+                    logger.info("Coordinator registry + consensus initialized (multi-global, lease " + coordLeaseMs + "ms)");
+
                     //send measurement info out
                     controllerEngine.setPerfControllerMonitor(new PerfControllerMonitor(controllerEngine));
                     //don't start this yet, otherwise agents will be listening for all KPIs

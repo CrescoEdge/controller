@@ -115,6 +115,8 @@ public class AutoTuner implements Runnable {
 
             // share: push this node's link-state onto the dataplane + ingest peers' (pub/sub, not pull).
             if (ce.getRouteAdvertiser() != null) ce.getRouteAdvertiser().tick();
+            // coordinator consensus: heartbeat, recompute leader, bump epoch on change (multi-global).
+            if (ce.getCoordinatorConsensus() != null) ce.getCoordinatorConsensus().tick();
 
             // actuation: only when autotune is enabled
             if (enabled) {

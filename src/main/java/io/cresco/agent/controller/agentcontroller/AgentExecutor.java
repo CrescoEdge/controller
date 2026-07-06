@@ -249,6 +249,26 @@ public class AgentExecutor implements Executor {
                         incoming.setParam("relay", plugin.getRegion());
                         return incoming;
                     }
+                case "getcoordinators":
+                    // Multi-global observability: the live coordinator set, the elected leader, this node's
+                    // epoch, and the quorum picture — all from the shared RouteView + consensus beats.
+                    try {
+                        io.cresco.agent.controller.netmetrics.CoordinatorRegistry cr = controllerEngine.getCoordinatorRegistry();
+                        io.cresco.agent.controller.globalscheduler.CoordinatorConsensus cc = controllerEngine.getCoordinatorConsensus();
+                        if (cr != null) {
+                            incoming.setParam("coordinators", String.join(",", cr.coordinators()));
+                            incoming.setParam("leader", String.valueOf(cr.leader()));
+                        }
+                        if (cc != null) {
+                            incoming.setParam("epoch", String.valueOf(cc.epoch()));
+                            incoming.setParam("live_coordinators", String.valueOf(cc.liveCoordinators().size()));
+                            incoming.setParam("quorum", String.valueOf(cc.quorum()));
+                            incoming.setParam("has_quorum", String.valueOf(cc.hasQuorum()));
+                            incoming.setParam("rejected_stale_epochs", String.valueOf(cc.rejectedStaleEpochs()));
+                        }
+                        incoming.setParam("status", "10");
+                    } catch (Exception ex) { incoming.setParam("error", String.valueOf(ex.getMessage())); }
+                    return incoming;
                 case "getnetworkstate":
                     return getNetworkState(incoming);
                 case "getmetricinventory":
