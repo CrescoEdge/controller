@@ -504,6 +504,28 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             // Stricter: a purely-regional CA stamps ITS tenant (an agent cannot cross tenants). A global
             // federates multiple tenants, so it preserves the joining region's tenant.
             boolean isGlobal = controllerEngine.cstate.isGlobalController();
+            // W2 PEER FEDERATION: when enabled, two independently-rooted REGIONS trust each other as EQUALS
+            // rather than one subordinating the other. The joiner presents its OWN region-CA chain
+            // ([leaf, joinerRegionCA, joinerRoot]); we add that CA to OUR truststore (so we trust the peer's
+            // own-signed identities), and we PRESERVE the joiner's tenant/region/agent instead of re-stamping
+            // it under our tenant. This is the bilateral cross-trust that removes the need for a common
+            // global as trust broker. Default off -> legacy subordinating behaviour unchanged.
+            boolean peerFederation = plugin.getConfig().getBooleanParam("security_peer_federation", false);
+            boolean joinerIsRegionPeer = (claimed != null && claimed.getAgent() != null
+                    && joinerCerts.length > 1 && joinerCerts[1] != null);
+            if (peerFederation && !isGlobal && joinerIsRegionPeer) {
+                // trust the peer's own CA (+ root) — bilateral: the peer likewise trusts ours via the chain
+                // we return below, which installEnrollment adds to its truststore.
+                addCertificatesToTrustStore("peerCA-" + joinerCerts[1].getSerialNumber(),
+                        joinerCerts.length > 2 && joinerCerts[2] != null
+                                ? new X509Certificate[]{ joinerCerts[1], joinerCerts[2] }
+                                : new X509Certificate[]{ joinerCerts[1] });
+                try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+                logger.info("PEER-FEDERATION: cross-trusted peer region " + region + " (tenant=" + tenant
+                        + ") as an EQUAL — added its CA to truststore, preserved its identity (no subordination).");
+                // return OUR CA chain so the peer trusts us too (bilateral), WITHOUT re-signing the peer.
+                return getJsonFromCerts(regionCA.caChain());
+            }
             if (!isGlobal) {
                 tenant = plugin.getConfig().getStringParam("tenant_id", tenant);
             }
@@ -533,6 +555,20 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("installEnrollment: no private key for alias " + keyStoreAlias);
                 return false;
             }
+            // W2 PEER FEDERATION: if the returned bundle is the PEER's CA (its leaf public key does not match
+            // OUR key), it is a cross-trust bundle, not a re-issue of our identity. Add it to the truststore
+            // and KEEP our own identity — the equal-peer relationship (no subordination).
+            try {
+                java.security.cert.Certificate ourCert = keyStore.getCertificate(keyStoreAlias);
+                if (ourCert != null && !ourCert.getPublicKey().equals(signedChain[0].getPublicKey())) {
+                    addCertificatesToTrustStore("peerCA-" + signedChain[0].getSerialNumber(), signedChain);
+                    try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+                    try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
+                    logger.info("PEER-FEDERATION: installed peer CA bundle (kept our own identity, no subordination): "
+                            + CrescoIdentity.fromCertificate(signedChain[0]));
+                    return true;
+                }
+            } catch (Exception ignore) { /* fall through to normal enrollment install */ }
             this.chain = signedChain;
             storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, signedChain);
             // trust the issuing CA (chain[1]) and its root (chain[2]) — the O(regions) trust anchors
