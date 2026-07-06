@@ -162,6 +162,14 @@ public class RegionalExecutor implements Executor {
     public void remoteGlobalSend(MsgEvent incoming) {
         try {
             if(!controllerEngine.cstate.isGlobalController()) {
+                // REGION-FIRST AUTONOMY: a region may run with no global (global_optional). There is then
+                // nowhere to forward a global-scoped message, so drop it with a clear log instead of
+                // forwarding to a null destination. Local + peer (region<->region) traffic is unaffected.
+                if (controllerEngine.cstate.getGlobalRegion() == null || controllerEngine.cstate.getGlobalAgent() == null) {
+                    logger.warn("remoteGlobalSend: no global controller joined (region-first); dropping global-scoped message action="
+                            + incoming.getParam("action"));
+                    return;
+                }
                 incoming.setForwardDst(controllerEngine.cstate.getGlobalRegion(),controllerEngine.cstate.getGlobalAgent(), null);
                 //ge.setParam("dst_region",controllerEngine.cstate.getGlobalRegion());
                 //ge.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());

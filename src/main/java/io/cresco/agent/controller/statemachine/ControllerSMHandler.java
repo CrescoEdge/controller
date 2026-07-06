@@ -445,7 +445,19 @@ public class ControllerSMHandler {
                     }
                     //next try and connect to global controller
 
-                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
+                    // REGION-FIRST AUTONOMY (global_optional): a region does not need a global to exist.
+                    // Start peer maintenance (regional_peers + self-organizing inference + cost routing) and
+                    // the inbound discovery engine NOW so this region is a first-class peer immediately, then
+                    // attempt a BOUNDED global join instead of blocking the boot thread forever. If no global
+                    // is found, remain in REGION as a valid steady state.
+                    boolean globalOptional8 = plugin.getConfig().getBooleanParam("global_optional", false);
+                    if (globalOptional8) {
+                        ensureRegionHealthWatcher();
+                        if(!startNetDiscoveryEngine()) { logger.error("Start Network Discovery Engine Failed! (region-first)"); }
+                    }
+                    int gAttempt8 = 0;
+                    int gMax8 = globalOptional8 ? plugin.getConfig().getIntegerParam("global_connect_attempts", 3) : Integer.MAX_VALUE;
+                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get()) && (gAttempt8 < gMax8)) {
                         List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.GLOBAL);
                         DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
                         if(discoveryNode != null) {
@@ -455,9 +467,14 @@ public class ControllerSMHandler {
                         } else {
                             logger.error("No agents discovered.");
                         }
+                        gAttempt8++;
                         Thread.sleep(retryWait);
                     }
-                    //discovery engine
+                    if (globalOptional8 && cstate.getControllerState() != ControllerMode.REGION_GLOBAL) {
+                        logger.info("global_optional: no global joined after " + gMax8 + " attempt(s); operating REGION-FIRST "
+                                + "(autonomous). Peer bridging, data plane, and cost routing are active without a global.");
+                    }
+                    //discovery engine (idempotent)
                     if(!startNetDiscoveryEngine()) {
                         logger.error("Start Network Discovery Engine Failed!");
                     }
@@ -477,7 +494,17 @@ public class ControllerSMHandler {
                     }
                     //next try and connect to global controller
 
-                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get())) {
+                    // REGION-FIRST AUTONOMY (global_optional): even with a configured global_controller_host,
+                    // a region can come up and operate before/without that global. Start peer/discovery now and
+                    // bound the join attempts rather than blocking the boot thread forever.
+                    boolean globalOptional24 = plugin.getConfig().getBooleanParam("global_optional", false);
+                    if (globalOptional24) {
+                        ensureRegionHealthWatcher();
+                        if(!startNetDiscoveryEngine()) { logger.error("Start Network Discovery Engine Failed! (region-first)"); }
+                    }
+                    int gAttempt24 = 0;
+                    int gMax24 = globalOptional24 ? plugin.getConfig().getIntegerParam("global_connect_attempts", 3) : Integer.MAX_VALUE;
+                    while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get()) && (gAttempt24 < gMax24)) {
                         // global discovery port is configurable (default 32005) so multiple globals can
                         // coexist (e.g. same-host multi-global mesh); a region targets ITS global's port.
                         int globalPort = plugin.getConfig().getIntegerParam("global_controller_port", 32005);
@@ -490,9 +517,14 @@ public class ControllerSMHandler {
                         } else {
                             logger.error("No global controller discovered.");
                         }
+                        gAttempt24++;
                         Thread.sleep(retryWait);
                     }
-                    //discovery engine
+                    if (globalOptional24 && cstate.getControllerState() != ControllerMode.REGION_GLOBAL) {
+                        logger.info("global_optional: no global joined after " + gMax24 + " attempt(s); operating REGION-FIRST "
+                                + "(autonomous). Peer bridging, data plane, and cost routing are active without a global.");
+                    }
+                    //discovery engine (idempotent)
                     if(!startNetDiscoveryEngine()) {
                         logger.error("Start Network Discovery Engine Failed!");
                     }
@@ -798,6 +830,19 @@ public class ControllerSMHandler {
         return isInit;
     }
 
+    /**
+     * Start the regional health/peer watcher exactly once. It drives local component health, agent-status
+     * aging, the (global) active ping, AND the region&lt;-&gt;region peer maintenance / self-organizing
+     * inference / cost-route probing. Region-first autonomy ({@code global_optional}) needs the peer/routing
+     * behaviour up BEFORE (and independent of) any global join, so this is called from both the region-first
+     * boot path and {@link #isRegionGlobal}. Null-guarded so a later global join does not double-schedule.
+     */
+    private void ensureRegionHealthWatcher() {
+        if (controllerEngine.getRegionHealthWatcher() == null) {
+            controllerEngine.setRegionHealthWatcher(new RegionHealthWatcher(controllerEngine));
+        }
+    }
+
     private boolean isRegionGlobal(DiscoveryNode discoveryNode) {
 
         boolean isInit = false;
@@ -826,7 +871,8 @@ public class ControllerSMHandler {
                 isInit = true;
                 logger.debug("Regional Global Success");
                 //set this must be enabled to let global message go through, it should be on the region side
-                controllerEngine.setRegionHealthWatcher(new RegionHealthWatcher(controllerEngine));
+                //(idempotent: region-first boot may have already started it)
+                ensureRegionHealthWatcher();
 
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL)); //1
                 cstate.setRegionalGlobalSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "isRegionGlobal() Success");
@@ -1522,6 +1568,12 @@ public class ControllerSMHandler {
 
                             break;
                         case GLOBAL:
+                            break;
+                        case REGION:
+                            // REGION-FIRST AUTONOMY (global_optional): a region operating with no global has
+                            // no parent to publish its rolled-up config to. This is a valid steady state, not
+                            // an error — peers learn topology via the pushed link-state (RouteView), not this
+                            // up-the-tree publish. No-op (like GLOBAL).
                             break;
 
                         default:
