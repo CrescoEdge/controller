@@ -228,6 +228,27 @@ public class AgentExecutor implements Executor {
                         }
                     } catch (Exception ignore) { }
                     return incoming;
+                case "indirectprobe":
+                    // SWIM indirect probe (W7): a peer suspects target_region/target_agent and asks US to
+                    // ping it on their behalf. If we can reach it, the fault is on the asker's direct link,
+                    // not the target -> reply reachable=true so the asker suppresses a false failure verdict.
+                    {
+                        String tR = incoming.getParam("target_region"), tA = incoming.getParam("target_agent");
+                        boolean reachable = false;
+                        try {
+                            MsgEvent p = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, tR, tA);
+                            if (p != null) {
+                                p.setParam("action", "ping");
+                                p.setParam("desc", "swim-indirect");
+                                p.setParam("no_cost_route", "1");
+                                MsgEvent r = plugin.sendRPC(p, plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000));
+                                reachable = (r != null && "pong".equals(r.getParam("action")));
+                            }
+                        } catch (Exception ex) { /* reachable stays false */ }
+                        incoming.setParam("reachable", String.valueOf(reachable));
+                        incoming.setParam("relay", plugin.getRegion());
+                        return incoming;
+                    }
                 case "getnetworkstate":
                     return getNetworkState(incoming);
                 case "getmetricinventory":

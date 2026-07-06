@@ -47,12 +47,25 @@ public class RegionHealthWatcher {
     // globalControllerLost after the grace window.
     private volatile long lastGlobalPongTs;
 
+    // Phi-accrual failure detection for peer regions (Phase A / W7). Successful cost-probes are
+    // heartbeats; a rising phi triggers SWIM indirect probing before any "peer unreachable" conclusion,
+    // so an asymmetric A<->B partition does not become a false verdict.
+    private final io.cresco.agent.controller.netmetrics.PhiAccrualFailureDetector peerFD =
+            new io.cresco.agent.controller.netmetrics.PhiAccrualFailureDetector();
+    private double phiSuspect;   // suspicion at which we start SWIM indirect probing
+    private double phiDead;      // suspicion at which (after SWIM fails) we log an unreachable conclusion
+    private int swimK;           // number of indirect probers to fan out to
+
 
     public RegionHealthWatcher(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(RegionHealthWatcher.class.getName(),CLogger.Level.Info);
         this.regionalExecutor = new RegionalExecutor(controllerEngine);
+
+        this.phiSuspect = plugin.getConfig().getDoubleParam("failure_phi_suspect", 4.0);
+        this.phiDead = plugin.getConfig().getDoubleParam("failure_phi_dead", 8.0);
+        this.swimK = plugin.getConfig().getIntegerParam("failure_swim_k", 2);
 
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
         long commWatchDogInterval = plugin.getConfig().getLongParam("comm_watchdog_interval",5000L); // Interval for checking local components
@@ -258,15 +271,79 @@ public class RegionHealthWatcher {
     public void probeConnectedRegionPeers() {
         try {
             String globalRegion = controllerEngine.cstate.getGlobalRegion();
+            List<DiscoveryNode> peers = new ArrayList<>();
             for (io.cresco.agent.controller.communication.BrokeredAgent ba : controllerEngine.getBrokeredAgents().values()) {
                 DiscoveryNode dn = ba.brokerNode;
                 if (dn == null || dn.discovered_region == null || dn.discovered_agent == null) continue;
                 if (dn.discovered_region.equals(plugin.getRegion())) continue;           // skip self
                 if (globalRegion != null && dn.discovered_region.equals(globalRegion)) continue; // skip global uplink
+                peers.add(dn);
                 measurePeerRtt(dn, ba.getPath());
             }
+            evaluatePeerFailures(peers);   // W7: phi-accrual + SWIM after this round of probes
         } catch (Exception e) {
             logger.debug("probeConnectedRegionPeers error: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Phi-accrual + SWIM (W7). For each connected peer whose suspicion (phi) has crossed the suspect
+     * threshold, do NOT immediately conclude it is gone: ask up to {@code swimK} OTHER peers to probe it
+     * indirectly. If any relay reaches it, the fault is localized to OUR link (asymmetric partition) and the
+     * suspicion is suppressed. Only if the indirect probes ALSO fail and phi exceeds the dead threshold do we
+     * log an "unreachable" conclusion — which Phase D turns into a quorum-committed LOST verdict.
+     */
+    private void evaluatePeerFailures(List<DiscoveryNode> peers) {
+        for (DiscoveryNode suspect : peers) {
+            String sRegion = suspect.discovered_region, sAgent = suspect.discovered_agent;
+            double ph = peerFD.phi(sRegion);
+            if (ph < phiSuspect) continue;  // healthy enough, no action
+            // gather candidate relays: other connected peers (not the suspect)
+            List<DiscoveryNode> relays = new ArrayList<>();
+            for (DiscoveryNode p : peers) {
+                if (!p.discovered_region.equals(sRegion) && !p.discovered_region.equals(plugin.getRegion())) relays.add(p);
+            }
+            boolean reachedIndirect = false;
+            String viaRelay = null;
+            int probed = 0;
+            for (DiscoveryNode relay : relays) {
+                if (probed >= swimK) break;
+                probed++;
+                if (indirectProbe(relay, sRegion, sAgent)) { reachedIndirect = true; viaRelay = relay.discovered_region; break; }
+            }
+            if (reachedIndirect) {
+                logger.info(String.format("SWIM: peer %s suspected (phi=%.1f) but REACHABLE via relay %s -> "
+                        + "suspicion SUPPRESSED (asymmetric partition on our direct link, not a peer failure).",
+                        sRegion, ph, viaRelay));
+            } else if (ph >= phiDead) {
+                logger.warn(String.format("PEER-UNREACHABLE: %s phi=%.1f, SWIM indirect probe via %d relay(s) also "
+                        + "failed -> peer is unreachable from the mesh (Phase D would commit a quorum LOST verdict).",
+                        sRegion, ph, probed));
+            } else {
+                logger.info(String.format("SWIM: peer %s suspected (phi=%.1f), no relays available to confirm; "
+                        + "holding verdict (phi<dead=%.1f).", sRegion, ph, phiDead));
+            }
+        }
+    }
+
+    /**
+     * SWIM indirect probe: ask {@code relay} to ping {@code targetRegion/targetAgent} on our behalf and report
+     * whether it is reachable. Returns true iff the relay confirms reachability.
+     */
+    private boolean indirectProbe(DiscoveryNode relay, String targetRegion, String targetAgent) {
+        try {
+            int timeout = plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000);
+            MsgEvent req = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, relay.discovered_region, relay.discovered_agent);
+            if (req == null) return false;
+            req.setParam("action", "indirectprobe");
+            req.setParam("target_region", targetRegion);
+            req.setParam("target_agent", targetAgent);
+            req.setParam("no_cost_route", "1");
+            MsgEvent resp = plugin.sendRPC(req, timeout);
+            return resp != null && "true".equalsIgnoreCase(resp.getParam("reachable"));
+        } catch (Exception e) {
+            logger.debug("indirectProbe via {} failed: {}", relay.discovered_region, e.getMessage());
+            return false;
         }
     }
 
@@ -290,7 +367,10 @@ public class RegionHealthWatcher {
             // DIRECT probe (bypasses cost injection so it measures the RAW default path = the direct
             // 1-hop bridge / link C).
             double directRtt = probePath(peerRegion, peerAgent, null, timeout, true, "probe-DIRECT");
-            if (directRtt >= 0) reg.forPath(peerAgentPath).recordRtt(directRtt);
+            if (directRtt >= 0) {
+                reg.forPath(peerAgentPath).recordRtt(directRtt);
+                peerFD.heartbeat(peerRegion);   // W7: successful reachability = a heartbeat for phi-accrual
+            }
 
             // VIA-G probe: force global as an explicit source-route waypoint (also bypasses injection).
             double viaGRtt = -1;
