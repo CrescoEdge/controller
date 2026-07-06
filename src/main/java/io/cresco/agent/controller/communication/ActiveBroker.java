@@ -564,7 +564,15 @@ public class ActiveBroker {
 		bridge.setDuplex(true);
 		bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
 		bridge.setNetworkTTL(messageTTL);
-		bridge.setDecreaseNetworkConsumerPriority(false);
+		// Decrease a bridged consumer's priority by hop count so ActiveMQ's demand-forwarding prefers the
+		// FEWEST-broker-hop path to a destination. Without this, a redundant mesh (e.g. R1 reachable both
+		// directly over link C and via the global) forwards over an arbitrary bridge -- empirically the
+		// multi-hop via-global path -- so the "short" direct link is never actually taken and there is
+		// nothing for cost-aware routing to route around. With it on, the direct 1-hop bridge is ActiveMQ's
+		// default; Cresco's source-route/cost selector then deliberately overrides that to the faster
+		// multi-hop path when the direct link is the slow one. Configurable; default now on.
+		bridge.setDecreaseNetworkConsumerPriority(
+				plugin.getConfig().getBooleanParam("broker_bridge_decrease_consumer_priority", true));
 		bridge.setConduitSubscriptions(false);
 
 		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));

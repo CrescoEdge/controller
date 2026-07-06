@@ -188,6 +188,12 @@ public class GlobalExecutor implements Executor {
                 case "getmetricinventory":
                     return getMetricInventory(ce);
 
+                case "getnetworkstate":
+                    ce.setParam("networkstate",
+                            io.cresco.agent.controller.netmetrics.NetworkStateJson.build(controllerEngine));
+                    ce.setParam("status", "10");
+                    return ce;
+
                 case "gethealthinventory":
                     return getHealthInventory(ce);
 

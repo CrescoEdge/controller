@@ -168,6 +168,8 @@ public class RegionHealthWatcher {
                             logger.info("Submitted connection candidate for peer {}", peerAddress);
                         } else {
                             logger.trace("Peer connection to {} ({}) is already active or pending.", peerAddress, peerAgentPath);
+                            // (cost-probing of connected peers happens in probeConnectedRegionPeers(),
+                            //  which covers configured AND inferred peers uniformly)
                         }
                     } else {
                         logger.error("Could not discover or connect to peer: {}", peerAddress);
@@ -176,6 +178,172 @@ public class RegionHealthWatcher {
                     logger.error("Error while maintaining peer connection to {}: {}", peerAddress, e.getMessage());
                 }
             }
+        }
+    }
+
+    /**
+     * SELF-ORGANIZATION. Using the mesh-wide route state (RouteView, learned via dataplane push), try to
+     * form a DIRECT bridge to every known region we are not already directly connected to. Each region
+     * advertises the dialable addresses of all its data-plane NICs; we attempt discovery on each. Only an
+     * address on a shared PHYSICAL link answers -- so we LEARN which regions we CAN reach directly (the
+     * network is not assumed fully meshed) and connect exactly those. Forming the bridge makes that region
+     * a peer; probeConnectedRegionPeers() then measures the new direct path and the cost selector ADOPTS it
+     * only if it beats the existing multi-hop / via-global path. That is: infer a link between two already-
+     * (transitively-)connected regions, connect it, and use it iff it is faster.
+     */
+    public void inferConnections() {
+        try {
+            if (!plugin.getConfig().getBooleanParam("net_infer_connections", true)) return;
+            io.cresco.agent.controller.netmetrics.RouteView rv = controllerEngine.getRouteView();
+            if (rv == null) return;
+            String self = plugin.getRegion() + "_" + plugin.getAgent();
+            int timeout = plugin.getConfig().getIntegerParam("infer_discovery_timeout", 1000);
+            for (io.cresco.agent.controller.netmetrics.RouteView.NodeState ns : rv.fresh()) {
+                if (ns.node == null || ns.node.equals(self)) continue;
+                if (!"region".equals(ns.role)) continue;                                 // region<->region only
+                if (controllerEngine.getBroker().isPeerConnected(ns.node)) continue;      // already bridged
+                if (ns.addrs == null || ns.addrs.isEmpty()) continue;
+                for (String addr : ns.addrs) {
+                    int colon = addr.lastIndexOf(':');
+                    if (colon <= 0) continue;
+                    String host = addr.substring(0, colon);
+                    int port;
+                    try { port = Integer.parseInt(addr.substring(colon + 1).trim()); } catch (Exception e) { continue; }
+                    try {
+                        TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
+                        List<DiscoveryNode> found = ds.discover(DiscoveryType.REGION, timeout, host, port, true);
+                        if (found != null && !found.isEmpty()) {
+                            controllerEngine.getIncomingCanidateBrokers().put(found.get(0));
+                            logger.info("INFERRED CONNECTION: region {} directly reachable at {}:{} (learned "
+                                    + "from shared route state) -> self-organizing a bridge", ns.node, host, port);
+                            break; // one reachable address suffices
+                        }
+                    } catch (Exception ignore) { }
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("inferConnections error: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Exercise + verify GRAPH routing to regions we have NO direct link to. For each known non-peer
+     * region, log the Dijkstra-computed lowest-latency path and send one real (steered) ping so the
+     * MsgRouter enforces that path; the destination's receiver-stamp independently confirms the hops.
+     */
+    public void verifyGraphRoutes() {
+        try {
+            if (!plugin.getConfig().getBooleanParam("net_cost_routing", false)) return;
+            io.cresco.agent.controller.netmetrics.RouteView rv = controllerEngine.getRouteView();
+            if (rv == null) return;
+            String self = plugin.getRegion() + "_" + plugin.getAgent();
+            for (io.cresco.agent.controller.netmetrics.RouteView.NodeState ns : rv.fresh()) {
+                if (ns.node == null || ns.node.equals(self) || ns.region == null) continue;
+                if (!"region".equals(ns.role)) continue;
+                if (controllerEngine.getBroker().isPeerConnected(ns.node)) continue;   // peers handled elsewhere
+                String peerAgent = ns.node.substring(Math.min(ns.region.length() + 1, ns.node.length()));
+                if (peerAgent.isEmpty()) continue;
+                String route = io.cresco.agent.controller.netmetrics.RouteComputer.computeSrcRoute(rv, self, ns.node);
+                double rtt = probePath(ns.region, peerAgent, null,
+                        plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000), false, "graph-route-verify");
+                logger.info("GRAPH-ROUTE to {}: computed lowest-latency path=[{}] steered-rtt={}ms",
+                        ns.node, (route == null ? "(direct)" : route), String.format("%.1f", rtt));
+            }
+        } catch (Exception e) {
+            logger.debug("verifyGraphRoutes error: {}", e.getMessage());
+        }
+    }
+
+    /** Cost-probe every connected REGION peer (configured or inferred) and update its path selection. */
+    public void probeConnectedRegionPeers() {
+        try {
+            String globalRegion = controllerEngine.cstate.getGlobalRegion();
+            for (io.cresco.agent.controller.communication.BrokeredAgent ba : controllerEngine.getBrokeredAgents().values()) {
+                DiscoveryNode dn = ba.brokerNode;
+                if (dn == null || dn.discovered_region == null || dn.discovered_agent == null) continue;
+                if (dn.discovered_region.equals(plugin.getRegion())) continue;           // skip self
+                if (globalRegion != null && dn.discovered_region.equals(globalRegion)) continue; // skip global uplink
+                measurePeerRtt(dn, ba.getPath());
+            }
+        } catch (Exception e) {
+            logger.debug("probeConnectedRegionPeers error: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Probe BOTH candidate paths to a connected peer region and select the faster by measured end-to-end
+     * RTT (latency-dominant). Two timed pings via the shipped source-routing data plane:
+     *   - DIRECT : addressed straight at the peer -> ActiveMQ takes the 1-hop region<->region bridge (link C).
+     *   - VIA-G  : srcroute forces global as a waypoint -> the 2-hop path (this->global->peer).
+     * The measured RTTs feed (a) the peer-edge LinkMetrics (direct) and (b) the PathTable, whose winning
+     * srcroute the MsgRouter attaches to real peer-bound traffic. This is how Cresco routes around a slow
+     * "short" link: if via-G is faster, its stack is chosen even though it has more broker hops.
+     */
+    private void measurePeerRtt(DiscoveryNode peerNode, String peerAgentPath) {
+        try {
+            io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+            if (reg == null || peerNode.discovered_region == null || peerNode.discovered_agent == null) return;
+            String peerRegion = peerNode.discovered_region, peerAgent = peerNode.discovered_agent;
+            String gRegion = controllerEngine.cstate.getGlobalRegion(), gAgent = controllerEngine.cstate.getGlobalAgent();
+            int timeout = plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000);
+
+            // DIRECT probe (bypasses cost injection so it measures the RAW default path = the direct
+            // 1-hop bridge / link C).
+            double directRtt = probePath(peerRegion, peerAgent, null, timeout, true, "probe-DIRECT");
+            if (directRtt >= 0) reg.forPath(peerAgentPath).recordRtt(directRtt);
+
+            // VIA-G probe: force global as an explicit source-route waypoint (also bypasses injection).
+            double viaGRtt = -1;
+            String viaGRoute = (gRegion != null && gAgent != null && !gRegion.equals(peerRegion))
+                    ? gRegion + "," + gAgent + ";" + peerRegion + "," + peerAgent : null;
+            if (viaGRoute != null) {
+                viaGRtt = probePath(peerRegion, peerAgent, viaGRoute, timeout, true, "probe-VIAG");
+            }
+
+            // Select the faster path; record the choice for the MsgRouter to enforce.
+            if (controllerEngine.getPathTable() != null) {
+                controllerEngine.getPathTable().update(peerAgentPath, directRtt, viaGRtt, viaGRoute);
+                boolean viaG = controllerEngine.getPathTable().chosenIsViaG(peerAgentPath);
+
+                // ENFORCEMENT PROOF: a real-traffic ping that does NOT bypass injection. If cost routing
+                // is enforcing the choice, MsgRouter steers this onto the chosen path -> its RTT tracks
+                // the winner (via-G), not the raw default (direct). This is the end-to-end demonstration.
+                double steeredRtt = probePath(peerRegion, peerAgent, null, timeout, false, "probe-STEERED-realtraffic");
+
+                logger.info(String.format(
+                        "PATH-PROBE to %s: direct=%.1fms via-G=%.1fms -> chose %s | real-traffic(steered)=%.1fms",
+                        peerAgentPath, directRtt, viaGRtt, viaG ? "VIA-G" : "DIRECT", steeredRtt));
+            }
+        } catch (Exception e) {
+            logger.debug("measurePeerRtt failed for {}: {}", peerAgentPath, e.getMessage());
+        }
+    }
+
+    /**
+     * Send one timed ping to {@code peerRegion/peerAgent}. If {@code srcroute} is non-null the probe is
+     * source-routed over that waypoint stack (head becomes the forwardDst); otherwise it is addressed
+     * directly. Returns the round-trip in ms, or -1 on miss.
+     */
+    private double probePath(String peerRegion, String peerAgent, String srcroute, int timeout, boolean bypassInject, String label) {
+        try {
+            MsgEvent probe = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.EXEC, peerRegion, peerAgent);
+            if (probe == null) return -1;
+            probe.setParam("action", "ping");
+            probe.setParam("desc", label);
+            if (bypassInject) probe.setParam("no_cost_route", "1"); // measure the RAW path, unsteered
+            if (srcroute != null) {
+                // Head of the stack is the first waypoint; deliver there first, it pops+forwards onward.
+                probe.setParam(io.cresco.agent.controller.communication.MsgRouter.SRCROUTE, srcroute);
+                int comma = srcroute.indexOf(','), semi = srcroute.indexOf(';');
+                String headRegion = srcroute.substring(0, comma);
+                String headAgent = srcroute.substring(comma + 1, semi < 0 ? srcroute.length() : semi);
+                probe.setForwardDst(headRegion, headAgent, null);
+            }
+            long t0 = System.nanoTime();
+            MsgEvent resp = plugin.sendRPC(probe, timeout);
+            return (resp != null) ? (System.nanoTime() - t0) / 1_000_000.0 : -1;
+        } catch (Exception e) {
+            return -1;
         }
     }
 
@@ -332,8 +500,12 @@ public class RegionHealthWatcher {
         public void run() {
             if (controllerEngine.cstate.isRegionalController()) { // Only run if node is regional controller
 
-                // Do something with peers
+                // 1) keep CONFIGURED peer links up; 2) self-organize INFERRED links from learned route
+                // state; 3) cost-probe EVERY connected region peer (configured or inferred) and select.
                 controllerEngine.getRegionHealthWatcher().maintainPeerConnections();
+                controllerEngine.getRegionHealthWatcher().inferConnections();
+                controllerEngine.getRegionHealthWatcher().probeConnectedRegionPeers();
+                controllerEngine.getRegionHealthWatcher().verifyGraphRoutes();
 
                 if (!regionalUpdateTimerActive.compareAndSet(false, true)) {
                     logger.warn("RegionalNodeStatusWatchDog already running, skipping cycle.");

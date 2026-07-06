@@ -547,6 +547,19 @@ public class ControllerSMHandler {
                     controllerEngine.getAutoTuner().start();
                     logger.info("Net link metrics + AutoTuner initialized");
 
+                    // PUSH-based mesh-wide link-state sharing over the dataplane (pub/sub, not RPC pull).
+                    // The RouteView holds the shared view; the RouteAdvertiser publishes this node's edges
+                    // each AutoTuner tick and subscribes to peers'. A cost selector reads the RouteView.
+                    long advMs = plugin.getConfig().getIntegerParam("net_route_advertise_interval_sec", 5) * 1000L;
+                    long staleMs = plugin.getConfig().getIntegerParam("net_route_stale_sec", 20) * 1000L;
+                    controllerEngine.setRouteView(new io.cresco.agent.controller.netmetrics.RouteView(staleMs));
+                    controllerEngine.setRouteAdvertiser(new io.cresco.agent.controller.netmetrics.RouteAdvertiser(
+                            controllerEngine, controllerEngine.getRouteView(), advMs));
+                    // Cost-aware path selection: chosen per-peer route from explicit latency probing.
+                    double hysteresisMs = plugin.getConfig().getDoubleParam("net_route_hysteresis_ms", 10.0);
+                    controllerEngine.setPathTable(new io.cresco.agent.controller.netmetrics.PathTable(hysteresisMs));
+                    logger.info("Dataplane route-state sharing initialized (advertise " + advMs + "ms, stale " + staleMs + "ms)");
+
                     //send measurement info out
                     controllerEngine.setPerfControllerMonitor(new PerfControllerMonitor(controllerEngine));
                     //don't start this yet, otherwise agents will be listening for all KPIs

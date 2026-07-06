@@ -113,6 +113,9 @@ public class AutoTuner implements Runnable {
                 for (LinkMetrics lm : registry.all()) logger.info("NETLINK " + lm);
             }
 
+            // share: push this node's link-state onto the dataplane + ingest peers' (pub/sub, not pull).
+            if (ce.getRouteAdvertiser() != null) ce.getRouteAdvertiser().tick();
+
             // actuation: only when autotune is enabled
             if (enabled) {
                 adaptBuffersAndBlocks(peakTx, peakRtt, anySaturated, allIdle);

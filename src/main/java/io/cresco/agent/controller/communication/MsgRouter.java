@@ -26,6 +26,7 @@ public class MsgRouter {
     public static final String SRCROUTE_DST_PLUGIN = "srcroute_dst_plugin"; // preserved final dst plugin
     private static final int SRCROUTE_MAX_HOPS = 16;             // safety bound on the stack length
     private volatile boolean loggedSrcRoute = false;
+    private volatile boolean loggedInject = false;
 
     public MsgRouter(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -98,6 +99,14 @@ public class MsgRouter {
             rm = getTTL(rm);
 
             if(rm != null) {
+
+                // Cost-aware source-route INJECTION (ingress enforcement). ActiveMQ will not pick an
+                // optimal path for us -- it pins one arbitrary path and never load-balances or routes
+                // around a slow link. So when this node has PROBED a faster path to the destination region
+                // than the default, we attach that path's waypoint stack here, at the origin, and the
+                // source-routing machinery below carries the flow along it. This is Cresco controlling the
+                // path end-to-end; the probe/selector decided it, this line enforces it on real traffic.
+                maybeInjectCostRoute(rm);
 
                 // Source/segment routing: if this message carries a waypoint stack and this node is the
                 // current head, pop-and-forward to the next waypoint. Returns true when the message was
@@ -565,9 +574,49 @@ public class MsgRouter {
                         forwardToLocalRegionalController(rm);
                         break;
 
+                    case 4463:
+                        // Remote controller (another region, or the global) -> THIS region's controller.
+                        // A cross-region controller<->controller RPC (e.g. the global's getmetricinventory /
+                        // listagents fan-out to a child region). ActiveMQ delivered it here because it is
+                        // addressed to this region's queue, so this is LOCAL delivery (not transit): hand it
+                        // to the regional controller executor, which processes the action and returns the RPC
+                        // reply. The strict-tree single-node builds never exercised this hop, so the static
+                        // table omitted it and the message fell to default-drop (silent RPC timeout).
+                        logger.debug("Remote controller sending message to local regional controller 4463");
+                        logger.trace(rm.getParams().toString());
+                        forwardToLocalRegionalController(rm);
+                        break;
+
                     default:
-                        //System.out.println("CONTROLLER ROUTE CASE " + routePath + " " + rm.getParams());
-                        logger.error("DEFAULT ROUTE CASE " + routePath + " " + rm.printHeader() + " [" + rm.getParams() + "]");
+                        // CATCH-ALL. The static table enumerates the hop patterns the tree/loopback builds
+                        // exercised; a real multi-region mesh produces a few more. Resolve by DESTINATION:
+                        //   - addressed to THIS node  -> deliver locally (controller or a hosted plugin);
+                        //   - addressed ELSEWHERE     -> RELAY it toward its destination. Relaying is the
+                        //     whole point of a bridge: a region acts as a router, forwarding traffic for
+                        //     other regions so the mesh can carry (and, with source-routing/cost selection,
+                        //     steer) cross-region flows -- e.g. R1 -> G -> R2 around a slow direct link.
+                        // SECURITY: this is not an open relay. Every message here already arrived over an
+                        // mTLS-authenticated, secret-gated broker bridge (trusted fabric traffic), it is
+                        // forwarded only toward the destination named in its own header, and getTTL() above
+                        // bounds hop count (drops at >10) so a relay loop cannot amplify. Which bridge a
+                        // transit hop takes is the PATH LOOKUP (gated net_source_routing / cost selector);
+                        // absent a route header we hand it to the broker network toward its dst.
+                        boolean forThisNode = rm.getDstRegion() != null
+                                && rm.getDstRegion().equals(plugin.getRegion())
+                                && rm.getDstAgent() != null
+                                && rm.getDstAgent().equals(plugin.getAgent());
+                        if (forThisNode && (rm.getDstPlugin() == null
+                                || rm.getDstPlugin().equals(plugin.getPluginID()))) {
+                            logger.debug("route catch-all: local controller delivery rp=" + routePath);
+                            forwardToLocalRegionalController(rm);
+                        } else if (forThisNode && rm.getDstPlugin() != null) {
+                            logger.debug("route catch-all: local plugin delivery rp=" + routePath);
+                            forwardToLocalPlugin(rm);
+                        } else {
+                            logger.debug("route catch-all: relay toward " + rm.getForwardDst()
+                                    + " rp=" + routePath);
+                            forwardToRemoteRegion(rm);
+                        }
                         break;
                 }
 
@@ -587,6 +636,46 @@ public class MsgRouter {
     }
 
     /**
+     * At the ingress region, steer a peer-bound flow onto the path the cost selector chose. If this node
+     * originated the message, it is bound for another region, it has no explicit route already, and the
+     * {@link io.cresco.agent.controller.netmetrics.PathTable} holds a faster probed path to that region,
+     * attach that waypoint stack (head becomes forwardDst). {@link #advanceSourceRoute} then carries it.
+     * Gated by net_cost_routing. Only locally-originated traffic is steered, so a transiting message is
+     * never re-injected (which would loop); the SRCROUTE guard also stops double-injection.
+     */
+    private void maybeInjectCostRoute(MsgEvent rm) {
+        try {
+            if (!plugin.getConfig().getBooleanParam("net_cost_routing", false)) return;
+            if ("1".equals(rm.getParam("no_cost_route"))) return;            // prober opts out (measures raw path)
+            if (rm.getParam(SRCROUTE) != null) return;                       // already routed
+            if (rm.getDstRegion() == null || rm.getDstAgent() == null) return;
+            if (rm.getDstRegion().equals(plugin.getRegion())) return;        // not leaving our region
+            if (!plugin.getRegion().equals(rm.getSrcRegion())) return;       // only steer OUR own egress
+            String dstNode = rm.getDstRegion() + "_" + rm.getDstAgent();
+            // Primary: Dijkstra over the whole learned graph -> lowest-latency N-hop path to any region.
+            String route = io.cresco.agent.controller.netmetrics.RouteComputer.computeSrcRoute(
+                    controllerEngine.getRouteView(), plugin.getRegion() + "_" + plugin.getAgent(), dstNode);
+            // Fallback: the per-peer probe choice (direct-vs-viaG) if the graph has no better multi-hop path.
+            if (route == null) {
+                io.cresco.agent.controller.netmetrics.PathTable pt = controllerEngine.getPathTable();
+                route = (pt != null) ? pt.chosenSrcroute(dstNode) : null;
+            }
+            if (route == null) return;                                       // default (direct) path is best -> leave it
+            int comma = route.indexOf(','), semi = route.indexOf(';');
+            if (comma <= 0) return;
+            String headRegion = route.substring(0, comma);
+            String headAgent = route.substring(comma + 1, semi < 0 ? route.length() : semi);
+            rm.setParam(SRCROUTE, route);
+            rm.setParam(SRCROUTE_DST_PLUGIN, rm.getDstPlugin() == null ? "" : rm.getDstPlugin());
+            rm.setForwardDst(headRegion, headAgent, null);
+            if (!loggedInject) {
+                loggedInject = true;
+                logger.info("cost-routing: steering egress to " + dstNode + " via chosen path [" + route + "]");
+            }
+        } catch (Exception ignore) { }
+    }
+
+    /**
      * Advance a source-routed message by one waypoint. The {@link #SRCROUTE} param is an ordered,
      * ';'-separated stack of "region,agent" node waypoints (the hops still to visit); the message's
      * forwardDst is always the head of that stack, so ActiveMQ delivers the message here because this
@@ -599,6 +688,10 @@ public class MsgRouter {
      * Defensive: if the head is not this node, leave the message alone (return false) and let normal
      * routing carry it toward forwardDst. TTL (getTTL) still bounds total hops; the stack is also
      * length-capped. Any parse error falls back to normal routing (return false) — never drops silently.
+     *
+     * @param rm the message being routed
+     * @return true if this call consumed/forwarded the message (caller should stop), false to let normal
+     *         routing proceed (final waypoint reached, not source-routed, or a defensive fallback)
      */
     private boolean advanceSourceRoute(MsgEvent rm) {
         try {

@@ -185,6 +185,51 @@ public class AgentExecutor implements Executor {
                     return getBroadcastDiscovery(incoming);
                 case "listagents":
                     return listAgents(incoming);
+                case "ping":
+                    // Answer a liveness/peer ping so the sender can time the round-trip. A region
+                    // harvests the DIRECT region<->region edge RTT this way (the message lands on the
+                    // peer's agent executor); the caller records (now - sendTs) as the link's latency.
+                    // INDEPENDENT PATH PROOF: log the srcroute-hop-* stamps that INTERMEDIATE nodes wrote
+                    // as this message transited them. If the trail names the global, this message provably
+                    // passed THROUGH global (via-G) -- evidence written by other nodes, not the sender.
+                    {
+                        StringBuilder trail = new StringBuilder();
+                        for (Map.Entry<String,String> p : incoming.getParams().entrySet()) {
+                            if (p.getKey().startsWith("srcroute-hop-")) trail.append(p.getKey().substring(13)).append(" ");
+                        }
+                        logger.info("PING-RECEIVED desc=" + incoming.getParam("desc")
+                                + " src=" + incoming.getSrcRegion()
+                                + " transit-hops=[" + trail.toString().trim() + "]"
+                                + " (empty hops = direct 1-broker-hop; contains 'global' = went via-G)");
+                    }
+                    incoming.setParam("action", "pong");
+                    incoming.setParam("remote_ts", String.valueOf(System.currentTimeMillis()));
+                    incoming.setParam("type", "agent_controller");
+                    // Steer the REPLY along this node's own cost-chosen path back to the caller, so the
+                    // round trip is optimized in BOTH directions (the forward leg is steered at the caller's
+                    // ingress; without this the reply would ride the default -- possibly slow -- path).
+                    // Contained: only fires for a peer region we have a via-path choice to; region->global
+                    // health pings have no PathTable entry and are untouched.
+                    try {
+                        if (plugin.getConfig().getBooleanParam("net_cost_routing", false)) {
+                            io.cresco.agent.controller.netmetrics.PathTable pt = controllerEngine.getPathTable();
+                            String srcPeer = incoming.getSrcRegion() + "_" + incoming.getSrcAgent();
+                            String route = (pt != null) ? pt.chosenSrcroute(srcPeer) : null;
+                            if (route != null) {
+                                int comma = route.indexOf(','), semi = route.indexOf(';');
+                                if (comma > 0) {
+                                    incoming.setParam(io.cresco.agent.controller.communication.MsgRouter.SRCROUTE, route);
+                                    incoming.setParam(io.cresco.agent.controller.communication.MsgRouter.SRCROUTE_DST_PLUGIN,
+                                            incoming.getSrcPlugin() == null ? "" : incoming.getSrcPlugin());
+                                    incoming.setForwardDst(route.substring(0, comma),
+                                            route.substring(comma + 1, semi < 0 ? route.length() : semi), null);
+                                }
+                            }
+                        }
+                    } catch (Exception ignore) { }
+                    return incoming;
+                case "getnetworkstate":
+                    return getNetworkState(incoming);
                 case "getmetricinventory":
                     return getMetricInventory(incoming);
                 case "gethealthinventory":
@@ -201,6 +246,30 @@ public class AgentExecutor implements Executor {
             }
             return null;
         }
+
+    /**
+     * Handles the {@code getnetworkstate} action: serializes this node's live view of the dynamic network
+     * — the learned mesh graph ({@link io.cresco.agent.controller.netmetrics.RouteView}, populated by pushed
+     * link-state) plus this node's own path choices — via
+     * {@link io.cresco.agent.controller.netmetrics.NetworkStateJson}. Typically invoked on the global (which
+     * receives every node's LSA) to render the whole dynamic topology; each edge carries rtt/cost/conns so
+     * link scaling, inferred links and path flips are all visible to the dashboard.
+     *
+     * @param ce the incoming EXEC message; the reply is the same event with the JSON attached under
+     *           {@code networkstate} (or an {@code error} param on failure)
+     * @return the reply message
+     */
+    private MsgEvent getNetworkState(MsgEvent ce) {
+        try {
+            ce.setParam("networkstate",
+                    io.cresco.agent.controller.netmetrics.NetworkStateJson.build(controllerEngine));
+            ce.setParam("status", "10");
+        } catch (Exception ex) {
+            ce.setParam("error", ex.getMessage());
+            logger.error("getNetworkState() " + ex.getMessage());
+        }
+        return ce;
+    }
 
     // B-2 unified metrics: every node's controller answers getmetricinventory (node scope) so the
     // global/region fan-out in PerfControllerMonitor can aggregate the whole mesh. Mirrors the global

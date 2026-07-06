@@ -514,6 +514,15 @@ public class ControllerEngine {
     public void setNetTuningProfile(io.cresco.agent.controller.netmetrics.NetTuningProfile p) { this.netTuningProfile = p; }
     public io.cresco.agent.controller.netmetrics.AutoTuner getAutoTuner() { return this.autoTuner; }
     public void setAutoTuner(io.cresco.agent.controller.netmetrics.AutoTuner t) { this.autoTuner = t; }
+    private io.cresco.agent.controller.netmetrics.RouteView routeView;
+    private io.cresco.agent.controller.netmetrics.RouteAdvertiser routeAdvertiser;
+    public io.cresco.agent.controller.netmetrics.RouteView getRouteView() { return this.routeView; }
+    public void setRouteView(io.cresco.agent.controller.netmetrics.RouteView v) { this.routeView = v; }
+    public io.cresco.agent.controller.netmetrics.RouteAdvertiser getRouteAdvertiser() { return this.routeAdvertiser; }
+    public void setRouteAdvertiser(io.cresco.agent.controller.netmetrics.RouteAdvertiser a) { this.routeAdvertiser = a; }
+    private io.cresco.agent.controller.netmetrics.PathTable pathTable;
+    public io.cresco.agent.controller.netmetrics.PathTable getPathTable() { return this.pathTable; }
+    public void setPathTable(io.cresco.agent.controller.netmetrics.PathTable t) { this.pathTable = t; }
 
     public void setMeasurementEngine(MeasurementEngine measurementEngine) {
         this.measurementEngine = measurementEngine;
