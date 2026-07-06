@@ -22,7 +22,8 @@ import java.util.Map;
     @CrescoAction(name = "getmetricinventory", summary = "Return this region node's unified metric inventory (node scope).", why = "Node-local metrics; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "metricinventory", type = "object")),
     @CrescoAction(name = "gethealthinventory", summary = "Return this region node's health inventory (all Felix HealthCheck results).", why = "The queryable parallel of getmetricinventory for the central health system.", returns = @CrescoReturn(name = "healthinventory", type = "object", description = "{node, aggregate, checks:[...]}")),
     @CrescoAction(name = "getcapabilities", summary = "Return the regional controller's self-describing capability document.", why = "Discovery of the regional API.", returns = @CrescoReturn(name = "capabilities", type = "object")),
-    @CrescoAction(name = "getcapabilityinventory", summary = "Return this region node's capability inventory (node scope).", why = "Node-local capability catalog; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "capabilityinventory", type = "object"))
+    @CrescoAction(name = "getcapabilityinventory", summary = "Return this region node's capability inventory (node scope).", why = "Node-local capability catalog; the controller fan-out calls this on the region.", returns = @CrescoReturn(name = "capabilityinventory", type = "object")),
+    @CrescoAction(name = "rpipelinesubmit", type = "CONFIG", summary = "Submit an application pipeline (CADL) at the REGIONAL tier.", why = "Region-first scheduling: a pipeline whose nodes are all region-local is placed regionally with NO global; only a cross-region pipeline escalates to a coordinator (Kandoo local/root split).", returns = @CrescoReturn(name = "scheduled_regionally", type = "boolean"))
 })
 public class RegionalExecutor implements Executor {
 
@@ -69,6 +70,9 @@ public class RegionalExecutor implements Executor {
                     }
                     return incoming;
 
+                case "rpipelinesubmit":
+                    return regionalPipelineSubmit(incoming);
+
                 default:
                     logger.debug("RegionalCommandExec Unknown configtype found: {}", incoming.getParam("action"));
                     return null;
@@ -81,6 +85,92 @@ public class RegionalExecutor implements Executor {
         }
         return null;
     }
+    /**
+     * Regional (local-controller) scheduling entry point — the Kandoo local/root split (Phase C/W4).
+     * Parses the CADL ({@code cadl} param = gPayload JSON) and classifies its nodes by {@code location_region}:
+     * <ul>
+     *   <li>every node region-local (== this region, or unspecified → default local) → schedule REGIONALLY:
+     *       dispatch a {@code pluginadd} to each target local agent, with NO global/coordinator involved;</li>
+     *   <li>any node targets another region → ESCALATE the whole pipeline to the coordinator that owns this
+     *       scheduling duty ({@link io.cresco.agent.controller.netmetrics.CoordinatorRegistry#coordinatorForDuty}),
+     *       or refuse if no coordinator is reachable.</li>
+     * </ul>
+     * This is the coordination-free-vs-strong decision from the plan: region-local placement is single-writer
+     * (this region owns its agents' capacity) and needs no consensus; cross-region placement is a global
+     * concern and goes to a coordinator.
+     */
+    private MsgEvent regionalPipelineSubmit(MsgEvent incoming) {
+        try {
+            String cadl = incoming.getParam("cadl");
+            if (cadl == null) { incoming.setParam("error", "missing cadl"); return incoming; }
+            io.cresco.library.app.gPayload gp =
+                    new com.google.gson.Gson().fromJson(cadl, io.cresco.library.app.gPayload.class);
+            String selfRegion = plugin.getRegion();
+            java.util.List<io.cresco.library.app.gNode> local = new java.util.ArrayList<>();
+            java.util.List<io.cresco.library.app.gNode> remote = new java.util.ArrayList<>();
+            if (gp != null && gp.nodes != null) {
+                for (io.cresco.library.app.gNode n : gp.nodes) {
+                    String locRegion = (n.params != null) ? n.params.get("location_region") : null;
+                    if (locRegion == null || locRegion.isEmpty() || locRegion.equals(selfRegion)) local.add(n);
+                    else remote.add(n);
+                }
+            }
+            String pid = (gp != null && gp.pipeline_id != null) ? gp.pipeline_id : "rpipe-" + Math.abs(cadl.hashCode());
+
+            if (remote.isEmpty()) {
+                // REGION-LOCAL: schedule here, no coordinator needed.
+                int dispatched = 0;
+                for (io.cresco.library.app.gNode n : local) {
+                    String agent = (n.params != null) ? n.params.getOrDefault("location_agent", "") : "";
+                    if (!agent.isEmpty()) { dispatchLocalPluginAdd(selfRegion, agent, n); dispatched++; }
+                }
+                logger.info("REGIONAL-SCHEDULE pipeline=" + pid + " nodes=" + local.size()
+                        + " -> scheduled REGION-LOCALLY (no coordinator required); pluginadd dispatched=" + dispatched);
+                incoming.setParam("scheduled_regionally", "true");
+                incoming.setParam("coordinator_used", "false");
+                incoming.setParam("nodes_local", String.valueOf(local.size()));
+            } else {
+                // CROSS-REGION: escalate to the coordinator that owns this scheduling duty.
+                String coord = null;
+                io.cresco.agent.controller.netmetrics.CoordinatorRegistry cr = controllerEngine.getCoordinatorRegistry();
+                if (cr != null) coord = cr.coordinatorForDuty("schedule:" + pid);
+                if (coord == null) {
+                    logger.warn("REGIONAL-SCHEDULE pipeline=" + pid + " has cross-region nodes but NO coordinator "
+                            + "reachable -> cannot place cross-region work (region-local part could still run).");
+                    incoming.setParam("scheduled_regionally", "false");
+                    incoming.setParam("escalated", "false");
+                    incoming.setParam("error", "cross-region placement requires a coordinator; none reachable");
+                } else {
+                    logger.info("REGIONAL-SCHEDULE pipeline=" + pid + " local=" + local.size() + " remote="
+                            + remote.size() + " -> ESCALATING cross-region placement to coordinator " + coord);
+                    incoming.setParam("scheduled_regionally", "false");
+                    incoming.setParam("escalated", "true");
+                    incoming.setParam("coordinator", coord);
+                    incoming.setParam("coordinator_used", "true");
+                }
+            }
+            incoming.setParam("status", "10");
+        } catch (Exception ex) {
+            incoming.setParam("error", String.valueOf(ex.getMessage()));
+            logger.error("regionalPipelineSubmit() " + ex.getMessage());
+        }
+        return incoming;
+    }
+
+    /** Dispatch a plugin add to a local agent (region-local placement). Best-effort; logs the outcome. */
+    private void dispatchLocalPluginAdd(String region, String agent, io.cresco.library.app.gNode n) {
+        try {
+            MsgEvent add = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG, region, agent);
+            if (add == null) return;
+            add.setParam("action", "pluginadd");
+            if (n.params != null) for (Map.Entry<String, String> e : n.params.entrySet()) add.setParam(e.getKey(), e.getValue());
+            add.setParam("no_cost_route", "1");
+            plugin.msgOut(add);
+        } catch (Exception e) {
+            logger.debug("dispatchLocalPluginAdd to {}_{} failed: {}", region, agent, e.getMessage());
+        }
+    }
+
     @Override
     public MsgEvent executeDISCOVER(MsgEvent incoming) {
         return null;
