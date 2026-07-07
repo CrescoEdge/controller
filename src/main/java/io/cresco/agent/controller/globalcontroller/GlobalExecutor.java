@@ -194,6 +194,27 @@ public class GlobalExecutor implements Executor {
                     ce.setParam("status", "10");
                     return ce;
 
+                case "getcoordinators":
+                    // Multi-global observability (served on the global for the dashboard): the live
+                    // coordinator set + consensus state (leader, epoch, quorum, stale-epoch fences).
+                    try {
+                        io.cresco.agent.controller.netmetrics.CoordinatorRegistry cr = controllerEngine.getCoordinatorRegistry();
+                        io.cresco.agent.controller.globalscheduler.CoordinatorConsensus cc = controllerEngine.getCoordinatorConsensus();
+                        if (cr != null) {
+                            ce.setParam("coordinators", String.join(",", cr.coordinators()));
+                            ce.setParam("leader", String.valueOf(cr.leader()));
+                        }
+                        if (cc != null) {
+                            ce.setParam("epoch", String.valueOf(cc.epoch()));
+                            ce.setParam("live_coordinators", String.valueOf(cc.liveCoordinators().size()));
+                            ce.setParam("quorum", String.valueOf(cc.quorum()));
+                            ce.setParam("has_quorum", String.valueOf(cc.hasQuorum()));
+                            ce.setParam("rejected_stale_epochs", String.valueOf(cc.rejectedStaleEpochs()));
+                        }
+                        ce.setParam("status", "10");
+                    } catch (Exception ex) { ce.setParam("error", String.valueOf(ex.getMessage())); }
+                    return ce;
+
                 case "gethealthinventory":
                     return getHealthInventory(ce);
 
