@@ -142,9 +142,14 @@ public final class CoordinatorConsensus {
             }
             leader = newLeader;
 
-            publishBeat();
-            maxCoordinatorsSeen = Math.max(maxCoordinatorsSeen, liveCoordinators().size());
-            logIfChanged();
+            // ONLY coordinators heartbeat. A region/agent computes the leader from the shared RouteView
+            // (CoordinatorRegistry) for routing but must NOT publish beats — otherwise every node floods the
+            // coordinator topic and the quorum/live count is polluted by non-coordinators.
+            if (registry.selfIsCoordinator()) {
+                publishBeat();
+                maxCoordinatorsSeen = Math.max(maxCoordinatorsSeen, liveCoordinators().size());
+                logIfChanged();
+            }
         } catch (Exception ex) {
             logger.debug("CoordinatorConsensus.tick error: " + ex.getMessage());
         }
