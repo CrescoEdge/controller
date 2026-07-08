@@ -39,6 +39,7 @@ public class AutoTuner implements Runnable {
     private final boolean enabled;
     private final int intervalSec;
     private final double sendLatHighMs, sendLatLowMs;
+    private final double rttHighMs;
     private final long backlogHigh;
     private final long cooldownMs;
     private final double bdpSafety;
@@ -59,6 +60,10 @@ public class AutoTuner implements Runnable {
         this.sendLatHighMs = plugin.getConfig().getDoubleParam("net_autotune_sendlat_high_ms", 20.0);
         this.sendLatLowMs = plugin.getConfig().getDoubleParam("net_autotune_sendlat_low_ms", 2.0);
         this.backlogHigh = plugin.getConfig().getLongParam("net_autotune_backlog_high", 500L);
+        // Congestion via smoothed RTT: dataplane byte floods (e.g. stunnel tunnels) ride ActiveMQ and do
+        // NOT register as Cresco send-latency/backlog, but they DO inflate the link's measured RTT. Scale
+        // connectors when srtt crosses this threshold so bridges grow automatically under ANY congestion.
+        this.rttHighMs = plugin.getConfig().getDoubleParam("net_autotune_rtt_high_ms", 40.0);
         this.cooldownMs = plugin.getConfig().getLongParam("net_autotune_cooldown_ms", 15000L);
         this.bdpSafety = plugin.getConfig().getDoubleParam("net_autotune_bdp_safety", 3.0);
         this.linkSpeedCeilingBps = plugin.getConfig().getLongParam("net_link_speed_bps", 0L);
@@ -99,8 +104,10 @@ public class AutoTuner implements Runnable {
                 peakTx = Math.max(peakTx, tput);
                 if (lm.getSrtt() > 0) peakRtt = Math.max(peakRtt, lm.getSrtt());
 
-                boolean saturated = lm.getSendLatencyEwma() > sendLatHighMs || lm.getPendingBacklog() > backlogHigh;
-                boolean idle = lm.getSendLatencyEwma() < sendLatLowMs && lm.getPendingBacklog() == 0;
+                boolean saturated = lm.getSendLatencyEwma() > sendLatHighMs || lm.getPendingBacklog() > backlogHigh
+                        || (lm.getSrtt() > rttHighMs);   // RTT-congestion: catches dataplane/stunnel byte floods
+                boolean idle = lm.getSendLatencyEwma() < sendLatLowMs && lm.getPendingBacklog() == 0
+                        && (lm.getSrtt() < 0 || lm.getSrtt() < rttHighMs);
                 anySaturated |= saturated;
                 allIdle &= idle;
 

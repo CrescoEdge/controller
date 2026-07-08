@@ -316,11 +316,20 @@ public class ActiveBroker {
 				// producer/send is checked against per-connection identity (see CrescoAuthorizationBroker
 				// + TenantPolicy). OFF by default -> broker behaves exactly as before; enable per-region
 				// with broker_security_enabled. Must be set before broker.start().
+				java.util.List<org.apache.activemq.broker.BrokerPlugin> brokerPlugins = new java.util.ArrayList<>();
+				// Hop tracing: stamp this broker's identity onto cresco_trace-marked data-plane messages so a
+				// tunnel's bytes arrive carrying the full broker path they crossed (end-to-end path visibility,
+				// pushed by the endpoint as a subscribable trace). On by default; only marked messages pay.
+				if (plugin.getConfig().getBooleanParam("net_trace_hops", true)) {
+					brokerPlugins.add(new CrescoTraceBroker(plugin, controllerEngine.cstate.getAgentPath()));
+				}
+				// Tenant isolation authorization plugin (OFF by default).
 				if (plugin.getConfig().getBooleanParam("broker_security_enabled", false)) {
-					broker.setPlugins(new org.apache.activemq.broker.BrokerPlugin[]{
-							new CrescoAuthorizationBroker(plugin)
-					});
+					brokerPlugins.add(new CrescoAuthorizationBroker(plugin));
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
+				}
+				if (!brokerPlugins.isEmpty()) {
+					broker.setPlugins(brokerPlugins.toArray(new org.apache.activemq.broker.BrokerPlugin[0]));
 				}
 				//<amq:transportConnector uri="ssl://localhost:61616" />
 
