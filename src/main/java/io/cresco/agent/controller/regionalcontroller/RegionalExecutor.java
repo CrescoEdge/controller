@@ -74,8 +74,10 @@ public class RegionalExecutor implements Executor {
                     return regionalPipelineSubmit(incoming);
 
                 default:
-                    logger.debug("RegionalCommandExec Unknown configtype found: {}", incoming.getParam("action"));
-                    return null;
+                    // Agent-tier actions (e.g. pluginlist) addressed to a region node: answer them
+                    // about THIS node via its own agent executor instead of dropping (RPC timeout).
+                    logger.debug("RegionalExec unknown CONFIG action '{}' -> agent executor", incoming.getParam("action"));
+                    return controllerEngine.getAgentExecutor().executeCONFIG(incoming);
             }
 
         }
@@ -200,8 +202,8 @@ public class RegionalExecutor implements Executor {
                     return globalExecutor.executeEXEC(incoming);
 
                 default:
-                    logger.error("RegionalCommandExec Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
-                    return null;
+                    logger.debug("RegionalExec unknown EXEC action '{}' -> agent executor", incoming.getParam("action"));
+                    return controllerEngine.getAgentExecutor().executeEXEC(incoming);
             }
         } else {
             logger.error("EXEC : UNKNOWN ACTION: Region:" + incoming.printHeader());

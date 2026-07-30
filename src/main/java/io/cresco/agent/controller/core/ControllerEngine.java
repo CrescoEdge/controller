@@ -502,6 +502,7 @@ public class ControllerEngine {
     public PluginAdmin getPluginAdmin() { return pluginAdmin; }
 
     public CrescoHealthExecutor getHealthExecutor() { return healthExecutor; }
+    public AgentExecutor getAgentExecutor() { return executor; }
 
     public io.cresco.agent.controller.health.MeshHealth getMeshHealth() { return meshHealth; }
 
