@@ -608,7 +608,11 @@ public class MsgRouter {
                         if (forThisNode && (rm.getDstPlugin() == null
                                 || rm.getDstPlugin().equals(plugin.getPluginID()))) {
                             logger.debug("route catch-all: local controller delivery rp=" + routePath);
-                            forwardToLocalRegionalController(rm);
+                            // Deliver to THIS node's own controller executor (pluginBuilder.msgIn -> executor),
+                            // not sendRegionalMsg (which forwards up to the regional controller). Using the
+                            // regional path here silently dropped agent-addressed RPCs (e.g. pluginlist) that
+                            // reach a leaf agent via the catch-all, so the reply never came back (RPC timeout).
+                            forwardToLocalAgent(rm);
                         } else if (forThisNode && rm.getDstPlugin() != null) {
                             logger.debug("route catch-all: local plugin delivery rp=" + routePath);
                             forwardToLocalPlugin(rm);
