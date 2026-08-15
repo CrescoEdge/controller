@@ -226,7 +226,12 @@ public class DBInterfaceImpl implements DBInterface {
                 }
             }
 
-            int periodMultiplier = plugin.getConfig().getIntegerParam("period_multiplier",10);
+            // watchdog_stale_multiplier scales the staleness threshold (watchdog_period x N).
+            // Historically this shared the period_multiplier key with RegionHealthWatcher's scan
+            // cadence but with a DIFFERENT default (10 vs 3), so setting the shared key silently
+            // changed both. The legacy key is honored as a fallback for existing configs.
+            int periodMultiplier = plugin.getConfig().getIntegerParam("watchdog_stale_multiplier",
+                    plugin.getConfig().getIntegerParam("period_multiplier",10));
             List<String> pendingStaleList = dbe.getStaleNodeList(region,agent, periodMultiplier);
             for(String node : pendingStaleList) {
                 if(nodeStatusMap.containsKey(node)) {
@@ -490,7 +495,7 @@ public class DBInterfaceImpl implements DBInterface {
                         regionMap.put("region_id", region);
                         regionMap.put("plugins", String.valueOf(dbe.getNodeCount(region, agent)));
                         Map<String,String> aNode = dbe.getANode(agent);
-                        regionMap.put("status_desc", aNode.get("status_desc"));
+                        regionMap.put("status_desc", (aNode != null) ? aNode.get("status_desc") : "unknown");
                         try {
 
                             try {

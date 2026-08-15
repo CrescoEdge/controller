@@ -254,7 +254,11 @@ public class DBEngine {
 
     public boolean nodeUpdateStatus(String mode, String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
 
-        boolean isUpdated = true;
+        // Start pessimistic and report success only when every entry applied cleanly. Callers use
+        // this to answer agent_enable (is_registered): the old always-true return told a
+        // re-registering agent it was registered while its regional rows stayed LOST.
+        boolean isUpdated = false;
+        boolean entryFailed = false;
 
         boolean isRegionUpdate = false;
         boolean isAgentUpdate = false;
@@ -289,20 +293,33 @@ public class DBEngine {
 
                     for(Map<String,String> regionMap : regionList) {
                         String region_id = regionMap.get("region_id");
-                        String status_code = regionMap.get("status_code");
-                        String status_desc = regionMap.get("status_desc");
-                        String watchdog_period = regionMap.get("watchdog_period");
-                        //String watchdog_ts = agentMap.get("watchdog_ts");
-                        String configparams = regionMap.get("configparams");
+                        // per-entry guard + try/catch: one malformed entry (e.g. nulls from a
+                        // defective peer export) must not abort the rest of the batch
+                        try {
+                            String status_code = regionMap.get("status_code");
+                            String status_desc = regionMap.get("status_desc");
+                            String watchdog_period = regionMap.get("watchdog_period");
+                            //String watchdog_ts = agentMap.get("watchdog_ts");
+                            String configparams = regionMap.get("configparams");
 
-                        if(!nodeExist(region_id,null,null)) {
+                            if(region_id == null || status_code == null || watchdog_period == null) {
+                                logger.warn("nodeUpdateStatus() skipping malformed region entry: {}", regionMap);
+                                entryFailed = true;
+                                continue;
+                            }
 
-                            //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
-                            addRNode(region_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                            if(!nodeExist(region_id,null,null)) {
 
-                        } else {
-                            //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
-                            updateNode(region_id,null,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                                //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+                                addRNode(region_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+
+                            } else {
+                                //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
+                                updateNode(region_id,null,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                            }
+                        } catch (Exception ex) {
+                            logger.error("nodeUpdateStatus() region entry failed for region_id: " + region_id, ex);
+                            entryFailed = true;
                         }
 
                     }
@@ -326,28 +343,41 @@ public class DBEngine {
                     List<Map<String,String>> agentList = entry.getValue();
                     for(Map<String,String> agentMap : agentList) {
                         String agent_id = agentMap.get("agent_id");
-                        String status_code = agentMap.get("status_code");
-                        String status_desc = agentMap.get("status_desc");
-                        String watchdog_period = agentMap.get("watchdog_period");
-                        //String watchdog_ts = agentMap.get("watchdog_ts");
-                        String configparams = agentMap.get("configparams");
-
-                        if(!nodeExist(region_id,agent_id,null)) {
-
-                            //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
-                            addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
-
-                        } else {
-                            //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
-                            updateNode(region_id,agent_id,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
-                            //remove from removeAgentList
-                            if(isRegionUpdate) {
+                        try {
+                            // a known agent must never be swept into the not-in-update removal
+                            // below just because its entry was malformed
+                            if(isRegionUpdate && agent_id != null) {
                                 removeAgentList.remove(agent_id);
                             }
-                        }
 
-                        if(!assoicateANodetoRNodeExist(region_id,agent_id)) {
-                            assoicateANodetoRNode(region_id, agent_id);
+                            String status_code = agentMap.get("status_code");
+                            String status_desc = agentMap.get("status_desc");
+                            String watchdog_period = agentMap.get("watchdog_period");
+                            //String watchdog_ts = agentMap.get("watchdog_ts");
+                            String configparams = agentMap.get("configparams");
+
+                            if(agent_id == null || status_code == null || watchdog_period == null) {
+                                logger.warn("nodeUpdateStatus() skipping malformed agent entry: {}", agentMap);
+                                entryFailed = true;
+                                continue;
+                            }
+
+                            if(!nodeExist(region_id,agent_id,null)) {
+
+                                //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
+                                addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+
+                            } else {
+                                //logger.debug("addNodeFromUpdate update [" + de.getParams() + "]");
+                                updateNode(region_id,agent_id,null,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
+                            }
+
+                            if(!assoicateANodetoRNodeExist(region_id,agent_id)) {
+                                assoicateANodetoRNode(region_id, agent_id);
+                            }
+                        } catch (Exception ex) {
+                            logger.error("nodeUpdateStatus() agent entry failed for agent_id: " + agent_id, ex);
+                            entryFailed = true;
                         }
 
                     }
@@ -382,26 +412,42 @@ public class DBEngine {
 
 
                         String plugin_id = pluginMap.get("plugin_id");
-                        String status_code = pluginMap.get("status_code");
-                        String status_desc = pluginMap.get("status_desc");
-                        String watchdog_period = pluginMap.get("watchdog_period");
-                        //String watchdog_ts = pluginMap.get("watchdog_ts");
-                        String pluginname = pluginMap.get("pluginname");
-                        String jarfile = pluginMap.get("jarfile");
-                        String version = pluginMap.get("version");
-                        String md5 = pluginMap.get("md5");
-                        String configparams = pluginMap.get("configparams");
-                        String persistence_code = pluginMap.get("persistence_code");
+                        try {
+                            // a known plugin must never be swept into the not-in-update removal
+                            // below just because its entry was malformed
+                            if(plugin_id != null) {
+                                removePluginList.remove(plugin_id);
+                            }
 
-                        if(!nodeExist(null,null, plugin_id)) {
-                            int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
-                        } else {
-                            updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
-                            removePluginList.remove(plugin_id);
-                        }
+                            String status_code = pluginMap.get("status_code");
+                            String status_desc = pluginMap.get("status_desc");
+                            String watchdog_period = pluginMap.get("watchdog_period");
+                            //String watchdog_ts = pluginMap.get("watchdog_ts");
+                            String pluginname = pluginMap.get("pluginname");
+                            String jarfile = pluginMap.get("jarfile");
+                            String version = pluginMap.get("version");
+                            String md5 = pluginMap.get("md5");
+                            String configparams = pluginMap.get("configparams");
+                            String persistence_code = pluginMap.get("persistence_code");
 
-                        if(!assoicatePNodetoANodeExist(agent_id,plugin_id)) {
-                            assoicatePNodetoANode(agent_id,plugin_id);
+                            if(plugin_id == null || status_code == null || watchdog_period == null) {
+                                logger.warn("nodeUpdateStatus() skipping malformed plugin entry: {}", pluginMap);
+                                entryFailed = true;
+                                continue;
+                            }
+
+                            if(!nodeExist(null,null, plugin_id)) {
+                                int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
+                            } else {
+                                updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
+                            }
+
+                            if(!assoicatePNodetoANodeExist(agent_id,plugin_id)) {
+                                assoicatePNodetoANode(agent_id,plugin_id);
+                            }
+                        } catch (Exception ex) {
+                            logger.error("nodeUpdateStatus() plugin entry failed for plugin_id: " + plugin_id, ex);
+                            entryFailed = true;
                         }
 
                     }
@@ -419,10 +465,11 @@ public class DBEngine {
 
             }
 
-            isUpdated = true;
+            isUpdated = !entryFailed;
 
         } catch (Exception ex) {
             logger.error("DBEngine.nodeUpdateStatus()", ex);
+            isUpdated = false;
         }
         return isUpdated;
     }
@@ -510,7 +557,12 @@ public class DBEngine {
                 }
 
                 for(String tmp_region_id : tmpRegionList) {
-                    regionList.add(getRNode(tmp_region_id));
+                    Map<String, String> rNode = getRNodeStrict(tmp_region_id);
+                    // skip rows that vanished between the list query and the node fetch — a null
+                    // (or formerly nulls-filled) entry poisons the peer's nodeUpdateStatus
+                    if (rNode != null) {
+                        regionList.add(rNode);
+                    }
                 }
                 regionMap.put(pluginBuilder.getRegion(), regionList);
 
@@ -524,7 +576,10 @@ public class DBEngine {
 
                 if((region_id != null) && (agent_id != null)) {
                     List<Map<String, String>> agentList = new ArrayList<>();
-                    agentList.add(getANode(agent_id));
+                    Map<String, String> aNode = getANodeStrict(agent_id);
+                    if (aNode != null) {
+                        agentList.add(aNode);
+                    }
                     agentMap.put(region_id, agentList);
 
                 } else {
@@ -534,7 +589,10 @@ public class DBEngine {
                         List<Map<String, String>> agentList = new ArrayList<>();
                         List<String> tmpAgentList = getNodeList(tmp_region_id, null);
                         for(String tmp_agent_id : tmpAgentList) {
-                            agentList.add(getANode(tmp_agent_id));
+                            Map<String, String> aNode = getANodeStrict(tmp_agent_id);
+                            if (aNode != null) {
+                                agentList.add(aNode);
+                            }
                         }
                         agentMap.put(tmp_region_id, agentList);
                     }
@@ -553,7 +611,10 @@ public class DBEngine {
                     List<Map<String, String>> pluginList = new ArrayList<>();
                     List<String> tmpPluginList = getNodeList(region_id, agent_id);
                     for (String pluginId : tmpPluginList) {
-                        pluginList.add(getPNode(pluginId));
+                        Map<String, String> pNode = getPNodeStrict(pluginId);
+                        if (pNode != null) {
+                            pluginList.add(pNode);
+                        }
                     }
                     pluginMap.put(agent_id, pluginList);
                 } else {
@@ -565,7 +626,10 @@ public class DBEngine {
                             List<String> tmpPluginList = getNodeList(tmp_region_id, tmp_agent_id);
                             List<Map<String, String>> pluginList = new ArrayList<>();
                             for(String tmp_plugin_id : tmpPluginList) {
-                                pluginList.add(getPNode(tmp_plugin_id));
+                                Map<String, String> pNode = getPNodeStrict(tmp_plugin_id);
+                                if (pNode != null) {
+                                    pluginList.add(pNode);
+                                }
                             }
                             pluginMap.put(tmp_agent_id, pluginList);
                         }
@@ -575,7 +639,10 @@ public class DBEngine {
             }
 
         } catch (Exception ex) {
+            // Return null on ANY error: a partial export shipped upstream makes the peer's
+            // not-in-update sweep delete live nodes. Callers skip the tick / retry instead.
             logger.error("DBEngine.getDBExport()", ex);
+            exportMap = null;
         }
 
 
@@ -812,23 +879,25 @@ public class DBEngine {
         return status_code;
     }
 
-    public Map<String,String> getPNode(String pluginId) {
+    // The three node getters distinguish "row missing" (null) from "query failed" (throws, strict
+    // variants): a map of nulls or an error-as-absent both poison peers — the former NFEs the
+    // peer's nodeUpdateStatus, the latter makes its not-in-update sweep delete live nodes.
+    // getDBExport uses the strict variants; the lenient public wrappers return null on error for
+    // callers where a dropped read is tolerable (health checks, display paths).
+
+    private Map<String,String> getPNodeStrict(String pluginId) throws Exception {
         Map<String,String> pNodeMap = null;
-        try {
 
-            pNodeMap = new HashMap<>();
+        String queryString = "SELECT * FROM pnode " +
+                "WHERE plugin_id='" + pluginId + "'";
 
-            String queryString = null;
+        try (Connection conn = ds.getConnection()) {
+            try (Statement stmt = conn.createStatement()) {
 
-            queryString = "SELECT * FROM pnode " +
-                    "WHERE plugin_id='" + pluginId + "'";
+                try(ResultSet rs = stmt.executeQuery(queryString)) {
 
-            try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
-
-                        rs.next();
+                    if (rs.next()) {
+                        pNodeMap = new HashMap<>();
                         pNodeMap.put("plugin_id", rs.getString("plugin_id"));
                         pNodeMap.put("status_code", rs.getString("status_code"));
                         pNodeMap.put("status_desc", rs.getString("status_desc"));
@@ -840,98 +909,100 @@ public class DBEngine {
                         pNodeMap.put("md5", rs.getString("md5"));
                         pNodeMap.put("configparams", rs.getString("configparams"));
                         pNodeMap.put("persistence_code", rs.getString("persistence_code"));
-
-                        rs.close();
+                    } else {
+                        logger.warn("DBEngine.getPNode() no pnode row for plugin_id: {}", pluginId);
                     }
-
-                    stmt.close();
                 }
-
-                conn.close();
             }
-
-        } catch(Exception ex) {
-            logger.error("DBEngine.getPNode()", ex);
         }
         return pNodeMap;
     }
 
-    public Map<String,String> getRNode(String regionId) {
-        Map<String,String> aNodeMap = null;
+    public Map<String,String> getPNode(String pluginId) {
         try {
+            return getPNodeStrict(pluginId);
+        } catch(Exception ex) {
+            logger.error("DBEngine.getPNode()", ex);
+            return null;
+        }
+    }
 
-            aNodeMap = new HashMap<>();
+    private Map<String,String> getRNodeStrict(String regionId) throws Exception {
+        Map<String,String> aNodeMap = null;
 
-            String queryString = null;
+        String queryString = "SELECT * FROM rnode " +
+                "WHERE region_id='" + regionId + "'";
 
-            queryString = "SELECT * FROM rnode " +
-                    "WHERE region_id='" + regionId + "'";
+        try (Connection conn = ds.getConnection()) {
+            try (Statement stmt = conn.createStatement()) {
 
-            try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try(ResultSet rs = stmt.executeQuery(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
-
-                        rs.next();
+                    // Missing row -> null, never a map of nulls (see getPNodeStrict).
+                    if (rs.next()) {
+                        aNodeMap = new HashMap<>();
                         aNodeMap.put("region_id", rs.getString("region_id"));
                         aNodeMap.put("status_code", rs.getString("status_code"));
                         aNodeMap.put("status_desc", rs.getString("status_desc"));
                         aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
                         //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
                         aNodeMap.put("configparams", rs.getString("configparams"));
-
-                        rs.close();
+                    } else {
+                        logger.warn("DBEngine.getRNode() no rnode row for region_id: {}", regionId);
                     }
-
-                    stmt.close();
                 }
-
-                conn.close();
             }
-
-        } catch(Exception ex) {
-            logger.error("DBEngine.getRNode()", ex);
         }
         return aNodeMap;
     }
 
-    public Map<String,String> getANode(String agentId) {
-        Map<String,String> aNodeMap = null;
+    public Map<String,String> getRNode(String regionId) {
         try {
+            return getRNodeStrict(regionId);
+        } catch(Exception ex) {
+            logger.error("DBEngine.getRNode()", ex);
+            return null;
+        }
+    }
 
-            aNodeMap = new HashMap<>();
+    private Map<String,String> getANodeStrict(String agentId) throws Exception {
+        Map<String,String> aNodeMap = null;
 
-            String queryString = null;
+        String queryString = "SELECT * FROM anode " +
+                "WHERE agent_id='" + agentId + "'";
 
-            queryString = "SELECT * FROM anode " +
-                    "WHERE agent_id='" + agentId + "'";
+        try (Connection conn = ds.getConnection()) {
+            try (Statement stmt = conn.createStatement()) {
 
-            try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try(ResultSet rs = stmt.executeQuery(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
-
-                        rs.next();
+                    // Missing row -> null, never a map of nulls: an empty anode export shipped
+                    // over the wire is what NFE'd the regional nodeUpdateStatus and left
+                    // re-registering agents stuck LOST (2026-08-15 incident).
+                    if (rs.next()) {
+                        aNodeMap = new HashMap<>();
                         aNodeMap.put("agent_id", rs.getString("agent_id"));
                         aNodeMap.put("status_code", rs.getString("status_code"));
                         aNodeMap.put("status_desc", rs.getString("status_desc"));
                         aNodeMap.put("watchdog_period", rs.getString("watchdog_period"));
                         //aNodeMap.put("watchdog_ts", rs.getString("watchdog_ts"));
                         aNodeMap.put("configparams", rs.getString("configparams"));
-
-                        rs.close();
+                    } else {
+                        logger.warn("DBEngine.getANode() no anode row for agent_id: {}", agentId);
                     }
-
-                    stmt.close();
                 }
-
-                conn.close();
             }
-
-        } catch(Exception ex) {
-            logger.error("DBEngine.getANode()", ex);
         }
         return aNodeMap;
+    }
+
+    public Map<String,String> getANode(String agentId) {
+        try {
+            return getANodeStrict(agentId);
+        } catch(Exception ex) {
+            logger.error("DBEngine.getANode()", ex);
+            return null;
+        }
     }
 
     public String getRNodeFromAnode(String agentId) {

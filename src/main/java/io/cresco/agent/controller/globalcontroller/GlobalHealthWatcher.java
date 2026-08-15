@@ -23,7 +23,10 @@ public class GlobalHealthWatcher {
 
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
         long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
-        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
+        // Same scan-cadence multiplier split as RegionHealthWatcher (see comment there); legacy
+        // period_multiplier honored as fallback.
+        long periodMultiplier = plugin.getConfig().getLongParam("watchdog_scan_multiplier",
+                plugin.getConfig().getLongParam("period_multiplier",3L));
 
         globalUpdateTimer = new Timer();
         globalUpdateTimer.scheduleAtFixedRate(new GlobalNodeStatusWatchDog(controllerEngine, logger),  periodMultiplier * watchDogIntervalDelay, periodMultiplier * watchDogInterval);//remote

@@ -1467,7 +1467,10 @@ public class PluginAdmin {
 
                     String pluginID = (String) pair.getKey();
 
-                    configMapList.add(gdb.getPNode(pluginID));
+                    Map<String,String> pNode = gdb.getPNode(pluginID);
+                    if (pNode != null) {
+                        configMapList.add(pNode);
+                    }
                     //it.remove(); // avoids a ConcurrentModificationException
                 }
             }
@@ -1495,7 +1498,10 @@ public class PluginAdmin {
 
                     String pluginID = (String) pair.getKey();
 
-                    configMapList.add(gdb.getPNode(pluginID));
+                    Map<String,String> pNode = gdb.getPNode(pluginID);
+                    if (pNode != null) {
+                        configMapList.add(pNode);
+                    }
                     //it.remove(); // avoids a ConcurrentModificationException
                 }
             }

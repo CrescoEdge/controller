@@ -1510,6 +1510,12 @@ public class ControllerSMHandler {
 
                             try {
                                 Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
+                                if (exportMap == null) {
+                                    // transient DB error: skip this tick rather than ship a partial
+                                    // export that the parent would sweep-delete nodes against
+                                    logger.warn("stateUpdateTask() AGENT: DB export unavailable; skipping this update tick.");
+                                    break;
+                                }
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
 
@@ -1544,6 +1550,12 @@ public class ControllerSMHandler {
 
                             try {
                                 Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(true, true, true, plugin.getRegion(), null, null);
+                                if (exportMap == null) {
+                                    // transient DB error: skip this tick rather than ship a partial
+                                    // export that the parent would sweep-delete nodes against
+                                    logger.warn("stateUpdateTask() REGION_GLOBAL: DB export unavailable; skipping this update tick.");
+                                    break;
+                                }
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
 
@@ -1693,7 +1705,15 @@ public class ControllerSMHandler {
             enableMsg.setParam("mode","AGENT");
 
             Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
-            enableMsg.setCompressedParam("agentconfigs",exportMap.get("agentconfigs"));
+            String agentconfigs = (exportMap != null) ? exportMap.get("agentconfigs") : null;
+            // A registration whose export lacks our own anode row would "succeed" on the regional
+            // side without restoring the watchdog row (the zombie-LOST trap). Fail this attempt so
+            // the state machine retries once the local DB row is back.
+            if (agentconfigs == null || controllerEngine.getGDB().getANode(plugin.getAgent()) == null) {
+                logger.error("registerAgent(): local anode export unavailable; aborting registration attempt.");
+                return false;
+            }
+            enableMsg.setCompressedParam("agentconfigs",agentconfigs);
 
             logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
 

@@ -155,13 +155,13 @@ public class AgentHealthWatcher {
                 logger.warn("sendWatchdogUpdate: Could not retrieve plugin list for agent {}", controllerEngine.cstate.getAgent());
             }
 
-            // Send the message only if there are config changes or it's a basic watchdog
-            if (le.paramsContains("agentconfigs") || le.paramsContains("pluginconfigs") || (le.getParams().size() > 6)) { // Check if more than basic params exist
-                logger.trace("Sending watchdog update to regional controller.");
-                plugin.msgOut(le);
-            } else {
-                logger.trace("No changes in agent/plugin configs, skipping watchdog send.");
-            }
+            // ALWAYS send: this WATCHDOG is the agent's control-plane keep-alive (it carries
+            // agent_watchdog_update, refreshing watchdog_ts on the regional controller). The old
+            // params.size()>6 guard suppressed it whenever configs were unchanged, leaving the
+            // 15s dataplane stateUpdate as the ONLY thing keeping this agent from going STALE.
+            // Config exports above are still diff-gated, so the steady-state message stays small.
+            logger.trace("Sending watchdog update to regional controller.");
+            plugin.msgOut(le);
 
         } else {
             // If this node *is* a regional/global controller, just update its own DB timestamp

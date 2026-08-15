@@ -70,7 +70,12 @@ public class RegionHealthWatcher {
         long watchDogIntervalDelay = plugin.getConfig().getLongParam("watchdog_interval_delay",5000L);
         long commWatchDogInterval = plugin.getConfig().getLongParam("comm_watchdog_interval",5000L); // Interval for checking local components
         long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L); // Interval for checking agent statuses in DB
-        long periodMultiplier = plugin.getConfig().getLongParam("period_multiplier",3L);
+        // watchdog_scan_multiplier scales the node-status scan cadence (x watchdog_interval).
+        // Historically this shared the period_multiplier key with the staleness threshold in
+        // DBInterfaceImpl but with a DIFFERENT default (3 vs 10), so setting the shared key
+        // silently changed both. The legacy key is honored as a fallback for existing configs.
+        long periodMultiplier = plugin.getConfig().getLongParam("watchdog_scan_multiplier",
+                plugin.getConfig().getLongParam("period_multiplier",3L));
 
         // Use separate config params for ping interval and timeout, or derive from wdTimer
         this.pingInterval = plugin.getConfig().getLongParam("region_ping_interval", 5000L); // ping cadence (also caps link-failure detection latency)
