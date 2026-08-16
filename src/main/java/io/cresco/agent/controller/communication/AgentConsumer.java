@@ -32,6 +32,8 @@ public class AgentConsumer {
 	private ControllerEngine controllerEngine;
     private MessageConsumer consumer;
 	private Gson gson;
+	private boolean dedicatedConnection;
+	private org.apache.activemq.ActiveMQConnection connection;
 
 	private AtomicBoolean lockGroupMap = new AtomicBoolean();
 	private Map<String, FileObjectGroupReceiver> fileGroupMap;
@@ -75,11 +77,35 @@ public class AgentConsumer {
 		logger.debug("Queue: {}", RXQueueName);
 		logger.trace("RXQueue=" + RXQueueName + " URI=" + URI);
 
+		// Transport isolation: the inbox carries ALL inbound control (WATCHDOG/EXEC/CONFIG, RPC
+		// replies), so receiving it over the pooled socket lets inbound dataplane/bulk frames
+		// delay control at the wire. Give the inbox its own socket. vm:// is in-JVM — pooled fine.
+		this.dedicatedConnection = !URI.startsWith("vm")
+				&& plugin.getConfig().getBooleanParam("agentconsumer_dedicated_connection", true);
+		sess = dedicatedConnection
+				? controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE, true)
+				: controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+		if (sess == null) {
+			throw new JMSException("AgentConsumer: unable to create session for URI " + URI);
+		}
+		if (dedicatedConnection) {
+			logger.info("AgentConsumer inbox on dedicated control-plane connection for URI [{}]", URI);
+		}
+		this.connection = (org.apache.activemq.ActiveMQConnection) sess.getConnection();
 
-		sess = controllerEngine.getActiveClient().createSession(URI,false, Session.AUTO_ACKNOWLEDGE);
-
-		RXqueue = sess.createQueue(RXQueueName);
-		consumer = sess.createConsumer(RXqueue);
+		// From here the dedicated socket is live and WE own it: if consumer setup fails (broker
+		// authz denial, broker drop mid-setup) the constructor throws and the caller never gets a
+		// reference to shut down — close the owned connection before rethrowing or it leaks open.
+		try {
+			RXqueue = sess.createQueue(RXQueueName);
+			consumer = sess.createConsumer(RXqueue);
+		} catch (JMSException | RuntimeException ex) {
+			if (dedicatedConnection) {
+				try { if (!sess.isClosed()) sess.close(); } catch (Exception ignore) { }
+				try { if (connection != null && !connection.isClosed()) connection.close(); } catch (Exception ignore) { }
+			}
+			throw ex;
+		}
 
 		Gson gson = new Gson();
 
@@ -297,6 +323,15 @@ public class AgentConsumer {
 
 	}
 
+	/** Live state of the connection actually carrying the inbox (dedicated or pooled). */
+	public boolean isConnectionActive() {
+		try {
+			return connection != null && connection.isStarted() && !connection.isClosing() && !connection.isClosed();
+		} catch (Exception ex) {
+			return false;
+		}
+	}
+
 	private boolean registerIncomingFiles(String msgEventString, String fileobjectString, String fileGroup) {
 		boolean isRegistered = false;
 		try {
@@ -329,6 +364,22 @@ public class AgentConsumer {
 			consumer.close();
 		} catch (Exception ex) {
 			logger.error("AgentConsumer.shutdown Consumer Shutdown Error: " + ex.getMessage(), ex);
+		}
+		// On a dedicated connection WE own the socket: close it or every re-init (failover) leaks
+		// one. Never close a pooled session's shared connection. Separate trys so a throwing
+		// session.close() cannot strand the socket.
+		if (dedicatedConnection) {
+			try {
+				if (sess != null && !sess.isClosed()) sess.close();
+			} catch (Exception ex) {
+				logger.warn("AgentConsumer.shutdown session close error: " + ex.getMessage());
+			} finally {
+				try {
+					if (connection != null && !connection.isClosed()) connection.close();
+				} catch (Exception ex) {
+					logger.warn("AgentConsumer.shutdown dedicated connection close error: " + ex.getMessage());
+				}
+			}
 		}
 	}
 

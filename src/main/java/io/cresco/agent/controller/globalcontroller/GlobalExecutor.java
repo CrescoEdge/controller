@@ -265,6 +265,13 @@ public class GlobalExecutor implements Executor {
     }
     @Override
     public MsgEvent executeWATCHDOG(MsgEvent incoming) {
+        // Region -> global keep-alive on the control plane (LIVENESS tier, queue path). This was a
+        // silent no-op, which made the dataplane stateUpdate the ONLY refresher of a region's
+        // watchdog_ts at the global — a single-path keep-alive that bulk dataplane traffic could
+        // starve. Mirrors RegionalExecutor.executeWATCHDOG.
+        if(!controllerEngine.getGDB().nodeUpdate(incoming)) {
+            logger.error("Unable to update Global WatchDog " + incoming.printHeader());
+        }
         return null;
     }
     @Override

@@ -13,6 +13,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Map;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap; // Import ConcurrentHashMap
@@ -26,6 +27,11 @@ public class ActiveClient {
     // Use ConcurrentHashMap for better thread safety with less contention than synchronizedMap
     private Map<String, ActiveMQSslConnectionFactory> connectionFactoryMap;
     private Map<String, ActiveMQConnection> connectionMap;
+    // Dedicated (non-pooled) connections handed out by createDedicatedSession. Tracked with their
+    // URI ONLY so refreshTrust/shutdown can close them (they are otherwise invisible to both, which
+    // left shard/control sockets running on pre-enrollment TLS material). Owners rebuild lazily.
+    private record DedicatedConn(String uri, ActiveMQConnection conn) {}
+    private final List<DedicatedConn> dedicatedConnections = Collections.synchronizedList(new ArrayList<>());
 
     private AgentConsumer agentConsumer;
     private AgentProducer agentProducer;
@@ -69,7 +75,27 @@ public class ActiveClient {
                     connectionFactoryMap.remove(uri);
                 }
             }
-            logger.info("ActiveClient trust refreshed — " + refreshed + " network connection(s) rebuilt with current certificates; vm:// preserved");
+            // Dedicated connections (control-plane sender/consumer, dataplane shards) carry the same
+            // TLS material; close the NETWORK ones so their owners lazily rebuild with the refreshed
+            // identity. vm:// dedicated connections (controllers to their own broker) hold no TLS and
+            // their owners cache sessions/producers — closing them would wedge, exactly like the
+            // pooled vm:// case above.
+            int dedicated = 0;
+            synchronized (dedicatedConnections) {
+                java.util.Iterator<DedicatedConn> it = dedicatedConnections.iterator();
+                while (it.hasNext()) {
+                    DedicatedConn dc = it.next();
+                    if (dc.uri() != null && dc.uri().startsWith("vm://")) {
+                        continue;
+                    }
+                    ActiveMQConnection c = dc.conn();
+                    if (c != null && !c.isClosed()) {
+                        try { c.setExceptionListener(null); c.close(); dedicated++; } catch (Exception ignore) { }
+                    }
+                    it.remove();
+                }
+            }
+            logger.info("ActiveClient trust refreshed — " + refreshed + " pooled + " + dedicated + " dedicated network connection(s) rebuilt with current certificates; vm:// preserved");
         } catch (Exception ex) {
             logger.error("refreshTrust error: " + ex.getMessage());
         }
@@ -148,7 +174,15 @@ public class ActiveClient {
         boolean isActive = false;
         try {
             if (faultTriggerURI != null) {
-                isActive = isConnectionActive(faultTriggerURI);
+                // The fault URI tracks the AgentConsumer's link to the parent broker. With the
+                // consumer on a DEDICATED connection there may be no pooled connection for this
+                // URI at all (waiters like DataPlaneServiceImpl.getSession spun forever on the
+                // map lookup during startup) — ask the consumer for its actual connection state.
+                if (agentConsumer != null) {
+                    isActive = agentConsumer.isConnectionActive();
+                } else {
+                    isActive = isConnectionActive(faultTriggerURI);
+                }
             } else {
                 logger.trace("isFaultURIActive: faultTriggerURI is null, assuming inactive.");
                 isActive = false; // No URI to check, assume inactive or handle as per application logic
@@ -193,6 +227,17 @@ public class ActiveClient {
     // own connection/core instead of multiplexing everything over one socket (the agent->region
     // throughput funnel). The caller owns the lifecycle and closes it via the session's connection.
     public ActiveMQSession createDedicatedSession(String URI, boolean transacted, int acknowledgeMode) {
+        return createDedicatedSession(URI, transacted, acknowledgeMode, false);
+    }
+
+    /**
+     * @param quietFailure true = a transport failure on THIS connection only logs and prunes it from
+     *        the registry; it does NOT invoke handleConnectionFailure, which would tear down the
+     *        healthy pooled connection and invalidate every producer worker. Used by owners with
+     *        their own recovery (ControlPlaneSender rebuilds lazily on send failure; AgentConsumer
+     *        failure surfaces through isFaultURIActive -> the fault state machine re-inits).
+     */
+    public ActiveMQSession createDedicatedSession(String URI, boolean transacted, int acknowledgeMode, boolean quietFailure) {
         try {
             ActiveMQSslConnectionFactory factory = connectionFactoryMap.computeIfAbsent(URI, key -> {
                 logger.info("createDedicatedSession: initializing factory for URI [{}]", key);
@@ -203,7 +248,17 @@ public class ActiveClient {
                 return null;
             }
             ActiveMQConnection conn = (ActiveMQConnection) factory.createConnection();
-            conn.setExceptionListener(new ConnectionExceptionListener(URI));
+            if (quietFailure) {
+                conn.setExceptionListener(e -> {
+                    logger.warn("Dedicated connection to [{}] failed (owner recovers): {}", URI, e.getMessage());
+                    synchronized (dedicatedConnections) {
+                        dedicatedConnections.removeIf(dc -> dc.conn() == conn);
+                    }
+                    try { conn.close(); } catch (Exception ignore) { }
+                });
+            } else {
+                conn.setExceptionListener(new ConnectionExceptionListener(URI));
+            }
             conn.start();
             int attempts = 0;
             while (!conn.isStarted() && attempts < MAX_CONNECTION_START_ATTEMPTS) {
@@ -214,6 +269,22 @@ public class ActiveClient {
                 logger.error("createDedicatedSession: connection to [{}] failed to start", URI);
                 try { conn.close(); } catch (JMSException ignore) {}
                 return null;
+            }
+            synchronized (dedicatedConnections) {
+                // prune dead entries: closed AND transport-failed (a failover-exhausted connection
+                // never reads as closed but is permanently dead — it would pin sockets forever)
+                java.util.Iterator<DedicatedConn> it = dedicatedConnections.iterator();
+                while (it.hasNext()) {
+                    DedicatedConn dc = it.next();
+                    ActiveMQConnection c = dc.conn();
+                    if (c == null || c.isClosed() || c.isTransportFailed()) {
+                        if (c != null && !c.isClosed()) {
+                            try { c.setExceptionListener(null); c.close(); } catch (Exception ignore) { }
+                        }
+                        it.remove();
+                    }
+                }
+                dedicatedConnections.add(new DedicatedConn(URI, conn));
             }
             return (ActiveMQSession) conn.createSession(transacted, acknowledgeMode);
         } catch (Exception ex) {
@@ -432,6 +503,10 @@ public class ActiveClient {
             if (this.agentConsumer != null) {
                 logger.warn("Existing Agent Consumer found. Shutting it down before creating a new one.");
                 this.agentConsumer.shutdown();
+                // Null BEFORE constructing: if the constructor throws, a stale field pointing at the
+                // shut-down consumer would make isFaultURIActive() false FOREVER (its dedicated
+                // connection never restarts) and permanently hang initIOChannels' wait loop.
+                this.agentConsumer = null;
             }
             this.agentConsumer = new AgentConsumer(controllerEngine, RXQueueName, URI);
             isInit = true; // Assume success if constructor doesn't throw
@@ -492,6 +567,15 @@ public class ActiveClient {
         }
 
         logger.info("Closing all active JMS connections...");
+        synchronized (dedicatedConnections) {
+            for (DedicatedConn dc : dedicatedConnections) {
+                ActiveMQConnection c = dc.conn();
+                if (c != null && !c.isClosed()) {
+                    try { c.setExceptionListener(null); c.close(); } catch (Exception ignore) { }
+                }
+            }
+            dedicatedConnections.clear();
+        }
         // Create a new list from keys to avoid ConcurrentModificationException if handleConnectionFailure modifies the map
         List<String> urisToClose = new ArrayList<>(connectionMap.keySet());
         for (String uri : urisToClose) {

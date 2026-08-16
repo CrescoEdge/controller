@@ -509,6 +509,13 @@ public class RegionHealthWatcher {
                     tick.setParam("mode", "REGION"); // Identify update source
                     controllerEngine.getGDB().nodeUpdate(tick);
                     logger.trace("Updated own watchdog status in DB.");
+                    // ALSO send it to the global (LIVENESS tier, control-plane queue path). Despite
+                    // this message being addressed to the global, it was only ever applied to the
+                    // LOCAL DB, so the global's view of this region's liveness depended entirely on
+                    // the dataplane stateUpdate — which bulk dataplane traffic can starve.
+                    if (controllerEngine.cstate.isRegionalController() && !controllerEngine.cstate.isGlobalController()) {
+                        plugin.msgOut(tick);
+                    }
                 } else {
                     logger.warn("CommunicationHealthWatcherTask: Failed to create watchdog message event!");
                 }

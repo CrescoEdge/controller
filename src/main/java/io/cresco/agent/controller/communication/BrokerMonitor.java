@@ -15,6 +15,7 @@ class BrokerMonitor implements Runnable {
 	private CLogger logger;
 	private String agentPath;
 	private NetworkConnector bridge;
+	private String monitoredHost;
 
 	public volatile boolean MonitorActive;
 
@@ -38,6 +39,7 @@ class BrokerMonitor implements Runnable {
 			if((InetAddress.getByName(brokerAddress) instanceof Inet6Address)) {
 				brokerAddress = "[" + brokerAddress + "]";
 			}
+			this.monitoredHost = brokerAddress;
 			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress);
 			bridge.start();
 
@@ -133,18 +135,28 @@ class BrokerMonitor implements Runnable {
 
 			}
 
+            // Liveness across the WHOLE connector group: with the control/data bridge split,
+            // connector 0 (control) staying up while a data connector dies would silently
+            // blackhole ALL topic forwarding — monitoring only the primary missed that entirely.
+            // A member counts once it has connected at least once (everConnected), so a freshly
+            // added AutoTuner connector that has not yet established does not flap the group.
+            java.util.Set<String> everConnected = new java.util.HashSet<>();
             while (MonitorActive) {
-				MonitorActive = false;
-				for (NetworkBridge b : bridge.activeBridges()) {
-				    logger.trace("Check Broker Name: " + b.getRemoteBrokerName() + " for agentPath: " + agentPath);
-					logger.trace("found bridge[" + b + "] to " + b.getRemoteBrokerName() + " on broker :" + b.getLocalBrokerName());
-
-					//agentcontroller.sendAPMessage(MsgEvent);
-                    //if (b.getRemoteBrokerName().equals(agentPath)) {
-					    MonitorActive = true;
-					//}
-
+                boolean primaryAlive = false;
+                boolean memberLost = false;
+                for (NetworkConnector nc : controllerEngine.getBroker().getBridgeGroup(monitoredHost)) {
+                    boolean alive = !nc.activeBridges().isEmpty();
+                    if (nc == bridge && alive) {
+                        primaryAlive = true;
+                    }
+                    if (alive) {
+                        everConnected.add(nc.getName());
+                    } else if (everConnected.contains(nc.getName())) {
+                        logger.warn("Bridge connector " + nc.getName() + " to " + agentPath + " lost its bridge; failing the group for rebuild.");
+                        memberLost = true;
+                    }
                 }
+                MonitorActive = primaryAlive && !memberLost;
 				Thread.sleep(5000);
 			}
 

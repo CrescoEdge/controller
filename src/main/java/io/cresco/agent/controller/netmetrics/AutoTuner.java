@@ -164,22 +164,32 @@ public class AutoTuner implements Runnable {
         String host = hostForPath(lm.getPath());
         if (host == null) return;
         int cur;
-        try { cur = ce.getBroker().getBridgeConnectionCount(host); } catch (Exception e) { return; }
+        // DATA-connector count: with the control/data bridge split, the ctl connector must not
+        // count toward dataplane parallelism or min/max thresholds are off by one.
+        try { cur = ce.getBroker().getDataBridgeConnectionCount(host); } catch (Exception e) { return; }
         if (cur == 0) return; // no inter-broker bridge to this host (agent-client path scales via shards)
 
         long now = System.currentTimeMillis();
         if (now - lastConnAction.getOrDefault(host, 0L) < cooldownMs) return;
 
+        // Only stamp cooldown/profile on an ACTUAL change: remove is floored at the partitioned
+        // core, so a no-op removal must not loop a phantom AUTOSCALE DOWN forever.
         if (saturated && cur < profile.getMaxConns()) {
+            int before = ce.getBroker().getBridgeConnectionCount(host);
             int n = ce.getBroker().addBridgeConnections(host, 1);
-            profile.setConnectionsPerLink(n);
-            lastConnAction.put(host, now);
-            logger.info("AUTOSCALE UP " + lm.getPath() + " -> " + n + " bridge conns  (" + lm + ")");
+            if (n > before) {
+                profile.setConnectionsPerLink(ce.getBroker().getDataBridgeConnectionCount(host));
+                lastConnAction.put(host, now);
+                logger.info("AUTOSCALE UP " + lm.getPath() + " -> " + n + " bridge conns  (" + lm + ")");
+            }
         } else if (idle && cur > profile.getMinConns()) {
+            int before = ce.getBroker().getBridgeConnectionCount(host);
             int n = ce.getBroker().removeBridgeConnections(host, 1);
-            profile.setConnectionsPerLink(n);
-            lastConnAction.put(host, now);
-            logger.info("AUTOSCALE DOWN " + lm.getPath() + " -> " + n + " bridge conns  (" + lm + ")");
+            if (n < before) {
+                profile.setConnectionsPerLink(ce.getBroker().getDataBridgeConnectionCount(host));
+                lastConnAction.put(host, now);
+                logger.info("AUTOSCALE DOWN " + lm.getPath() + " -> " + n + " bridge conns  (" + lm + ")");
+            }
         }
     }
 

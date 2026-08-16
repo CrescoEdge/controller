@@ -39,6 +39,7 @@ class ControlPlaneSender {
 
     private ActiveMQSession session;
     private MessageProducer producer;
+    private final boolean dedicatedConnection;
     private final Map<String, Destination> destCache = new ConcurrentHashMap<>();
 
     ControlPlaneSender(ControllerEngine controllerEngine, String baseURI) {
@@ -47,6 +48,12 @@ class ControlPlaneSender {
         this.logger = plugin.getLogger(ControlPlaneSender.class.getName(), CLogger.Level.Info);
         this.baseURI = baseURI;
         this.ttl = plugin.getConfig().getLongParam("controlplane_ttl", 300000L);
+        // Transport isolation: a dedicated SESSION on the pooled connection still shares ONE TCP
+        // socket with the dataplane, so 256KB bulk frames delay the liveness ping at the wire
+        // (FIFO OpenWire marshal + TCP backpressure) no matter the JMS priority. Give control its
+        // own socket. vm:// is in-JVM (no socket) — pooled is fine there.
+        this.dedicatedConnection = !baseURI.startsWith("vm")
+                && plugin.getConfig().getBooleanParam("controlplane_dedicated_connection", true);
     }
 
     private void ensureOpen() throws JMSException {
@@ -54,11 +61,14 @@ class ControlPlaneSender {
         synchronized (lock) {
             if (session != null && !session.isClosed() && producer != null) return;
             closeQuietly();
-            session = controllerEngine.getActiveClient().createSession(baseURI, false, Session.AUTO_ACKNOWLEDGE);
+            session = dedicatedConnection
+                    ? controllerEngine.getActiveClient().createDedicatedSession(baseURI, false, Session.AUTO_ACKNOWLEDGE, true)
+                    : controllerEngine.getActiveClient().createSession(baseURI, false, Session.AUTO_ACKNOWLEDGE);
             if (session == null) throw new JMSException("ControlPlaneSender: null session for " + baseURI);
             producer = session.createProducer(null); // anonymous; destination chosen per send
             destCache.clear();
-            logger.info("ControlPlaneSender session (re)initialized for {}", baseURI);
+            logger.info("ControlPlaneSender session (re)initialized for {}{}", baseURI,
+                    dedicatedConnection ? " (dedicated control-plane connection)" : "");
         }
     }
 
@@ -95,7 +105,17 @@ class ControlPlaneSender {
     private void closeQuietly() {
         synchronized (lock) {
             try { if (producer != null) producer.close(); } catch (Exception ignore) { }
+            // On a dedicated connection WE own the socket: close it too or every rebuild leaks one.
+            // Never close the connection of a pooled session (shared). Session and connection are
+            // closed in SEPARATE trys so a throwing session.close() cannot strand the socket.
+            org.apache.activemq.ActiveMQConnection conn = null;
+            try {
+                if (session != null && dedicatedConnection) {
+                    conn = (org.apache.activemq.ActiveMQConnection) session.getConnection();
+                }
+            } catch (Exception ignore) { }
             try { if (session != null && !session.isClosed()) session.close(); } catch (Exception ignore) { }
+            try { if (conn != null && !conn.isClosed()) conn.close(); } catch (Exception ignore) { }
             producer = null;
             session = null;
             destCache.clear();

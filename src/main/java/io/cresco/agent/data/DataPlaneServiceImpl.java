@@ -345,6 +345,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 synchronized (shardSessions) {
                     s = shardSessions.get(key);
                     if (s == null || s.isClosed()) {
+                        // a closed session's dedicated connection may still be open — close it or
+                        // every shard rebuild leaks a socket
+                        if (s != null) {
+                            try {
+                                org.apache.activemq.ActiveMQConnection oldConn =
+                                        (org.apache.activemq.ActiveMQConnection) s.getConnection();
+                                if (oldConn != null && !oldConn.isClosed()) oldConn.close();
+                            } catch (Exception ignore) { }
+                        }
                         while (!controllerEngine.getActiveClient().isFaultURIActive()) { Thread.sleep(1000); }
                         s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
                         if (s != null) {

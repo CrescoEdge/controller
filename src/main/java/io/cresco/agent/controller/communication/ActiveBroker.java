@@ -131,7 +131,11 @@ public class ActiveBroker {
                 //entry.setExpireMessagesPeriod(0);
 
                 int queuePrefetchLimit = plugin.getConfig().getIntegerParam("queue_prefetch_limit",100);
-                entry.setTopicPrefetch(queuePrefetchLimit);
+                // BUG FIX: this called setTopicPrefetch (then overwritten by the topic block below),
+                // so queue consumers — the control inboxes — actually ran at the ActiveMQ client
+                // default prefetch of 1000: up to 1000 mixed messages (incl. 256KB file parts)
+                // FIFO-committed onto the shared socket ahead of a priority-9 WATCHDOG.
+                entry.setQueuePrefetch(queuePrefetchLimit);
 
                 PrefetchRatePendingMessageLimitStrategy queuePreFetchRate = new PrefetchRatePendingMessageLimitStrategy();
                 queuePreFetchRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
@@ -546,16 +550,33 @@ public class ActiveBroker {
 
 	}
 
-	// Create the bridge group to a remote host. Count comes from broker_bridge_connections (default 1,
-	// = shipped single-connector behavior). Returns the PRIMARY connector (index 0) un-started so the
-	// existing BrokerMonitor connect path starts+monitors it; any extra connectors are started here.
+	// Create the bridge group to a remote host. Returns the PRIMARY connector (index 0) un-started so
+	// the existing BrokerMonitor connect path starts+monitors it; any extra connectors are started here.
+	//
+	// With broker_control_bridge_split (default true) the group is partitioned by destination TYPE:
+	// connector 0 forwards ONLY queues (the entire MsgEvent control fabric — WATCHDOG/liveness, EXEC,
+	// CONFIG, RPC — plus telemetry/file-part MsgEvents), and connectors 1..N forward ONLY topics (the
+	// dataplane: agent/region/global.event incl. all stunnel bulk). This gives the control plane its
+	// own TCP socket between brokers: without it, up to bridge-prefetch x 256KB of priority-0 bulk is
+	// FIFO-committed onto the single shared duplex socket ahead of a priority-9 WATCHDOG (JMS priority
+	// only orders WITHIN one destination; it cannot help across destinations sharing a transport).
+	// The type wildcards also match tenant-qualified (T.<tenant>.*) names, unlike the raw shard-topic
+	// filters, so the split holds under tenant_namespacing.
 	public NetworkConnector AddNetworkConnector(String hostname) {
-		int count = Math.max(1, plugin.getConfig().getIntegerParam("broker_bridge_connections", 1));
-		// When the dataplane is sharded, use exactly one connector per shard so each shard forwards
-		// over its own TLS socket (the destination filter in buildConnector binds connector i to
-		// global.event.i). Without that 1:1 binding, only one connector actually forwards -> no gain.
+		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
-		if (shards > 1) count = shards;
+		int count;
+		if (split) {
+			// one control connector + one data connector per shard (min 1)
+			int dataCount = Math.max(shards, Math.max(1, plugin.getConfig().getIntegerParam("broker_bridge_connections", 1)));
+			count = 1 + dataCount;
+		} else {
+			count = Math.max(1, plugin.getConfig().getIntegerParam("broker_bridge_connections", 1));
+			// When the dataplane is sharded, use exactly one connector per shard so each shard forwards
+			// over its own TLS socket (the destination filter in buildConnector binds connector i to
+			// global.event.i). Without that 1:1 binding, only one connector actually forwards -> no gain.
+			if (shards > 1) count = shards;
+		}
 		List<NetworkConnector> group = addBridgeConnectors(hostname, count, false);
 		return group.isEmpty() ? null : group.get(0);
 	}
@@ -567,11 +588,20 @@ public class ActiveBroker {
 	private NetworkConnector buildConnector(String hostname, int index) throws Exception {
 		int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 		int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
+		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 		NetworkConnector bridge = broker.addNetworkConnector(uri);
-		bridge.setName("cresco-bridge-" + hostname + "-" + index + "-" + java.util.UUID.randomUUID());
+		String role = split ? (index == 0 ? "ctl" : "data") : "mixed";
+		bridge.setName("cresco-bridge-" + hostname + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
 		bridge.setDuplex(true);
-		bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
+		// Data connectors get a SMALL prefetch: prefetch is the per-destination FIFO batch already
+		// committed to the socket ahead of later messages — 100 x 256KB was ~25MB of head-of-line
+		// bulk. Control keeps the larger window (its messages are small).
+		if (split && index > 0) {
+			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch_data", 10));
+		} else {
+			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
+		}
 		bridge.setNetworkTTL(messageTTL);
 		// Decrease a bridged consumer's priority by hop count so ActiveMQ's demand-forwarding prefers the
 		// FEWEST-broker-hop path to a destination. Without this, a redundant mesh (e.g. R1 reachable both
@@ -586,7 +616,34 @@ public class ActiveBroker {
 
 		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
 		String shardBase = plugin.getConfig().getStringParam("dataplane_shard_topic", "global.event");
-		if (shards > 1) {
+		if (split) {
+			if (index == 0) {
+				// CONTROL connector: queues only — the whole MsgEvent fabric. Queue(">") matches
+				// tenant-qualified names too. Topics (all dataplane) never ride this socket.
+				List<ActiveMQDestination> ctl = new ArrayList<>();
+				ctl.add(new org.apache.activemq.command.ActiveMQQueue(">"));
+				bridge.setDynamicallyIncludedDestinations(ctl);
+			} else {
+				// DATA connector(s): topics only. With shards>1, data connector j=index-1 keeps the
+				// existing 1:1 shard binding (j==0 additionally carries the base topic + everything
+				// unsharded via the wildcard, minus the other shards). Advisory topics are excluded
+				// defensively — bridges handle demand via their own advisory consumers.
+				int dataIdx = index - 1;
+				List<ActiveMQDestination> mine = new ArrayList<>();
+				List<ActiveMQDestination> excluded = new ArrayList<>();
+				excluded.add(new org.apache.activemq.command.ActiveMQTopic("ActiveMQ.Advisory.>"));
+				if (shards > 1 && dataIdx > 0 && dataIdx < shards) {
+					mine.add(new org.apache.activemq.command.ActiveMQTopic(shardBase + "." + dataIdx));
+				} else {
+					mine.add(new org.apache.activemq.command.ActiveMQTopic(">"));
+					for (int s = 1; s < shards; s++) {
+						excluded.add(new org.apache.activemq.command.ActiveMQTopic(shardBase + "." + s));
+					}
+				}
+				bridge.setDynamicallyIncludedDestinations(mine);
+				bridge.setExcludedDestinations(excluded);
+			}
+		} else if (shards > 1) {
 			if (index == 0) {
 				// connector 0 forwards everything EXCEPT the shards owned by the other connectors
 				List<ActiveMQDestination> excluded = new ArrayList<>();
@@ -641,7 +698,14 @@ public class ActiveBroker {
 		synchronized (bridgeGroups) {
 			List<NetworkConnector> group = bridgeGroups.get(hostname);
 			if (group == null || group.isEmpty()) return 0;
-			int removable = Math.max(0, Math.min(count, group.size() - 1)); // keep >=1
+			// Floor sized to the PARTITIONED core, not a constant: under the split protect the ctl
+			// connector + the wildcard data connector + every shard-bound connector (their topics
+			// are excluded from the wildcard, so removing one blackholes that shard); legacy path
+			// protects connector 0 + shard connectors 1..N-1.
+			boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
+			int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
+			int minKeep = split ? 1 + Math.max(1, shards) : Math.max(1, shards);
+			int removable = Math.max(0, Math.min(count, group.size() - minKeep));
 			for (int i = 0; i < removable; i++) {
 				NetworkConnector nc = group.remove(group.size() - 1);
 				try {
@@ -663,6 +727,27 @@ public class ActiveBroker {
 		synchronized (bridgeGroups) {
 			List<NetworkConnector> group = bridgeGroups.get(hostname);
 			return group == null ? 0 : group.size();
+		}
+	}
+
+	// DATA-connector count for a host: with the control/data split, connector 0 is control-only and
+	// must not count toward dataplane parallelism (AutoTuner sizes throughput on this).
+	public int getDataBridgeConnectionCount(String hostname) {
+		synchronized (bridgeGroups) {
+			List<NetworkConnector> group = bridgeGroups.get(hostname);
+			if (group == null) return 0;
+			boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
+			return split ? Math.max(0, group.size() - 1) : group.size();
+		}
+	}
+
+	// Snapshot of a host's bridge group for liveness monitoring (BrokerMonitor watches the WHOLE
+	// group: with the split, the data connector dying alone silently blackholes all topics).
+	// Teardown is already group-wide: removeNetworkConnector(any member) removes the entire group.
+	public List<NetworkConnector> getBridgeGroup(String hostname) {
+		synchronized (bridgeGroups) {
+			List<NetworkConnector> group = bridgeGroups.get(hostname);
+			return group == null ? new ArrayList<>() : new ArrayList<>(group);
 		}
 	}
 

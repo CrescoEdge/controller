@@ -1068,7 +1068,12 @@ public class ControllerSMHandler {
                                         plugin.getConfig().getStringParam("tenant_id", "default"), rxQueue);
                             }
                         }
-                        controllerEngine.getActiveClient().initActiveAgentConsumer(rxQueue, URI);
+                        if (!controllerEngine.getActiveClient().initActiveAgentConsumer(rxQueue, URI)) {
+                            // consumer construction failed hard (e.g. broker not trust-ready yet or
+                            // authz denial): fail THIS attempt so the outer retry loop advances,
+                            // instead of falling into the wait below with no consumer to wait for
+                            throw new Exception("initActiveAgentConsumer failed for " + URI);
+                        }
                         //check to see if there is an dataPlaneService, if so reset connections
                         if(controllerEngine.getDataPlaneService() == null) {
                             dataPlaneService = new DataPlaneServiceImpl(controllerEngine, URI);
@@ -1079,7 +1084,13 @@ public class ControllerSMHandler {
 
                     }
 
+                    // Bounded: an unbounded spin here parked the SM thread forever when the consumer
+                    // died without recovery, so HC-fired transitions could never re-drive a rejoin.
+                    int consumerWait = 0;
                     while (!controllerEngine.getActiveClient().isFaultURIActive()) {
+                        if (++consumerWait > 30) {
+                            throw new Exception("Agent Consumer did not become active within 30s for " + URI);
+                        }
                         logger.info("Waiting on Agent Consumer Startup.");
                         Thread.sleep(1000);
                     }
@@ -1497,10 +1508,24 @@ public class ControllerSMHandler {
         private String lastRegionconfigs = "";
         private String lastAgentconfigs = "";
         private String lastpluginconfigs = "";
+        private long tick = 0;
 
         public void run() {
 
                 if (controllerEngine.cstate.isActive()) {
+
+                    // Periodic FULL resend: config exports ride best-effort topics, so a lost
+                    // first export (bridge/subscription still forming at startup) previously left
+                    // the parent without this node's rows FOREVER — the diff-gate never re-sends
+                    // unchanged configs, and later property-only updates cannot create rows.
+                    // Forcing a full export every N ticks makes any loss self-heal within
+                    // N x watchdog_interval at negligible steady-state cost.
+                    tick++;
+                    if (tick % Math.max(1, plugin.getConfig().getIntegerParam("state_update_full_resend_ticks", 4)) == 0) {
+                        lastRegionconfigs = "";
+                        lastAgentconfigs = "";
+                        lastpluginconfigs = "";
+                    }
 
                     switch (plugin.getAgentService().getAgentState().getControllerState()) {
 
