@@ -30,7 +30,16 @@ public class ActiveClient {
     // Dedicated (non-pooled) connections handed out by createDedicatedSession. Tracked with their
     // URI ONLY so refreshTrust/shutdown can close them (they are otherwise invisible to both, which
     // left shard/control sockets running on pre-enrollment TLS material). Owners rebuild lazily.
-    private record DedicatedConn(String uri, ActiveMQConnection conn) {}
+    // NOTE: a plain class, not a record — the ClassIndex annotation processor (transitive, Siddhi)
+    // fails compilation on record components ("Internal error: Unknown element"), which is why
+    // nothing else in this tree uses records either.
+    private static final class DedicatedConn {
+        private final String uri;
+        private final ActiveMQConnection conn;
+        DedicatedConn(String uri, ActiveMQConnection conn) { this.uri = uri; this.conn = conn; }
+        String uri() { return uri; }
+        ActiveMQConnection conn() { return conn; }
+    }
     private final List<DedicatedConn> dedicatedConnections = Collections.synchronizedList(new ArrayList<>());
 
     private AgentConsumer agentConsumer;
