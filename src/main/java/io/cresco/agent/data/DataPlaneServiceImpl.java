@@ -200,12 +200,56 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 	    return destination;
     }
 
+    /**
+     * Liveness of the DATAPLANE's own broker connection. Since control-plane traffic moved to its
+     * own sockets, nothing else exercises this connection, so it can wedge silently - and
+     * isFaultURIActive() now reports the CONTROL connection, not this one.
+     * @return false only when the dataplane connection exists and is unusable.
+     */
+    public boolean isDataPlaneConnectionHealthy() {
+        try {
+            ActiveMQSession s = activeMQSession;
+            if (s == null) return true;          // never used yet - nothing to call broken
+            if (s.isClosed()) return false;
+            org.apache.activemq.ActiveMQConnection c =
+                    (org.apache.activemq.ActiveMQConnection) s.getConnection();
+            return c != null && c.isStarted() && !c.isClosed() && !c.isTransportFailed();
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
     private ActiveMQSession getSession() {
 	    try {
 
+	        // BOUNDED. This used to park forever, so any caller (e.g. a stunnel DST session
+	        // attaching its listener) hung indefinitely with no error and leaked its thread.
+	        int waited = 0;
+	        int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
 	        while (!controllerEngine.getActiveClient().isFaultURIActive()) {
+                if (waited++ >= maxWait) {
+                    logger.error("getSession: messaging plane not active after " + maxWait
+                            + "s - returning null instead of blocking the caller forever");
+                    return null;
+                }
                 Thread.sleep(1000);
             }
+
+	        // A failover connection whose transport has failed still reads as open/started, but
+	        // every synchronous call on it (createConsumer/createProducer) blocks. Drop it so the
+	        // pooled connection is rebuilt - the dataplane no longer shares the control plane's
+	        // socket, so nothing else would notice it had gone bad.
+	        if (activeMQSession != null) {
+	            try {
+	                org.apache.activemq.ActiveMQConnection c =
+	                        (org.apache.activemq.ActiveMQConnection) activeMQSession.getConnection();
+	                if (c != null && (c.isTransportFailed() || c.isClosed())) {
+	                    logger.warn("getSession: dataplane connection transport failed/closed - dropping for rebuild");
+	                    controllerEngine.getActiveClient().handleConnectionFailure(URI);
+	                    activeMQSession = null;
+	                }
+	            } catch (Exception ignore) { }
+	        }
 
 	        if(activeMQSession == null) {
                 activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
