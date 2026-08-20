@@ -589,22 +589,24 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     public void removeMessageListener(String listenerId) {
 	    try {
+	        // Take the consumer OUT of the map under the lock, then close it OUTSIDE. consumer.close()
+	        // takes ActiveMQ session/dispatch locks and can block; holding lockMessage across it
+	        // serialized every listener add/remove on the node behind one blocking JMS call, and a
+	        // close that never returned would freeze listener registration permanently.
+	        MessageConsumer consumer;
 	        synchronized (lockMessage) {
-                MessageConsumer consumer = messageConsumerMap.get(listenerId);
-                if (consumer != null) {
-                    try {
-                        logger.trace("removeMessageListener: closing listener : " + listenerId);
-                        logger.trace("removeMessageListener: message selector : " + consumer.getMessageSelector());
-
-                        consumer.close();
-
-                        messageConsumerMap.remove(listenerId);
-                    } catch (JMSException e) {
-                        logger.error("Failed to close message listener [{}]", listenerId);
-                    }
-                } else {
-                    logger.error("removeMessageListener close called on unknown listener_id: " + listenerId);
-                }
+                consumer = messageConsumerMap.remove(listenerId);
+                messageConfigMap.remove(listenerId);
+            }
+            if (consumer == null) {
+                logger.error("removeMessageListener close called on unknown listener_id: " + listenerId);
+                return;
+            }
+            try {
+                logger.trace("removeMessageListener: closing listener : " + listenerId);
+                consumer.close();
+            } catch (JMSException e) {
+                logger.error("Failed to close message listener [{}]", listenerId);
             }
         } catch (Exception e) {
 	        logger.error("removeMessageListener('{}'): {}", listenerId, e.getMessage());
