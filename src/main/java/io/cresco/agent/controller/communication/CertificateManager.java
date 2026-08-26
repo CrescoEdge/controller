@@ -80,9 +80,10 @@ public class CertificateManager {
             if (keyStorePasswordStr != null && keyStoreFilePath != null &&
                     trustStorePasswordStr != null && trustStoreFilePath != null &&
                     !keyStoreFilePath.equals(trustStoreFilePath)) {
-                logger.debug("keyStorePasswordStr: {}", keyStorePasswordStr);
+                //never log store passwords, even at debug
+                logger.debug("keyStorePassword set: {}", keyStorePasswordStr != null);
                 logger.debug("keyStoreFilePath: {}", keyStoreFilePath);
-                logger.debug("trustStorePasswordStr: {}", trustStorePasswordStr);
+                logger.debug("trustStorePassword set: {}", trustStorePasswordStr != null);
                 logger.debug("trustStoreFilePath: {}", trustStoreFilePath);
                 keyStorePassword = keyStorePasswordStr.toCharArray();
                 trustStorePassword = trustStorePasswordStr.toCharArray();

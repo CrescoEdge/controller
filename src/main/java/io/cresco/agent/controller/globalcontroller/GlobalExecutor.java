@@ -565,7 +565,7 @@ public class GlobalExecutor implements Executor {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             String configParamsJson = ce.getCompressedParam("configparams");
-            logger.trace("pluginAdd configParamsJson: " + configParamsJson);
+            logger.trace("pluginAdd configParams received, length: " + ((configParamsJson != null) ? configParamsJson.length() : 0));
             Map<String, String> jarInfo = gson.fromJson(configParamsJson, type);
 
             String pluginName = jarInfo.get("pluginname");

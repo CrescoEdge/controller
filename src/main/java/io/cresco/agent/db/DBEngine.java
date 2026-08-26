@@ -211,7 +211,7 @@ public class DBEngine {
                 Driver drv = derbyDrivers.nextElement();
                 if (drv.getClass().getName().startsWith("org.apache.derby.")) {
                     try { DriverManager.deregisterDriver(drv); }
-                    catch (SQLException ignore) { /* best-effort on shutdown */ }
+                    catch (SQLException sqle) { logger.error("DBEngine.shutdown() driver deregistration", sqle); }
                 }
             }
 
@@ -250,6 +250,39 @@ public class DBEngine {
             logger.error("DBEngine.checkSchema() Schema is invalid", ex);
         }
         return isOk;
+    }
+
+    // Columns of pnode that remote "list plugins by type" requests may filter on. The column
+    // name arrives over the wire (action_plugintype_id) and JDBC cannot bind an identifier as
+    // a parameter, so getPluginListMapByType() validates it against this hardcoded allowlist.
+    private static final Set<String> PLUGIN_TYPE_COLUMNS = new HashSet<>(Arrays.asList(
+            "plugin_id", "status_desc", "pluginname", "jarfile", "version", "md5"));
+
+    // Tables this class itself creates and drops. dropTable() concatenates the name into DDL,
+    // which cannot be parameterized, so it refuses anything outside this hardcoded allowlist.
+    private static final Set<String> MANAGED_TABLES = new HashSet<>(Arrays.asList(
+            "inodekpi", "vnode", "inode", "resourcenode", "tenantnode", "cstate",
+            "pluginof", "pnode", "aconfig", "agentof", "anode", "rnode"));
+
+    // Statement-era string concatenation rendered a null Java String as the four-character
+    // literal "null" inside SQL quotes. Preserve that exact stored/matched value under
+    // PreparedStatement parameters so the injection fix changes no observable behavior.
+    private static String textParam(String value) {
+        return value == null ? "null" : value;
+    }
+
+    // Binds positional parameters with typed setters for the multi-branch query builders.
+    private static void bindParams(PreparedStatement stmt, List<Object> queryParams) throws SQLException {
+        for (int i = 0; i < queryParams.size(); i++) {
+            Object queryParam = queryParams.get(i);
+            if (queryParam instanceof Integer) {
+                stmt.setInt(i + 1, (Integer) queryParam);
+            } else if (queryParam instanceof Long) {
+                stmt.setLong(i + 1, (Long) queryParam);
+            } else {
+                stmt.setString(i + 1, textParam((String) queryParam));
+            }
+        }
     }
 
     public boolean nodeUpdateStatus(String mode, String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
@@ -477,54 +510,66 @@ public class DBEngine {
     public void updateNode(String region, String agent, String plugin, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
 
-                String stmtString = null;
+            String stmtString = null;
+            String nodeId = null;
 
-                if (((region != null) && (agent != null) && (plugin != null)) || ((region == null) && (agent == null) && (plugin != null))) {
-                    //add plugin metadata where it exist
+            if (((region != null) && (agent != null) && (plugin != null)) || ((region == null) && (agent == null) && (plugin != null))) {
+                //add plugin metadata where it exist
 
-                    String pluginname = "unknown";
-                    String jarfile = "unknown";
-                    String version = "unknown";
-                    String md5 = "unknown";
+                String pluginname = "unknown";
+                String jarfile = "unknown";
+                String version = "unknown";
+                String md5 = "unknown";
 
-                    if (configparams != null) {
-                        Type type = new TypeToken<Map<String, String>>() {
-                        }.getType();
-                        Map<String, String> configMap = gson.fromJson(configparams, type);
+                if (configparams != null) {
+                    Type type = new TypeToken<Map<String, String>>() {
+                    }.getType();
+                    Map<String, String> configMap = gson.fromJson(configparams, type);
 
-                        if (configMap.containsKey("pluginname")) {
-                            pluginname = configMap.get("pluginname");
-                        }
-                        if (configMap.containsKey("jarfile")) {
-                            jarfile = configMap.get("jarfile");
-                        }
-                        if (configMap.containsKey("version")) {
-                            version = configMap.get("version");
-                        }
-                        if (configMap.containsKey("md5")) {
-                            md5 = configMap.get("md5");
-                        }
-
+                    if (configMap.containsKey("pluginname")) {
+                        pluginname = configMap.get("pluginname");
+                    }
+                    if (configMap.containsKey("jarfile")) {
+                        jarfile = configMap.get("jarfile");
+                    }
+                    if (configMap.containsKey("version")) {
+                        version = configMap.get("version");
+                    }
+                    if (configMap.containsKey("md5")) {
+                        md5 = configMap.get("md5");
                     }
 
-                    stmtString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                            "WHERE plugin_id='" + plugin + "'";
-
-                } else if (((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
-                    stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                            "WHERE agent_id='" + agent + "'";
-
-                } else if ((region != null) && (agent == null) && (plugin == null)) {
-                    stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                            ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                            "WHERE region_id='" + region + "'";
                 }
 
-                stmt.executeUpdate(stmtString);
+                stmtString = "UPDATE pnode SET status_code=?, status_desc=?, watchdog_period=?" +
+                        ", watchdog_ts=?, configparams=? " +
+                        "WHERE plugin_id=?";
+                nodeId = plugin;
+
+            } else if (((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
+                stmtString = "UPDATE anode SET status_code=?, status_desc=?, watchdog_period=?" +
+                        ", watchdog_ts=?, configparams=? " +
+                        "WHERE agent_id=?";
+                nodeId = agent;
+
+            } else if ((region != null) && (agent == null) && (plugin == null)) {
+                stmtString = "UPDATE rnode SET status_code=?, status_desc=?, watchdog_period=?" +
+                        ", watchdog_ts=?, configparams=? " +
+                        "WHERE region_id=?";
+                nodeId = region;
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
+
+                stmt.setInt(1, status_code);
+                stmt.setString(2, textParam(status_desc));
+                stmt.setInt(3, watchdog_period);
+                stmt.setLong(4, watchdog_ts);
+                stmt.setString(5, textParam(configparams));
+                stmt.setString(6, textParam(nodeId));
+
+                stmt.executeUpdate();
                 stmt.close();
             }
 
@@ -652,12 +697,22 @@ public class DBEngine {
     public void addCStateEvent(long config_ts, String current_mode, String current_desc, String global_region, String global_agent, String regional_region, String regional_agent, String local_region, String local_agent) {
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
-                String stmtString = null;
 
-                stmtString = "INSERT INTO cstate values (" + config_ts + ",'" + current_mode + "','" + current_desc + "','" + global_region + "','" + global_agent + "','" + regional_region + "','" + regional_agent + "','" + local_region + "','" + local_agent + "')";
+            String stmtString = "INSERT INTO cstate values (?,?,?,?,?,?,?,?,?)";
 
-                stmt.executeUpdate(stmtString);
+            try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
+
+                stmt.setLong(1, config_ts);
+                stmt.setString(2, textParam(current_mode));
+                stmt.setString(3, textParam(current_desc));
+                stmt.setString(4, textParam(global_region));
+                stmt.setString(5, textParam(global_agent));
+                stmt.setString(6, textParam(regional_region));
+                stmt.setString(7, textParam(regional_agent));
+                stmt.setString(8, textParam(local_region));
+                stmt.setString(9, textParam(local_agent));
+
+                stmt.executeUpdate();
                 stmt.close();
             }
 
@@ -672,16 +727,21 @@ public class DBEngine {
     public void updateRNode(String region, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
-                String stmtString = null;
 
+            String stmtString = "UPDATE rnode SET status_code=?, status_desc=?, watchdog_period=?" +
+                    ", watchdog_ts=?, configparams=? " +
+                    "WHERE region_id=?";
 
-                stmtString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE region_id='" + region + "'";
+            try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
 
+                stmt.setInt(1, status_code);
+                stmt.setString(2, textParam(status_desc));
+                stmt.setInt(3, watchdog_period);
+                stmt.setLong(4, watchdog_ts);
+                stmt.setString(5, textParam(configparams));
+                stmt.setString(6, textParam(region));
 
-                stmt.executeUpdate(stmtString);
+                stmt.executeUpdate();
                 stmt.close();
             }
 
@@ -695,16 +755,21 @@ public class DBEngine {
     public void updateANode(String agent, int status_code, String status_desc, int watchdog_period, long watchdog_ts, String configparams) {
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
-                String stmtString = null;
 
+            String stmtString = "UPDATE anode SET status_code=?, status_desc=?, watchdog_period=?" +
+                    ", watchdog_ts=?, configparams=? " +
+                    "WHERE agent_id=?";
 
-                stmtString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE agent_id='" + agent + "'";
+            try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
 
+                stmt.setInt(1, status_code);
+                stmt.setString(2, textParam(status_desc));
+                stmt.setInt(3, watchdog_period);
+                stmt.setLong(4, watchdog_ts);
+                stmt.setString(5, textParam(configparams));
+                stmt.setString(6, textParam(agent));
 
-                stmt.executeUpdate(stmtString);
+                stmt.executeUpdate();
                 stmt.close();
             }
 
@@ -721,13 +786,15 @@ public class DBEngine {
         try {
 
             inodeResourceList = new ArrayList<>();
-            String queryString = null;
 
-            queryString = "SELECT vnode_id FROM vnode WHERE resource_id='" + resourceId + "'";
+            String queryString = "SELECT vnode_id FROM vnode WHERE resource_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
+
+                    stmt.setString(1, textParam(resourceId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         while (rs.next()) {
                             String node = rs.getString(1);
@@ -757,14 +824,15 @@ public class DBEngine {
         try {
 
             inodeResourceList = new ArrayList<>();
-            String queryString = null;
 
-            queryString = "SELECT inode_id FROM inode WHERE resource_id='" + resourceId + "'";
+            String queryString = "SELECT inode_id FROM inode WHERE resource_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(resourceId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         while (rs.next()) {
                             String node = rs.getString(1);
@@ -792,14 +860,14 @@ public class DBEngine {
         int status_code = -1;
         try {
 
-            String queryString = null;
-
-            queryString = "SELECT status_code FROM inode WHERE inode_id='" + inodeId + "'";
+            String queryString = "SELECT status_code FROM inode WHERE inode_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(inodeId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         rs.next();
                         status_code = rs.getInt(1);
@@ -823,17 +891,18 @@ public class DBEngine {
         int queryReturn = -1;
         try {
 
-            String queryString = null;
-
-            queryString = "UPDATE inode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                    + " WHERE inode_id='" + inodeId + "'";
-
+            String queryString = "UPDATE inode SET status_code=?, status_desc=?"
+                    + " WHERE inode_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
-                    
+                    stmt.setInt(1, status_code);
+                    stmt.setString(2, textParam(status_desc));
+                    stmt.setString(3, textParam(inodeId));
+
+                    queryReturn = stmt.executeUpdate();
+
                     stmt.close();
                 }
 
@@ -850,16 +919,15 @@ public class DBEngine {
         int status_code = -1;
         try {
 
-            String queryString = null;
-
-            queryString = "SELECT persistence_code FROM pnode " +
-                    "WHERE plugin_id='" + pluginId + "'";
+            String queryString = "SELECT persistence_code FROM pnode " +
+                    "WHERE plugin_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
+                    stmt.setString(1, textParam(pluginId));
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         rs.next();
                         status_code = rs.getInt(1);
@@ -889,12 +957,14 @@ public class DBEngine {
         Map<String,String> pNodeMap = null;
 
         String queryString = "SELECT * FROM pnode " +
-                "WHERE plugin_id='" + pluginId + "'";
+                "WHERE plugin_id=?";
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
+            try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                try(ResultSet rs = stmt.executeQuery(queryString)) {
+                stmt.setString(1, textParam(pluginId));
+
+                try(ResultSet rs = stmt.executeQuery()) {
 
                     if (rs.next()) {
                         pNodeMap = new HashMap<>();
@@ -931,12 +1001,14 @@ public class DBEngine {
         Map<String,String> aNodeMap = null;
 
         String queryString = "SELECT * FROM rnode " +
-                "WHERE region_id='" + regionId + "'";
+                "WHERE region_id=?";
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
+            try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                try(ResultSet rs = stmt.executeQuery(queryString)) {
+                stmt.setString(1, textParam(regionId));
+
+                try(ResultSet rs = stmt.executeQuery()) {
 
                     // Missing row -> null, never a map of nulls (see getPNodeStrict).
                     if (rs.next()) {
@@ -969,12 +1041,14 @@ public class DBEngine {
         Map<String,String> aNodeMap = null;
 
         String queryString = "SELECT * FROM anode " +
-                "WHERE agent_id='" + agentId + "'";
+                "WHERE agent_id=?";
 
         try (Connection conn = ds.getConnection()) {
-            try (Statement stmt = conn.createStatement()) {
+            try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                try(ResultSet rs = stmt.executeQuery(queryString)) {
+                stmt.setString(1, textParam(agentId));
+
+                try(ResultSet rs = stmt.executeQuery()) {
 
                     // Missing row -> null, never a map of nulls: an empty anode export shipped
                     // over the wire is what NFE'd the regional nodeUpdateStatus and left
@@ -1009,12 +1083,14 @@ public class DBEngine {
         String configParams = null;
         try {
 
-            String queryString = "SELECT region_id FROM agentOf WHERE agent_id = '" + agentId +"'";
+            String queryString = "SELECT region_id FROM agentOf WHERE agent_id = ?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(agentId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         if (rs.next()) {
                             configParams = rs.getString(1);
@@ -1043,40 +1119,49 @@ public class DBEngine {
         try {
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
                 queryString = "SELECT P.configparams FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
-                        "AND A.AGENT_ID = '" + agentId + "' " +
-                        "AND P.PLUGIN_ID = '" + pluginId + "' " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
+                        "AND P.PLUGIN_ID = ? " +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID " +
                         "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
+                queryParams.add(pluginId);
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "SELECT A.configparams FROM ANODE A, RNODE R, AGENTOF O " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
-                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
                         "AND R.REGION_ID = O.REGION_ID " +
                         "AND O.AGENT_ID = A.AGENT_ID ";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
                 queryString = "SELECT configparams " + "FROM rnode " +
-                        "WHERE region_id = '" + regionId + "'";
+                        "WHERE region_id = ?";
+                queryParams.add(regionId);
             }
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         rs.next();
                         configParams = rs.getString(1);
-                        
+
                         rs.close();
                     }
 
@@ -1097,24 +1182,28 @@ public class DBEngine {
         try {
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null)) {
                 //agent
 
                 queryString = "SELECT count(P.PLUGIN_ID) FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
-                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID " +
                         "AND PO.PLUGIN_ID = P.PLUGIN_ID";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
 
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
 
                 queryString = "SELECT count(A.agent_id) FROM ANODE A, RNODE R, AGENTOF O "
-                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID ";
+                        + "WHERE R.REGION_ID = ? AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID ";
+                queryParams.add(regionId);
 
             }
             else if((regionId == null) && (agentId == null)) {
@@ -1123,9 +1212,11 @@ public class DBEngine {
             }
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         rs.next();
                         count = rs.getInt(1);
@@ -1149,18 +1240,18 @@ public class DBEngine {
         String submission = null;
         try {
 
-            String queryString = null;
-
-            queryString = "SELECT submission FROM resourcenode WHERE resource_id='" + resource_id + "'";
+            String queryString = "SELECT submission FROM resourcenode WHERE resource_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(resource_id));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         rs.next();
                         submission = rs.getString(1);
-                    
+
                         rs.close();
                     }
 
@@ -1180,14 +1271,17 @@ public class DBEngine {
         int queryReturn = -1;
         try {
 
-            String queryString = null;
-            queryString = "UPDATE resourcenode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                    + " WHERE resource_id='" + resourceId + "'";
+            String queryString = "UPDATE resourcenode SET status_code=?, status_desc=?"
+                    + " WHERE resource_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    stmt.setInt(1, status_code);
+                    stmt.setString(2, textParam(status_desc));
+                    stmt.setString(3, textParam(resourceId));
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1206,18 +1300,22 @@ public class DBEngine {
         int queryReturn = -1;
         try {
 
-            String queryString = null;
-            queryString = "UPDATE resourcenode SET status_code=" + status_code + ", status_desc='" + status_desc + "', submission='" + submission + "'"
-                    + " WHERE resource_id='" + resourceId + "'";
+            String queryString = "UPDATE resourcenode SET status_code=?, status_desc=?, submission=?"
+                    + " WHERE resource_id=?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    stmt.setInt(1, status_code);
+                    stmt.setString(2, textParam(status_desc));
+                    stmt.setString(3, textParam(submission));
+                    stmt.setString(4, textParam(resourceId));
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
-                
+
                 conn.close();
             }
 
@@ -1234,19 +1332,24 @@ public class DBEngine {
             try (Connection conn = ds.getConnection()) {
                 conn.setAutoCommit(false);
 
-                try (Statement stmt = conn.createStatement()) {
+                String insertRNodeString = "insert into rnode (region_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
+                        "values (?,?,?,?,?,?)";
 
-                    String insertRNodeString = "insert into rnode (region_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
-                            "values ('" + region + "'," + status_code + ",'" + status_desc + "'," +
-                            watchdog_period + "," + watchdog_ts + ",'" +
-                            configparams + "')";
+                try (PreparedStatement stmt = conn.prepareStatement(insertRNodeString)) {
 
-                    stmt.executeUpdate(insertRNodeString);
+                    stmt.setString(1, textParam(region));
+                    stmt.setInt(2, status_code);
+                    stmt.setString(3, textParam(status_desc));
+                    stmt.setInt(4, watchdog_period);
+                    stmt.setLong(5, watchdog_ts);
+                    stmt.setString(6, textParam(configparams));
+
+                    stmt.executeUpdate();
                     conn.commit();
 
                     stmt.close();
                 }
-                
+
                 conn.close();
             }
 
@@ -1295,14 +1398,19 @@ public class DBEngine {
 
                 conn.setAutoCommit(false);
 
-                try (Statement stmt = conn.createStatement()) {
+                String insertANodeString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
+                        "values (?,?,?,?,?,?)";
 
-                    String insertANodeString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
-                            "values ('" + agent + "'," + status_code + ",'" + status_desc + "'," +
-                            watchdog_period + "," + watchdog_ts + ",'" +
-                            configparams + "')";
+                try (PreparedStatement stmt = conn.prepareStatement(insertANodeString)) {
 
-                    stmt.executeUpdate(insertANodeString);
+                    stmt.setString(1, textParam(agent));
+                    stmt.setInt(2, status_code);
+                    stmt.setString(3, textParam(status_desc));
+                    stmt.setInt(4, watchdog_period);
+                    stmt.setLong(5, watchdog_ts);
+                    stmt.setString(6, textParam(configparams));
+
+                    stmt.executeUpdate();
                     conn.commit();
 
                     stmt.close();
@@ -1321,17 +1429,18 @@ public class DBEngine {
         boolean exist = false;
         try {
 
-
-            String queryString = null;
-
             //agent
-            queryString = "SELECT COUNT(1) " + "FROM agentof " +
-                        "WHERE region_id = '" + regionId + "'" +
-                        "AND agent_id = '" + agentId + "'";
+            String queryString = "SELECT COUNT(1) " + "FROM agentof " +
+                        "WHERE region_id = ? " +
+                        "AND agent_id = ?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
+
+                    stmt.setString(1, textParam(regionId));
+                    stmt.setString(2, textParam(agentId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
@@ -1356,18 +1465,18 @@ public class DBEngine {
         boolean exist = false;
         try {
 
-
-            String queryString = null;
-
             //agent
-            queryString = "SELECT COUNT(1) " + "FROM pluginof " +
-                    "WHERE agent_id = '" + agentId + "'" +
-                    "AND plugin_id = '" + pluginId + "'";
+            String queryString = "SELECT COUNT(1) " + "FROM pluginof " +
+                    "WHERE agent_id = ? " +
+                    "AND plugin_id = ?";
 
             try (Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(agentId));
+                    stmt.setString(2, textParam(pluginId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
                         }
@@ -1392,12 +1501,15 @@ public class DBEngine {
         if(!assoicateANodetoRNodeExist(region,agent)) {
                 try(Connection conn = ds.getConnection()) {
 
-                    try (Statement stmt = conn.createStatement()) {
+                    String insertANodeToRNode = "insert into agentof (region_id, agent_id) " +
+                            "values (?,?)";
 
-                        String insertANodeToRNode = "insert into agentof (region_id, agent_id) " +
-                                "values ('" + region + "','" + agent + "')";
+                    try (PreparedStatement stmt = conn.prepareStatement(insertANodeToRNode)) {
 
-                        stmt.executeUpdate(insertANodeToRNode);
+                        stmt.setString(1, textParam(region));
+                        stmt.setString(2, textParam(agent));
+
+                        stmt.executeUpdate();
 
                         stmt.close();
                     }
@@ -1416,12 +1528,15 @@ public class DBEngine {
 
             try(Connection conn = ds.getConnection()) {
 
-                try (Statement stmt = conn.createStatement()) {
+                String insertANodeToRNode = "insert into pluginof (agent_id, plugin_id) " +
+                        "values (?,?)";
 
-                    String insertANodeToRNode = "insert into pluginof (agent_id, plugin_id) " +
-                            "values ('" + agent + "','" + plugin + "')";
+                try (PreparedStatement stmt = conn.prepareStatement(insertANodeToRNode)) {
 
-                    stmt.executeUpdate(insertANodeToRNode);
+                    stmt.setString(1, textParam(agent));
+                    stmt.setString(2, textParam(plugin));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1439,14 +1554,20 @@ public class DBEngine {
 
         try(Connection conn = ds.getConnection()) {
 
-            try (Statement stmt = conn.createStatement()) {
+            String insertPNodeString = "UPDATE pnode SET status_code=?, status_desc=?, watchdog_period=?" +
+                    ", watchdog_ts=?, configparams=? " +
+                    "WHERE plugin_id=?";
 
-                String insertPNodeString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "', watchdog_period=" + watchdog_period +
-                        ", watchdog_ts=" + watchdog_ts + ", configparams='" + configparams + "' " +
-                        "WHERE plugin_id='" + plugin + "'";
+            try (PreparedStatement stmt = conn.prepareStatement(insertPNodeString)) {
 
+                stmt.setInt(1, status_code);
+                stmt.setString(2, textParam(status_desc));
+                stmt.setInt(3, watchdog_period);
+                stmt.setLong(4, watchdog_ts);
+                stmt.setString(5, textParam(configparams));
+                stmt.setString(6, textParam(plugin));
 
-                stmt.executeUpdate(insertPNodeString);
+                stmt.executeUpdate();
                 //force update of pnode, so the next command does not fail.
 
                 stmt.close();
@@ -1467,23 +1588,39 @@ public class DBEngine {
 
                 conn.setAutoCommit(false);
 
-            try (Statement stmt = conn.createStatement()) {
+            String insertPNodeString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams,persistence_code) " +
+                    "values (?,?,?,?,?,?,?,?,?,?,?)";
 
-                String insertPNodeString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams,persistence_code) " +
-                        "values ('" + plugin + "'," + status_code + ",'" + status_desc + "'," +
-                        watchdog_period + "," + watchdog_ts + ",'" +
-                        pluginname + "','" + jarfile + "','" + version + "','" + md5 + "','" +
-                        configparams + "'," + persistence_code + ")";
+            String insertPNodeToANode = "insert into pluginof (agent_id, plugin_id) " +
+                    "values (?,?)";
 
-                String insertPNodeToANode = "insert into pluginof (agent_id, plugin_id) " +
-                        "values ('" + agent + "','" + plugin + "')";
+            try (PreparedStatement stmt = conn.prepareStatement(insertPNodeString)) {
 
+                stmt.setString(1, textParam(plugin));
+                stmt.setInt(2, status_code);
+                stmt.setString(3, textParam(status_desc));
+                stmt.setInt(4, watchdog_period);
+                stmt.setLong(5, watchdog_ts);
+                stmt.setString(6, textParam(pluginname));
+                stmt.setString(7, textParam(jarfile));
+                stmt.setString(8, textParam(version));
+                stmt.setString(9, textParam(md5));
+                stmt.setString(10, textParam(configparams));
+                stmt.setInt(11, persistence_code);
 
-                status = stmt.executeUpdate(insertPNodeString);
+                status = stmt.executeUpdate();
                 //force update of pnode, so the next command does not fail.
                 conn.commit();
 
-                status = status + stmt.executeUpdate(insertPNodeToANode);
+                stmt.close();
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(insertPNodeToANode)) {
+
+                stmt.setString(1, textParam(agent));
+                stmt.setString(2, textParam(plugin));
+
+                status = status + stmt.executeUpdate();
 
                 conn.commit();
 
@@ -1502,15 +1639,21 @@ public class DBEngine {
         int queryReturn = -1;
         try {
 
-            String queryString = null;
-            queryString = "UPDATE inode SET status_code=" + status_code + ", status_desc='" + status_desc +
-                    "', region_id='" + regionId +"', agent_id='" + agentId + "', plugin_id='" + pluginId + "'" +
-                    " WHERE inode_id='" + inodeId + "'";
+            String queryString = "UPDATE inode SET status_code=?, status_desc=?" +
+                    ", region_id=?, agent_id=?, plugin_id=?" +
+                    " WHERE inode_id=?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    stmt.setInt(1, status_code);
+                    stmt.setString(2, textParam(status_desc));
+                    stmt.setString(3, textParam(regionId));
+                    stmt.setString(4, textParam(agentId));
+                    stmt.setString(5, textParam(pluginId));
+                    stmt.setString(6, textParam(inodeId));
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1528,23 +1671,22 @@ public class DBEngine {
         boolean exist = false;
         try {
 
-            String queryString = null;
-
-
             //region
-            queryString = "SELECT COUNT(1) " + "FROM inodekpi " +
-                    "WHERE inode_id = '" + inodeId + "'";
+            String queryString = "SELECT COUNT(1) " + "FROM inodekpi " +
+                    "WHERE inode_id = ?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(inodeId));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         rs.next();
                         exist = rs.getBoolean(1);
 
                         rs.close();
                     }
-                    
+
                     stmt.close();
                 }
 
@@ -1562,13 +1704,16 @@ public class DBEngine {
 
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String stmtString = null;
 
-                    stmtString = "insert into inodekpi (inode_id, kpiparams) " +
-                            "values ('" + inodeId + "','" + kpiparams + "')";
+                String stmtString = "insert into inodekpi (inode_id, kpiparams) " +
+                        "values (?,?)";
 
-                    stmt.executeUpdate(stmtString);
+                try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
+
+                    stmt.setString(1, textParam(inodeId));
+                    stmt.setString(2, textParam(kpiparams));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1585,14 +1730,16 @@ public class DBEngine {
         int queryReturn = -1;
         try {
 
-            String queryString = null;
-            queryString = "UPDATE inodekpi SET kpiparams='" + kpiparams +"'"
-                    + " WHERE inode_id='" + inodeId + "'";
+            String queryString = "UPDATE inodekpi SET kpiparams=?"
+                    + " WHERE inode_id=?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    stmt.setString(1, textParam(kpiparams));
+                    stmt.setString(2, textParam(inodeId));
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1610,13 +1757,19 @@ public class DBEngine {
 
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String stmtString = null;
 
-                    stmtString = "insert into inode (inode_id, resource_id, status_code, status_desc, configparams) " +
-                            "values ('" + inodeId + "','" + resourceId + "'," + statusCode + ",'" + statusDesc + "','" + configparams + "')";
+                String stmtString = "insert into inode (inode_id, resource_id, status_code, status_desc, configparams) " +
+                        "values (?,?,?,?,?)";
 
-                    stmt.executeUpdate(stmtString);
+                try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
+
+                    stmt.setString(1, textParam(inodeId));
+                    stmt.setString(2, textParam(resourceId));
+                    stmt.setInt(3, statusCode);
+                    stmt.setString(4, textParam(statusDesc));
+                    stmt.setString(5, textParam(configparams));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1634,13 +1787,17 @@ public class DBEngine {
         try {
             try(Connection conn = ds.getConnection()) {
 
-                try (Statement stmt = conn.createStatement()) {
-                    String stmtString = null;
+                String stmtString = "insert into vnode (vnode_id, resource_id, inode_id, configparams) " +
+                        "values (?,?,?,?)";
 
-                    stmtString = "insert into vnode (vnode_id, resource_id, inode_id, configparams) " +
-                            "values ('" + vnodeId + "','" + resourceId + "','" + inodeId + "','" + configparams + "')";
+                try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
 
-                    stmt.executeUpdate(stmtString);
+                    stmt.setString(1, textParam(vnodeId));
+                    stmt.setString(2, textParam(resourceId));
+                    stmt.setString(3, textParam(inodeId));
+                    stmt.setString(4, textParam(configparams));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -1657,14 +1814,14 @@ public class DBEngine {
         int status_code = -1;
         try {
 
-            String queryString = null;
-
-            queryString = "SELECT status_code FROM resourcenode WHERE resource_id='" + resource_id + "'";
+            String queryString = "SELECT status_code FROM resourcenode WHERE resource_id=?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(resource_id));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         rs.next();
                         status_code = rs.getInt(1);
 
@@ -1688,14 +1845,14 @@ public class DBEngine {
         try
         {
 
-            String queryString = null;
-
-            queryString = "SELECT * FROM inode WHERE inode_id='" + inode_id + "'";
+            String queryString = "SELECT * FROM inode WHERE inode_id=?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(inode_id));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         if (rs.next()) {
                             inodeMap.put("inode_id", rs.getString("inode_id"));
@@ -1737,17 +1894,21 @@ public class DBEngine {
         {
             inodeKPIList = new ArrayList<>();
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null)) {
                 //agent
                 queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
                         "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
-                        "WHERE (region_id = '" + regionId + "' AND agent_id = '" + agentId + "')";
+                        "WHERE (region_id = ? AND agent_id = ?)";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
             } else if((regionId != null) && (agentId == null)) {
                 //region
                 queryString = "SELECT inodekpi.kpiparams, inode.region_id, inode.agent_id FROM inodekpi " +
                         "INNER JOIN inode ON inodekpi.inode_id = inode.inode_id " +
-                        "WHERE (region_id = '" + regionId + "')";
+                        "WHERE (region_id = ?)";
+                queryParams.add(regionId);
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
@@ -1756,9 +1917,11 @@ public class DBEngine {
                         "WHERE (region_id IS NOT NULL AND agent_id IS NOT NULL)";
             }
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         while (rs.next()) {
                             inodeKPIList.add(rs.getString(1));
                         }
@@ -1786,14 +1949,14 @@ public class DBEngine {
         try
         {
 
-            String queryString = null;
-
-            queryString = "SELECT resource_name, tenant_id, status_code, status_desc FROM resourcenode WHERE resource_id='" + resource_id + "'";
+            String queryString = "SELECT resource_name, tenant_id, status_code, status_desc FROM resourcenode WHERE resource_id=?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(resource_id));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         rs.next();
 
                         statusMap.put("pipeline_id", resource_id);
@@ -1801,7 +1964,7 @@ public class DBEngine {
                         statusMap.put("tenant_id", rs.getString("tenant_id"));
                         statusMap.put("status_code", rs.getString("status_code"));
                         statusMap.put("status_desc", rs.getString("status_desc"));
-                    
+
                         rs.close();
                     }
 
@@ -2059,6 +2222,47 @@ public class DBEngine {
         } catch(Exception ex) {
             logger.error("DBEngine.initDB()", ex);
         }
+
+        // Indexes for the association tables' join/FK columns and the status/watchdog lookup
+        // columns used by getNodeList/getStaleNodeList/getNodeStatusCodeMap and the KPI joins.
+        // Derby has no CREATE INDEX IF NOT EXISTS: an already-exists failure (SQLState X0Y32)
+        // is ignored the same way re-created tables are tolerated; anything else is logged.
+        String[][] indexStatements = new String[][]{
+                {"idx_agentof_region_id", "CREATE INDEX idx_agentof_region_id ON agentof (region_id)"},
+                {"idx_agentof_agent_id", "CREATE INDEX idx_agentof_agent_id ON agentof (agent_id)"},
+                {"idx_pluginof_agent_id", "CREATE INDEX idx_pluginof_agent_id ON pluginof (agent_id)"},
+                {"idx_pluginof_plugin_id", "CREATE INDEX idx_pluginof_plugin_id ON pluginof (plugin_id)"},
+                {"idx_rnode_status_code", "CREATE INDEX idx_rnode_status_code ON rnode (status_code)"},
+                {"idx_anode_status_code", "CREATE INDEX idx_anode_status_code ON anode (status_code)"},
+                {"idx_pnode_status_code", "CREATE INDEX idx_pnode_status_code ON pnode (status_code)"},
+                {"idx_inode_resource_id", "CREATE INDEX idx_inode_resource_id ON inode (resource_id)"},
+                {"idx_inode_region_agent", "CREATE INDEX idx_inode_region_agent ON inode (region_id, agent_id)"},
+                {"idx_vnode_resource_id", "CREATE INDEX idx_vnode_resource_id ON vnode (resource_id)"},
+                {"idx_inodekpi_inode_id", "CREATE INDEX idx_inodekpi_inode_id ON inodekpi (inode_id)"}
+        };
+
+        try {
+            try(Connection conn = ds.getConnection()) {
+                try (Statement stmt = conn.createStatement()) {
+
+                    for (String[] indexStatement : indexStatements) {
+                        try {
+                            stmt.executeUpdate(indexStatement[1]);
+                        } catch (SQLException sqle) {
+                            if (!"X0Y32".equals(sqle.getSQLState())) {
+                                logger.error("DBEngine.initDB() create index failed: " + indexStatement[0], sqle);
+                            }
+                        }
+                    }
+
+                    stmt.close();
+                }
+
+                conn.close();
+            }
+        } catch(Exception ex) {
+            logger.error("DBEngine.initDB() index creation", ex);
+        }
     }
 
 
@@ -2067,15 +2271,15 @@ public class DBEngine {
 
         try {
 
-            String queryString = null;
-
-            queryString = "SELECT COUNT(1) FROM INFORMATION_SCHEMA.TABLES " +
-                    "WHERE TABLE_NAME = N'" + tableName + "'";
+            String queryString = "SELECT COUNT(1) FROM INFORMATION_SCHEMA.TABLES " +
+                    "WHERE TABLE_NAME = ?";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(tableName));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
                         rs.next();
                         exist = rs.getBoolean(1);
 
@@ -2104,9 +2308,14 @@ public class DBEngine {
         int result = -1;
         try {
 
-            String stmtString = null;
+            // A table name cannot be bound as a JDBC parameter; restrict this DDL to the
+            // hardcoded set of tables this class manages.
+            if((tableName == null) || (!MANAGED_TABLES.contains(tableName.toLowerCase(Locale.ROOT)))) {
+                logger.error("DBEngine.dropTable() refusing non-allowlisted table: " + tableName);
+                return result;
+            }
 
-            stmtString = "DROP TABLE " + tableName;
+            String stmtString = "DROP TABLE " + tableName;
 
             try(Connection conn = ds.getConnection()) {
                 try (Statement stmt = conn.createStatement()) {
@@ -2131,38 +2340,45 @@ public class DBEngine {
 
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId == null) && (agentId == null) && (pluginId != null)) {
                 //plugin
                 queryString = "SELECT COUNT(1) " + "FROM pnode " +
-                        "WHERE plugin_id = '" + pluginId + "'";
+                        "WHERE plugin_id = ?";
+                queryParams.add(pluginId);
 
             } if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
                 queryString = "SELECT COUNT(1) " + "FROM pnode " +
-                        "WHERE plugin_id = '" + pluginId + "'";
+                        "WHERE plugin_id = ?";
+                queryParams.add(pluginId);
 
             } else if((regionId == null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "SELECT COUNT(1) " + "FROM anode " +
-                        "WHERE agent_id = '" + agentId + "'";
+                        "WHERE agent_id = ?";
+                queryParams.add(agentId);
 
             }else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
                 queryString = "SELECT COUNT(1) " + "FROM anode " +
-                        "WHERE agent_id = '" + agentId + "'";
+                        "WHERE agent_id = ?";
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
                 queryString = "SELECT COUNT(1) " + "FROM rnode " +
-                        "WHERE region_id = '" + regionId + "'";
+                        "WHERE region_id = ?";
+                queryParams.add(regionId);
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
+                    bindParams(stmt, queryParams);
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         if (rs.next()) {
                             exist = rs.getBoolean(1);
@@ -2187,15 +2403,19 @@ public class DBEngine {
 
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "UPDATE AGENTOF " +
-                            "SET region_id = '" + regionId + "', agent_id = '" + agentId + "'" +
-                            "WHERE region_id = '" + originalRegionId + "' AND agent_id = '" + originalAgentId + "'";
+                String queryString = "UPDATE AGENTOF " +
+                        "SET region_id = ?, agent_id = ? " +
+                        "WHERE region_id = ? AND agent_id = ?";
 
-                    stmt.executeUpdate(queryString);
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
+
+                    stmt.setString(1, textParam(regionId));
+                    stmt.setString(2, textParam(agentId));
+                    stmt.setString(3, textParam(originalRegionId));
+                    stmt.setString(4, textParam(originalAgentId));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2212,15 +2432,17 @@ public class DBEngine {
 
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "UPDATE PLUGINOF " +
-                            "SET agent_id = '" + agentId + "' " +
-                            "WHERE agent_id = '" + originalAgentId + "'";
+                String queryString = "UPDATE PLUGINOF " +
+                        "SET agent_id = ? " +
+                        "WHERE agent_id = ?";
 
-                    stmt.executeUpdate(queryString);
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
+
+                    stmt.setString(1, textParam(agentId));
+                    stmt.setString(2, textParam(originalAgentId));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2237,22 +2459,23 @@ public class DBEngine {
         //boolean isRemoved = false;
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "DELETE FROM PNODE P WHERE NOT EXISTS ( " +
-                            "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PLUGINOF PO " +
-                            "WHERE R.REGION_ID = '" + regionId + "' " +
-                            "AND A.AGENT_ID = '" + agentId + "' " +
-                            "AND R.REGION_ID = AO.REGION_ID " +
-                            "AND AO.AGENT_ID = A.AGENT_ID " +
-                            "AND A.AGENT_ID = PO.AGENT_ID " +
-                            "AND PO.PLUGIN_ID = P.PLUGIN_ID " +
-                            "AND P.PERSISTENCE_CODE > 9 )";
+                String queryString = "DELETE FROM PNODE P WHERE NOT EXISTS ( " +
+                        "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PLUGINOF PO " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID " +
+                        "AND P.PERSISTENCE_CODE > 9 )";
 
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    stmt.executeUpdate(queryString);
+                    stmt.setString(1, textParam(regionId));
+                    stmt.setString(2, textParam(agentId));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2269,15 +2492,15 @@ public class DBEngine {
         boolean isRemoved = false;
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "DELETE FROM inode " +
-                            "WHERE inode_id = '" + inodeId + "'";
+                String queryString = "DELETE FROM inode " +
+                        "WHERE inode_id = ?";
 
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    if (stmt.executeUpdate(queryString) == 1) {
+                    stmt.setString(1, textParam(inodeId));
+
+                    if (stmt.executeUpdate() == 1) {
                         isRemoved = true;
                     }
 
@@ -2296,15 +2519,15 @@ public class DBEngine {
         boolean isRemoved = false;
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "DELETE FROM vnode " +
-                            "WHERE vnode_id = '" + vnodeId + "'";
+                String queryString = "DELETE FROM vnode " +
+                        "WHERE vnode_id = ?";
 
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    if (stmt.executeUpdate(queryString) == 1) {
+                    stmt.setString(1, textParam(vnodeId));
+
+                    if (stmt.executeUpdate() == 1) {
                         isRemoved = true;
                     }
 
@@ -2335,15 +2558,15 @@ public class DBEngine {
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
 
-                    queryString = "DELETE FROM resourcenode " +
-                            "WHERE resource_id = '" + resourceId + "'";
+                String queryString = "DELETE FROM resourcenode " +
+                        "WHERE resource_id = ?";
 
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    if (stmt.executeUpdate(queryString) == 1) {
+                    stmt.setString(1, textParam(resourceId));
+
+                    if (stmt.executeUpdate() == 1) {
                         isRemoved = true;
                     }
 
@@ -2366,11 +2589,13 @@ public class DBEngine {
         try {
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if(config_ts != null) {
                 queryString = "SELECT CONFIG_TS, CURRENT_MODE, CURRENT_DESC, GLOBAL_REGION, " +
                         "GLOBAL_AGENT, REGIONAL_REGION, REGIONAL_AGENT, LOCAL_REGION, LOCAL_AGENT " +
-                        "FROM CSTATE WHERE CONFIG_TS = " + config_ts;
+                        "FROM CSTATE WHERE CONFIG_TS = ?";
+                queryParams.add(Long.parseLong(config_ts));
 
             } else {
                 queryString = "SELECT CONFIG_TS, CURRENT_MODE, CURRENT_DESC, GLOBAL_REGION, " +
@@ -2381,9 +2606,11 @@ public class DBEngine {
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         if (rs.next()) {
                             cstateMap = new HashMap<>();
@@ -2421,59 +2648,72 @@ public class DBEngine {
 
         boolean isRemoved = false;
         try {
+            String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
+            //DELETE FROM table_name WHERE condition;
+            if ((regionId != null) && (agentId != null) && (pluginId != null)) {
+                //plugin
+                queryString = "DELETE FROM PNODE WHERE PLUGIN_ID IN ( " +
+                        "SELECT P.PLUGIN_ID " +
+                        "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
+                        "AND P.PLUGIN_ID = ? " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID " +
+                        "AND A.AGENT_ID = PO.AGENT_ID " +
+                        "AND PO.PLUGIN_ID = P.PLUGIN_ID)";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
+                queryParams.add(pluginId);
+
+            } else if ((regionId == null) && (agentId == null) && (pluginId != null)) {
+                //plugin
+                queryString = "DELETE FROM pnode " +
+                        "WHERE plugin_id = ?";
+                queryParams.add(pluginId);
+
+            } else if ((regionId == null) && (agentId != null) && (pluginId == null)) {
+                //agent
+                queryString = "DELETE FROM anode " +
+                        "WHERE region_id = ? and agent_id = ?";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
+
+            } else if ((regionId != null) && (agentId != null) && (pluginId == null)) {
+
+                //first remove agent plugins
+                cleanPnodesFromAnode(regionId, agentId);
+
+                //agent
+                queryString = "DELETE FROM ANODE WHERE AGENT_ID IN ( " +
+                        "SELECT A.AGENT_ID " +
+                        "FROM ANODE A, RNODE R, AGENTOF AO " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
+                        "AND R.REGION_ID = AO.REGION_ID " +
+                        "AND AO.AGENT_ID = A.AGENT_ID)";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
+
+            } else if ((regionId != null) && (agentId == null) && (pluginId == null)) {
+                //first remove agents and plugins from region
+                cleanANodesfromRNode(regionId);
+
+                //region
+                queryString = "DELETE FROM rnode " +
+                        "WHERE region_id = ?";
+                queryParams.add(regionId);
+            }
+
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String queryString = null;
-                    //DELETE FROM table_name WHERE condition;
-                    if ((regionId != null) && (agentId != null) && (pluginId != null)) {
-                        //plugin
-                        queryString = "DELETE FROM PNODE WHERE PLUGIN_ID IN ( " +
-                                "SELECT P.PLUGIN_ID " +
-                                "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                                "WHERE R.REGION_ID = '" + regionId + "' " +
-                                "AND A.AGENT_ID = '" + agentId + "' " +
-                                "AND P.PLUGIN_ID = '" + pluginId + "' " +
-                                "AND R.REGION_ID = AO.REGION_ID " +
-                                "AND AO.AGENT_ID = A.AGENT_ID " +
-                                "AND A.AGENT_ID = PO.AGENT_ID " +
-                                "AND PO.PLUGIN_ID = P.PLUGIN_ID)";
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    } else if ((regionId == null) && (agentId == null) && (pluginId != null)) {
-                        //plugin
-                        queryString = "DELETE FROM pnode " +
-                                "WHERE plugin_id = '" + pluginId + "'";
-
-                    } else if ((regionId == null) && (agentId != null) && (pluginId == null)) {
-                        //agent
-                        queryString = "DELETE FROM anode " +
-                                "WHERE region_id = '" + regionId + "' and agent_id = '" + agentId + "'";
-
-                    } else if ((regionId != null) && (agentId != null) && (pluginId == null)) {
-
-                        //first remove agent plugins
-                        cleanPnodesFromAnode(regionId, agentId);
-
-                        //agent
-                        queryString = "DELETE FROM ANODE WHERE AGENT_ID IN ( " +
-                                "SELECT A.AGENT_ID " +
-                                "FROM ANODE A, RNODE R, AGENTOF AO " +
-                                "WHERE R.REGION_ID = '" + regionId + "' " +
-                                "AND A.AGENT_ID = '" + agentId + "' " +
-                                "AND R.REGION_ID = AO.REGION_ID " +
-                                "AND AO.AGENT_ID = A.AGENT_ID)";
-
-                    } else if ((regionId != null) && (agentId == null) && (pluginId == null)) {
-                        //first remove agents and plugins from region
-                        cleanANodesfromRNode(regionId);
-
-                        //region
-                        queryString = "DELETE FROM rnode " +
-                                "WHERE region_id = '" + regionId + "'";
-                    }
+                    bindParams(stmt, queryParams);
 
                     //System.out.println("QUERY: " + queryString);
 
-                    int result = stmt.executeUpdate(queryString);
+                    int result = stmt.executeUpdate();
 
 
                     //System.out.println("RESULT : " + result);
@@ -2497,28 +2737,37 @@ public class DBEngine {
         try {
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId == null) && (agentId == null) && (pluginId != null)) {
                 //plugin
 
-                queryString = "UPDATE pnode SET watchdog_ts = + " + System.currentTimeMillis()
-                        + " WHERE plugin_id='" + pluginId + "'";
+                queryString = "UPDATE pnode SET watchdog_ts = ?"
+                        + " WHERE plugin_id=?";
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(pluginId);
 
             } else if((regionId == null) && (agentId != null) && (pluginId == null)) {
                 //agent
-                queryString = "UPDATE anode SET watchdog_ts = + " + System.currentTimeMillis()
-                        + " WHERE agent_id='" + agentId + "'";
+                queryString = "UPDATE anode SET watchdog_ts = ?"
+                        + " WHERE agent_id=?";
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
-                queryString = "UPDATE rnode SET watchdog_ts = + " + System.currentTimeMillis()
-                        + " WHERE region_id='" + regionId + "'";
+                queryString = "UPDATE rnode SET watchdog_ts = ?"
+                        + " WHERE region_id=?";
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(regionId);
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    bindParams(stmt, queryParams);
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2540,24 +2789,28 @@ public class DBEngine {
 
             nodeList = new ArrayList<>();
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null)) {
                 //agent
 
                 queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
-                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID " +
                         "AND PO.PLUGIN_ID = P.PLUGIN_ID " +
                         "AND P.STATUS_CODE = 10";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
                 queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
-                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
+                        + "WHERE R.REGION_ID = ? AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
                         + "AND A.STATUS_CODE = 10";
+                queryParams.add(regionId);
 
             }
             else if((regionId == null) && (agentId == null)) {
@@ -2568,9 +2821,11 @@ public class DBEngine {
             if(queryString != null) {
 
                 try(Connection conn = ds.getConnection()) {
-                    try (Statement stmt = conn.createStatement()) {
+                    try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                        try(ResultSet rs = stmt.executeQuery(queryString)) {
+                        bindParams(stmt, queryParams);
+
+                        try(ResultSet rs = stmt.executeQuery()) {
 
                             while (rs.next()) {
                                 String node = rs.getString(1);
@@ -2606,24 +2861,29 @@ public class DBEngine {
 
             Type type = new TypeToken<Map<String, String>>(){}.getType();
 
-            String queryString = null;
+            // The column name arrives over the wire (action_plugintype_id) and JDBC cannot
+            // bind an identifier as a parameter, so validate it against the hardcoded
+            // allowlist of pnode columns before it touches the SQL text.
+            String typeColumn = (actionPluginTypeId == null) ? null : actionPluginTypeId.toLowerCase(Locale.ROOT);
+            if((typeColumn == null) || (!PLUGIN_TYPE_COLUMNS.contains(typeColumn))) {
+                logger.error("DBEngine.getPluginListMapByType() rejected non-allowlisted pnode column: " + actionPluginTypeId);
+                return configMapList;
+            }
 
-            //plugin
-            //queryString = "SELECT region_id, agent_id, plugin_id, configparams " + "FROM pnode " +
-            //        "WHERE " + actionPluginTypeId + " = '" + actionPluginTypeValue + "'";
-
-            queryString = "SELECT R.REGION_ID, A.AGENT_ID, P.PLUGIN_ID, P.CONFIGPARAMS " +
+            String queryString = "SELECT R.REGION_ID, A.AGENT_ID, P.PLUGIN_ID, P.CONFIGPARAMS " +
                     "FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                    "WHERE P." + actionPluginTypeId + " = '" + actionPluginTypeValue + "' " +
+                    "WHERE P." + typeColumn + " = ? " +
                     "AND R.REGION_ID = AO.REGION_ID " +
                     "AND AO.AGENT_ID = A.AGENT_ID " +
                     "AND A.AGENT_ID = PO.AGENT_ID " +
                     "AND PO.PLUGIN_ID = P.PLUGIN_ID";
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    stmt.setString(1, textParam(actionPluginTypeValue));
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         while (rs.next()) {
                             String configParamString = rs.getString("configparams");
@@ -2659,26 +2919,30 @@ public class DBEngine {
 
             nodeMap = new HashMap<>();
 
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null)) {
                 //agent
 
                 queryString = "SELECT P.PLUGIN_ID, P.status_code FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                        "WHERE R.REGION_ID ='" + regionId + "'" +
-                        "AND A.AGENT_ID = '" + agentId + "'" +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND P.PLUGIN_ID = PO.PLUGIN_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID ";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
 
                 queryString = "SELECT A.agent_id, A.status_code FROM ANODE A, RNODE R, AGENTOF O " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
+                        "WHERE R.REGION_ID = ? " +
                         "AND R.REGION_ID = O.REGION_ID " +
                         "AND O.AGENT_ID = A.AGENT_ID " +
                         "AND R.REGION_ID = O.REGION_ID ";
+                queryParams.add(regionId);
 
             }
             else if((regionId == null) && (agentId == null)) {
@@ -2687,9 +2951,11 @@ public class DBEngine {
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         while (rs.next()) {
                             String key = rs.getString(1);
@@ -2721,35 +2987,47 @@ public class DBEngine {
 
             nodeList = new ArrayList<>();
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null)) {
                 //agent
 
                 queryString = "SELECT P.PLUGIN_ID FROM ANODE A, RNODE R, AGENTOF AO, PNODE P, PLUGINOF PO " +
-                        "WHERE R.REGION_ID ='" + regionId + "' " +
-                        "AND A.AGENT_ID = '" + agentId + "' " +
+                        "WHERE R.REGION_ID = ? " +
+                        "AND A.AGENT_ID = ? " +
                         "AND R.REGION_ID = AO.REGION_ID " +
                         "AND AO.AGENT_ID = A.AGENT_ID " +
                         "AND A.AGENT_ID = PO.AGENT_ID " +
-                        "AND P.status_code=10 and ((" + System.currentTimeMillis() + " - P.watchdog_ts) > (P.watchdog_period *  " + periodMultiplier + "))";
+                        "AND P.status_code=10 and ((? - P.watchdog_ts) > (P.watchdog_period * ?))";
+                queryParams.add(regionId);
+                queryParams.add(agentId);
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(periodMultiplier);
 
             } else if((regionId != null) && (agentId == null)) {
                 //region
                 queryString = "SELECT A.agent_id FROM ANODE A, RNODE R, AGENTOF O "
-                        + "WHERE R.REGION_ID ='" + regionId + "' AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
-                        + "AND A.status_code=10 and ((" + System.currentTimeMillis() + " - A.watchdog_ts) > (A.watchdog_period * " + periodMultiplier + "))";
+                        + "WHERE R.REGION_ID = ? AND R.REGION_ID = O.REGION_ID AND O.AGENT_ID = A.AGENT_ID "
+                        + "AND A.status_code=10 and ((? - A.watchdog_ts) > (A.watchdog_period * ?))";
+                queryParams.add(regionId);
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(periodMultiplier);
 
             }
             else if((regionId == null) && (agentId == null)) {
                 //global
                 queryString = "SELECT region_id FROM rnode "
-                        + "WHERE status_code=10 and ((" + System.currentTimeMillis() + " - watchdog_ts) > (watchdog_period * " + periodMultiplier + "))";
+                        + "WHERE status_code=10 and ((? - watchdog_ts) > (watchdog_period * ?))";
+                queryParams.add(System.currentTimeMillis());
+                queryParams.add(periodMultiplier);
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    try(ResultSet rs = stmt.executeQuery(queryString)) {
+                    bindParams(stmt, queryParams);
+
+                    try(ResultSet rs = stmt.executeQuery()) {
 
                         while (rs.next()) {
                             String node = rs.getString(1);
@@ -2781,28 +3059,40 @@ public class DBEngine {
         try {
 
             String queryString = null;
+            List<Object> queryParams = new ArrayList<>();
 
             if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
 
-                queryString = "UPDATE pnode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                        + " WHERE plugin_id='" + pluginId + "'";
+                queryString = "UPDATE pnode SET status_code=?, status_desc=?"
+                        + " WHERE plugin_id=?";
+                queryParams.add(status_code);
+                queryParams.add(status_desc);
+                queryParams.add(pluginId);
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
-                queryString = "UPDATE anode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                        + " WHERE agent_id='" + agentId + "'";
+                queryString = "UPDATE anode SET status_code=?, status_desc=?"
+                        + " WHERE agent_id=?";
+                queryParams.add(status_code);
+                queryParams.add(status_desc);
+                queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
-                queryString = "UPDATE rnode SET status_code=" + status_code + ", status_desc='" + status_desc + "'"
-                        + " WHERE region_id='" + regionId + "'";
+                queryString = "UPDATE rnode SET status_code=?, status_desc=?"
+                        + " WHERE region_id=?";
+                queryParams.add(status_code);
+                queryParams.add(status_desc);
+                queryParams.add(regionId);
             }
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
+                try (PreparedStatement stmt = conn.prepareStatement(queryString)) {
 
-                    queryReturn = stmt.executeUpdate(queryString);
+                    bindParams(stmt, queryParams);
+
+                    queryReturn = stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2822,14 +3112,20 @@ public class DBEngine {
 
 
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String stmtString = null;
 
-                    stmtString = "insert into resourcenode (resource_id, resource_name, tenant_id, status_code, status_desc, submission) " +
-                            "values ('" + resourceId + "','" + resourceName + "'," + tenantId + "," + statusCode + ",'" + statusDesc + "','" + submission + "')";
+                String stmtString = "insert into resourcenode (resource_id, resource_name, tenant_id, status_code, status_desc, submission) " +
+                        "values (?,?,?,?,?,?)";
 
+                try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
 
-                    stmt.executeUpdate(stmtString);
+                    stmt.setString(1, textParam(resourceId));
+                    stmt.setString(2, textParam(resourceName));
+                    stmt.setInt(3, tenantId);
+                    stmt.setInt(4, statusCode);
+                    stmt.setString(5, textParam(statusDesc));
+                    stmt.setString(6, textParam(submission));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2846,13 +3142,16 @@ public class DBEngine {
 
         try {
             try(Connection conn = ds.getConnection()) {
-                try (Statement stmt = conn.createStatement()) {
-                    String stmtString = null;
 
-                    stmtString = "insert into tenantnode (tenant_id,tenantname) " +
-                            "values (" + tenantId + ",'" + tenantName + "')";
+                String stmtString = "insert into tenantnode (tenant_id,tenantname) " +
+                        "values (?,?)";
 
-                    stmt.executeUpdate(stmtString);
+                try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
+
+                    stmt.setInt(1, tenantId);
+                    stmt.setString(2, textParam(tenantName));
+
+                    stmt.executeUpdate();
 
                     stmt.close();
                 }
@@ -2980,6 +3279,7 @@ public class DBEngine {
             }
             compressedData = byteStream.toByteArray();
         } catch(Exception e) {
+            logger.error("DBEngine.dataCompress()", e);
             return null;
         }
         return compressedData;

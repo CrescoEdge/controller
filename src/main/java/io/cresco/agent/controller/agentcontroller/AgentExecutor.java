@@ -432,32 +432,55 @@ public class AgentExecutor implements Executor {
         return null;
     }
 
+    //hard ceiling on a single requested part: legitimate transfers use 5MB parts, and the
+    //request-supplied partsize is allocated directly, so an unbounded value is a remote OOM
+    private static final int MAX_FILE_PART_SIZE = 64 * 1024 * 1024;
+
     private MsgEvent getFileData (MsgEvent ce) {
         try {
 
             if(ce.paramsContains("filepath") && ce.paramsContains("skiplength") && ce.paramsContains("partsize")) {
 
                 Path filePath = Paths.get(ce.getParam("filepath"));
-                if (filePath.toFile().exists()) {
+                if(!isFileAccessAllowed(filePath)) {
+                    ce.setParam("status","9");
+                    ce.setParam("status_desc","file access denied by file_access_roots");
+                } else if (filePath.toFile().exists()) {
                     if (filePath.toFile().isFile()) {
 
                         long skipLength = Long.parseLong(ce.getParam("skiplength"));
                         int partsize = Integer.parseInt(ce.getParam("partsize"));
 
-                        try (InputStream inputStream = new FileInputStream(filePath.toFile())) {
-                            byte[] databyte = new byte[partsize];
-                            long skipSize = inputStream.skip(skipLength);
-                            long readSize = inputStream.read(databyte);
-                            inputStream.close();
-                            ce.setCompressedDataParam("payload",databyte);
-                            ce.setParam("status","10");
-                            ce.setParam("status_desc","wrote data part");
-
-                        } catch (Exception e) {
-                            logger.error("getFileData() inputStream ", e);
-
+                        if((partsize < 0) || (partsize > MAX_FILE_PART_SIZE) || (skipLength < 0)) {
                             ce.setParam("status","9");
-                            ce.setParam("status_desc","inputStream failure");
+                            ce.setParam("status_desc","partsize/skiplength out of bounds");
+                        } else {
+
+                            try (InputStream inputStream = new FileInputStream(filePath.toFile())) {
+                                byte[] databyte = new byte[partsize];
+                                long skipSize = inputStream.skip(skipLength);
+                                //fill the part completely; a single read() may return short
+                                int totalRead = 0;
+                                while (totalRead < partsize) {
+                                    int r = inputStream.read(databyte, totalRead, partsize - totalRead);
+                                    if (r == -1) {
+                                        break;
+                                    }
+                                    totalRead += r;
+                                }
+                                if (totalRead < partsize) {
+                                    databyte = java.util.Arrays.copyOf(databyte, totalRead);
+                                }
+                                ce.setCompressedDataParam("payload",databyte);
+                                ce.setParam("status","10");
+                                ce.setParam("status_desc","wrote data part");
+
+                            } catch (Exception e) {
+                                logger.error("getFileData() inputStream ", e);
+
+                                ce.setParam("status","9");
+                                ce.setParam("status_desc","inputStream failure");
+                            }
                         }
 
                     } else {
@@ -505,13 +528,46 @@ public class AgentExecutor implements Executor {
         }
         return ce;
     }
+    /**
+     * getfileinfo/getfiledata serve operator-named absolute paths by design (filerepo sync
+     * downloads from configured scan directories anywhere on disk), so they cannot be hard-chrooted
+     * without breaking that feature. When the agent config sets file_access_roots (comma-separated
+     * directories), remote reads are confined to those roots; unset preserves open access.
+     */
+    private boolean isFileAccessAllowed(Path filePath) {
+        try {
+            String roots = plugin.getConfig().getStringParam("file_access_roots");
+            if ((roots == null) || roots.trim().isEmpty()) {
+                return true;
+            }
+            Path requested = filePath.toAbsolutePath().normalize();
+            for (String root : roots.split(",")) {
+                if (root.trim().isEmpty()) {
+                    continue;
+                }
+                Path base = Paths.get(root.trim()).toAbsolutePath().normalize();
+                if (requested.startsWith(base)) {
+                    return true;
+                }
+            }
+            logger.error("remote file access denied by file_access_roots: " + requested);
+            return false;
+        } catch (Exception ex) {
+            logger.error("isFileAccessAllowed", ex);
+            return false;
+        }
+    }
+
     private MsgEvent getFileInfo (MsgEvent ce) {
         try {
 
             if(ce.paramsContains("filepath")) {
 
                 Path filePath = Paths.get(ce.getParam("filepath"));
-                if (filePath.toFile().exists()) {
+                if(!isFileAccessAllowed(filePath)) {
+                    ce.setParam("status","9");
+                    ce.setParam("status_desc","file access denied by file_access_roots");
+                } else if (filePath.toFile().exists()) {
                     if (filePath.toFile().isFile()) {
                         ce.setParam("status","10");
                         ce.setParam("status_desc","file found");

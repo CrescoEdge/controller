@@ -59,7 +59,7 @@ public class DiscoveryCrypto {
         String decryptedValue = null;
 
         try {
-            logger.debug("enc: [" + encryptedValue + "] key:[" + secretKey + "]");
+            logger.debug("enc: [" + encryptedValue + "]");
             final Key key = generateKeyFromString(secretKey);
             final Cipher c = Cipher.getInstance(ALGORITHM);
             c.init(Cipher.DECRYPT_MODE, key);
@@ -68,10 +68,10 @@ public class DiscoveryCrypto {
             //byte[] valueDecoded= Base64.decodeBase64(bytesEncoded );
             final byte[] decValue = c.doFinal(decorVal);
             decryptedValue = new String(decValue);
-            logger.debug("dec: [" + decryptedValue + "] key:[" + secretKey + "]");
+            logger.debug("decrypt ok");
 
         } catch(javax.crypto.BadPaddingException bx) {
-            logger.debug("Secret key [{}] cannot decrypt encrypted value [{}]", secretKey, encryptedValue);
+            logger.debug("configured secret cannot decrypt encrypted value [{}]", encryptedValue);
             //logger.debug(bx.getMessage() + " bad password error");
             //bx.printStackTrace();
             //logger.info("bad!");

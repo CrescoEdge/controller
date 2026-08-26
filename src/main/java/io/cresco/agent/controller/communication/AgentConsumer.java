@@ -17,6 +17,7 @@ import org.apache.activemq.ActiveMQSession;
 import org.apache.activemq.BlobMessage;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -199,10 +200,11 @@ public class AgentConsumer {
 								if(groupExist) {
 
 
-									Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + dataName);
+									Path journalBase = controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath();
+									Path filePath = resolveInJournal(journalBase, dataName);
 									Files.createDirectories(filePath);
 
-									File filePart = new File(filePath.toAbsolutePath().toString(), dataPart);
+									File filePart = resolveInJournal(filePath, dataPart).toFile();
 
 									byte[] data = new byte[(int) ((BytesMessage) msg).getBodyLength()];
 									((BytesMessage) msg).readBytes(data);
@@ -232,7 +234,7 @@ public class AgentConsumer {
 
 									if(isPartComplete) {
 										List<File> orderedFilePartList = new ArrayList<>();
-										File combinedFile = new File(filePath.toAbsolutePath().toString(), combinedFileName);
+										File combinedFile = resolveInJournal(filePath, combinedFileName).toFile();
 
 										for(String filePartName : orderedFilePartNameList) {
 											File partFile = new File(filePath.toAbsolutePath().toString(), filePartName);
@@ -321,6 +323,24 @@ public class AgentConsumer {
 			}
 		});
 
+	}
+
+	/**
+	 * Wire-supplied name components (dataname/datapart/group file names) must be simple names:
+	 * legitimate senders use UUID-derived values, so separators, "..", or absolute paths are
+	 * hostile. The resolved path must stay inside the journal directory.
+	 */
+	private Path resolveInJournal(Path baseDir, String name) throws IOException {
+		if ((name == null) || name.isEmpty() || name.contains("/") || name.contains("\\")
+				|| name.contains("..") || name.indexOf('\0') >= 0) {
+			throw new IOException("rejecting unsafe file name component: [" + name + "]");
+		}
+		Path base = baseDir.toAbsolutePath().normalize();
+		Path resolved = base.resolve(name).normalize();
+		if (!resolved.startsWith(base)) {
+			throw new IOException("rejecting file name escaping journal path: [" + name + "]");
+		}
+		return resolved;
 	}
 
 	/** Live state of the connection actually carrying the inbox (dedicated or pooled). */

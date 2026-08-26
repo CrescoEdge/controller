@@ -386,6 +386,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         ActiveMQSession s = shardSessions.get(key);
         try {
             if (s == null || s.isClosed()) {
+                // BOUNDED wait, and outside the shardSessions monitor: parking forever while
+                // holding the lock wedged every other shard's rebuild along with this one
+                int waited = 0;
+                int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
+                while (!controllerEngine.getActiveClient().isFaultURIActive()) {
+                    if (waited++ >= maxWait) {
+                        logger.error("getShardSession(" + shard + "): messaging plane not active after "
+                                + maxWait + "s - returning null instead of blocking the caller forever");
+                        return null;
+                    }
+                    Thread.sleep(1000);
+                }
                 synchronized (shardSessions) {
                     s = shardSessions.get(key);
                     if (s == null || s.isClosed()) {
@@ -398,7 +410,6 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                                 if (oldConn != null && !oldConn.isClosed()) oldConn.close();
                             } catch (Exception ignore) { }
                         }
-                        while (!controllerEngine.getActiveClient().isFaultURIActive()) { Thread.sleep(1000); }
                         s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
                         if (s != null) {
                             shardSessions.put(key, s);
@@ -479,7 +490,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             return sendMessage(topicType, message, deliveryMode, priority, timeToLive);
         }
         try {
+            // BOUNDED: parking the caller forever on an inactive controller wedged send threads
+            int waited = 0;
+            int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
             while(!controllerEngine.cstate.isActive()) {
+                if (waited++ >= maxWait) {
+                    logger.error("sendMessage(shard): controller not active after " + maxWait
+                            + "s - dropping send instead of blocking the caller forever");
+                    return false;
+                }
                 Thread.sleep(1000);
             }
             String topicName = shardedTopicName(topicType, shard);
@@ -672,7 +691,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 deliveryMode = tier.deliveryMode;
             }
 
+            // BOUNDED: parking the caller forever on an inactive controller wedged send threads
+            int waited = 0;
+            int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
             while(!controllerEngine.cstate.isActive()) {
+                if (waited++ >= maxWait) {
+                    logger.error("sendMessage: controller not active after " + maxWait
+                            + "s - dropping send instead of blocking the caller forever");
+                    return false;
+                }
                 Thread.sleep(1000);
                 logger.debug("!controllerEngine.cstate.isActive() SLEEPING 1s");
             }
@@ -1145,7 +1172,10 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             dme.setParam("partsize", String.valueOf(fileSize));
 
                             MsgEvent rdme = plugin.sendRPC(dme);
-                            fileOutputStream.write(rdme.getDataParam("payload"));
+                            //payload is written with setCompressedDataParam (gzip+base64);
+                            //reading it with getDataParam returned the raw gzip bytes and
+                            //corrupted every transfer (permanent md5-mismatch sync loop)
+                            fileOutputStream.write(rdme.getCompressedDataParam("payload"));
                         }
 
                     } else { //we need to break up the file
@@ -1172,7 +1202,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                                 dme.setParam("partsize", String.valueOf(sizeOfFilePart));
 
                                 MsgEvent rdme = plugin.sendRPC(dme);
-                                fileOutputStream.write(rdme.getDataParam("payload"));
+                                fileOutputStream.write(rdme.getCompressedDataParam("payload"));
 
                                 fileDataRemaining = fileDataRemaining - sizeOfFilePart;
                                 skipLength += sizeOfFilePart;
@@ -1185,8 +1215,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     String lmd5 = plugin.getMD5(localFilePath);
                     if(lmd5.equals(rmd5)) {
                         returnFilePath = Paths.get(localFilePath);
+                    } else {
+                        //silent md5 failure made every unsuccessful transfer indistinguishable
+                        //from "worked" at this layer - callers only saw a null
+                        logger.error("downloadRemoteFile: md5 mismatch for " + remoteFilePath
+                                + " local=" + lmd5 + " remote=" + rmd5);
                     }
 
+                } else {
+                    logger.error("downloadRemoteFile: getfileinfo for " + remoteFilePath
+                            + " returned no md5/size: status=" + re.getParam("status")
+                            + " desc=" + re.getParam("status_desc"));
                 }
 
             }

@@ -96,8 +96,22 @@ public class BrokeredAgent {
 			logger.error("bm.MonitorActive : shutting down.. activeAddress: " + brokerNode.discovered_ip);
 		}
 		bm = new BrokerMonitor(controllerEngine, brokerNode.getDiscoveredPath());
-		new Thread(bm).start();
+		Thread monitorThread = new Thread(bm);
+		monitorThread.start();
+		// BOUNDED: if connectToBroker fails, the monitor thread exits without ever setting
+		// MonitorActive and marks itself FAILED - spinning here forever wedged the caller
+		int waited = 0;
 		while(!bm.MonitorActive) {
+			if (!monitorThread.isAlive()) {
+				logger.error("setStarting: broker monitor exited without connecting, activeAddress: "
+						+ brokerNode.discovered_ip);
+				return;
+			}
+			if (waited++ >= 120) {
+				logger.error("setStarting: broker monitor not active after " + waited
+						+ "s, giving up wait, activeAddress: " + brokerNode.discovered_ip);
+				return;
+			}
 			try {
 				Thread.sleep(1000);
 				logger.debug("waiting on monitor active ");
@@ -112,7 +126,9 @@ public class BrokeredAgent {
 		if(bm.MonitorActive) {
 			bm.shutdown();
 		}
-		while(bm.MonitorActive) {
+		// shutdown() clears MonitorActive synchronously; the bound only guards a throw inside it
+		int waited = 0;
+		while(bm.MonitorActive && (waited++ < 30)) {
 			try {
 				Thread.sleep(1000);
 			} catch (Exception e) {

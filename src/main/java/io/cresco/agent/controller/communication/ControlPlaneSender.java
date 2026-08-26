@@ -65,6 +65,22 @@ class ControlPlaneSender {
                     ? controllerEngine.getActiveClient().createDedicatedSession(baseURI, false, Session.AUTO_ACKNOWLEDGE, true)
                     : controllerEngine.getActiveClient().createSession(baseURI, false, Session.AUTO_ACKNOWLEDGE);
             if (session == null) throw new JMSException("ControlPlaneSender: null session for " + baseURI);
+            // Persistent sends are synchronous (await broker receipt), and send() must hold the
+            // lock (JMS sessions are not thread-safe) - so a wedged transport would otherwise hold
+            // the lock forever and starve every control-plane sender behind it. Bound the stall:
+            // a timed-out send throws, closeQuietly() rebuilds, callers see a clean failure.
+            // Only on the dedicated connection (we own it; never mutate the shared pooled one).
+            if (dedicatedConnection) {
+                try {
+                    org.apache.activemq.ActiveMQConnection conn =
+                            (org.apache.activemq.ActiveMQConnection) session.getConnection();
+                    if (conn != null) {
+                        conn.setSendTimeout(plugin.getConfig().getIntegerParam("controlplane_send_timeout_ms", 15000));
+                    }
+                } catch (Exception ex) {
+                    logger.warn("ControlPlaneSender: unable to set send timeout: {}", ex.getMessage());
+                }
+            }
             producer = session.createProducer(null); // anonymous; destination chosen per send
             destCache.clear();
             logger.info("ControlPlaneSender session (re)initialized for {}{}", baseURI,
@@ -86,6 +102,9 @@ class ControlPlaneSender {
         for (int attempt = 1; attempt <= 2; attempt++) {
             try {
                 ensureOpen();
+                // the lock is required (JMS sessions are single-threaded); the send inside it is
+                // bounded by the connection sendTimeout set in ensureOpen, so a dead transport
+                // fails this send instead of parking every sender behind the lock
                 synchronized (lock) {
                     TextMessage tm = session.createTextMessage(gson.toJson(sm));
                     producer.send(dest(dstQueueName), tm, tier.deliveryMode, tier.priority, ttl);

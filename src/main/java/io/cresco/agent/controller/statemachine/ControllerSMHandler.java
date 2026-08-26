@@ -119,11 +119,31 @@ public class ControllerSMHandler {
         stateInit();
     }
 
+    // Two independent detectors (HC->MINA bridge and BrokeredAgent) can report the SAME loss
+    // episode; MINA queues the second event and would replay a full recovery on the freshly
+    // recovered controller. A genuinely new loss re-fires from the next health tick after the
+    // window, so debouncing duplicates is safe.
+    private volatile long lastRecoveryComplete = 0;
+    private static final long RECOVERY_DEBOUNCE_MS = 30000;
+
+    private boolean isDuplicateLossReport(String event) {
+        long sinceRecovery = System.currentTimeMillis() - lastRecoveryComplete;
+        if ((lastRecoveryComplete > 0) && (sinceRecovery < RECOVERY_DEBOUNCE_MS)) {
+            logger.warn(event + " ignored: recovery completed " + sinceRecovery
+                    + "ms ago (duplicate loss report from a second detector)");
+            return true;
+        }
+        return false;
+    }
+
     @Transitions({
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL_FAILED),
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL)
     })
     public void globalControllerLost(StateContext context, String desc) {
+        if (isDuplicateLossReport("globalControllerLost")) {
+            return;
+        }
         logger.error("GLOBAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
         // Drop stale recorded parent health so recovery re-logs (covers the BrokeredAgent-driven
         // region->global loss path, which does not go through the HC->MINA bridge).
@@ -135,6 +155,7 @@ public class ControllerSMHandler {
               logger.error("!isRegionalGlobalShutdown() Dirty Shutdown!");
             }
             stateInit();
+            lastRecoveryComplete = System.currentTimeMillis();
             logger.info("RegionalGlobalFailed Recovered");
             //startup things
         } else {
@@ -147,6 +168,9 @@ public class ControllerSMHandler {
             @Transition(on = "regionalControllerLost", in = AGENT)
     })
     public void regionalControllerLost(StateContext context) {
+        if (isDuplicateLossReport("regionalControllerLost")) {
+            return;
+        }
         logger.error("REGIONAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
         if (controllerEngine.getMeshHealth() != null) { controllerEngine.getMeshHealth().resetParent(); }
 
@@ -156,6 +180,7 @@ public class ControllerSMHandler {
                 logger.error("!isAgentShutdown() Dirty Shutdown!");
             }
             stateInit();
+            lastRecoveryComplete = System.currentTimeMillis();
             logger.info("AgentFailed Recovered");
             //startup things
         } else {

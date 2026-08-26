@@ -90,7 +90,7 @@ public class GlobalHealthWatcher {
 
             for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {
                 logger.error("Agent NodeID : " + regionName + " Agent NodeID : " + entry.getKey() + " SETTING LOST");
-                controllerEngine.getGDB().setNodeStatusCode(regionName, null, null, 50, "agent set LOST by global controller health watcher I1");
+                controllerEngine.getGDB().setNodeStatusCode(regionName, entry.getKey(), null, 50, "agent set LOST by global controller health watcher I1");
                 setPluginsLost(regionName, entry.getKey());
             }
         }

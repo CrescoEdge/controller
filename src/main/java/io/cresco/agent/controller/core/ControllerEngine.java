@@ -105,9 +105,15 @@ public class ControllerEngine {
 
         this.activeClient = new ActiveClient(this);
 
-        //this.msgInProcessQueue = Executors.newFixedThreadPool(100);
-        this.msgInProcessQueue = Executors.newCachedThreadPool();
-        //this.msgInProcessQueue = Executors.newSingleThreadExecutor();
+        //bounded pool: a cached (unbounded) pool means thread-per-message under broker churn,
+        //which exhausts threads/FDs on constrained edge hosts; CallerRuns pushes backpressure
+        //onto the delivery thread instead of dropping or growing without limit
+        int msgInMaxThreads = Math.max(8, Runtime.getRuntime().availableProcessors() * 2);
+        ThreadPoolExecutor msgInPool = new ThreadPoolExecutor(msgInMaxThreads, msgInMaxThreads,
+                60L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(4096),
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        msgInPool.allowCoreThreadTimeOut(true);
+        this.msgInProcessQueue = msgInPool;
 
         //will wait until active then load plugins
         StaticPluginLoader staticPluginLoader = new StaticPluginLoader(this);
@@ -179,6 +185,16 @@ public class ControllerEngine {
 
             if(plugin != null) {
                 plugin.setIsActive(false);
+            }
+
+            try {
+                msgInProcessQueue.shutdown();
+                if (!msgInProcessQueue.awaitTermination(5, TimeUnit.SECONDS)) {
+                    msgInProcessQueue.shutdownNow();
+                }
+            } catch (InterruptedException ie) {
+                msgInProcessQueue.shutdownNow();
+                Thread.currentThread().interrupt();
             }
 
             //disable logging

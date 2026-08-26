@@ -85,18 +85,14 @@ public class ActiveProducerWorkerData implements Runnable {
 
 				dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 0, 0);
 
-				dataProducer.close();
+				//one producer for the whole transfer: creating and closing one per file part cost
+				//N synchronous OpenWire round-trips per file; the outer finally closes it
 
 				for(FileObject fileObject : fileObjectList) {
 
 					Path filePath = Paths.get(controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath() + System.getProperty("file.separator") + fileObject.getDataName());
 
 					for (String parList : fileObject.getOrderedPartList()) {
-
-						dataProducer = dataSess.createProducer(dataDestination);
-						dataProducer.setTimeToLive(0);
-						dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
-
 
 						BytesMessage bytesMessage = dataSess.createBytesMessage();
 						bytesMessage.setStringProperty("datapart", parList);
@@ -149,10 +145,6 @@ public class ActiveProducerWorkerData implements Runnable {
 							}
 						} catch (Exception ex) {
 							logger.error("ActiveProducerWorkerData.run General send failure : " + ex.getMessage(), ex);
-						} finally {
-							if(dataProducer != null) {
-								dataProducer.close();
-							}
 						}
 						filePart.delete();
 					}
