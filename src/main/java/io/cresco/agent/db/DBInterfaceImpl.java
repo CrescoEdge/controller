@@ -24,6 +24,24 @@ public class DBInterfaceImpl implements DBInterface {
     private Type type;
     private Type mapType;
 
+    // During a join storm heartbeats legitimately race registration (config sync is async of
+    // connect), so a missed watchdog update is expected for a few seconds per node — WARN once
+    // per node per interval, not once per heartbeat.
+    private final Map<String,Long> watchdogMissWarnTs = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long WATCHDOG_MISS_WARN_INTERVAL_MS = 60_000L;
+
+    private void warnWatchdogMiss(String tier, String nodeId) {
+        long now = System.currentTimeMillis();
+        Long last = watchdogMissWarnTs.get(nodeId);
+        if ((last == null) || ((now - last) > WATCHDOG_MISS_WARN_INTERVAL_MS)) {
+            watchdogMissWarnTs.put(nodeId, now);
+            logger.warn("watchdog TS update found no {} row for '{}' (heartbeat before registration, or node removed); repeats logged at debug for {}s",
+                    tier, nodeId, WATCHDOG_MISS_WARN_INTERVAL_MS / 1000);
+        } else {
+            logger.debug("watchdog TS miss for {} '{}'", tier, nodeId);
+        }
+    }
+
     public DBInterfaceImpl(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(DBInterfaceImpl.class.getName(),CLogger.Level.Info);
@@ -113,7 +131,7 @@ public class DBInterfaceImpl implements DBInterface {
                     timestampUpdatesPerformed++;
                     logger.trace("Watchdog TS updated for region: {}", region_watchdog_update);
                 } else {
-                    logger.warn("Failed to update watchdog TS for region: {}", region_watchdog_update);
+                    warnWatchdogMiss("region", region_watchdog_update);
                 }
             }
             if (agent_watchdog_update != null) { // This matches the error log context
@@ -121,7 +139,7 @@ public class DBInterfaceImpl implements DBInterface {
                     timestampUpdatesPerformed++;
                     logger.trace("Watchdog TS updated for agent: {}", agent_watchdog_update);
                 } else {
-                    logger.warn("Failed to update watchdog TS for agent: {}", agent_watchdog_update);
+                    warnWatchdogMiss("agent", agent_watchdog_update);
                 }
             }
             if (plugin_watchdog_update != null) {
@@ -129,7 +147,7 @@ public class DBInterfaceImpl implements DBInterface {
                     timestampUpdatesPerformed++;
                     logger.trace("Watchdog TS updated for plugin: {}", plugin_watchdog_update);
                 } else {
-                    logger.warn("Failed to update watchdog TS for plugin: {}", plugin_watchdog_update);
+                    warnWatchdogMiss("plugin", plugin_watchdog_update);
                 }
             }
 

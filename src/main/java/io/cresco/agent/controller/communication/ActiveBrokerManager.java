@@ -52,13 +52,16 @@ public class ActiveBrokerManager implements Runnable  {
 
 					//Poison Pill Shutdown, send null class if blocking on input
 					if (discoveryNode.discovery_type != DiscoveryType.SHUTDOWN) {
-						//String agentIP = cb.getParam("dst_ip");
 
-						//if ((!controllerEngine.isLocal(discoveryNode.discovered_ip)) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost"))) { //ignore local responses
-						if((!controllerEngine.isLocal(discoveryNode.discovered_ip) || (discoveryNode.discovered_ip.equals("127.0.0.1")) || (discoveryNode.discovered_ip.equals("localhost")))) {
-							logger.warn("REMOVED BLOCKED BROKER CONNECTION FOR LOCALHOST, THIS MIGHT CAUSE ISSUES, NEED TO PREVENT AGENT CONNECTING TO SELF IN THE DISCOVERY PROCESS");
+						// self-detection is by IDENTITY, not by IP: an address-based check
+						// misfires on multi-homed hosts (every legitimate peer WARNed here
+						// before) and breaks same-host multi-controller setups, while a
+						// self-connection is exactly "the discovered path is my own path"
+						String selfPath = controllerEngine.cstate.getAgentPath();
+						if (selfPath.equals(discoveryNode.getDiscoveredPath())) {
+							logger.debug("ignoring discovery candidate for self (" + selfPath + " ip: " + discoveryNode.discovered_ip + ")");
+							continue;
 						}
-
 
 							boolean addBroker = false;
 							//String agentPath = cb.getParam("dst_region") + "_" + cb.getParam("dst_agent");

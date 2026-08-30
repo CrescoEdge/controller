@@ -303,7 +303,7 @@ public class GlobalExecutor implements Executor {
 
     }
 
-    private List<Map<String,String>> getConnectedRegions() {
+    private List<Map<String,String>> getConnectedRegions(Set<String> knownRegions) {
 
         List<Map<String,String>> returnBridgedRegions = new ArrayList<>();
         try {
@@ -313,7 +313,13 @@ public class GlobalExecutor implements Executor {
                 String remoteRegion = connectedRegions.get("region_id");
                 String remoteAgent =  connectedRegions.get("agent_id");
 
-                if(!remoteRegion.equals(controllerEngine.cstate.getRegion()) && !remoteAgent.equals(controllerEngine.cstate.getAgent())) {
+                // self = same region AND same agent; a dynamic-mesh bridge back to a
+                // federated region is not a new region — skip both (a federated region is
+                // already in the DB list, and querying it over the bridge costs an RPC per call)
+                boolean isSelf = remoteRegion.equals(controllerEngine.cstate.getRegion())
+                        && remoteAgent.equals(controllerEngine.cstate.getAgent());
+
+                if(!isSelf && !knownRegions.contains(remoteRegion)) {
 
                     Map<String, List<Map<String, String>>> agentMap = getAgentMap(remoteRegion, remoteAgent);
                     if(agentMap != null) {
@@ -323,6 +329,7 @@ public class GlobalExecutor implements Executor {
                         regionMap.put("agents", String.valueOf(agentMap.get("agents").size()));
                         regionMap.put("type", "bridged");
                         returnBridgedRegions.add(regionMap);
+                        knownRegions.add(remoteRegion);
                     }
 
                 }
@@ -382,10 +389,18 @@ public class GlobalExecutor implements Executor {
 
         try {
 
-            List<Map<String,String>> connectedRegions = getConnectedRegions();
-
-
             queryMap = controllerEngine.getGDB().getRegionList();
+
+            // regions already federated into the global DB are authoritative; bridged
+            // entries only add regions reachable ONLY via a broker bridge. Without this
+            // dedup a dynamic mesh (every region federated AND bridge-connected) lists
+            // every region twice.
+            Set<String> knownRegions = new HashSet<>();
+            for(Map<String,String> regionMap : queryMap.get("regions")) {
+                knownRegions.add(regionMap.get("name"));
+            }
+
+            List<Map<String,String>> connectedRegions = getConnectedRegions(knownRegions);
 
             if(connectedRegions != null) {
                 queryMap.get("regions").addAll(connectedRegions);
@@ -426,13 +441,26 @@ public class GlobalExecutor implements Executor {
         Map<String,List<Map<String,String>>> queryMap = null;
 
         try {
-            if((Objects.equals(controllerEngine.cstate.getRegion(), regionName)) || (regionName == null)) {
-                queryMap = controllerEngine.getGDB().getAgentList(regionName);
-            } else {
+            // any federated region (not just our own) has its agents in the global DB —
+            // serve from there first; only a bridge-only region needs the remote RPC
+            queryMap = controllerEngine.getGDB().getAgentList(regionName);
+
+            boolean dbEmpty = (queryMap == null) || (queryMap.get("agents") == null)
+                    || queryMap.get("agents").isEmpty();
+
+            if(dbEmpty && (regionName != null) && !Objects.equals(controllerEngine.cstate.getRegion(), regionName)) {
                 Map<String,List<Map<String,String>>> regionMap = getRegions();
                 for(Map<String,String> mapEntry : regionMap.get("regions")) {
                     if(mapEntry.get("name").equals(regionName)) {
-                        queryMap = getAgentMap(regionName, mapEntry.get("bridged_agent"));
+                        // a "local" (DB) entry carries no bridged_agent — an RPC addressed
+                        // to a null agent can never be answered, so only follow real bridges
+                        String bridgedAgent = mapEntry.get("bridged_agent");
+                        if(bridgedAgent != null) {
+                            queryMap = getAgentMap(regionName, bridgedAgent);
+                            if(queryMap != null) {
+                                break;
+                            }
+                        }
                     }
                 }
             }
