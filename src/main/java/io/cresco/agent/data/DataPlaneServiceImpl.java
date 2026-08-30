@@ -20,7 +20,6 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
@@ -1237,44 +1236,14 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
 
+    /** Content hash via the single library crypto facade (SHA-256, FIPS-approved). */
     public String getMD5(String filePath) {
-        String hashString = null;
         try {
-            //Get file input stream for reading the file content
-            try (FileInputStream fis = new FileInputStream(filePath)) {
-
-                MessageDigest digest = MessageDigest.getInstance("MD5");
-
-                //Create byte array to read data in chunks
-                byte[] byteArray = new byte[1024];
-                int bytesCount = 0;
-
-                //Read file data and update in message digest
-                while ((bytesCount = fis.read(byteArray)) != -1) {
-                    digest.update(byteArray, 0, bytesCount);
-                }
-
-                //close the stream; We don't need it now.
-                fis.close();
-
-                //Get the hash's bytes
-                byte[] bytes = digest.digest();
-
-                //This bytes[] has bytes in decimal format;
-                //Convert it to hexadecimal format
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < bytes.length; i++) {
-                    sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
-                }
-
-                hashString = sb.toString();
-            }
-
+            return io.cresco.library.crypto.CrescoCrypto.contentHashHex(filePath);
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.getMD5 error", ex);
+            return null;
         }
-        //return complete hash
-        return hashString;
     }
 
     public void mergeFiles(List<File> files, File into, boolean deleteParts) {

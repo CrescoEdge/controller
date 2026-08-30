@@ -52,7 +52,8 @@ public class CertificateManager {
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
 
-    private int keySize = 2048;
+    // CNSA-1.0 RSA floor via the single crypto policy seam (was a factorable 512-bit clamp).
+    private int keySize = io.cresco.library.crypto.CrescoCrypto.MIN_RSA_KEY_BITS;
     private boolean certificateSaveFailureEncountered = false;
 
     public CertificateManager(ControllerEngine controllerEngine) {
@@ -65,10 +66,11 @@ public class CertificateManager {
 
             Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
 
-            keySize = plugin.getConfig().getIntegerParam("messagekeysize",2048);
-            if (keySize < 512) {
-                logger.warn("Message key sizes (messagekeysize) of <512 are not currently supported, using 512 bits");
-                keySize = 512;
+            int minKeySize = io.cresco.library.crypto.CrescoCrypto.MIN_RSA_KEY_BITS;
+            keySize = plugin.getConfig().getIntegerParam("messagekeysize", minKeySize);
+            if (keySize < minKeySize) {
+                logger.warn("messagekeysize " + keySize + " is below the CNSA-1.0 RSA floor; using " + minKeySize);
+                keySize = minKeySize;
             }
 
             this.keyStoreAlias = this.controllerEngine.cstate.getAgentPath();
@@ -108,11 +110,11 @@ public class CertificateManager {
                     }
 
                     logger.info("Key store or trust store do not exists or are invalid, (re)creating");
-                    keyStore = KeyStore.getInstance("jks");
+                    keyStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
                     keyStore.load(null, null);
 
 
-                    trustStore = KeyStore.getInstance("jks");
+                    trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
                     trustStore.load(null, null);
 
                     generateCertChain();
@@ -124,11 +126,11 @@ public class CertificateManager {
                 //keyStoreAlias = UUID.randomUUID().toString();
                 keyStorePassword = UUID.randomUUID().toString().toCharArray();
 
-                keyStore = KeyStore.getInstance("jks");
+                keyStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
                 keyStore.load(null, null);
 
 
-                trustStore = KeyStore.getInstance("jks");
+                trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
                 trustStore.load(null, null);
 
                 generateCertChain();
@@ -356,8 +358,8 @@ public class CertificateManager {
     private void storeKeyAndCertificateChain(String alias, char[] password, Key key, X509Certificate[] chain) throws Exception{
 
 
-        //KeyStore keyStore=KeyStore.getInstance("jks");
-        //keyStore=KeyStore.getInstance("jks");
+        //KeyStore keyStore=KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+        //keyStore=KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         //keyStore.load(null,null);
         keyStore.setKeyEntry(alias, key, password, chain);
 
@@ -633,7 +635,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         try (FileInputStream keyStoreIn = new FileInputStream(keyStoreFilePath);
              FileInputStream trustStoreIn = new FileInputStream(trustStoreFilePath)) {
             logger.trace("Generating blank key store object");
-            keyStore = KeyStore.getInstance("jks");
+            keyStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
             logger.trace("Loading existing key store: {}", Paths.get(keyStoreFilePath).toAbsolutePath());
             keyStore.load(keyStoreIn, keyStorePassword);
             if (keyStore == null) {
@@ -646,7 +648,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 return false;
             }
             logger.trace("Generating blank trust store object");
-            trustStore = KeyStore.getInstance("jks");
+            trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
             logger.trace("Loading existing trust store: {}", Paths.get(trustStoreFilePath).toAbsolutePath());
             trustStore.load(trustStoreIn, trustStorePassword);
             Certificate[] keyStoreCertChain = keyStore.getCertificateChain(keyStoreAlias);
@@ -905,7 +907,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
 
     private void loadAndDisplayChain(String alias,char[] password, String keystore) throws Exception{
         //Reload the keystore
-        KeyStore keyStore=KeyStore.getInstance("jks");
+        KeyStore keyStore=KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         keyStore.load(new FileInputStream(keystore),password);
 
         Key key=keyStore.getKey(alias, password);
@@ -930,7 +932,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     }
 
     private  void clearKeyStore(String alias,char[] password, String keystore) throws Exception{
-        KeyStore keyStore=KeyStore.getInstance("jks");
+        KeyStore keyStore=KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         keyStore.load(new FileInputStream(keystore),password);
         keyStore.deleteEntry(alias);
         keyStore.store(new FileOutputStream(keystore),password);
@@ -987,7 +989,9 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             PrivateKey rootPrivateKey=keyGen.getPrivateKey();
 
             KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048, SecureRandom.getInstance("SHA1PRNG"));
+            // DRBG (SP 800-90A) via the crypto seam, was SHA1PRNG; CNSA RSA floor, was hardcoded 2048.
+            gen.initialize(io.cresco.library.crypto.CrescoCrypto.MIN_RSA_KEY_BITS,
+                    io.cresco.library.crypto.CrescoCrypto.secureRandom());
             KeyPair keyPair = gen.generateKeyPair();
 
             //X509Certificate rootCertificate = keyGen.getSelfCertificate(new X500Name("CN=ROOT"), (long) (365 * 24 * 60 * 60) * YEARS_VALID);
