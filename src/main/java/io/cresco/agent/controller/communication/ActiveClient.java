@@ -42,6 +42,48 @@ public class ActiveClient {
     }
     private final List<DedicatedConn> dedicatedConnections = Collections.synchronizedList(new ArrayList<>());
 
+    // ---- dead-transport teardown ----------------------------------------------------------
+    // A failover transport that is mid-reconnect parks EVERY JMS close() (consumer, producer,
+    // session, connection) inside FailoverTransport.oneway() until its reconnect attempts are
+    // exhausted (~20s with maxReconnectAttempts=5 / 5s delay), and the closes run serially. On a
+    // parent-broker loss that stretched the agent's re-init (isAgentShutdown -> ActiveClient
+    // .shutdown) from milliseconds to minutes, leaving the agent parked in "STUCK IN CONNECTION
+    // FAULT" long after the parent was back (W-GFS-6). Disposing a DEAD transport first makes
+    // every parked oneway() throw immediately, so the teardown is instant; a healthy transport is
+    // left alone and closes gracefully (RemoveInfo/ShutdownInfo still reach the broker).
+    static boolean isTransportDead(ActiveMQConnection c) {
+        if (c == null) return true;
+        try {
+            if (c.isTransportFailed()) return true;
+            org.apache.activemq.transport.Transport t = c.getTransport();
+            org.apache.activemq.transport.failover.FailoverTransport ft =
+                    (t != null) ? t.narrow(org.apache.activemq.transport.failover.FailoverTransport.class) : null;
+            return ft != null && !ft.isConnected();
+        } catch (Exception ex) {
+            return true;
+        }
+    }
+
+    /** Dispose the transport of a DEAD connection so parked closes/sends fail fast. @return true if disposed. */
+    static boolean disposeIfDead(ActiveMQConnection c) {
+        if (c == null || !isTransportDead(c)) return false;
+        try {
+            org.apache.activemq.transport.Transport t = c.getTransport();
+            if (t != null) t.stop();
+            return true;
+        } catch (Exception ignore) {
+            return false;
+        }
+    }
+
+    /** Close a connection without ever parking on a dead transport (graceful when healthy). */
+    static void closeConnectionFast(ActiveMQConnection c) {
+        if (c == null) return;
+        disposeIfDead(c);
+        try { c.setExceptionListener(null); } catch (Exception ignore) { }
+        try { if (!c.isClosed()) c.close(); } catch (Exception ignore) { }
+    }
+
     private AgentConsumer agentConsumer;
     private AgentProducer agentProducer;
 
@@ -263,7 +305,7 @@ public class ActiveClient {
                     synchronized (dedicatedConnections) {
                         dedicatedConnections.removeIf(dc -> dc.conn() == conn);
                     }
-                    try { conn.close(); } catch (Exception ignore) { }
+                    closeConnectionFast(conn);
                 });
             } else {
                 conn.setExceptionListener(new ConnectionExceptionListener(URI));
@@ -287,9 +329,7 @@ public class ActiveClient {
                     DedicatedConn dc = it.next();
                     ActiveMQConnection c = dc.conn();
                     if (c == null || c.isClosed() || c.isTransportFailed()) {
-                        if (c != null && !c.isClosed()) {
-                            try { c.setExceptionListener(null); c.close(); } catch (Exception ignore) { }
-                        }
+                        closeConnectionFast(c);
                         it.remove();
                     }
                 }
@@ -446,13 +486,8 @@ public class ActiveClient {
         ActiveMQConnection failedConnection = connectionMap.remove(uri);
         if (failedConnection != null) {
             connectionRemoved = true;
-            try {
-                logger.warn("Closing failed connection object for URI [{}] due to failure.", uri);
-                failedConnection.setExceptionListener(null);
-                failedConnection.close();
-            } catch (JMSException e) {
-                logger.warn("Exception while closing failed connection for URI [{}]: {}", uri, e.getMessage());
-            }
+            logger.warn("Closing failed connection object for URI [{}] due to failure.", uri);
+            closeConnectionFast(failedConnection);
             logger.info("Removed connection from map for URI [{}] after failure.", uri);
         } else {
             logger.info("No active connection found in map for URI [{}] during failure handling (already removed or never added).", uri);
@@ -563,6 +598,22 @@ public class ActiveClient {
     public void shutdown() {
         logger.info("ActiveClient shutting down...");
 
+        // Pre-pass: dispose every DEAD transport (dedicated + pooled) BEFORE tearing down the
+        // producer/consumer, so none of the closes below can park on a reconnecting failover
+        // transport. This is what keeps a parent-loss re-init at sub-second instead of minutes.
+        int disposed = 0;
+        synchronized (dedicatedConnections) {
+            for (DedicatedConn dc : dedicatedConnections) {
+                if (disposeIfDead(dc.conn())) disposed++;
+            }
+        }
+        for (ActiveMQConnection c : new ArrayList<>(connectionMap.values())) {
+            if (disposeIfDead(c)) disposed++;
+        }
+        if (disposed > 0) {
+            logger.warn("ActiveClient shutdown: disposed {} dead transport(s) up front so teardown cannot park on reconnect", disposed);
+        }
+
         if (this.agentProducer != null) {
             logger.info("Shutting down AgentProducer...");
             this.agentProducer.shutdown();
@@ -578,10 +629,7 @@ public class ActiveClient {
         logger.info("Closing all active JMS connections...");
         synchronized (dedicatedConnections) {
             for (DedicatedConn dc : dedicatedConnections) {
-                ActiveMQConnection c = dc.conn();
-                if (c != null && !c.isClosed()) {
-                    try { c.setExceptionListener(null); c.close(); } catch (Exception ignore) { }
-                }
+                closeConnectionFast(dc.conn());
             }
             dedicatedConnections.clear();
         }
@@ -590,13 +638,8 @@ public class ActiveClient {
         for (String uri : urisToClose) {
             ActiveMQConnection connection = connectionMap.remove(uri);
             if (connection != null) {
-                try {
-                    logger.debug("Closing connection for URI [{}]", uri);
-                    connection.setExceptionListener(null); // Remove listener before closing
-                    connection.close();
-                } catch (JMSException e) {
-                    logger.warn("Exception closing connection for URI [{}] during shutdown: {}", uri, e.getMessage());
-                }
+                logger.debug("Closing connection for URI [{}]", uri);
+                closeConnectionFast(connection);
             }
         }
         logger.info("Cleared connection map ({} entries).", urisToClose.size());

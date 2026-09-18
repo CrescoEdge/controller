@@ -497,17 +497,44 @@ public class ControllerEngine {
         this.globalHealthWatcher = globalHealthWatcher;
     }
 
+    // A message that arrives while the parent-broker link is down (fault URI inactive) used to
+    // spin here FOREVER, one ERROR line per second per waiting thread ("STUCK IN CONNECTION
+    // FAULT"), pinning every plugin thread that tried to talk during a parent loss. Bounded now:
+    // hold the message up to msgin_fault_wait_ms for the link to come back (a normal re-init
+    // completes well inside that), then drop it with ONE error line -- an RPC caller sees a
+    // timeout and retries, exactly as for any other transient loss. Messages addressed to this
+    // agent itself never need the parent link and are routed immediately.
     public void msgIn(MsgEvent msg) {
 
         try {
-            while (!getActiveClient().isFaultURIActive()) {
-                Thread.sleep(1000);
-                logger.error("STUCK IN CONNECTION FAULT!!!");
-                logger.error("[" + msg.getParams() + "]");
+            if (!getActiveClient().isFaultURIActive() && !isLocalDestination(msg)) {
+                long waitMs = plugin.getConfig().getLongParam("msgin_fault_wait_ms", 20000L);
+                long deadline = System.currentTimeMillis() + waitMs;
+                boolean logged = false;
+                while (!getActiveClient().isFaultURIActive()) {
+                    if (System.currentTimeMillis() >= deadline) {
+                        logger.error("msgIn: parent link in connection fault for " + waitMs + "ms, dropping message [" + msg.getParams() + "]");
+                        return;
+                    }
+                    if (!logged) {
+                        logged = true;
+                        logger.warn("msgIn: parent link in connection fault, holding message up to " + waitMs + "ms [type=" + msg.getMsgType() + " dst=" + msg.getDstRegion() + "_" + msg.getDstAgent() + "]");
+                    }
+                    Thread.sleep(250);
+                }
             }
             msgRouter.route(msg);
         } catch (Exception ex) {
         logger.error("ControllerEngine.msgIn ", ex);
+        }
+    }
+
+    private boolean isLocalDestination(MsgEvent msg) {
+        try {
+            return cstate != null && msg.getDstRegion() != null && msg.getDstAgent() != null
+                    && msg.getDstRegion().equals(cstate.getRegion()) && msg.getDstAgent().equals(cstate.getAgent());
+        } catch (Exception ex) {
+            return false;
         }
     }
 

@@ -380,25 +380,35 @@ public class AgentConsumer {
 	}
 
 	public void shutdown() {
+		// A dead (reconnecting/failed) failover transport parks consumer.close() / session.close() /
+		// connection.close() until its reconnect attempts exhaust (~20s each, serially). Dispose it
+		// first so the teardown is immediate; a healthy transport still closes gracefully. Only on
+		// the dedicated connection we own -- never touch a pooled session's shared connection.
+		boolean dead = false;
+		if (dedicatedConnection && connection != null) {
+			dead = ActiveClient.disposeIfDead(connection);
+			if (dead) {
+				logger.warn("AgentConsumer.shutdown: dedicated transport is dead; disposed it before teardown");
+			}
+		}
 		try {
-			consumer.close();
+			if (consumer != null) consumer.close();
 		} catch (Exception ex) {
-			logger.error("AgentConsumer.shutdown Consumer Shutdown Error: " + ex.getMessage(), ex);
+			if (dead) {
+				logger.debug("AgentConsumer.shutdown consumer close on dead transport: " + ex.getMessage());
+			} else {
+				logger.error("AgentConsumer.shutdown Consumer Shutdown Error: " + ex.getMessage(), ex);
+			}
 		}
 		// On a dedicated connection WE own the socket: close it or every re-init (failover) leaks
-		// one. Never close a pooled session's shared connection. Separate trys so a throwing
-		// session.close() cannot strand the socket.
+		// one. Separate trys so a throwing session.close() cannot strand the socket.
 		if (dedicatedConnection) {
 			try {
 				if (sess != null && !sess.isClosed()) sess.close();
 			} catch (Exception ex) {
-				logger.warn("AgentConsumer.shutdown session close error: " + ex.getMessage());
+				if (!dead) logger.warn("AgentConsumer.shutdown session close error: " + ex.getMessage());
 			} finally {
-				try {
-					if (connection != null && !connection.isClosed()) connection.close();
-				} catch (Exception ex) {
-					logger.warn("AgentConsumer.shutdown dedicated connection close error: " + ex.getMessage());
-				}
+				ActiveClient.closeConnectionFast(connection);
 			}
 		}
 	}
