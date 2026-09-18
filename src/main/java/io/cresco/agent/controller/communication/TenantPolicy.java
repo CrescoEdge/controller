@@ -3,6 +3,8 @@ package io.cresco.agent.controller.communication;
 import io.cresco.library.security.CrescoIdentity;
 import io.cresco.library.security.TenantNamespace;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -46,6 +48,81 @@ public final class TenantPolicy {
     /** Authorization role of a connection. See class javadoc. */
     public enum Role { SUPERUSER, INTERNAL, TENANT }
 
+    /**
+     * W-GFS-1: a NAMED cross-tenant sink. A principal whose tenant matches {@code src} may {@code access}
+     * destinations matching {@code dst} even though they lie outside its own {@code T.<tenant>.} subtree.
+     * This is the only way across the tenant boundary short of SUPERUSER, and it is explicit: an
+     * allow-list distributed with the fabric configuration ({@code broker_cross_tenant_sinks}), e.g.
+     * <pre>
+     *   *->T.gfs-federation.*:write ; gfs-federation->T.*:write ; *->T.*.global.event:write
+     * </pre>
+     * (any site may write to the federation core's inboxes; the core may write to any tenant's inbox;
+     * any tenant may publish fragments on any tenant's dataplane topic). Globs: {@code *} = any run of
+     * characters, {@code ?} = one character. Access is {@code write} (default), {@code read} or {@code any}.
+     * A rule never grants READ unless it says so, so a tenant still cannot consume another tenant's inbox.
+     */
+    public static final class CrossTenantSink {
+        public final String src, dst;
+        public final Access access; // null = any
+        private final java.util.regex.Pattern srcRe, dstRe;
+
+        public CrossTenantSink(String src, String dst, Access access) {
+            this.src = src; this.dst = dst; this.access = access;
+            this.srcRe = glob(src); this.dstRe = glob(dst);
+        }
+
+        public boolean matches(String tenant, String destination, Access a) {
+            if (tenant == null || destination == null) return false;
+            if (access != null && access != a) return false;
+            return srcRe.matcher(tenant).matches() && dstRe.matcher(destination).matches();
+        }
+
+        static java.util.regex.Pattern glob(String g) {
+            StringBuilder sb = new StringBuilder();
+            for (char c : g.toCharArray()) {
+                if (c == '*') sb.append(".*");
+                else if (c == '?') sb.append('.');
+                else sb.append(java.util.regex.Pattern.quote(String.valueOf(c)));
+            }
+            return java.util.regex.Pattern.compile(sb.toString());
+        }
+
+        /** Parse {@code src->dst[:write|read|any]} entries separated by ';' or ','. Malformed entries are dropped. */
+        public static List<CrossTenantSink> parse(String spec) {
+            List<CrossTenantSink> out = new ArrayList<>();
+            if (spec == null) return out;
+            for (String raw : spec.split("[;,]")) {
+                String e = raw.trim();
+                if (e.isEmpty()) continue;
+                int arrow = e.indexOf("->");
+                if (arrow <= 0 || arrow + 2 >= e.length()) continue;
+                String src = e.substring(0, arrow).trim();
+                String rest = e.substring(arrow + 2).trim();
+                Access acc = Access.WRITE;
+                int colon = rest.lastIndexOf(':');
+                if (colon > 0) {
+                    String a = rest.substring(colon + 1).trim().toLowerCase();
+                    if (a.equals("write")) { acc = Access.WRITE; rest = rest.substring(0, colon).trim(); }
+                    else if (a.equals("read")) { acc = Access.READ; rest = rest.substring(0, colon).trim(); }
+                    else if (a.equals("any")) { acc = null; rest = rest.substring(0, colon).trim(); }
+                }
+                if (src.isEmpty() || rest.isEmpty()) continue;
+                out.add(new CrossTenantSink(src, rest, acc));
+            }
+            return out;
+        }
+
+        @Override public String toString() { return src + "->" + dst + ":" + (access == null ? "any" : access.name().toLowerCase()); }
+    }
+
+    private static Decision sinkDecision(String tenant, String destination, Access access, List<CrossTenantSink> sinks) {
+        if (sinks == null) return null;
+        for (CrossTenantSink s : sinks) {
+            if (s.matches(tenant, destination, access)) return Decision.allow("cross-tenant-sink " + s);
+        }
+        return null;
+    }
+
     public static final class Decision {
         public final boolean allowed;
         public final String reason;
@@ -75,6 +152,11 @@ public final class TenantPolicy {
 
     public static Decision check(CrescoIdentity principal, String destination, Access access,
                                  Set<String> sharedPrefixes, Role role) {
+        return check(principal, destination, access, sharedPrefixes, role, null);
+    }
+
+    public static Decision check(CrescoIdentity principal, String destination, Access access,
+                                 Set<String> sharedPrefixes, Role role, List<CrossTenantSink> sinks) {
         if (destination == null || destination.isEmpty()) {
             return Decision.deny("null/empty destination");
         }
@@ -101,6 +183,9 @@ public final class TenantPolicy {
             if (destination.startsWith(TenantNamespace.prefix(tenant))) {
                 return Decision.allow("tenant-namespace");
             }
+            // W-GFS-1: an explicitly named cross-tenant sink is the ONLY way across the boundary.
+            Decision sink = sinkDecision(tenant, destination, access, sinks);
+            if (sink != null) return sink;
             return Decision.deny("cross-tenant namespaced dest (own tenant '" + tenant + "')");
         }
 
@@ -122,6 +207,8 @@ public final class TenantPolicy {
                     : Decision.deny("read of peer inbox in region denied");
         }
 
+        Decision sink = sinkDecision(tenant, destination, access, sinks);
+        if (sink != null) return sink;
         return Decision.deny("outside tenant '" + tenant + "' namespace");
     }
 }

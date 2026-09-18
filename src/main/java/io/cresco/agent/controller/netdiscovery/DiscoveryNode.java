@@ -5,6 +5,11 @@ public class DiscoveryNode {
 	public DiscoveryType discovery_type;
 	public String broadcast_ip;
 	public int discovered_port;
+	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
+	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
+	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port
+	// see no change.
+	public int discovered_broker_port = -1;
 	public long broadcast_ts;
 	public String broadcast_validator;
 

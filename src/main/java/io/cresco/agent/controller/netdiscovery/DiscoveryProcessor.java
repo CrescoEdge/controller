@@ -50,6 +50,20 @@ public class DiscoveryProcessor {
 		return discoverySecret;
 	}
 
+	// W-GFS-5: advertise the port THIS controller's broker is bound to (dynamic port included), so a
+	// peer bridges to this broker and not to whatever happens to listen on discovery_port_remote on
+	// this host. On one host with several regional brokers that was the global's broker: the bridge
+	// came up against the wrong broker, the identity check failed, the path was declared lost and
+	// re-discovered every ~7 s ("Controller Path Lost" flapping).
+	private int advertisedBrokerPort() {
+		try {
+			if (controllerEngine.getBroker() != null) {
+				return controllerEngine.getBroker().getBoundBrokerPort();
+			}
+		} catch (Exception ignore) { }
+		return plugin.getConfig().getIntegerParam("broker_port", 32010);
+	}
+
 	public DiscoveryNode processIncomingBroadCastDiscovery(DiscoveryNode discoveryNode, String localAddress, int localPort, String remoteAddress, int remotePort) {
 		try {
 
@@ -72,10 +86,12 @@ public class DiscoveryProcessor {
 
 								if(discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVER) {
 									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret));
+									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY) {
 
 									String discovered_cert = configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert);
 									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret), discovered_cert);
+									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 
 								} else {
 									logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType: " + discoveryNode.nodeType.name() + " !UNKNOWN!");

@@ -16,6 +16,8 @@ class BrokerMonitor implements Runnable {
 	private String agentPath;
 	private NetworkConnector bridge;
 	private String monitoredHost;
+	private int brokerPort = -1; // W-GFS-5: the peer's advertised broker port (-1 = default remote port)
+	public void setBrokerPort(int port) { this.brokerPort = port; }
 
 	public volatile boolean MonitorActive;
 
@@ -39,12 +41,12 @@ class BrokerMonitor implements Runnable {
 			if((InetAddress.getByName(brokerAddress) instanceof Inet6Address)) {
 				brokerAddress = "[" + brokerAddress + "]";
 			}
-			this.monitoredHost = brokerAddress;
-			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress);
+			this.monitoredHost = controllerEngine.getBroker().bridgeKey(brokerAddress, brokerPort);
+			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerPort);
 			bridge.start();
 
 
-			logger.info("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress);
+			logger.info("Starting Bridge: " + bridge.getBrokerName() + " brokerAddress: " + brokerAddress + (brokerPort > 0 ? ":" + brokerPort : ""));
 			int connect_count = 0;
 
 			while((connect_count++ < 10) && !bridge.isStarted()) {

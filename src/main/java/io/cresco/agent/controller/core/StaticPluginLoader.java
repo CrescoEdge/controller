@@ -306,7 +306,15 @@ public class StaticPluginLoader implements Runnable  {
                                     //start new plugin
                                     Map<String, Object> configMap = getPluginConfigMap(pluginId);
                                     if (configMap != null) {
+                                        // W-GFS-4: a persisted plugin comes back under ITS OWN id. Without this a
+                                        // reload minted a fresh plugin-<uuid> unless the deploy config carried
+                                        // inode_id, so anything keyed by region:agent:plugin (GFS nodes, placements,
+                                        // subscriptions) saw a "new" node while the old id stayed LOST.
+                                        configMap.putIfAbsent("inode_id", pluginId);
                                         String pluginID = controllerEngine.getPluginAdmin().addPlugin(configMap);
+                                        if (pluginID != null && !pluginID.equals(pluginId)) {
+                                            logger.warn("Persisted plugin " + pluginId + " restarted under a different id " + pluginID);
+                                        }
                                     }
                                 }
                             }

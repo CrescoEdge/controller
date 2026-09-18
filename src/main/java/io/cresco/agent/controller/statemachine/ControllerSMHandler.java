@@ -726,7 +726,7 @@ public class ControllerSMHandler {
 
                 logger.info("AgentPath=" + cstate.getAgentPath());
 
-                if(initIOChannels(cbrokerAddress)) {
+                if(initIOChannels(cbrokerAddress, discoveryNode.discovered_broker_port)) {
 
                     logger.info("initIOChannels Success");
                     //agent name not set on core init
@@ -1051,6 +1051,19 @@ public class ControllerSMHandler {
     }
 
     private  boolean initIOChannels(String brokerAddress) {
+        return initIOChannels(brokerAddress, -1);
+    }
+
+    // W-GFS-5: the discovered controller advertises the port its broker is bound to; prefer it over the
+    // fixed discovery_port config (use_discovered_broker_port=false restores the old behavior).
+    private int brokerPortFor(int discoveredBrokerPort) {
+        if (discoveredBrokerPort > 0 && plugin.getConfig().getBooleanParam("use_discovered_broker_port", true)) {
+            return discoveredBrokerPort;
+        }
+        return plugin.getConfig().getIntegerParam("discovery_port",32010);
+    }
+
+    private  boolean initIOChannels(String brokerAddress, int discoveredBrokerPort) {
         boolean isInit = false;
         try {
 
@@ -1059,7 +1072,7 @@ public class ControllerSMHandler {
             while(!consumerAgentConnected && (consumerAgentConnectCount < 10)) {
                 try {
                     //consumer agent
-                    int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
+                    int discoveryPort = brokerPortFor(discoveredBrokerPort);
 
                     String URI = null;
                     if(isLocalBroker(brokerAddress)) {
@@ -1127,7 +1140,7 @@ public class ControllerSMHandler {
                 }
                 consumerAgentConnectCount++;
             }
-            int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port",32010);
+            int discoveryPort = brokerPortFor(discoveredBrokerPort);
             if(isLocalBroker(brokerAddress)) {
                 controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
             } else {

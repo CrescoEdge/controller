@@ -75,6 +75,7 @@ public class ActiveBroker {
 				}
 
 				isPortAvailable = portAvailable(brokerPort);
+				boundBrokerPort = brokerPort;
 			} else {
 				isPortAvailable = true;
 			}
@@ -401,6 +402,21 @@ public class ActiveBroker {
 		return plugin.getConfig().getIntegerParam("broker_port",32010);
 	}
 
+	// The port the transport connector was actually bound to (enable_dynamic_broker_port may have
+	// moved it past the configured one). Advertised in discovery replies (W-GFS-5).
+	private volatile int boundBrokerPort = -1;
+	public int getBoundBrokerPort() {
+		return boundBrokerPort > 0 ? boundBrokerPort : getBrokerPort();
+	}
+
+	// Bridge-group key: hostname alone when the peer listens on the default remote port (multi-host,
+	// unchanged), hostname:port when it does not (several brokers on one host).
+	public String bridgeKey(String hostname, int port) {
+		int def = plugin.getConfig().getIntegerParam("discovery_port_remote", 32010);
+		return (port > 0 && port != def) ? hostname + ":" + port : hostname;
+	}
+	private final Map<String, String[]> groupTargets = new HashMap<>(); // key -> {hostname, port}
+
 	// Total pending (undispatched) message count across this broker's topics — the cheapest, highest-
 	// signal native congestion indicator. Read in-process from ActiveMQ's DestinationViewMBean via the
 	// platform MBeanServer (JMX is on by default; only the remote connector is disabled). A growing
@@ -563,6 +579,12 @@ public class ActiveBroker {
 	// The type wildcards also match tenant-qualified (T.<tenant>.*) names, unlike the raw shard-topic
 	// filters, so the split holds under tenant_namespacing.
 	public NetworkConnector AddNetworkConnector(String hostname) {
+		return AddNetworkConnector(hostname, -1);
+	}
+
+	// port <= 0 -> discovery_port_remote (the multi-host default); otherwise the peer's advertised
+	// broker port (W-GFS-5).
+	public NetworkConnector AddNetworkConnector(String hostname, int port) {
 		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
 		int count;
@@ -577,7 +599,7 @@ public class ActiveBroker {
 			// global.event.i). Without that 1:1 binding, only one connector actually forwards -> no gain.
 			if (shards > 1) count = shards;
 		}
-		List<NetworkConnector> group = addBridgeConnectors(hostname, count, false);
+		List<NetworkConnector> group = addBridgeConnectors(bridgeKey(hostname, port), hostname, port, count, false);
 		return group.isEmpty() ? null : group.get(0);
 	}
 
@@ -585,14 +607,14 @@ public class ActiveBroker {
 	// connector forwards exactly one shard-topic: connector i owns global.event.i; connector 0 also
 	// carries everything else (control queues, advisories, unsharded topics) by excluding the other
 	// shards. This gives one TLS socket per shard -> real cross-node parallelism, no duplicates.
-	private NetworkConnector buildConnector(String hostname, int index) throws Exception {
-		int discoveryPort = plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
+	private NetworkConnector buildConnector(String hostname, int port, int index) throws Exception {
+		int discoveryPort = (port > 0) ? port : plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 		int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
 		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 		NetworkConnector bridge = broker.addNetworkConnector(uri);
 		String role = split ? (index == 0 ? "ctl" : "data") : "mixed";
-		bridge.setName("cresco-bridge-" + hostname + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
+		bridge.setName("cresco-bridge-" + hostname + "-" + discoveryPort + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
 		bridge.setDuplex(true);
 		// Data connectors get a SMALL prefetch: prefetch is the per-destination FIFO batch already
 		// committed to the socket ahead of later messages — 100 x 256KB was ~25MB of head-of-line
@@ -663,14 +685,15 @@ public class ActiveBroker {
 
 	// Add `count` connectors to a host's group. startAll=true starts every new connector (runtime add);
 	// startAll=false leaves the very first primary un-started for BrokerMonitor, starting the rest.
-	private List<NetworkConnector> addBridgeConnectors(String hostname, int count, boolean startAll) {
+	private List<NetworkConnector> addBridgeConnectors(String key, String hostname, int port, int count, boolean startAll) {
 		synchronized (bridgeGroups) {
-			List<NetworkConnector> group = bridgeGroups.computeIfAbsent(hostname, k -> new ArrayList<>());
+			List<NetworkConnector> group = bridgeGroups.computeIfAbsent(key, k -> new ArrayList<>());
+			groupTargets.put(key, new String[]{hostname, String.valueOf(port)});
 			try {
 				int startIndex = group.size();
 				for (int i = 0; i < count; i++) {
 					int idx = startIndex + i;
-					NetworkConnector bridge = buildConnector(hostname, idx);
+					NetworkConnector bridge = buildConnector(hostname, port, idx);
 					group.add(bridge);
 					if (startAll || idx > 0) {
 						bridge.start();
@@ -688,7 +711,12 @@ public class ActiveBroker {
 
 	// Add `count` more parallel connectors to an already-bridged host, live. Returns the new group size.
 	public int addBridgeConnections(String hostname, int count) {
-		List<NetworkConnector> group = addBridgeConnectors(hostname, Math.max(0, count), true);
+		String host = hostname; int port = -1;
+		synchronized (bridgeGroups) {
+			String[] t = groupTargets.get(hostname);
+			if (t != null) { host = t[0]; try { port = Integer.parseInt(t[1]); } catch (Exception ignore) { } }
+		}
+		List<NetworkConnector> group = addBridgeConnectors(hostname, host, port, Math.max(0, count), true);
 		logger.info("addBridgeConnections: host=" + hostname + " added=" + count + " total=" + group.size());
 		return group.size();
 	}

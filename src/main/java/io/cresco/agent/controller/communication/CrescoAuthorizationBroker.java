@@ -47,6 +47,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
     private final CLogger logger;
     private final Set<String> sharedPrefixes;
     private final Set<String> superuserTenants;
+    private final java.util.List<TenantPolicy.CrossTenantSink> crossTenantSinks;
     private final boolean logAllow;
 
     public CrescoAuthorizationBroker(PluginBuilder plugin) {
@@ -68,8 +69,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
             if (!t.isEmpty()) this.superuserTenants.add(t);
         }
         this.logAllow = plugin.getConfig().getBooleanParam("broker_security_log_allow", false);
+        // W-GFS-1: named cross-tenant sinks (see TenantPolicy.CrossTenantSink). Empty by default -> the
+        // strict own-subtree rule, exactly as before.
+        this.crossTenantSinks = TenantPolicy.CrossTenantSink.parse(
+                plugin.getConfig().getStringParam("broker_cross_tenant_sinks", ""));
         logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes
-                + " superuser tenants=" + this.superuserTenants);
+                + " superuser tenants=" + this.superuserTenants + " cross-tenant sinks=" + this.crossTenantSinks);
     }
 
     /** Authorization role for a resolved identity: SUPERUSER for a configured superuser tenant, else TENANT. */
@@ -138,7 +143,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin {
         }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
-        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id));
+        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks);
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
             logger.warn("DENY " + access + " '" + name + "' for " + who + " : " + d.reason);
