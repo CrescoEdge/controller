@@ -215,6 +215,33 @@ public class ActiveBroker {
 				PolicyMap map = new PolicyMap();
 		        map.setDefaultEntry(entry);
 
+				// Topics (the dataplane) get their own entry so their producer flow control is independent of the
+				// queues' (control, liveness), which stays off. With flow control off, a producer without its own
+				// flow control and a slow consumer drove a Cresco-configured broker's heap to 7.95 of 8 GB and lost
+				// 247 MB to pending-limit eviction; with it on topics only (per-topic memory limit 256 MB) the same
+				// storm peaked at 1.48 GB with no loss and slightly more delivered (DGX dpbench p5, 2026-09-26).
+				// Credit-windowed senders (gfs node leg, stunnel, GKT) never reach the limit. Risk, documented: flow
+				// control is per destination, so a consumer that is stuck (not merely slow) can hold a topic's
+				// producers once that topic's memory is full; activemq_topic_producer_flow_control=false restores
+				// the old behaviour.
+				if (plugin.getConfig().getBooleanParam("activemq_topic_producer_flow_control", true)) {
+					PolicyEntry topics = new PolicyEntry();
+					topics.setTopic(">");
+					topics.setGcInactiveDestinations(gcInactiveDestinations);
+					topics.setInactiveTimeoutBeforeGC(inactiveTimeoutBeforeGC);
+					topics.setMemoryLimit(plugin.getConfig().getLongParam("activemq_topic_memory_limit", destinationMemoryLimit));
+					topics.setProducerFlowControl(true);
+					topics.setUseCache(useCache);
+					topics.setPrioritizedMessages(prioritizedMessages);
+					topics.setTopicPrefetch(topicPrefetchLimit);
+					PrefetchRatePendingMessageLimitStrategy topicRate = new PrefetchRatePendingMessageLimitStrategy();
+					topicRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
+					topics.setPendingMessageLimitStrategy(topicRate);
+					topics.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
+					map.put(new org.apache.activemq.command.ActiveMQTopic(">"), topics);
+					logger.info("topics: producer flow control on, memory limit " + topics.getMemoryLimit() + " B per topic");
+				}
+
 		        //String jarPath = ControllerEngine.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath();
 
 
@@ -623,7 +650,10 @@ public class ActiveBroker {
 		// committed to the socket ahead of later messages — 100 x 256KB was ~25MB of head-of-line
 		// bulk. Control keeps the larger window (its messages are small).
 		if (split && index > 0) {
-			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch_data", 10));
+			// 10 -> 64 (2026-09-26): a bridge's demand subscription evicts beyond prefetch x 2.5 pending, so at 10
+			// a bridge that fell briefly behind shed frames (1 MiB x 16 flows over a direct DGX mesh bridge: 826
+			// retransmits; at 64: 3). Control rides its own connector since the control/data split.
+			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch_data", 64));
 		} else {
 			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
 		}
