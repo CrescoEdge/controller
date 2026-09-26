@@ -100,7 +100,9 @@ public class DataPlaneLogger {
                                     textMessage.setStringProperty("loglevel", level.name());
                                     textMessage.setStringProperty("logid", logIdent);
                                     textMessage.setStringProperty("session_id", sessionId);
-                                    textMessage.setText(message);
+                                    // redacted here, where it is actually sent (CLoggerImpl skips redaction for
+                                    // levels its own backend does not log): see ConfigRedaction.redactText
+                                    textMessage.setText(io.cresco.agent.db.ConfigRedaction.redactText(message));
 
                                     pluginBuilder.getAgentService().getDataPlaneService().sendMessage(TopicType.AGENT, textMessage);
                                 }

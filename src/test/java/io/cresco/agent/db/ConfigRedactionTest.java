@@ -99,4 +99,115 @@ class ConfigRedactionTest {
         inode.put("params", "not json gfs_secret=abc");
         assertEquals("{}", ConfigRedaction.redactINode(inode).get("params"));
     }
+
+    // activemq_client_transport_options is not a secret-looking key, but its value is raw ActiveMQ transport
+    // options appended to every broker URI, so a keystore password put there must not leave in an export,
+    // a reply, or a log line (CLoggerImpl runs every message and throwable through redactText/redactThrowable).
+    static final String OPTS = "keyStorePassword=ks-pw-1&trustStorePassword=ts-pw-2&tcpNoDelay=true&password=pw-3"
+            + "&jms.clientSecret=sec-4&keyStoreKeyPassword=kk-5&wireFormat.maxInactivityDuration=30000";
+    static final String[] OPT_SECRETS = {"ks-pw-1", "ts-pw-2", "pw-3", "sec-4", "kk-5"};
+
+    /** The option string inside a redacted configparams JSON (Gson escapes '=' and '&' in the raw text). */
+    static String optsIn(String json) {
+        for (String secret : OPT_SECRETS) assertFalse(json.contains(secret), secret + " in " + json);
+        Map<String, Object> m = GSON.fromJson(json, new TypeToken<Map<String, Object>>() {}.getType());
+        return (String) m.get("activemq_client_transport_options");
+    }
+
+    static void assertNoOptSecrets(String s) {
+        for (String secret : OPT_SECRETS) assertFalse(s.contains(secret), secret + " in " + s);
+        assertTrue(s.contains("tcpNoDelay=true"), "non-secret options kept: " + s);
+        assertTrue(s.contains("wireFormat.maxInactivityDuration=30000"), "non-secret options kept: " + s);
+        assertTrue(s.contains("keyStorePassword=" + ConfigRedaction.REDACTED), s);
+    }
+
+    @Test
+    void transportOptionValuesAreRedactedInEveryExportAndReply() {
+        assertFalse(ConfigRedaction.isSecretKey("activemq_client_transport_options"), "the key itself is not secret-looking");
+
+        // a flat config map (region/plugin replies)
+        Map<String, String> cfg = new HashMap<>(Map.of("activemq_client_transport_options", OPTS, "activemq_transport", "nio+ssl"));
+        Map<String, String> red = ConfigRedaction.redactMap(cfg);
+        assertNoOptSecrets(red.get("activemq_client_transport_options"));
+        assertEquals("nio+ssl", red.get("activemq_transport"));
+        assertEquals(OPTS, cfg.get("activemq_client_transport_options"), "the agent's own config is untouched");
+
+        // the agent's configparams JSON (watchdog/state export), and an exported row carrying it
+        String json = GSON.toJson(Map.of("activemq_client_transport_options", OPTS, "pluginname", "io.cresco.agent"));
+        String out = ConfigRedaction.redactJson(json);
+        assertNoOptSecrets(optsIn(out));
+        assertTrue(out.contains("io.cresco.agent"));
+        assertEquals(out, ConfigRedaction.redactJson(out), "stable: the diff-gated export does not churn");
+        Map<String, String> row = new HashMap<>(Map.of("agent_id", "a1", "configparams", json, "note", "brokerURL=x?password=pw-3"));
+        Map<String, String> rowOut = ConfigRedaction.redactNode(row);
+        assertNoOptSecrets(optsIn(rowOut.get("configparams")));
+        assertFalse(rowOut.get("note").contains("pw-3"));
+        assertEquals("a1", rowOut.get("agent_id"));
+
+        // a pipeline document: an option string at depth, in an object and in an array
+        String pipe = "{\"pipeline_id\":\"p1\",\"nodes\":[{\"params\":{\"pluginname\":\"x\",\"opts\":\"" + OPTS
+                + "\"}}],\"extra\":[\"" + OPTS + "\"]}";
+        String pipeOut = ConfigRedaction.redactPipelineJson(pipe);
+        for (String secret : OPT_SECRETS) assertFalse(pipeOut.contains(secret), secret + " in " + pipeOut);
+        assertTrue(pipeOut.contains("tcpNoDelay\\u003dtrue") || pipeOut.contains("tcpNoDelay=true"), pipeOut);
+        assertEquals(pipeOut, ConfigRedaction.redactPipelineJson(pipeOut), "stable");
+
+        // an iNode status map
+        Map<String, String> inode = new HashMap<>(Map.of("inode_id", "i1", "params", json));
+        assertNoOptSecrets(optsIn(ConfigRedaction.redactINode(inode).get("params")));
+    }
+
+    @Test
+    void aBrokerUriInALogLineKeepsItsShapeButNotItsSecrets() {
+        String uri = "failover:(nio+ssl://10.0.0.1:32010?verifyHostName=false&socketBufferSize=0&" + OPTS
+                + ",nio+ssl://10.0.0.2:32010?trustStorePassword=ts-pw-2)?maxReconnectAttempts=5&initialReconnectDelay=5000";
+        String line = ConfigRedaction.redactText("Connection to URI [" + uri + "] started successfully.");
+        assertNoOptSecrets(line);
+        for (String kept : new String[]{"nio+ssl://10.0.0.1:32010?verifyHostName=false&socketBufferSize=0&",
+                ",nio+ssl://10.0.0.2:32010?trustStorePassword=" + ConfigRedaction.REDACTED + ")",
+                "?maxReconnectAttempts=5&initialReconnectDelay=5000] started successfully."})
+            assertTrue(line.contains(kept), kept + " lost from " + line);
+        assertEquals(line, ConfigRedaction.redactText(line), "stable");
+
+        // other separators and secret-looking names: JDBC ';', a service key, a token, a PIN, whitespace
+        String misc = ConfigRedaction.redactText("jdbc:derby:db;user=cresco;password=hunter2 cresco_service_key=k-6 api_token=t-7 hsm_pin=1234 port=8282");
+        for (String secret : new String[]{"hunter2", "k-6", "t-7", "1234"}) assertFalse(misc.contains(secret), secret + " in " + misc);
+        assertTrue(misc.contains("user=cresco") && misc.contains("port=8282"), misc);
+
+        // nothing to redact: the same instance back (the logger's fast path)
+        String plain = "socketBufferSize=0&tcpNoDelay=true ping_interval=5 mapping=a";
+        assertSame(plain, ConfigRedaction.redactText(plain));
+        assertNull(ConfigRedaction.redactText(null));
+        assertEquals("password=", ConfigRedaction.redactText("password="), "an empty value has nothing to hide");
+    }
+
+    @Test
+    void aThrowableCarryingABrokerUrlIsLoggedRedacted() {
+        Exception root = new java.net.ConnectException("Connection refused");
+        Exception e = new IllegalStateException("Could not connect to broker URL: nio+ssl://h:32010?" + OPTS + ". Reason: " + root, root);
+        Throwable r = ConfigRedaction.redactThrowable(e);
+        assertNotSame(e, r);
+        java.io.StringWriter sw = new java.io.StringWriter();
+        r.printStackTrace(new java.io.PrintWriter(sw));
+        String printed = sw.toString();
+        for (String secret : OPT_SECRETS) assertFalse(printed.contains(secret), secret + " in " + printed);
+        assertTrue(printed.startsWith("java.lang.IllegalStateException: Could not connect to broker URL: nio+ssl://h:32010?"), printed);
+        assertTrue(printed.contains("Caused by: java.net.ConnectException: Connection refused"), printed);
+        assertArrayEquals(e.getStackTrace(), r.getStackTrace(), "the stack trace is kept");
+
+        // a secret only in the cause
+        Throwable r2 = ConfigRedaction.redactThrowable(new RuntimeException("connect failed", new IllegalArgumentException("Invalid connect parameters: {trustStorePassword=ts-pw-2}")));
+        java.io.StringWriter sw2 = new java.io.StringWriter();
+        r2.printStackTrace(new java.io.PrintWriter(sw2));
+        assertFalse(sw2.toString().contains("ts-pw-2"), sw2.toString());
+        assertTrue(sw2.toString().contains("java.lang.RuntimeException: connect failed"));
+
+        // a clean throwable passes through unchanged; null stays null; a looping cause chain terminates
+        Exception clean = new RuntimeException("socketBufferSize=0");
+        assertSame(clean, ConfigRedaction.redactThrowable(clean));
+        assertNull(ConfigRedaction.redactThrowable(null));
+        Exception a = new RuntimeException("a"), b = new RuntimeException("b password=pw-3", a);
+        a.initCause(b);
+        assertFalse(ConfigRedaction.redactThrowable(a).getCause().toString().contains("pw-3"));
+    }
 }
