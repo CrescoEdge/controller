@@ -863,7 +863,8 @@ public class GlobalExecutor implements Executor {
                 String actionPipelineId = ce.getParam("action_pipelineid");
                 String returnGetGpipeline = controllerEngine.getGDB().getGPipeline(actionPipelineId);
                 if(returnGetGpipeline != null) {
-                    ce.setCompressedParam("gpipeline", returnGetGpipeline);
+                    // node params are plugin config: a reply carries no secret values
+                    ce.setCompressedParam("gpipeline", io.cresco.agent.db.ConfigRedaction.redactPipelineJson(returnGetGpipeline));
                     ce.setParam("success", Boolean.TRUE.toString());
 
                 } else {
@@ -888,7 +889,8 @@ public class GlobalExecutor implements Executor {
                 String actionPipelineId = ce.getParam("action_pipelineid");
                 String returnGetGpipeline = controllerEngine.getGDB().getGPipelineExport(actionPipelineId);
                 if (returnGetGpipeline != null) {
-                    ce.setCompressedParam("gpipeline", returnGetGpipeline);
+                    // redacted too: re-deploying an export needs its secrets supplied again, by design
+                    ce.setCompressedParam("gpipeline", io.cresco.agent.db.ConfigRedaction.redactPipelineJson(returnGetGpipeline));
                     ce.setParam("success", Boolean.TRUE.toString());
 
                 } else {
@@ -915,7 +917,7 @@ public class GlobalExecutor implements Executor {
                 Map<String,String> inodeMap = controllerEngine.getGDB().getInodeMap(ce.getParam("inode_id"));
                 if(inodeMap != null) {
                     Gson gson = new Gson();
-                    String iNodeMapString = gson.toJson(inodeMap);
+                    String iNodeMapString = gson.toJson(io.cresco.agent.db.ConfigRedaction.redactINode(inodeMap));
                     ce.setCompressedParam("inodemap",iNodeMapString);
                 /*
                 String status_code = controllerEngine.getGDB().getINodeParam(ce.getParam("inode_id"),"status_code");

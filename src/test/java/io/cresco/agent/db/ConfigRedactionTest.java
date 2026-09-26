@@ -68,4 +68,35 @@ class ConfigRedactionTest {
         assertEquals("p", red.get("pluginid"));
         assertEquals("k", flat.get("cresco_service_key"));
     }
+
+    @Test
+    void pipelineRepliesCarryNoSecretValuesAtAnyDepth() {
+        String gpipeline = "{\"pipeline_id\":\"resource-1\",\"pipeline_name\":\"gfs\",\"nodes\":["
+                + "{\"type\":\"dummy\",\"node_name\":\"idx\",\"node_id\":\"n0\",\"params\":{\"pluginname\":\"io.cresco.gfs\","
+                + "\"gfs_secret\":\"s3cr3t-value\",\"core_master_key_file\":\"/k/m.key\",\"hsmPin\":\"1234\","
+                + "\"configparams\":\"{\\\"db_password\\\":\\\"hunter2\\\",\\\"site_id\\\":\\\"s1\\\"}\"}}],"
+                + "\"edges\":[{\"edge_id\":\"e0\",\"node_from\":\"n0\",\"node_to\":\"n1\",\"extra\":{\"api_token\":\"tok\"}}]}";
+        String out = ConfigRedaction.redactPipelineJson(gpipeline);
+        for (String secret : new String[]{"s3cr3t-value", "1234", "hunter2", "\"tok\""}) assertFalse(out.contains(secret), secret + " in " + out);
+        for (String kept : new String[]{"io.cresco.gfs", "/k/m.key", "resource-1", "n0", "s1", "e0"}) assertTrue(out.contains(kept), kept + " lost from " + out);
+        assertEquals(out, ConfigRedaction.redactPipelineJson(out), "stable");
+        assertEquals("{}", ConfigRedaction.redactPipelineJson("{\"nodes\":["));
+        assertEquals("{}", ConfigRedaction.redactPipelineJson("[1,2]"));
+        assertNull(ConfigRedaction.redactPipelineJson(null));
+    }
+
+    @Test
+    void anINodeStatusMapHasItsParamsRedacted() {
+        Map<String, String> inode = new HashMap<>();
+        inode.put("inode_id", "i1");
+        inode.put("status_code", "10");
+        inode.put("params", "{\"pluginname\":\"io.cresco.gfs\",\"gfs_secret\":\"s3cr3t-value\"}");
+        Map<String, String> out = ConfigRedaction.redactINode(inode);
+        assertFalse(out.get("params").contains("s3cr3t-value"));
+        assertTrue(out.get("params").contains("io.cresco.gfs"));
+        assertEquals("i1", out.get("inode_id"));
+        assertTrue(inode.get("params").contains("s3cr3t-value"), "the global database row is untouched");
+        inode.put("params", "not json gfs_secret=abc");
+        assertEquals("{}", ConfigRedaction.redactINode(inode).get("params"));
+    }
 }
