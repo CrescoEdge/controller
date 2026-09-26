@@ -39,6 +39,7 @@ public class PerfControllerMonitor {
         initJVMMetrics();
         initControllerMetrics();
         initCEPMetrics();
+        initDataplaneLossMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
 
@@ -60,6 +61,30 @@ public class PerfControllerMonitor {
             me.setExisting("cep.queries.active", "cep");
         } catch (Exception ex) {
             logger.error("initCEPMetrics ", ex);
+        }
+    }
+
+    // No silent dataplane loss: the broker's slow-subscriber discards (CrescoDiscardAccountingBroker) as
+    // Micrometer counters in the unified inventory. The wsapi egress drops are the wsapi plugin's own
+    // counter (wsapi.dataplane.egress.dropped), folded in through its getmetrics.
+    public void initDataplaneLossMetrics() {
+        try {
+            io.micrometer.core.instrument.FunctionCounter
+                    .builder("dataplane.broker.discarded",
+                            io.cresco.agent.controller.communication.CrescoDiscardAccountingBroker.DISCARDED,
+                            java.util.concurrent.atomic.AtomicLong::get)
+                    .description("Dataplane messages this node's broker discarded for slow topic subscribers (past the pending-message limit).")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("dataplane.broker.discarded", "dataplane");
+            io.micrometer.core.instrument.FunctionCounter
+                    .builder("dataplane.broker.slow.consumers",
+                            io.cresco.agent.controller.communication.CrescoDiscardAccountingBroker.SLOW_CONSUMERS,
+                            java.util.concurrent.atomic.AtomicLong::get)
+                    .description("Slow-subscriber episodes on this node's broker (more than prefetch pending; loss only past the pending limit).")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("dataplane.broker.slow.consumers", "dataplane");
+        } catch (Exception ex) {
+            logger.error("initDataplaneLossMetrics ", ex);
         }
     }
 
