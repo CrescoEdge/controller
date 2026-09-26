@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 /**
  * Keeps secret-looking config values out of everything the controller sends elsewhere: the
  * watchdog and state exports to the regional and global controllers, and the plugininfo,
- * listplugins and listpluginsbytype replies. Plugin config is stored in plaintext Derby and was
+ * listplugins and listpluginsbytype replies, and the agent-level pluginlist reply. Plugin config is stored in plaintext Derby and was
  * shipped upstream whole, so a plugin's key or password reached every controller above it and any
  * wsapi client of the global controller (GaiaKeep OUT-03).
  *
@@ -24,11 +24,16 @@ import java.util.regex.Pattern;
 public final class ConfigRedaction {
 
     /**
-     * A config key is secret when it contains secret, password, passphrase or token, ends in _key,
-     * or has pin as a whole underscore-separated word (so ping_interval and mapping are not caught).
-     * Case-insensitive.
+     * A config key is secret when it contains secret, password, passphrase or token, or ends in _key
+     * (case-insensitive), or has pin as a whole word: delimited by start, end, '_', '.' or '-' in any
+     * case (pin, HSM_PIN, pkcs11.pin), or as a camelCase word (hsmPin, userPIN, pinCode). ping_interval,
+     * mapping, spinlock and pinned are not caught.
      */
-    public static final Pattern SECRET_KEY = Pattern.compile("(?i)(secret|password|passphrase|token|_key$|(^|_)pin(_|$))");
+    public static final Pattern SECRET_KEY = Pattern.compile(
+            "(?i:secret|password|passphrase|token|_key$)"
+            + "|(?i:(?:^|[_.-])pin(?:[_.-]|$))"
+            + "|(?:^|[_.-])(?:pin|Pin)(?=[A-Z0-9])"
+            + "|[a-z0-9](?:Pin|PIN)(?![a-z])");
     public static final String REDACTED = "[REDACTED]";
 
     private static final Gson GSON = new Gson();

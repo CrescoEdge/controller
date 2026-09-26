@@ -17,10 +17,12 @@ class ConfigRedactionTest {
     @Test
     void secretLookingKeysMatch() {
         for (String k : new String[]{"gfs_secret", "GFS_SECRET_FILE", "core_master_key", "cresco_service_key", "db_password",
-                "ssl_passphrase", "api_token", "tokenizer_model", "pin", "hsm_pin", "gfs_pkcs11_pin_file", "PIN_env", "discovery_secret_agent"})
+                "ssl_passphrase", "api_token", "tokenizer_model", "pin", "hsm_pin", "gfs_pkcs11_pin_file", "PIN_env", "discovery_secret_agent",
+                "hsmPin", "userPIN", "pinCode", "hsmPinFile", "pkcs11.pin", "token-pin", "HSM_PIN", "Pin", "PIN", "API_KEY"})
             assertTrue(ConfigRedaction.isSecretKey(k), k);
         for (String k : new String[]{"pluginname", "jarfile", "md5", "version", "gfs_roles", "index_addr", "ping_interval_ms",
-                "mapping", "spinlock", "keyspace", "key_count", "site_id", "location", "inode_id", "pipeline"})
+                "mapping", "spinlock", "keyspace", "key_count", "site_id", "location", "inode_id", "pipeline",
+                "PING_TIMEOUT", "pinned", "wrapPinned", "shipping", "SNAPPING", "pinger", "keepAlive"})
             assertFalse(ConfigRedaction.isSecretKey(k), k);
     }
 

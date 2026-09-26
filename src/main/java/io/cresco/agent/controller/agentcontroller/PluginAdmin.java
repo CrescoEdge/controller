@@ -5,6 +5,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.data.DataPlaneLogger;
+import io.cresco.agent.db.ConfigRedaction;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.agent.AgentService;
 import io.cresco.library.agent.AgentState;
@@ -1452,29 +1453,31 @@ public class PluginAdmin {
         return out;
     }
 
+    /**
+     * The pNode rows of {@code pluginIds} as a JSON list, each with its configparams redacted: these
+     * replies (pluginlist) leave the agent, and the rows hold every plugin's full config (OUT-03).
+     */
+    static String redactedRows(Iterable<String> pluginIds, java.util.function.Function<String, Map<String,String>> pNodeOf) {
+        List<Map<String,String>> configMapList = new ArrayList<>();
+        for (String pluginID : pluginIds) {
+            Map<String,String> pNode = pNodeOf.apply(pluginID);
+            if (pNode != null) {
+                configMapList.add(ConfigRedaction.redactNode(pNode));
+            }
+        }
+        return new Gson().toJson(configMapList);
+    }
+
     public String getPluginList() {
 
 
         String exportString = null;
         try {
-
-            List<Map<String,String>> configMapList = new ArrayList<>();
-
+            List<String> pluginIds;
             synchronized (lockPlugin) {
-                Iterator it = pluginMap.entrySet().iterator();
-                while (it.hasNext()) {
-                    Map.Entry pair = (Map.Entry) it.next();
-
-                    String pluginID = (String) pair.getKey();
-
-                    Map<String,String> pNode = gdb.getPNode(pluginID);
-                    if (pNode != null) {
-                        configMapList.add(pNode);
-                    }
-                    //it.remove(); // avoids a ConcurrentModificationException
-                }
+                pluginIds = new ArrayList<>(pluginMap.keySet());
             }
-            exportString = gson.toJson(configMapList);
+            exportString = redactedRows(pluginIds, gdb::getPNode);
 
         } catch(Exception ex) {
             logger.error("PluginExport.pluginExport() Error " + ex.getMessage());
@@ -1488,24 +1491,11 @@ public class PluginAdmin {
 
         String exportString = null;
         try {
-
-            List<Map<String,String>> configMapList = new ArrayList<>();
-
+            List<String> pluginIds;
             synchronized (lockPlugin) {
-                Iterator it = pluginMap.entrySet().iterator();
-                while (it.hasNext()) {
-                    Map.Entry pair = (Map.Entry) it.next();
-
-                    String pluginID = (String) pair.getKey();
-
-                    Map<String,String> pNode = gdb.getPNode(pluginID);
-                    if (pNode != null) {
-                        configMapList.add(pNode);
-                    }
-                    //it.remove(); // avoids a ConcurrentModificationException
-                }
+                pluginIds = new ArrayList<>(pluginMap.keySet());
             }
-            exportString = gson.toJson(configMapList);
+            exportString = redactedRows(pluginIds, gdb::getPNode);
 
         } catch(Exception ex) {
             logger.error("PluginExport.pluginExport() Error " + ex.getMessage());
