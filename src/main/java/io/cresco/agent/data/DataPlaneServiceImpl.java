@@ -63,6 +63,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     private String URI;
 
+    // Send lanes: extra dedicated connections for the UNSHARDED topics, picked by a message's int property
+    // dp_lane. Topic names do not change, so every agent interoperates whatever its lane count (unlike
+    // dataplane_shards, which renames topics and must match fabric-wide); only this agent's send
+    // parallelism changes. Measured cross-host (2026-09-26): with one connection an agent sends at most
+    // ~840 MB/s -- the blocking TLS client encrypts and writes under one transport lock -- while it can
+    // receive 1.2-1.4 GB/s on the same connection. A caller that needs ordering keeps one key on one lane.
+    private int sendLanes = 4;
+    private final Map<Integer, ActiveMQSession> laneSessions = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, MessageProducer> laneProducers = new java.util.concurrent.ConcurrentHashMap<>();
+
     // Tenant namespacing for the dataplane (the second controlled channel besides MsgEvent). When on, every
     // dataplane topic is qualified T.<tenant>.<topic> so a tenant's agent/region/global streams are isolated
     // per tenant at every broker; same-tenant cross-region flow still works via demand-forwarding, while a
@@ -97,6 +107,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         localTenant = plugin.getConfig().getStringParam("tenant_id", "default");
 
         dataPlaneShards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
+        sendLanes = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_send_lanes", 4));
         // Give each shard its own dedicated broker connection (parallel sockets) rather than
         // multiplexing all shards over the single pooled session. Default on when sharding is enabled.
         parallelConnections = plugin.getConfig().getBooleanParam("dataplane_parallel_connections", dataPlaneShards > 1);
@@ -161,6 +172,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     public void shutdown() {
 	    try {
 	        if(cepEngine != null) cepEngine.shutdown();
+            dropAllLanes();
 
             List<String> listeners = null;
             synchronized (lockMessage) {
@@ -365,6 +377,81 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } catch (Exception ignore) { }
     }
 
+    // --- Send lanes ---
+
+    private int laneOf(Message message) {
+        if (sendLanes <= 1) return -1;
+        try {
+            if (!message.propertyExists("dp_lane")) return -1;
+            return Math.floorMod(message.getIntProperty("dp_lane"), sendLanes);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private MessageProducer laneProducer(TopicType topicType, int lane) {
+        String topicName = getTopicName(topicType);
+        String key = topicName + "#" + lane;
+        MessageProducer p = laneProducers.get(key);
+        if (p != null) return p;
+        synchronized (laneProducers) {
+            p = laneProducers.get(key);
+            if (p != null) return p;
+            try {
+                ActiveMQSession s = laneSessions.get(lane);
+                if (s == null || s.isClosed()) {
+                    s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                    if (s == null) return null;
+                    laneSessions.put(lane, s);
+                    logger.info("Opened dataplane send lane " + lane + " (dedicated connection)");
+                }
+                p = s.createProducer(s.createTopic(topicName));
+                p.setTimeToLive(300000L);
+                p.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+                laneProducers.put(key, p);
+            } catch (Exception ex) {
+                logger.error("laneProducer(" + key + ") error: " + ex.getMessage());
+                dropLane(lane);
+                return null;
+            }
+        }
+        return p;
+    }
+
+    private void dropLane(int lane) {
+        laneProducers.keySet().removeIf(k -> k.endsWith("#" + lane));
+        ActiveMQSession s = laneSessions.remove(lane);
+        if (s != null) {
+            try {
+                org.apache.activemq.ActiveMQConnection c = (org.apache.activemq.ActiveMQConnection) s.getConnection();
+                if (c != null && !c.isClosed()) c.close();
+            } catch (Exception ignore) { }
+        }
+    }
+
+    private void dropAllLanes() {
+        for (Integer lane : new java.util.ArrayList<>(laneSessions.keySet())) dropLane(lane);
+        laneProducers.clear();
+    }
+
+    /** Send on a lane when the message names one; false = use the pooled producer. */
+    private boolean sendOnLane(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
+        int lane = laneOf(message);
+        if (lane < 0) return false;
+        MessageProducer p = laneProducer(topicType, lane);
+        if (p == null) return false;
+        try {
+            long t0 = System.nanoTime();
+            p.send(message, deliveryMode, priority, timeToLive);
+            recordUplinkSend(t0, message);
+            return true;
+        } catch (Exception ex) {
+            logger.warn("send lane " + lane + " failed (" + ex.getMessage() + "); rebuilding it, this message goes on the pooled producer");
+            dropLane(lane);
+            return false;
+        }
+    }
+
     // --- Dataplane sharding ---
 
     @Override
@@ -516,6 +603,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
     public void updateConnections(String URI)  {
+
+        dropAllLanes();                 // lanes ride the old URI's connections
 
         //set new URI
         logger.error("Restoring DataPlane");
@@ -701,6 +790,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
                 Thread.sleep(1000);
                 logger.debug("!controllerEngine.cstate.isActive() SLEEPING 1s");
+            }
+
+            if (message.getObjectProperty("blob_data_stream") == null
+                    && sendOnLane(topicType, message, deliveryMode, priority, timeToLive)) {
+                return true;
             }
 
             switch (topicType) {
