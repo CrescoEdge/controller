@@ -2,6 +2,7 @@ package io.cresco.agent.core;
 
 
 import io.cresco.agent.data.DataPlaneLogger;
+import io.cresco.agent.db.ConfigRedaction;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import org.slf4j.Logger;
@@ -122,6 +123,15 @@ public class CLoggerImpl implements CLogger {
 
     public void log(String messageBody, Level level, Throwable throwable) {
 
+        // Every bundle logs through here: a secret-looking name=value (a broker URI carrying
+        // activemq_client_transport_options such as keyStorePassword=..., in a message or in an
+        // exception's message) is redacted before any sink sees it. Only when a sink will emit it:
+        // a disabled level (hot-path trace lines) pays nothing; the dataplane mirror redacts its own copy.
+        if (willEmit(level)) {
+            messageBody = ConfigRedaction.redactText(messageBody);
+            throwable = ConfigRedaction.redactThrowable(throwable);
+        }
+
         String logMessage = "[" + source + ": " + baseClassName + "]"
                 + "[" + formatClassName(issuingClassName) + "] " + messageBody;
 
@@ -153,6 +163,7 @@ public class CLoggerImpl implements CLogger {
 
     public void log(String messageBody, Level level) {
 
+        if (willEmit(level)) messageBody = ConfigRedaction.redactText(messageBody);   // see log(String, Level, Throwable)
 
         String logMessage = "[" + source + ": " + baseClassName + "]";
             logMessage = logMessage + "[" + formatClassName(issuingClassName) + "]";
@@ -191,6 +202,22 @@ public class CLoggerImpl implements CLogger {
 
     }
 
+    /** True when the SLF4J backend logs this level, or the backend is dead and the stderr failsafe will. */
+    private boolean willEmit(Level level) {
+        if (!backendActive) return true;
+        try {
+            switch (level.name()) {
+                case "Trace": return logService.isTraceEnabled();
+                case "Debug": return logService.isDebugEnabled();
+                case "Info":  return logService.isInfoEnabled();
+                case "Warn":  return logService.isWarnEnabled();
+                default:      return logService.isErrorEnabled();
+            }
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
     private String formatClassName(String className) {
         StringBuilder newName = new StringBuilder();
         int lastIndex = 0;
@@ -215,7 +242,7 @@ public class CLoggerImpl implements CLogger {
                 try {
                     logMessage = logMessage.replaceFirst("\\{\\}", String.valueOf(params[replaced]));
                 } catch (Exception ex) {
-                    logService.error("CORE LOGGER REGEX ERROR: MESSAGE:[" + logMessage + "]");
+                    logService.error("CORE LOGGER REGEX ERROR: MESSAGE:[" + ConfigRedaction.redactText(logMessage) + "]");
                 }
             }
             replaced++;

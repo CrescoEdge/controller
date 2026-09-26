@@ -37,11 +37,77 @@ public final class ConfigRedaction {
             + "|[a-z0-9](?:Pin|PIN)(?![a-z])");
     public static final String REDACTED = "[REDACTED]";
 
+    /**
+     * A name=value parameter embedded in a value or a log line: a URI query or ActiveMQ transport options
+     * (activemq_client_transport_options, a failover:(nio+ssl://h:p?keyStorePassword=...) URI), a JDBC URL
+     * (;password=...). The value runs to the next separator ActiveMQ and JDBC URLs use: & ; , ) whitespace,
+     * or a quote. A value containing one of those cannot be carried in such a URL unescaped anyway.
+     */
+    private static final Pattern EMBEDDED_PARAM = Pattern.compile("([A-Za-z0-9_.\\-]+)=([^&;,)\\s\"']*)");
+
     private static final Gson GSON = new Gson();
 
     private ConfigRedaction() {}
 
     public static boolean isSecretKey(String key) { return key != null && SECRET_KEY.matcher(key).find(); }
+
+    /**
+     * The text with the value of every embedded name=value parameter whose name is secret-looking
+     * ({@link #isSecretKey}: keyStorePassword, trustStorePassword, password, any *Password* or *secret*,
+     * token, passphrase, *_key, pin) replaced by {@link #REDACTED}. Everything else is kept, so an
+     * option string or URI stays readable. Stable: redacting twice gives the same text.
+     * Used for config values whose own key is not secret (activemq_client_transport_options) and for
+     * every log line (CLoggerImpl), where a broker URI built from those options would otherwise appear.
+     */
+    public static String redactText(String text) {
+        if (text == null || text.indexOf('=') < 0) return text;
+        java.util.regex.Matcher m = EMBEDDED_PARAM.matcher(text);
+        StringBuilder sb = null;
+        int last = 0, pos = 0;
+        while (pos < text.length() && m.find(pos)) {
+            if (!isSecretKey(m.group(1))) {
+                pos = m.end(1) + 1;          // look inside a non-secret value too: brokerURL=x?password=...
+                continue;
+            }
+            pos = m.end(2);                  // a secret value is taken whole, even when it contains '=' or '?'
+            if (m.group(2).isEmpty() || REDACTED.equals(m.group(2))) continue;
+            if (sb == null) sb = new StringBuilder(text.length());
+            sb.append(text, last, m.start(2)).append(REDACTED);
+            last = m.end(2);
+        }
+        return sb == null ? text : sb.append(text, last, text.length()).toString();
+    }
+
+    /**
+     * The throwable to log in place of t: t itself when neither it nor a cause carries a secret-looking
+     * embedded parameter (an ActiveMQ "Could not connect to broker URL: ...?keyStorePassword=..." message),
+     * else a copy whose messages are redacted, keeping every stack trace and the cause chain.
+     */
+    public static Throwable redactThrowable(Throwable t) {
+        if (t == null) return null;
+        boolean dirty = false;
+        Throwable c = t;
+        for (int depth = 0; c != null && !dirty && depth < 16; depth++) {   // bounded: a cause chain can loop
+            String s = c.toString();
+            dirty = !s.equals(redactText(s));
+            c = (c.getCause() == c) ? null : c.getCause();
+        }
+        return dirty ? copyRedacted(t, 0) : t;
+    }
+
+    private static Throwable copyRedacted(Throwable t, int depth) {
+        Throwable cause = (t.getCause() != null && t.getCause() != t && depth < 16) ? copyRedacted(t.getCause(), depth + 1) : null;
+        RedactedThrowable r = new RedactedThrowable(redactText(t.toString()), cause);
+        r.setStackTrace(t.getStackTrace());
+        return r;
+    }
+
+    /** A logged stand-in for a throwable whose message carried a secret: prints as the original class and redacted message. */
+    static final class RedactedThrowable extends Throwable {
+        private final String text;
+        RedactedThrowable(String text, Throwable cause) { super(text, cause, false, true); this.text = text; }
+        @Override public String toString() { return text; }
+    }
 
     /**
      * A configparams JSON object with every secret value replaced. Anything that is not a JSON object
@@ -53,7 +119,11 @@ public final class ConfigRedaction {
             JsonElement e = JsonParser.parseString(configJson);
             if (!e.isJsonObject()) return "{}";
             JsonObject o = e.getAsJsonObject();
-            for (String k : o.keySet()) if (isSecretKey(k)) o.add(k, new JsonPrimitive(REDACTED));
+            for (String k : o.keySet()) {
+                JsonElement v = o.get(k);
+                if (isSecretKey(k)) o.add(k, new JsonPrimitive(REDACTED));
+                else if (v.isJsonPrimitive() && v.getAsJsonPrimitive().isString()) redactStringIn(o, k, v.getAsString());
+            }
             return GSON.toJson(o);
         } catch (RuntimeException unreadable) {
             return "{}";
@@ -64,8 +134,17 @@ public final class ConfigRedaction {
     public static Map<String, String> redactMap(Map<String, String> m) {
         if (m == null) return null;
         Map<String, String> out = new HashMap<>(m);
-        for (Map.Entry<String, String> e : out.entrySet()) if (isSecretKey(e.getKey())) e.setValue(REDACTED);
+        for (Map.Entry<String, String> e : out.entrySet()) {
+            if (isSecretKey(e.getKey())) e.setValue(REDACTED);
+            else if (e.getValue() != null) e.setValue(redactText(e.getValue()));   // e.g. activemq_client_transport_options
+        }
         return out;
+    }
+
+    /** Replaces o[k] when its string value carries a secret-looking embedded parameter. */
+    private static void redactStringIn(JsonObject o, String k, String value) {
+        String r = redactText(value);
+        if (!r.equals(value)) o.add(k, new JsonPrimitive(r));
     }
 
     /**
@@ -88,7 +167,12 @@ public final class ConfigRedaction {
 
     private static void redactTree(JsonElement e) {
         if (e.isJsonArray()) {
-            for (JsonElement x : e.getAsJsonArray()) redactTree(x);
+            com.google.gson.JsonArray a = e.getAsJsonArray();
+            for (int i = 0; i < a.size(); i++) {
+                JsonElement x = a.get(i);
+                if (x.isJsonPrimitive() && x.getAsJsonPrimitive().isString()) a.set(i, new JsonPrimitive(redactText(x.getAsString())));
+                else redactTree(x);
+            }
         } else if (e.isJsonObject()) {
             JsonObject o = e.getAsJsonObject();
             for (String k : new java.util.ArrayList<>(o.keySet())) {
@@ -96,6 +180,7 @@ public final class ConfigRedaction {
                 if (isSecretKey(k)) o.add(k, new JsonPrimitive(REDACTED));
                 else if (("configparams".equals(k) || "params".equals(k)) && v.isJsonPrimitive() && v.getAsJsonPrimitive().isString())
                     o.add(k, new JsonPrimitive(redactJson(v.getAsString())));
+                else if (v.isJsonPrimitive() && v.getAsJsonPrimitive().isString()) redactStringIn(o, k, v.getAsString());
                 else redactTree(v);
             }
         }
@@ -105,7 +190,7 @@ public final class ConfigRedaction {
     public static Map<String, String> redactINode(Map<String, String> inode) {
         if (inode == null) return null;
         Map<String, String> out = redactMap(inode);
-        for (String k : new String[]{"params", "configparams"}) if (out.get(k) != null) out.put(k, redactJson(out.get(k)));
+        for (String k : new String[]{"params", "configparams"}) if (inode.get(k) != null) out.put(k, redactJson(inode.get(k)));
         return out;
     }
 
@@ -113,7 +198,10 @@ public final class ConfigRedaction {
     public static Map<String, String> redactNode(Map<String, String> node) {
         if (node == null) return null;
         Map<String, String> out = new HashMap<>(node);
-        if (out.containsKey("configparams")) out.put("configparams", redactJson(out.get("configparams")));
+        for (Map.Entry<String, String> e : out.entrySet()) {
+            if ("configparams".equals(e.getKey())) e.setValue(redactJson(e.getValue()));
+            else if (e.getValue() != null) e.setValue(redactText(e.getValue()));
+        }
         return out;
     }
 }
