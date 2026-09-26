@@ -167,6 +167,11 @@ public class ActiveBroker {
 				//configure exclusive consumers
 				boolean topicAllConsumersExclusive = plugin.getConfig().getBooleanParam("topic_all_consumers_exclusive",true);
 				entry.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
+				// Route slow-subscriber discards and slow-consumer episodes to CrescoDiscardAccountingBroker, which
+				// counts and logs them (ActiveMQ itself logs a discard only at DEBUG): no silent broker loss.
+				boolean discardAccounting = plugin.getConfig().getBooleanParam("broker_discard_accounting", true);
+				entry.setAdvisoryForDiscardingMessages(discardAccounting);
+				entry.setAdvisoryForSlowConsumers(discardAccounting);
 
                 //entry.setProducerFlowControl(true);
 				//entry.setOptimizedDispatch(true);
@@ -238,6 +243,8 @@ public class ActiveBroker {
 					topicRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
 					topics.setPendingMessageLimitStrategy(topicRate);
 					topics.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
+					topics.setAdvisoryForDiscardingMessages(discardAccounting);
+					topics.setAdvisoryForSlowConsumers(discardAccounting);
 					map.put(new org.apache.activemq.command.ActiveMQTopic(">"), topics);
 					logger.info("topics: producer flow control on, memory limit " + topics.getMemoryLimit() + " B per topic");
 				}
@@ -361,6 +368,10 @@ public class ActiveBroker {
 				if (plugin.getConfig().getBooleanParam("broker_security_enabled", false)) {
 					brokerPlugins.add(new CrescoAuthorizationBroker(plugin));
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
+				}
+				// Slow-subscriber discards: counted (dataplane.broker.discarded) and logged instead of silent.
+				if (discardAccounting) {
+					brokerPlugins.add(new CrescoDiscardAccountingBroker(plugin));
 				}
 				if (!brokerPlugins.isEmpty()) {
 					broker.setPlugins(brokerPlugins.toArray(new org.apache.activemq.broker.BrokerPlugin[0]));
