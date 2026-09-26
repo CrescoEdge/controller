@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
 /**
  * Keeps secret-looking config values out of everything the controller sends elsewhere: the
  * watchdog and state exports to the regional and global controllers, and the plugininfo,
- * listplugins and listpluginsbytype replies, and the agent-level pluginlist reply. Plugin config is stored in plaintext Derby and was
+ * listplugins and listpluginsbytype replies, the agent-level pluginlist reply, and the pipeline
+ * replies getgpipeline, getgpipelineexport and getinodestatus. Plugin config is stored in plaintext Derby and was
  * shipped upstream whole, so a plugin's key or password reached every controller above it and any
  * wsapi client of the global controller (GaiaKeep OUT-03).
  *
@@ -64,6 +65,47 @@ public final class ConfigRedaction {
         if (m == null) return null;
         Map<String, String> out = new HashMap<>(m);
         for (Map.Entry<String, String> e : out.entrySet()) if (isSecretKey(e.getKey())) e.setValue(REDACTED);
+        return out;
+    }
+
+    /**
+     * A pipeline (gpipeline) JSON document with every secret value replaced, at any depth: node
+     * params are plugin config, and an embedded configparams or params string is redacted as config
+     * too. What cannot be parsed is withheld ("{}"). The getgpipelineexport reply is meant for
+     * re-deployment, so a redacted export needs its secrets supplied again; that is intended.
+     */
+    public static String redactPipelineJson(String json) {
+        if (json == null) return null;
+        try {
+            JsonElement e = JsonParser.parseString(json);
+            if (!e.isJsonObject()) return "{}";
+            redactTree(e);
+            return GSON.toJson(e);
+        } catch (RuntimeException unreadable) {
+            return "{}";
+        }
+    }
+
+    private static void redactTree(JsonElement e) {
+        if (e.isJsonArray()) {
+            for (JsonElement x : e.getAsJsonArray()) redactTree(x);
+        } else if (e.isJsonObject()) {
+            JsonObject o = e.getAsJsonObject();
+            for (String k : new java.util.ArrayList<>(o.keySet())) {
+                JsonElement v = o.get(k);
+                if (isSecretKey(k)) o.add(k, new JsonPrimitive(REDACTED));
+                else if (("configparams".equals(k) || "params".equals(k)) && v.isJsonPrimitive() && v.getAsJsonPrimitive().isString())
+                    o.add(k, new JsonPrimitive(redactJson(v.getAsString())));
+                else redactTree(v);
+            }
+        }
+    }
+
+    /** A copy of an iNode status map (getinodestatus) with its params / configparams redacted. */
+    public static Map<String, String> redactINode(Map<String, String> inode) {
+        if (inode == null) return null;
+        Map<String, String> out = redactMap(inode);
+        for (String k : new String[]{"params", "configparams"}) if (out.get(k) != null) out.put(k, redactJson(out.get(k)));
         return out;
     }
 
