@@ -650,7 +650,10 @@ public class DBInterfaceImpl implements DBInterface {
         try
         {
             queryMap = new HashMap<>();
-            queryMap.put("plugins", dbe.getPluginListMapByType(actionPluginTypeId,actionPluginTypeValue));
+            // a reply to listpluginsbytype: secret values redacted (internal callers use the map form)
+            List<Map<String,String>> rows = new ArrayList<>();
+            for (Map<String,String> row : dbe.getPluginListMapByType(actionPluginTypeId,actionPluginTypeValue)) rows.add(ConfigRedaction.redactMap(row));
+            queryMap.put("plugins", rows);
             queryReturn = gson.toJson(queryMap);
 
         }
@@ -830,7 +833,7 @@ public class DBInterfaceImpl implements DBInterface {
                             try {
                                 String configParamString = dbe.getNodeConfigParams(region, agent, plugin);
                                 Map<String,String> configMap = gson.fromJson(configParamString,mapType);
-                                regionMap.putAll(configMap);
+                                regionMap.putAll(ConfigRedaction.redactMap(configMap));      // a reply: no secrets
                             }catch (Exception ex) {
                                 logger.error("Could not get plugin configMap");
                             }
