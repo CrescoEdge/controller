@@ -53,9 +53,11 @@ public class ActiveBroker {
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveBroker.class.getName(),CLogger.Level.Info);
 		transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
-		if(transport.contains("ssl")) {
-			verifyTransport = "?verifyHostName=false";
-		}
+		// every client-side URI (bridges here, agent connections in ControllerSMHandler): TLS host check
+		// off (Cresco verifies peers by its own trust managers) and socketBufferSize=0 = kernel autotuning
+		verifyTransport = BrokerTransport.clientQuery(plugin, transport);
+		// the fixed broker-side nio+ssl transport must be registered before the connector binds
+		BrokerTransport.installTransportFactories(plugin, logger);
 
 		try {
 
@@ -347,12 +349,13 @@ public class ActiveBroker {
 					connector.setUpdateClusterClients(true);
 					connector.setUpdateClusterClientsOnRemove(true);
 
-					// Throughput: default TCP socket buffers (~64KB) throttle large inter-node binary
-					// (measured 44 -> 1300+ MB/s in broker-bench). Match the client's large buffers.
-					// This is a SPEED knob, not backpressure -- TCP window + prefetch + usage limits still
-					// bound a fast producer to a slow consumer. Configurable for slow-edge deployments.
+					// Socket buffers: 0 (default) = kernel autotuning. ActiveMQ's default is a pinned 64 KiB,
+					// and any explicit size is capped by net.core.rmem_max/wmem_max on Linux (256/208 KiB on the
+					// DGX) AND disables autotuning -- the old 2 MiB default measured 197 MB/s per stream across
+					// DGX hosts vs 449 autotuned (see BrokerTransport). A SPEED knob, not backpressure: prefetch,
+					// usage limits and end-to-end credit windows bound a fast producer to a slow consumer.
 					String txOpts = "?daemon=true"
-							+ "&socketBufferSize=" + plugin.getConfig().getIntegerParam("activemq_socket_buffer_size", 2 * 1024 * 1024)
+							+ "&socketBufferSize=" + BrokerTransport.connectorSocketBufferSize(plugin)
 							+ "&wireFormat.maxFrameSize=" + plugin.getConfig().getLongParam("activemq_max_frame_size", 128L * 1024 * 1024);
 
 					// Mutual TLS: require every network client to present a certificate the broker's trust

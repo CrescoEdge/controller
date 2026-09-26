@@ -98,9 +98,9 @@ public class ControllerSMHandler {
         gson = new Gson();
 
         transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
-        if(transport.contains("ssl")) {
-            verifyTransport = "?verifyHostName=false";
-        }
+        // client transport options for every broker connection: TLS host check off, socketBufferSize=0
+        // (kernel autotuning; ActiveMQ's default pins 64 KiB) -- see BrokerTransport
+        verifyTransport = io.cresco.agent.controller.communication.BrokerTransport.clientQuery(plugin, transport);
 
 
         //This should be set to the same rates on the remote side
