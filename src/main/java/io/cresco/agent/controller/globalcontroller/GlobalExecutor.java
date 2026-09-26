@@ -678,7 +678,9 @@ public class GlobalExecutor implements Executor {
 
     private MsgEvent pluginInfo(MsgEvent ce) {
         try {
-            ce.setCompressedParam("plugininfo", controllerEngine.getGDB().getPluginInfo(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin")));
+            // secret values never leave in a reply; the agent keeps them for its own restarts
+            ce.setCompressedParam("plugininfo", io.cresco.agent.db.ConfigRedaction.redactJson(
+                    controllerEngine.getGDB().getPluginInfo(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin"))));
             logger.trace("plugins info return : " + ce.getParams().toString());
         }
         catch(Exception ex) {
