@@ -117,7 +117,7 @@ public class AgentHealthWatcher {
             List<Map<String,String>> agentList = new ArrayList<>();
             Map<String, String> agentNode = controllerEngine.getGDB().getANode(controllerEngine.cstate.getAgent());
             if (agentNode != null) {
-                agentList.add(agentNode);
+                agentList.add(io.cresco.agent.db.ConfigRedaction.redactNode(agentNode));
                 agentMap.put(controllerEngine.cstate.getRegion(), agentList);
 
                 String tmpAgentExport = gson.toJson(agentMap);
@@ -139,7 +139,8 @@ public class AgentHealthWatcher {
                 for (String pluginId : tmpPluginList) {
                     Map<String, String> pNode = controllerEngine.getGDB().getPNode(pluginId);
                     if (pNode != null) {
-                        pluginList.add(pNode);
+                        // secrets stay on this agent: the export goes upstream (ConfigRedaction)
+                        pluginList.add(io.cresco.agent.db.ConfigRedaction.redactNode(pNode));
                     }
                 }
                 pluginMap.put(controllerEngine.cstate.getAgent(), pluginList);

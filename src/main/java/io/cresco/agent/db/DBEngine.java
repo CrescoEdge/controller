@@ -582,6 +582,7 @@ public class DBEngine {
 
     public Map<String,String> getDBExport(boolean regions, boolean agents, boolean plugins, String region_id, String agent_id, String plugin_id) {
 
+        // Every row leaving here goes to a controller upstream: its secret config values are redacted.
         Map<String,String> exportMap = null;
 
         try {
@@ -606,7 +607,7 @@ public class DBEngine {
                     // skip rows that vanished between the list query and the node fetch — a null
                     // (or formerly nulls-filled) entry poisons the peer's nodeUpdateStatus
                     if (rNode != null) {
-                        regionList.add(rNode);
+                        regionList.add(ConfigRedaction.redactNode(rNode));
                     }
                 }
                 regionMap.put(pluginBuilder.getRegion(), regionList);
@@ -623,7 +624,7 @@ public class DBEngine {
                     List<Map<String, String>> agentList = new ArrayList<>();
                     Map<String, String> aNode = getANodeStrict(agent_id);
                     if (aNode != null) {
-                        agentList.add(aNode);
+                        agentList.add(ConfigRedaction.redactNode(aNode));
                     }
                     agentMap.put(region_id, agentList);
 
@@ -636,7 +637,7 @@ public class DBEngine {
                         for(String tmp_agent_id : tmpAgentList) {
                             Map<String, String> aNode = getANodeStrict(tmp_agent_id);
                             if (aNode != null) {
-                                agentList.add(aNode);
+                                agentList.add(ConfigRedaction.redactNode(aNode));
                             }
                         }
                         agentMap.put(tmp_region_id, agentList);
@@ -658,7 +659,7 @@ public class DBEngine {
                     for (String pluginId : tmpPluginList) {
                         Map<String, String> pNode = getPNodeStrict(pluginId);
                         if (pNode != null) {
-                            pluginList.add(pNode);
+                            pluginList.add(ConfigRedaction.redactNode(pNode));
                         }
                     }
                     pluginMap.put(agent_id, pluginList);
@@ -673,7 +674,7 @@ public class DBEngine {
                             for(String tmp_plugin_id : tmpPluginList) {
                                 Map<String, String> pNode = getPNodeStrict(tmp_plugin_id);
                                 if (pNode != null) {
-                                    pluginList.add(pNode);
+                                    pluginList.add(ConfigRedaction.redactNode(pNode));
                                 }
                             }
                             pluginMap.put(tmp_agent_id, pluginList);
