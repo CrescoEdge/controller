@@ -447,7 +447,8 @@ public class ActiveClient {
         ActiveMQSslConnectionFactory activeMQSslConnectionFactory = null;
         try {
             logger.debug("Initializing ConnectionFactory for URI: {}", URI);
-            activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(URI);
+            // the connection map stays keyed by URI; ActiveMQ gets it without any secret-looking parameter
+            activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger));
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
             }
