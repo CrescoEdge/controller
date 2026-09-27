@@ -406,10 +406,10 @@ public class ActiveBroker {
 					}
 
 					if (plugin.isIPv6())
-						connector.setUri(new URI(transport + "://[::]:" + brokerPort + txOpts));
+						connector.setUri(new URI(BrokerTransport.forActiveMQ(transport + "://[::]:" + brokerPort + txOpts, logger)));
 
 					else
-						connector.setUri(new URI(transport + "://0.0.0.0:" + brokerPort + txOpts));
+						connector.setUri(new URI(BrokerTransport.forActiveMQ(transport + "://0.0.0.0:" + brokerPort + txOpts, logger)));
 
 					broker.addConnector(connector);
 
@@ -653,7 +653,7 @@ public class ActiveBroker {
 		int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
 		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
-		NetworkConnector bridge = broker.addNetworkConnector(uri);
+		NetworkConnector bridge = broker.addNetworkConnector(new URI(BrokerTransport.forActiveMQ(uri.toString(), logger)));
 		String role = split ? (index == 0 ? "ctl" : "data") : "mixed";
 		bridge.setName("cresco-bridge-" + hostname + "-" + discoveryPort + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
 		bridge.setDuplex(true);
