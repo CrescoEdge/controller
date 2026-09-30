@@ -20,6 +20,8 @@ import org.apache.felix.hc.api.Result;
 public class ParentLinkHealthCheck implements HealthCheck {
 
     private final ControllerEngine ce;
+    /** True from the first stale verdict until the link is OK again (one stall dump per episode). */
+    private volatile boolean staleEpisode = false;
 
     public ParentLinkHealthCheck(ControllerEngine ce) {
         this.ce = ce;
@@ -78,7 +80,20 @@ public class ParentLinkHealthCheck implements HealthCheck {
         }
         long age = System.currentTimeMillis() - lastPongTs;
         if (age < staleMs) {
+            staleEpisode = false;
             return new Result(Result.Status.OK, label + " link ok (pong age " + age + "ms)");
+        }
+        if (!staleEpisode) {
+            staleEpisode = true;
+            // once per episode (and per 5 min): where the ping/watchdog threads are parked
+            if (ce.getPluginBuilder().getConfig().getBooleanParam("health_link_stale_threaddump", true)) {
+                String d = StallDiagnostics.dumpIfDue(label + " pong age " + age + "ms",
+                        ce.getPluginBuilder().getConfig().getLongParam("health_link_stale_threaddump_interval_ms", 300_000L));
+                if (d != null) {
+                    ce.getPluginBuilder().getLogger(ParentLinkHealthCheck.class.getName(),
+                            io.cresco.library.utilities.CLogger.Level.Info).warn(d);
+                }
+            }
         }
         return new Result(Result.Status.TEMPORARILY_UNAVAILABLE,
                 label + " link stale (pong age " + age + "ms >= " + staleMs + "ms)");
