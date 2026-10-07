@@ -246,28 +246,33 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
     /**
-     * #22: messages each dataplane session has received from the broker but not yet handed to its listeners,
-     * keyed "pooled" or "shard-N". A session whose listener stalls (a zombie owner, a blocked handler) shows here
-     * as a depth that keeps growing while the connection still reports healthy. O(listeners): it reads each
-     * consumer's dispatch-buffer size and copies nothing.
+     * #22: each dataplane listener's queue: {session ("pooled" or "shard-N"), messages received from the broker but
+     * not yet handed to the listener, the sequence id of the last one it was handed}. A listener whose owner stalls
+     * (a zombie, a blocked handler) keeps a depth while its sequence stops moving, and its connection still reports
+     * healthy. The maps are copied under the lock and the consumers read outside it; O(listeners), nothing copied
+     * per message.
      */
-    public Map<String, Integer> sessionQueueDepths() {
-        Map<String, Integer> depths = new java.util.TreeMap<>();
+    public Map<String, Object[]> listenerQueues() {
+        List<Map.Entry<String, MessageConsumer>> consumers;
+        Map<String, Integer> shards = new HashMap<>();
         synchronized (lockMessage) {
-            for (Map.Entry<String, MessageConsumer> e : messageConsumerMap.entrySet()) {
-                DataPlanePersistantInstance i = messageConfigMap.get(e.getKey());
-                String key = (i == null || i.getShard() < 0) ? "pooled" : "shard-" + i.getShard();
-                int n = (e.getValue() instanceof org.apache.activemq.ActiveMQMessageConsumer)
-                        ? ((org.apache.activemq.ActiveMQMessageConsumer) e.getValue()).getMessageSize() : 0;
-                depths.merge(key, n, Integer::sum);
-            }
+            consumers = new ArrayList<>(messageConsumerMap.entrySet());
+            for (Map.Entry<String, DataPlanePersistantInstance> e : messageConfigMap.entrySet()) shards.put(e.getKey(), e.getValue().getShard());
         }
-        return depths;
+        Map<String, Object[]> out = new java.util.TreeMap<>();
+        for (Map.Entry<String, MessageConsumer> e : consumers) {
+            if (!(e.getValue() instanceof org.apache.activemq.ActiveMQMessageConsumer)) continue;
+            org.apache.activemq.ActiveMQMessageConsumer c = (org.apache.activemq.ActiveMQMessageConsumer) e.getValue();
+            Integer shard = shards.get(e.getKey());
+            String session = (shard == null || shard < 0) ? "pooled" : "shard-" + shard;
+            out.put(e.getKey(), new Object[]{session, c.getMessageSize(), c.getLastDeliveredSequenceId()});
+        }
+        return out;
     }
 
-    /** The depth above which the dataplane health check warns (dataplane_queue_warn, default 5000). */
-    public int sessionQueueWarnDepth() {
-        return Math.max(1, plugin.getConfig().getIntegerParam("dataplane_queue_warn", 5000));
+    /** How long a listener may hold queued messages without taking one before the health check warns (dataplane_stall_sec, default 30). */
+    public long listenerStallMs() {
+        return 1000L * Math.max(1, plugin.getConfig().getIntegerParam("dataplane_stall_sec", 30));
     }
 
     private ActiveMQSession getSession() {
@@ -662,10 +667,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 if (c == null) continue;
                 c.setMessageListener(i.getMessageListener());
                 MessageConsumer old;
+                boolean removed;
                 synchronized (lockMessage) {
-                    if (!messageConfigMap.containsKey(i.getListenerId())) { c.close(); continue; }   // removed meanwhile
-                    old = messageConsumerMap.put(i.getListenerId(), c);
+                    removed = !messageConfigMap.containsKey(i.getListenerId());           // removed meanwhile
+                    old = removed ? null : messageConsumerMap.put(i.getListenerId(), c);
                 }
+                // JMS close blocks on the broker: never under lockMessage, which every send and listener change takes
+                if (removed) { try { c.close(); } catch (Exception ignore) { } continue; }
                 if (old != null) try { old.close(); } catch (Exception ignore) { }
                 n++;
             } catch (Exception ex) {
