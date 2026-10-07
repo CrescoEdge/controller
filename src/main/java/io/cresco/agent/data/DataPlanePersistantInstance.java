@@ -13,11 +13,23 @@ public class DataPlanePersistantInstance {
 
     private String listenerId;
 
+    /** The dataplane shard the listener rides (its own dedicated connection), or -1 for the pooled session. */
+    private int shard = -1;
+
     public DataPlanePersistantInstance(TopicType topicType, MessageListener messageListener, String selectorString, String listenerId) throws IOException {
         this.topicType = topicType;
         this.messageListener = messageListener;
         this.selectorString = selectorString;
         this.listenerId = listenerId;
+    }
+
+    public DataPlanePersistantInstance(TopicType topicType, MessageListener messageListener, String selectorString, String listenerId, int shard) throws IOException {
+        this(topicType, messageListener, selectorString, listenerId);
+        this.shard = shard;
+    }
+
+    public int getShard() {
+        return shard;
     }
 
     public TopicType getTopicType() {
