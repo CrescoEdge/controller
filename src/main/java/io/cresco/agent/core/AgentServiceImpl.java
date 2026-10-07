@@ -231,6 +231,10 @@ public class AgentServiceImpl implements AgentService {
         //create plugin
         plugin = new PluginBuilder(this, this.getClass().getName(), context, configParams);
 
+        // controller#23: a thread killed by an OutOfMemoryError (or any VirtualMachineError) halts the JVM, so the
+        // agent is restarted instead of living on without its broker threads
+        FatalErrorGuard.install(plugin.getLogger(FatalErrorGuard.class.getName(), CLogger.Level.Info));
+
         //create dataplane logger
         dataPlaneLogger = new DataPlaneLogger(plugin);
 
