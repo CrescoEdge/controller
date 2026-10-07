@@ -245,6 +245,31 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
     }
 
+    /**
+     * #22: messages each dataplane session has received from the broker but not yet handed to its listeners,
+     * keyed "pooled" or "shard-N". A session whose listener stalls (a zombie owner, a blocked handler) shows here
+     * as a depth that keeps growing while the connection still reports healthy. O(listeners): it reads each
+     * consumer's dispatch-buffer size and copies nothing.
+     */
+    public Map<String, Integer> sessionQueueDepths() {
+        Map<String, Integer> depths = new java.util.TreeMap<>();
+        synchronized (lockMessage) {
+            for (Map.Entry<String, MessageConsumer> e : messageConsumerMap.entrySet()) {
+                DataPlanePersistantInstance i = messageConfigMap.get(e.getKey());
+                String key = (i == null || i.getShard() < 0) ? "pooled" : "shard-" + i.getShard();
+                int n = (e.getValue() instanceof org.apache.activemq.ActiveMQMessageConsumer)
+                        ? ((org.apache.activemq.ActiveMQMessageConsumer) e.getValue()).getMessageSize() : 0;
+                depths.merge(key, n, Integer::sum);
+            }
+        }
+        return depths;
+    }
+
+    /** The depth above which the dataplane health check warns (dataplane_queue_warn, default 5000). */
+    public int sessionQueueWarnDepth() {
+        return Math.max(1, plugin.getConfig().getIntegerParam("dataplane_queue_warn", 5000));
+    }
+
     private ActiveMQSession getSession() {
 	    try {
 
