@@ -167,10 +167,25 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error("DataPlaneServiceImpl constructor journal init failed", ex);
         }
 
+        // #22: find a dead shard connection even when nothing sends on it, and bring its listeners back
+        if (parallelConnections && dataPlaneShards > 1) {
+            long every = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shard_check_sec", 5));
+            shardCheck = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "dataplane-shard-check");
+                t.setDaemon(true);
+                return t;
+            });
+            shardCheck.scheduleWithFixedDelay(() -> {
+                try { checkShardSessions(); } catch (Throwable t) { logger.error("dataplane shard check: " + t); }
+            }, every, every, java.util.concurrent.TimeUnit.SECONDS);
+        }
     }
+
+    private java.util.concurrent.ScheduledExecutorService shardCheck;
 
     public void shutdown() {
 	    try {
+	        if (shardCheck != null) shardCheck.shutdownNow();
 	        if(cepEngine != null) cepEngine.shutdown();
             dropAllLanes();
 
@@ -470,8 +485,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         if (!parallelConnections) return getSession();
         Integer key = Math.floorMod(shard, dataPlaneShards);
         ActiveMQSession s = shardSessions.get(key);
+        boolean rebuilt = false;
         try {
-            if (s == null || s.isClosed()) {
+            if (s == null || !sessionAlive(s)) {
                 // BOUNDED wait, and outside the shardSessions monitor: parking forever while
                 // holding the lock wedged every other shard's rebuild along with this one
                 int waited = 0;
@@ -486,7 +502,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
                 synchronized (shardSessions) {
                     s = shardSessions.get(key);
-                    if (s == null || s.isClosed()) {
+                    if (s == null || !sessionAlive(s)) {
+                        boolean hadOne = s != null;
                         // a closed session's dedicated connection may still be open — close it or
                         // every shard rebuild leaks a socket
                         if (s != null) {
@@ -500,6 +517,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         if (s != null) {
                             shardSessions.put(key, s);
                             logger.info("Opened dedicated dataplane connection for shard " + key);
+                            // producers cached on the dead session would fail (or vanish) every send: drop the shard's
+                            dropShardProducers(key);
+                            rebuilt = hadOne;
                         }
                     }
                 }
@@ -507,7 +527,22 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         } catch (Exception ex) {
             logger.error("getShardSession(" + shard + ") error", ex);
         }
+        if (rebuilt && s != null) reattachShardListeners(key, s);
         return s;
+    }
+
+    /** Forget the producers (and destinations) cached for shard {@code key}: they belonged to its old session. */
+    private void dropShardProducers(int key) {
+        String suffix = "." + key;
+        synchronized (shardProducerMap) {
+            for (java.util.Iterator<Map.Entry<String, MessageProducer>> it = shardProducerMap.entrySet().iterator(); it.hasNext(); ) {
+                Map.Entry<String, MessageProducer> e = it.next();
+                if (!e.getKey().endsWith(suffix)) continue;
+                try { e.getValue().close(); } catch (Exception ignore) { }
+                it.remove();
+            }
+        }
+        synchronized (shardDestMap) { shardDestMap.keySet().removeIf(t -> t.endsWith(suffix)); }
     }
 
     private Destination getShardDestination(String topicName, ActiveMQSession session) {
@@ -549,25 +584,100 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         if (dataPlaneShards <= 1) {
             return addMessageListener(topicType, messageListener, selectorString);
         }
-        String listenerId = null;
+        return addShardListener(topicType, messageListener, selectorString, shard, null);
+    }
+
+    /**
+     * A listener on one shard's topic, on that shard's session. It is recorded (#22) so it is restored under the
+     * same id when the dataplane reconnects (updateConnections, after a broker or hub restart) and re-attached when
+     * the shard's dedicated connection is rebuilt: before, a sharded listener was dropped on the first reconnect
+     * and its owner (gfs's FrameBus and streams) never received another frame, while sends kept succeeding.
+     */
+    private String addShardListener(TopicType topicType, MessageListener messageListener, String selectorString, int shard, String listenerId) {
         try {
-            String topicName = shardedTopicName(topicType, shard);
-            ActiveMQSession s = getShardSession(shard);
-            Destination dest = getShardDestination(topicName, s);
-            MessageConsumer consumer = (s != null && dest != null)
-                    ? ((selectorString == null) ? s.createConsumer(dest) : s.createConsumer(dest, selectorString))
-                    : null;
+            int key = Math.floorMod(shard, dataPlaneShards);
+            ActiveMQSession s = getShardSession(key);
+            MessageConsumer consumer = shardConsumer(s, topicType, selectorString, key);
             if (consumer != null) {
                 consumer.setMessageListener(messageListener);
-                listenerId = UUID.randomUUID().toString();
+                if (listenerId == null) listenerId = UUID.randomUUID().toString();
                 synchronized (lockMessage) {
                     messageConsumerMap.put(listenerId, consumer);
+                    messageConfigMap.put(listenerId, new DataPlanePersistantInstance(topicType, messageListener, selectorString, listenerId, key));
                 }
+            } else {
+                logger.error("addShardListener: no consumer on shard " + key + " (session " + (s == null ? "unavailable" : "open") + ")");
             }
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.addMessageListener(shard) error", ex);
         }
         return listenerId;
+    }
+
+    private MessageConsumer shardConsumer(ActiveMQSession s, TopicType topicType, String selectorString, int key) throws JMSException {
+        if (s == null) return null;
+        // the destination comes from this session (a cached one may belong to a session that is gone)
+        Destination dest = s.createTopic(shardedTopicName(topicType, key));
+        return (selectorString == null) ? s.createConsumer(dest) : s.createConsumer(dest, selectorString);
+    }
+
+    /**
+     * Re-attach every recorded listener of shard {@code key} to its (new) session: their consumers died with the
+     * old connection. Called with the shard's new session, outside the shardSessions monitor.
+     */
+    private void reattachShardListeners(int key, ActiveMQSession s) {
+        List<DataPlanePersistantInstance> mine = new ArrayList<>();
+        synchronized (lockMessage) {
+            for (DataPlanePersistantInstance i : messageConfigMap.values()) if (i.getShard() == key) mine.add(i);
+        }
+        int n = 0;
+        for (DataPlanePersistantInstance i : mine) {
+            try {
+                MessageConsumer c = shardConsumer(s, i.getTopicType(), i.getSelectorString(), key);
+                if (c == null) continue;
+                c.setMessageListener(i.getMessageListener());
+                MessageConsumer old;
+                synchronized (lockMessage) {
+                    if (!messageConfigMap.containsKey(i.getListenerId())) { c.close(); continue; }   // removed meanwhile
+                    old = messageConsumerMap.put(i.getListenerId(), c);
+                }
+                if (old != null) try { old.close(); } catch (Exception ignore) { }
+                n++;
+            } catch (Exception ex) {
+                logger.error("reattach listener " + i.getListenerId() + " on shard " + key + ": " + ex.getMessage());
+            }
+        }
+        if (n > 0) logger.warn("Dataplane shard " + key + " reconnected: re-attached " + n + " listener(s)");
+    }
+
+    /** Whether a shard session can still deliver: open, its connection started and its transport alive. */
+    private static boolean sessionAlive(ActiveMQSession s) {
+        try {
+            if (s == null || s.isClosed()) return false;
+            org.apache.activemq.ActiveMQConnection c = (org.apache.activemq.ActiveMQConnection) s.getConnection();
+            return c != null && c.isStarted() && !c.isClosed() && !c.isTransportFailed();
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    /**
+     * #22: a shard whose dedicated connection died is rebuilt here even when nothing sends on it, so a receiving
+     * node's listeners come back on their own (before, only a send rebuilt the session, and never its consumers).
+     */
+    void checkShardSessions() {
+        if (!parallelConnections || dataPlaneShards <= 1) return;
+        Set<Integer> keys = new java.util.TreeSet<>();
+        synchronized (lockMessage) {
+            for (DataPlanePersistantInstance i : messageConfigMap.values()) if (i.getShard() >= 0) keys.add(i.getShard());
+        }
+        for (Integer k : keys) {
+            ActiveMQSession s = shardSessions.get(k);
+            if (s != null && !sessionAlive(s)) {
+                logger.warn("Dataplane shard " + k + ": its connection is closed or its transport failed; rebuilding it");
+                getShardSession(k);
+            }
+        }
     }
 
     @Override
@@ -591,7 +701,17 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             MessageProducer producer = getShardProducer(topicName, shard);
             if (producer != null) {
                 long t0 = System.nanoTime();
-                producer.send(message, deliveryMode, priority, timeToLive);
+                try {
+                    producer.send(message, deliveryMode, priority, timeToLive);
+                } catch (JMSException dead) {
+                    // the producer's session is gone (#22): forget it, rebuild the shard's session (re-attaching
+                    // its listeners), and try once more on the new one
+                    synchronized (shardProducerMap) { shardProducerMap.remove(topicName, producer); }
+                    getShardSession(shard);
+                    producer = getShardProducer(topicName, shard);
+                    if (producer == null) throw dead;
+                    producer.send(message, deliveryMode, priority, timeToLive);
+                }
                 recordUplinkSend(t0, message);
                 return true;
             }
@@ -687,10 +807,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             messageConfigMap.clear();
         }
 
+        int restored = 0;
         for (DataPlanePersistantInstance dataPlanePersistantInstance : saveMessageConfigMap.values()) {
-            logger.info("Restoring listenerId: " + dataPlanePersistantInstance.getListenerId());
-            addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
+            logger.info("Restoring listenerId: " + dataPlanePersistantInstance.getListenerId()
+                    + (dataPlanePersistantInstance.getShard() >= 0 ? " on shard " + dataPlanePersistantInstance.getShard() : ""));
+            String id;
+            if (dataPlanePersistantInstance.getShard() >= 0)      // #22: a sharded listener goes back on its own shard
+                id = addShardListener(dataPlanePersistantInstance.getTopicType(), dataPlanePersistantInstance.getMessageListener(),
+                        dataPlanePersistantInstance.getSelectorString(), dataPlanePersistantInstance.getShard(), dataPlanePersistantInstance.getListenerId());
+            else
+                id = addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
+            if (id != null) restored++;
         }
+        logger.warn("Dataplane restored " + restored + " of " + saveMessageConfigMap.size() + " listener(s) after reconnecting");
 
     }
 
