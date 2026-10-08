@@ -80,9 +80,11 @@ public class AgentConsumer {
 
 		// Transport isolation: the inbox carries ALL inbound control (WATCHDOG/EXEC/CONFIG, RPC
 		// replies), so receiving it over the pooled socket lets inbound dataplane/bulk frames
-		// delay control at the wire. Give the inbox its own socket. vm:// is in-JVM — pooled fine.
-		this.dedicatedConnection = !URI.startsWith("vm")
-				&& plugin.getConfig().getBooleanParam("agentconsumer_dedicated_connection", true);
+		// delay control at the wire. Give the inbox its own socket. On vm:// (the agent's own broker)
+		// the pooled connection is shared with the dataplane, so the inbox gets its own vm://
+		// connection as well unless controlplane_dedicated_vm=false (OUT-81).
+		this.dedicatedConnection = ActiveClient.dedicatedControlConnection(plugin.getConfig(), URI,
+				"agentconsumer_dedicated_connection");
 		sess = dedicatedConnection
 				? controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE, true)
 				: controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
@@ -344,6 +346,15 @@ public class AgentConsumer {
 	}
 
 	/** Live state of the connection actually carrying the inbox (dedicated or pooled). */
+	/** The connection the inbox consumes on. For tests. */
+	org.apache.activemq.ActiveMQConnection getConnection() {
+		return connection;
+	}
+
+	boolean isDedicatedConnection() {
+		return dedicatedConnection;
+	}
+
 	public boolean isConnectionActive() {
 		try {
 			return connection != null && connection.isStarted() && !connection.isClosing() && !connection.isClosed();
