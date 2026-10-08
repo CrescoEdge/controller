@@ -1,22 +1,17 @@
 package io.cresco.agent.db;
 
+import io.cresco.agent.core.OwnerOnlyFile;
 import io.cresco.library.utilities.CLogger;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.attribute.PosixFileAttributes;
-import java.nio.file.attribute.PosixFilePermission;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.EnumSet;
 import java.util.Properties;
-import java.util.Set;
 
 /**
  * Derby encryption at rest for the controller database (GaiaKeep OUT-03a). Opt-in: with no
@@ -58,53 +53,15 @@ public final class DerbyAtRest {
 
     private DerbyAtRest() {}
 
-    private static final Set<PosixFilePermission> OWNER_ONLY =
-            EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-
-    /** Read the key file after the owner/mode/directory checks; throws AtRestException on any failure. */
+    /** Read the key file after the owner/mode/directory checks ({@link OwnerOnlyFile}); AtRestException on any failure. */
     public static Secret readKeyFile(Path keyFile) {
-        if (keyFile == null) throw new AtRestException("db_key_file: no path");
-        Path p = keyFile.toAbsolutePath().normalize();
-        if (!Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
-            throw new AtRestException("db_key_file " + p + " does not exist");
-        }
-        if (Files.isSymbolicLink(p)) {
-            throw new AtRestException("db_key_file " + p + " is a symbolic link; point db_key_file at the file itself");
-        }
-        if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
-            throw new AtRestException("db_key_file " + p + " is not a regular file");
-        }
-        String me = System.getProperty("user.name");
-        try {
-            PosixFileAttributes a = Files.readAttributes(p, PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-            if (me == null || !me.equals(a.owner().getName())) {
-                throw new AtRestException("db_key_file " + p + " is owned by " + a.owner().getName() + ", not by the agent user " + me);
-            }
-            Set<PosixFilePermission> perms = a.permissions();
-            if (!OWNER_ONLY.containsAll(perms) || !perms.contains(PosixFilePermission.OWNER_READ)) {
-                throw new AtRestException("db_key_file " + p + " has mode " + java.nio.file.attribute.PosixFilePermissions.toString(perms)
-                        + "; it must be 0600 or 0400 (owner read/write only)");
-            }
-            Path dir = p.getParent().toRealPath();
-            PosixFileAttributes d = Files.readAttributes(dir, PosixFileAttributes.class);
-            String dirOwner = d.owner().getName();
-            if (!me.equals(dirOwner) && !"root".equals(dirOwner)) {
-                throw new AtRestException("db_key_file directory " + dir + " is owned by " + dirOwner + "; it must be owned by " + me + " or root");
-            }
-            if (d.permissions().contains(PosixFilePermission.GROUP_WRITE) || d.permissions().contains(PosixFilePermission.OTHERS_WRITE)) {
-                throw new AtRestException("db_key_file directory " + dir + " is group- or world-writable; the key file could be replaced");
-            }
-        } catch (UnsupportedOperationException uoe) {
-            throw new AtRestException("db_key_file " + p + ": this filesystem has no POSIX owner/mode, so the key file cannot be checked");
-        } catch (IOException ioe) {
-            throw new AtRestException("db_key_file " + p + ": " + ioe.getMessage(), ioe);
-        }
         String v;
         try {
-            v = new String(Files.readAllBytes(p), StandardCharsets.UTF_8).strip();
-        } catch (IOException ioe) {
-            throw new AtRestException("db_key_file " + p + " unreadable: " + ioe.getMessage(), ioe);
+            v = OwnerOnlyFile.read(keyFile, "db_key_file");
+        } catch (OwnerOnlyFile.UnsafeFileException e) {
+            throw new AtRestException(e.getMessage(), e);
         }
+        Path p = keyFile.toAbsolutePath().normalize();
         if (v.matches("[0-9a-fA-F]{64}")) {
             return new Secret("encryptionKey", v);
         }
