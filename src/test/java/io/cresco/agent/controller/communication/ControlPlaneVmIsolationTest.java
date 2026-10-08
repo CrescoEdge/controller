@@ -1,17 +1,11 @@
 package io.cresco.agent.controller.communication;
 
 import io.cresco.agent.controller.core.ControllerEngine;
-import io.cresco.agent.core.AgentServiceImpl;
-import io.cresco.agent.test.MockBundleContext;
-import io.cresco.library.agent.AgentService;
-import io.cresco.library.agent.AgentState;
-import io.cresco.library.agent.ControllerState;
-import io.cresco.library.data.DataPlaneService;
+import io.cresco.agent.test.TestAgentService;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Config;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.security.TenantNamespace;
-import io.cresco.library.utilities.CLogger;
 import jakarta.jms.Connection;
 import jakarta.jms.JMSException;
 import jakarta.jms.Session;
@@ -26,7 +20,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -42,38 +35,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class ControlPlaneVmIsolationTest {
 
     private static final String VM = "vm://localhost";
-    private static final String AGENT_PATH = "r1_a1";
+    private static final String AGENT_PATH = TestAgentService.AGENT_PATH;
 
     private BrokerService broker;
     private String tcpUri;
 
-    /** Region/agent for PluginBuilder.getRegion()/getAgent(); the rest of ControllerState unused. */
-    private static final class TestAgentService implements AgentService {
-        private final AgentServiceImpl loggers = new AgentServiceImpl();
-        private final AgentState state = new AgentState((ControllerState) Proxy.newProxyInstance(
-                ControllerState.class.getClassLoader(), new Class<?>[]{ControllerState.class},
-                (p, m, a) -> {
-                    switch (m.getName()) {
-                        case "getRegion": return "r1";
-                        case "getAgent": return "a1";
-                        case "getAgentPath": return AGENT_PATH;
-                        case "isActive": return Boolean.TRUE;
-                        default: return m.getReturnType() == boolean.class ? Boolean.FALSE : null;
-                    }
-                }));
-        @Override public AgentState getAgentState() { return state; }
-        @Override public DataPlaneService getDataPlaneService() { return null; }
-        @Override public CLogger getCLogger(PluginBuilder pb, String b, String i, CLogger.Level l) { return loggers.getCLogger(pb, b, i, l); }
-        @Override public CLogger getCLogger(PluginBuilder pb, String b, String i) { return loggers.getCLogger(pb, b, i); }
-        @Override public void msgOut(String id, MsgEvent msg) { }
-        @Override public void setLogLevel(String logId, CLogger.Level level) { }
-        @Override public String getAgentDataDirectory() { return System.getProperty("java.io.tmpdir"); }
-    }
-
     private static PluginBuilder plugin(Map<String, Object> cfg) {
         Map<String, Object> m = new HashMap<>(cfg);
         m.putIfAbsent("tenant_namespacing", "true");
-        return new PluginBuilder(new TestAgentService(), AgentServiceImpl.class.getName(), new MockBundleContext(), m);
+        return TestAgentService.plugin(System.getProperty("java.io.tmpdir"), m);
     }
 
     @BeforeEach
