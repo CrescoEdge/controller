@@ -54,6 +54,16 @@ class AgentConfigSecretSourceTest {
     }
 
     @Test
+    void gfsKeyFamiliesAndTheDerbyKeyAreLeftToTheirOwners() {
+        // their owners read <name>_file themselves; resolving it here too would hand them the secret twice
+        for (String p : new String[]{"db_key", "gfs_secret", "gfs_secret_env", "gfs_secret_previous", "core_master_key",
+                "tape_media_key", "gfs_pkcs11_pin"})
+            assertFalse(SecretSources.isSecretParam(p), p);
+        assertTrue(SecretSources.isSecretParam("keystorepwd"));
+        assertTrue(SecretSources.isSecretParam("broker_security_secret"));
+    }
+
+    @Test
     void aFileWinsOverTheEnvironmentAndTheCommandLineWhichIsCleared() throws Exception {
         Path f = secretFile("broker.secret", "from-file-s3cr3t\n", "rw-------");
         Map<String, Object> cfg = new HashMap<>();
@@ -102,9 +112,12 @@ class AgentConfigSecretSourceTest {
         Path f = secretFile("svc", "service-key-value", "rw-------");
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("cresco_service_key_file", f.toString());
-        SecretSources.resolve(cfg, env("CRESCO_GFS_SECRET", "gfs-value"), new Properties());
+        Map<String, String> e = new HashMap<>(env("CRESCO_WSAPI_KEYSTORE_PASSWORD", "ks-value"));
+        e.put("CRESCO_GFS_SECRET", "gfs-value");
+        SecretSources.resolve(cfg, e, new Properties());
         assertEquals("service-key-value", cfg.get("cresco_service_key"));
-        assertEquals("gfs-value", cfg.get("gfs_secret"));
+        assertEquals("ks-value", cfg.get("wsapi_keystore_password"));
+        assertNull(cfg.get("gfs_secret"), "gfs reads its own key families (KeySources); never resolved here");
     }
 
     @Test
