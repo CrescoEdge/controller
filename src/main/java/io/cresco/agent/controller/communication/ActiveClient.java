@@ -245,6 +245,22 @@ public class ActiveClient {
         return isActive;
     }
 
+    /**
+     * Whether a control-plane owner (ControlPlaneSender, the AgentConsumer inbox) gets its own
+     * connection to {@code uri} instead of the pooled one the dataplane uses. On a network URI the
+     * owner's flag decides (default true: its own socket). On vm:// (an agent on its own broker,
+     * e.g. the global controller) {@code controlplane_dedicated_vm} decides (default true): the
+     * pooled vm:// connection is shared with the dataplane, so without it control and bulk share
+     * one transport and one session-dispatch path (OUT-81). Owners open the dedicated connection
+     * with quietFailure=true, so recovery is theirs either way.
+     */
+    static boolean dedicatedControlConnection(io.cresco.library.plugin.Config config, String uri, String networkFlag) {
+        if (uri != null && uri.startsWith("vm")) {
+            return config.getBooleanParam("controlplane_dedicated_vm", true);
+        }
+        return config.getBooleanParam(networkFlag, true);
+    }
+
     public ActiveMQSession createSession(String URI, boolean transacted, int acknowledgeMode) {
         ActiveMQSession activeMQSession = null;
         logger.debug("Attempting to create session for URI [{}]", URI);
@@ -451,12 +467,14 @@ public class ActiveClient {
             activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger));
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
+            } else {
+                // vm:// is in-JVM and never does TLS: only network URIs need the key/trust managers
+                activeMQSslConnectionFactory.setKeyAndTrustManagers(
+                        controllerEngine.getCertificateManager().getKeyManagers(),
+                        controllerEngine.getCertificateManager().getTrustManagers(),
+                        new SecureRandom()
+                );
             }
-            activeMQSslConnectionFactory.setKeyAndTrustManagers(
-                    controllerEngine.getCertificateManager().getKeyManagers(),
-                    controllerEngine.getCertificateManager().getTrustManagers(),
-                    new SecureRandom()
-            );
 
             // Tenant identity on the connection. When broker security is enabled, a NETWORK client
             // (agent -> regional broker; not the local vm:// path) asserts its identity as
