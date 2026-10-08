@@ -69,9 +69,24 @@ class ControlPlaneSender {
         // Transport isolation: a dedicated SESSION on the pooled connection still shares ONE TCP
         // socket with the dataplane, so 256KB bulk frames delay the liveness ping at the wire
         // (FIFO OpenWire marshal + TCP backpressure) no matter the JMS priority. Give control its
-        // own socket. vm:// is in-JVM (no socket) — pooled is fine there.
-        this.dedicatedConnection = !baseURI.startsWith("vm")
-                && plugin.getConfig().getBooleanParam("controlplane_dedicated_connection", true);
+        // own socket. On vm:// (the agent's own broker) there is no socket, but the pooled vm://
+        // connection still carries the dataplane: one connection = one transport, one session-dispatch
+        // path and one broker-side ConnectionContext, so bulk can still delay control there (OUT-81).
+        // controlplane_dedicated_vm (default true) gives control its own vm:// connection too.
+        this.dedicatedConnection = ActiveClient.dedicatedControlConnection(plugin.getConfig(), baseURI,
+                "controlplane_dedicated_connection");
+    }
+
+    /** The connection control-plane sends ride on (opening the session if needed). For tests. */
+    ActiveMQConnection transportConnection() throws JMSException {
+        ensureOpen();
+        ActiveMQSession s = session;
+        if (s == null) throw new JMSException("ControlPlaneSender: no session");
+        return (ActiveMQConnection) s.getConnection();
+    }
+
+    boolean isDedicatedConnection() {
+        return dedicatedConnection;
     }
 
     private boolean isOpen() {

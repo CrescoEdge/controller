@@ -101,7 +101,24 @@ public class DBEngine {
 
             Class.forName(dbDriver).newInstance();
 
-            if ((dbUserName != null) && (dbPassword != null)) {
+            // decided before anything opens the database (the pool is lazy, but an encrypted boot is not)
+            boolean freshDB = !Paths.get(dbPath).toFile().exists();
+
+            // OUT-03a: opt-in encryption at rest. Unset = exactly as before.
+            String dbKeyFile = plugin.getConfig().getStringParam("db_key_file");
+            if (dbKeyFile != null && !dbKeyFile.isBlank()) {
+                DerbyAtRest.Secret secret = DerbyAtRest.readKeyFile(Paths.get(dbKeyFile.trim()));
+                Properties base = new Properties();
+                if ((dbUserName != null) && (dbPassword != null)) {
+                    base.setProperty("user", dbUserName);
+                    base.setProperty("password", dbPassword);
+                }
+                ds = setupDataSource(dbConnectionString, DerbyAtRest.boot(dbConnectionString, secret, base, logger));
+            } else if (dbConnectionString.startsWith("jdbc:derby:") && DerbyAtRest.isEncryptedWithoutKey(dbConnectionString)) {
+                // once encrypted, the database cannot be opened without its key: say so and stop,
+                // instead of running on with a database every query fails against
+                throw new DerbyAtRest.AtRestException("the controller database is encrypted at rest but db_key_file is not set");
+            } else if ((dbUserName != null) && (dbPassword != null)) {
                 ds = setupDataSource(dbConnectionString, dbUserName, dbPassword);
             } else {
                 ds = setupDataSource(dbConnectionString);
@@ -116,9 +133,8 @@ public class DBEngine {
             if (dbType == DBType.EMBEDDED) {
 
                 if (dbName.equals(defaultDBName)) {
-                    File dbsource = Paths.get(dbPath).toFile();
                     //File dbsource = new File(defaultDBName);
-                    if (dbsource.exists()) {
+                    if (!freshDB) {
                         //delete(dbsource);
                     } else {
                         //dbsource.mkdir();
@@ -162,6 +178,12 @@ public class DBEngine {
             ds.setUrl("jdbc:derby:demo;create=true");
             */
 
+        } catch (DerbyAtRest.AtRestException atRest) {
+            // a configured db_key_file that cannot be used: refuse to start, never fall back to plaintext
+            if (logger != null) {
+                logger.error("DBEngine: refusing to start: " + atRest.getMessage());
+            }
+            throw atRest;
         } catch (Exception ex) {
             if(logger != null) {
                 logger.error("DBEngine.DBEngine()", ex);
@@ -3206,6 +3228,11 @@ public class DBEngine {
         return setupDataSource(connectURI,null,null);
     }
 
+    /** Pool over connections opened with {@code props} (credentials and the at-rest key; never in the URL). */
+    public DataSource setupDataSource(String connectURI, Properties props) {
+        return setupPool(new DriverManagerConnectionFactory(connectURI, props));
+    }
+
     public DataSource setupDataSource(String connectURI, String login, String password) {
         //
         // First, we'll create a ConnectionFactory that the
@@ -3230,6 +3257,10 @@ public class DBEngine {
         // the "real" Connections created by the ConnectionFactory with
         // the classes that implement the pooling functionality.
         //
+        return setupPool(connectionFactory);
+    }
+
+    private DataSource setupPool(ConnectionFactory connectionFactory) {
         poolableConnectionFactory =
                 new PoolableConnectionFactory(connectionFactory, null);
 

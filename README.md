@@ -22,6 +22,36 @@ cannot start. Output: `target/controller-1.3-SNAPSHOT.jar`.
 
 Requires `io.cresco:library` in your local Maven repository — build [library](https://github.com/CrescoEdge/library) first.
 
+Tests: `mvn test -Djacoco.skip=true` (JaCoCo cannot instrument JDK 21 classes; always skip it).
+
+## Release by hand (no GitHub Actions)
+
+`scripts/release-agent.sh` builds and ships the agent from a workstation or the DGX:
+
+```bash
+scripts/release-agent.sh [--offline] [--skip-tests] [--publish] [--repo OWNER/NAME] [--tag TAG] <agent-checkout>
+```
+
+1. builds this bundle (`mvn package bundle:bundle -Djacoco.skip=true`, tests included unless
+   `--skip-tests`) and checks it is an OSGi bundle;
+2. copies `target/controller-<version>.jar` to `<agent-checkout>/src/main/resources/controller.jar`;
+3. builds the agent (`mvn package -Dmaven.test.skip=true`) and checks the agent jar carries exactly
+   the controller just built (sha256);
+4. only with `--publish`: `gh release upload <tag> target/agent-<version>.jar --clobber` to the
+   existing `CrescoEdge/agent` release `1.3-SNAPSHOT` (it never creates or deletes a release).
+
+It does not run the agent's `prebuild.sh` (that re-downloads every component from the snapshot
+repository and would overwrite the embedded controller) and it does not commit: the new
+`controller.jar` is left in the agent checkout for you to commit with the release.
+
+## Security-relevant configuration
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `controlplane_dedicated_vm` | `true` | An agent on its own broker (the global controller, vm://) gives the control-plane sender and its inbox their own vm:// connections instead of sharing the dataplane's pooled one. `false` restores the shared connection. Network URIs keep `controlplane_dedicated_connection` / `agentconsumer_dedicated_connection`. |
+| `db_key_file` | unset | Encrypts the controller Derby database at rest (`AES/CBC/NoPadding`, 256-bit). The file holds one line: 64 hex characters (raw key) or a boot password of at least 16 characters. It must be a regular file owned by the agent user, mode 0600/0400, in a directory only that user (or root) can write; otherwise the controller refuses to start. A plaintext database is encrypted in place at the first boot with the key. Unset = no change. Keep the key: the database cannot be opened without it. |
+| `<param>_file`, `CRESCO_<PARAM>` | — | Secret parameters (`keystorepwd`, `truststorepwd`, `db_password`, `broker_security_secret`, `discovery_secret_{agent,region,global}`, and any secret-looking name) are taken from an owner-only file named by `<param>_file` (as `-D`, `CRESCO_<PARAM>_FILE` or in agent.ini), then from the environment `CRESCO_<PARAM>`, before `-D<param>`. A `-D` copy that loses is cleared; a secret given only by `-D` still works but is logged as a warning. An unusable file refuses start. |
+
 ## Cresco framework
 
 | Component | Role |
