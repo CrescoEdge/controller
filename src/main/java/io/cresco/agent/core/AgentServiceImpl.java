@@ -68,6 +68,8 @@ public class AgentServiceImpl implements AgentService {
 
     }
 
+    private java.util.List<String> secretSourceNotes = java.util.Collections.emptyList();
+
     private Map<String,Object> initAgentConfigMap() {
         Map<String, Object> configParams = null;
         try {
@@ -100,6 +102,9 @@ public class AgentServiceImpl implements AgentService {
             }
             */
 
+
+            // OUT-03b: secret params from <param>_file (owner-only file) or CRESCO_<PARAM>, ahead of -D
+            secretSourceNotes = SecretSources.resolve(configParams, System.getenv(), System.getProperties());
 
             String platform = System.getenv("CRESCO_PLATFORM");
             if (platform == null) {
@@ -177,6 +182,10 @@ public class AgentServiceImpl implements AgentService {
             }
             //enableMsg.setParam("location", location);
             configParams.put("location", location);
+        } catch (SecretSources.SecretSourceException sse) {
+            // an unusable secret file: refuse to start (the logger does not exist yet)
+            System.err.println("Cresco agent: " + sse.getMessage());
+            throw sse;
         } catch (Exception ex) {
             ex.printStackTrace();
             System.exit(0);
@@ -267,6 +276,10 @@ public class AgentServiceImpl implements AgentService {
         logger.info("  /_______/  /__/   |__|  /_______/  /_______/  /_______/  /________/");
         logger.info("");
         logger.info("");
+
+        for (String note : secretSourceNotes) {
+            if (note.startsWith("WARN: ")) logger.warn(note.substring(6)); else logger.info(note);
+        }
 
         logger.info("Controller Version: " + getControllerVersion());
         if(plugin.getConfig().getStringParam("cresco_data_location") != null) {
