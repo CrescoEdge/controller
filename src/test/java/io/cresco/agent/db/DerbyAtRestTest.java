@@ -240,6 +240,13 @@ class DerbyAtRestTest {
             assertEquals("default tenant", rs.getString(1), "the schema and rows made before encryption are intact");
         }
         shutdownDb(db);
+
+        // the key is required from now on: without db_key_file the controller refuses to start
+        assertTrue(assertThrows(DerbyAtRest.AtRestException.class, () -> new DBEngine(TestAgentService.plugin(data, cfg())))
+                .getMessage().contains("db_key_file is not set"));
+        DBEngine again = new DBEngine(TestAgentService.plugin(data, cfg("db_key_file", key.toString())));
+        assertTrue(again.shutdown(), "and boots again with it");
+        reloadDriver();
     }
 
     @Test

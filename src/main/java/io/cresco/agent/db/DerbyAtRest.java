@@ -38,7 +38,7 @@ public final class DerbyAtRest {
 
     /** A db_key_file is configured but cannot be used: the controller must not start. */
     public static final class AtRestException extends IllegalStateException {
-        AtRestException(String msg) { super(msg); }
+        public AtRestException(String msg) { super(msg); }
         AtRestException(String msg, Throwable cause) { super(msg, cause); }
     }
 
@@ -95,6 +95,15 @@ public final class DerbyAtRest {
     /** True when the database exists (has a service.properties). */
     static boolean exists(Path dbDir) {
         return Files.isRegularFile(dbDir.resolve("service.properties"));
+    }
+
+    /** An on-disk Derby database at this URL that is encrypted (opening it needs db_key_file); false for anything else. */
+    static boolean isEncryptedWithoutKey(String jdbcUrl) {
+        try {
+            return isEncrypted(databaseDirectory(jdbcUrl));
+        } catch (AtRestException notOnDisk) {
+            return false;
+        }
     }
 
     /** True when Derby recorded the database as encrypted. */

@@ -114,6 +114,10 @@ public class DBEngine {
                     base.setProperty("password", dbPassword);
                 }
                 ds = setupDataSource(dbConnectionString, DerbyAtRest.boot(dbConnectionString, secret, base, logger));
+            } else if (dbConnectionString.startsWith("jdbc:derby:") && DerbyAtRest.isEncryptedWithoutKey(dbConnectionString)) {
+                // once encrypted, the database cannot be opened without its key: say so and stop,
+                // instead of running on with a database every query fails against
+                throw new DerbyAtRest.AtRestException("the controller database is encrypted at rest but db_key_file is not set");
             } else if ((dbUserName != null) && (dbPassword != null)) {
                 ds = setupDataSource(dbConnectionString, dbUserName, dbPassword);
             } else {
