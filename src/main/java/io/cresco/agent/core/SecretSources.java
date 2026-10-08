@@ -43,8 +43,20 @@ public final class SecretSources {
             "keystorepwd", "truststorepwd", "db_password", "broker_security_secret",
             "discovery_secret_agent", "discovery_secret_region", "discovery_secret_global"));
 
-    /** {@code <name>_file} parameters that are not secret sources: db_key_file is DBEngine's own key file (OUT-03a). */
-    static final Set<String> NOT_SOURCES = Collections.singleton("db_key");
+    /**
+     * Families whose {@code <name>_file} their owner reads with its own rules, so this resolver must not read it too
+     * (the owner would see the secret twice and refuse to start): db_key (DBEngine's key file, OUT-03a) and gfs's key
+     * families (KeySources: key-record files plus {@code _env} indirection). Every parameter of a family
+     * ({@code gfs_secret_env}, {@code gfs_secret_previous_files}, ...) keeps the plain lookup. The same list as the
+     * library's SecretParams.NOT_SOURCES.
+     */
+    static final Set<String> NOT_SOURCES = Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(
+            "db_key", "gfs_secret", "core_master_key", "tape_media_key", "gfs_pkcs11_pin")));
+
+    static boolean inExcludedFamily(String param) {
+        for (String family : NOT_SOURCES) if (param.equals(family) || param.startsWith(family + "_")) return true;
+        return false;
+    }
 
     static final String ENV_PREFIX = "CRESCO_";
     static final String FILE_SUFFIX = "_file";
@@ -63,7 +75,7 @@ public final class SecretSources {
     /** Is this a parameter we resolve: a listed agent secret, or a secret-looking name. */
     static boolean isSecretParam(String param) {
         return param != null && !param.isEmpty() && !param.toLowerCase(Locale.ROOT).endsWith(FILE_SUFFIX)
-                && !NOT_SOURCES.contains(param)
+                && !inExcludedFamily(param)
                 && (AGENT_SECRET_PARAMS.contains(param) || ConfigRedaction.isSecretKey(param));
     }
 
