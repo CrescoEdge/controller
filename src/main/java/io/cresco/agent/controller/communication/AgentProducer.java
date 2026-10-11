@@ -145,27 +145,34 @@ public class AgentProducer {
     }
 
     public void invalidateWorkersForURI(String failedUri) {
-        if (!this.baseURI.equals(failedUri)) {
-            logger.debug("Ignoring invalidateWorkersForURI call for URI [{}], this producer manages base URI [{}]", failedUri, this.baseURI);
-            return;
-        }
-
-        logger.warn("Invalidating ALL producer workers due to connection failure on base URI [{}]", failedUri);
+        // controller#25: invalidate a worker whose own connection URI failed, and every worker when the base URI
+        // failed. The old guard returned on anything but the base URI, which made the per-worker check unreachable.
+        // (Workers are created on baseURI today, so the two coincide; this keeps it right if they ever differ.)
+        if (failedUri == null) return;
+        boolean baseUriFailed = failedUri.equals(this.baseURI);
+        int removed = 0;
         synchronized (producerWorkers) { // Synchronize for safe iteration and modification
-            List<String> keysToRemove = new ArrayList<>(producerWorkers.keySet());
-            for (String key : keysToRemove) {
+            List<String> keys = new ArrayList<>(producerWorkers.keySet());
+            for (String key : keys) {
                 ActiveProducerWorker worker = producerWorkers.get(key); // Get before removing
-                if (worker != null) {
-                    // We only need to check if the worker's specific URI matches the failed one.
-                    // However, if the baseURI failed, all workers using it are implicitly invalid.
-                    logger.info("Shutting down and removing worker for destination [{}] due to connection failure on base URI [{}]", key, failedUri);
-                    worker.shutdown();
-                    producerWorkers.remove(key); // Explicitly remove after shutdown
+                if (worker == null) continue;
+                boolean workerUriFailed = failedUri.equals(worker.getConnectionURI());
+                if (!workerUriFailed && !baseUriFailed) continue;
+                if (baseUriFailed) {
+                    logger.warn("Shutting down and removing worker for destination [{}] due to base connection failure on [{}]", key, failedUri);
+                } else {
+                    logger.warn("Shutting down and removing worker for destination [{}]: its own connection failed on [{}]", key, failedUri);
                 }
+                worker.shutdown();
+                producerWorkers.remove(key); // Explicitly remove after shutdown
+                removed++;
             }
         }
-        logger.info("Finished invalidating ALL workers for base URI [{}]", failedUri);
+        logger.info("Invalidated {} worker(s) for failed URI [{}] (base URI [{}])", removed, failedUri, this.baseURI);
     }
+
+    /** The per-destination workers (tests). */
+    Map<String, ActiveProducerWorker> workers() { return producerWorkers; }
 
     public boolean sendMessage(MsgEvent sm) {
         boolean isSent = false;

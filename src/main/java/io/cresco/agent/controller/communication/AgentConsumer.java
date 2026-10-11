@@ -34,7 +34,14 @@ public class AgentConsumer {
     private MessageConsumer consumer;
 	private Gson gson;
 	private boolean dedicatedConnection;
-	private org.apache.activemq.ActiveMQConnection connection;
+	private volatile org.apache.activemq.ActiveMQConnection connection;
+	/** The inbox's broker URI (a re-init reuses it) and the reply correlation key its listener reads. */
+	private String uri, callIdKey, RXQueueName;
+	/** controller#24: shutdown wins over a re-init; one re-init at a time. */
+	private volatile boolean closed;
+	private final AtomicBoolean rebuilding = new AtomicBoolean();
+	private volatile int rebuilds;
+	static long REBUILD_INITIAL_BACKOFF_MS = 2_000, REBUILD_MAX_BACKOFF_MS = 30_000;
 
 	private AtomicBoolean lockGroupMap = new AtomicBoolean();
 	private Map<String, FileObjectGroupReceiver> fileGroupMap;
@@ -78,23 +85,47 @@ public class AgentConsumer {
 		logger.debug("Queue: {}", RXQueueName);
 		logger.trace("RXQueue=" + RXQueueName + " URI=" + URI);
 
+		// Transport isolation (OUT-81) and controller#24: the setup is re-runnable, and the dedicated connection's
+		// failure listener rebuilds it, so the inbox never stays dead.
+		this.uri = URI;
+		this.RXQueueName = RXQueueName;
+		this.callIdKey = "callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID();
+		setupTransport(URI);
+
+	}
+
+	/**
+	 * Create the session, the inbox queue, the consumer and its listener on {@code uri}. Re-runnable: the
+	 * failure hook calls it again when the dedicated connection dies (controller#24).
+	 */
+	private synchronized void setupTransport(String uri) throws JMSException {
 		// Transport isolation: the inbox carries ALL inbound control (WATCHDOG/EXEC/CONFIG, RPC
 		// replies), so receiving it over the pooled socket lets inbound dataplane/bulk frames
 		// delay control at the wire. Give the inbox its own socket. On vm:// (the agent's own broker)
 		// the pooled connection is shared with the dataplane, so the inbox gets its own vm://
 		// connection as well unless controlplane_dedicated_vm=false (OUT-81).
-		this.dedicatedConnection = ActiveClient.dedicatedControlConnection(plugin.getConfig(), URI,
+		this.dedicatedConnection = ActiveClient.dedicatedControlConnection(plugin.getConfig(), uri,
 				"agentconsumer_dedicated_connection");
 		sess = dedicatedConnection
-				? controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE, true)
-				: controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+				? controllerEngine.getActiveClient().createDedicatedSession(uri, false, Session.AUTO_ACKNOWLEDGE, true)
+				: controllerEngine.getActiveClient().createSession(uri, false, Session.AUTO_ACKNOWLEDGE);
 		if (sess == null) {
-			throw new JMSException("AgentConsumer: unable to create session for URI " + URI);
+			throw new JMSException("AgentConsumer: unable to create session for uri " + uri);
 		}
 		if (dedicatedConnection) {
-			logger.info("AgentConsumer inbox on dedicated control-plane connection for URI [{}]", URI);
+			logger.info("AgentConsumer inbox on dedicated control-plane connection for uri [{}]", uri);
 		}
 		this.connection = (org.apache.activemq.ActiveMQConnection) sess.getConnection();
+		// controller#24: we own the dedicated socket, so its failure is ours to recover from. Chain to the listener
+		// ActiveClient installed (it prunes the connection from its registry and closes it) and then rebuild the inbox.
+		if (dedicatedConnection && connection != null) {
+			final org.apache.activemq.ActiveMQConnection owned = connection;
+			final ExceptionListener registry = owned.getExceptionListener();
+			owned.setExceptionListener(ex -> {
+				try { if (registry != null) registry.onException(ex); } catch (Exception ignore) { }
+				onConnectionFailure(uri, owned, ex);
+			});
+		}
 
 		// From here the dedicated socket is live and WE own it: if consumer setup fails (broker
 		// authz denial, broker drop mid-setup) the constructor throws and the caller never gets a
@@ -104,15 +135,11 @@ public class AgentConsumer {
 			consumer = sess.createConsumer(RXqueue);
 		} catch (JMSException | RuntimeException ex) {
 			if (dedicatedConnection) {
-				try { if (!sess.isClosed()) sess.close(); } catch (Exception ignore) { }
+				try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
 				try { if (connection != null && !connection.isClosed()) connection.close(); } catch (Exception ignore) { }
 			}
 			throw ex;
 		}
-
-		Gson gson = new Gson();
-
-		String callIdKey = "callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID();
 
 
 		consumer.setMessageListener(new MessageListener() {
@@ -324,8 +351,62 @@ public class AgentConsumer {
 				}
 			}
 		});
-
 	}
+
+	/**
+	 * controller#24: the dedicated inbox connection died (a broker or hub restart, a churn window). Rebuild it
+	 * off-thread with backoff so the agent's control plane resumes without a JVM restart. One rebuild at a time;
+	 * shutdown wins. A failure of a connection already replaced is ignored.
+	 */
+	private void onConnectionFailure(String uri, org.apache.activemq.ActiveMQConnection failed, JMSException ex) {
+		if (closed || failed != connection) return;
+		logger.error("AgentConsumer inbox connection failure for URI [{}]: {}; rebuilding the inbox", uri,
+				ex == null || ex.getMessage() == null ? String.valueOf(ex) : ex.getMessage());
+		if (!rebuilding.compareAndSet(false, true)) return;
+		Thread t = new Thread(null, () -> {
+			try {
+				long backoff = REBUILD_INITIAL_BACKOFF_MS;
+				while (!closed) {
+					try {
+						Thread.sleep(backoff);
+						synchronized (this) {
+							if (closed) return;
+							logger.warn("AgentConsumer re-initializing the inbox for URI [{}] (backoff {} ms)", uri, backoff);
+							teardownTransport();
+							setupTransport(uri);
+							rebuilds++;
+						}
+						logger.warn("AgentConsumer inbox re-initialized for URI [{}]", uri);
+						return;
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						return;
+					} catch (Exception retry) {
+						logger.error("AgentConsumer inbox re-init failed for URI [{}]: {}; retrying", uri, retry.getMessage());
+						backoff = Math.min(REBUILD_MAX_BACKOFF_MS, backoff * 2);
+					}
+				}
+			} finally {
+				rebuilding.set(false);
+			}
+		}, "agentconsumer-reinit", 1 << 20);
+		t.setDaemon(true);
+		t.start();
+	}
+
+	/** Close the current consumer, session and owned connection (the re-init follows). Never parks on a dead transport. */
+	private synchronized void teardownTransport() {
+		if (dedicatedConnection && connection != null) ActiveClient.disposeIfDead(connection);
+		try { if (consumer != null) consumer.close(); } catch (Exception ignore) { }
+		if (dedicatedConnection) {
+			try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
+			ActiveClient.closeConnectionFast(connection);
+		}
+		consumer = null;
+	}
+
+	/** How many times the inbox was rebuilt after a connection failure (tests, diagnostics). */
+	int rebuilds() { return rebuilds; }
 
 	/**
 	 * Wire-supplied name components (dataname/datapart/group file names) must be simple names:
@@ -357,7 +438,10 @@ public class AgentConsumer {
 
 	public boolean isConnectionActive() {
 		try {
-			return connection != null && connection.isStarted() && !connection.isClosing() && !connection.isClosed();
+			org.apache.activemq.ActiveMQConnection c = connection;
+			// controller#24: a dedicated socket that died can still read as started and not closed; a failed
+			// transport is not an active inbox (the fault watchers then see it too)
+			return c != null && c.isStarted() && !c.isClosing() && !c.isClosed() && !ActiveClient.isTransportDead(c);
 		} catch (Exception ex) {
 			return false;
 		}
@@ -391,6 +475,15 @@ public class AgentConsumer {
 	}
 
 	public void shutdown() {
+		// controller#24: shutdown wins over a re-init. Taking the transport lock waits for one in progress, so it
+		// cannot install a fresh connection after this teardown and leak it.
+		closed = true;
+		synchronized (this) {
+			shutdownTransport();
+		}
+	}
+
+	private void shutdownTransport() {
 		// A dead (reconnecting/failed) failover transport parks consumer.close() / session.close() /
 		// connection.close() until its reconnect attempts exhaust (~20s each, serially). Dispose it
 		// first so the teardown is immediate; a healthy transport still closes gracefully. Only on
