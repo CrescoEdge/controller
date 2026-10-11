@@ -91,6 +91,11 @@ class ControlPlaneSender {
 
     private boolean isOpen() {
         ActiveMQSession s = session;
+        // controller#25 (send side): a dedicated connection whose transport died can still read as open; sending
+        // into it loses non-persistent control messages until something fails. Treat it as closed so the next
+        // send rebuilds it first.
+        ActiveMQConnection c = conn;
+        if (dedicatedConnection && c != null && ActiveClient.isTransportDead(c)) return false;
         return s != null && !s.isClosed() && producer != null;
     }
 
