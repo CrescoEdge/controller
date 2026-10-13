@@ -51,6 +51,9 @@ class ControlPlaneSender {
     private final long lockWaitMs;
     // fair: a sender that has waited longest (or shutdown) goes next; no thread can be starved
     private final ReentrantLock lock = new ReentrantLock(true);
+    // Set by shutdown() alone, and permanent. A transport failure never sets it: the failed send drops the session
+    // (closeIfCurrent) and the next send re-opens it, so a broker or hub restart heals on the next send with no timer
+    // (controller#26). A closed sender belongs to an AgentProducer that ActiveClient has already replaced or cleared.
     private volatile boolean closed = false;
 
     private volatile ActiveMQSession session;
@@ -126,31 +129,40 @@ class ControlPlaneSender {
             if (dedicatedConnection) {
                 try { c = (ActiveMQConnection) s.getConnection(); } catch (Exception ignore) { }
             }
-            if (closed) {
-                // shutdown raced this (re)connect: release what we just built and fail the send
-                try { s.close(); } catch (Exception ignore) { }
-                ActiveClient.closeConnectionFast(c);
-                throw new JMSException("ControlPlaneSender: closed during (re)connect");
-            }
-            // Persistent sends are synchronous (await broker receipt), and send() must hold the
-            // lock (JMS sessions are not thread-safe) - so a wedged transport would otherwise hold
-            // the lock for the whole stall. Bound it: a timed-out send throws, the session is
-            // rebuilt, callers see a clean failure. Only on the dedicated connection (we own it;
-            // never mutate the shared pooled one).
-            if (c != null) {
-                try {
-                    c.setSendTimeout(plugin.getConfig().getIntegerParam("controlplane_send_timeout_ms", 15000));
-                } catch (Exception ex) {
-                    logger.warn("ControlPlaneSender: unable to set send timeout: {}", ex.getMessage());
+            boolean built = false;
+            try {
+                if (closed) {
+                    // shutdown raced this (re)connect: release what we just built and fail the send
+                    throw new JMSException("ControlPlaneSender: closed during (re)connect");
+                }
+                // Persistent sends are synchronous (await broker receipt), and send() must hold the
+                // lock (JMS sessions are not thread-safe) - so a wedged transport would otherwise hold
+                // the lock for the whole stall. Bound it: a timed-out send throws, the session is
+                // rebuilt, callers see a clean failure. Only on the dedicated connection (we own it;
+                // never mutate the shared pooled one).
+                if (c != null) {
+                    try {
+                        c.setSendTimeout(plugin.getConfig().getIntegerParam("controlplane_send_timeout_ms", 15000));
+                    } catch (Exception ex) {
+                        logger.warn("ControlPlaneSender: unable to set send timeout: {}", ex.getMessage());
+                    }
+                }
+                MessageProducer p = s.createProducer(null); // anonymous; destination chosen per send
+                destCache.clear();
+                conn = c;
+                session = s;
+                producer = p;
+                built = true;
+                logger.info("ControlPlaneSender session (re)initialized for {}{}", baseURI,
+                        dedicatedConnection ? " (dedicated control-plane connection)" : "");
+            } finally {
+                if (!built) {
+                    // shutdown raced us, or the transport died between the session and its producer: release the
+                    // session and (dedicated only) its socket, which no field references yet
+                    try { s.close(); } catch (Exception ignore) { }
+                    ActiveClient.closeConnectionFast(c);
                 }
             }
-            MessageProducer p = s.createProducer(null); // anonymous; destination chosen per send
-            destCache.clear();
-            conn = c;
-            session = s;
-            producer = p;
-            logger.info("ControlPlaneSender session (re)initialized for {}{}", baseURI,
-                    dedicatedConnection ? " (dedicated control-plane connection)" : "");
         } finally {
             lock.unlock();
         }

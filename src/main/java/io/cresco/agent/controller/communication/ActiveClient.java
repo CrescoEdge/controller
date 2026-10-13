@@ -84,8 +84,9 @@ public class ActiveClient {
         try { if (!c.isClosed()) c.close(); } catch (Exception ignore) { }
     }
 
-    private AgentConsumer agentConsumer;
-    private AgentProducer agentProducer;
+    // volatile: the state-machine thread swaps these on a re-init while timer and plugin threads send through them
+    private volatile AgentConsumer agentConsumer;
+    private volatile AgentProducer agentProducer;
 
     private String faultTriggerURI;
     private final int MAX_CONNECTION_START_ATTEMPTS = 5;
@@ -229,8 +230,9 @@ public class ActiveClient {
                 // consumer on a DEDICATED connection there may be no pooled connection for this
                 // URI at all (waiters like DataPlaneServiceImpl.getSession spun forever on the
                 // map lookup during startup) — ask the consumer for its actual connection state.
-                if (agentConsumer != null) {
-                    isActive = agentConsumer.isConnectionActive();
+                AgentConsumer consumer = agentConsumer;
+                if (consumer != null) {
+                    isActive = consumer.isConnectionActive();
                 } else {
                     isActive = isConnectionActive(faultTriggerURI);
                 }
@@ -518,9 +520,10 @@ public class ActiveClient {
         }
 
         if ((connectionRemoved || factoryRemoved)) {
-            if (agentProducer != null) {
+            AgentProducer producer = agentProducer;
+            if (producer != null) {
                 logger.info("Notifying AgentProducer about connection failure for URI [{}]", uri);
-                agentProducer.invalidateWorkersForURI(uri);
+                producer.invalidateWorkersForURI(uri);
             } else {
                 logger.warn("AgentProducer is null in ActiveClient. Cannot notify about failure for URI [{}]", uri);
             }
@@ -563,13 +566,15 @@ public class ActiveClient {
         boolean isInit = false;
         try {
             logger.info("Initializing Agent Consumer for Queue [{}] on URI [{}]", RXQueueName, URI);
-            if (this.agentConsumer != null) {
+            AgentConsumer old = this.agentConsumer;
+            if (old != null) {
                 logger.warn("Existing Agent Consumer found. Shutting it down before creating a new one.");
-                this.agentConsumer.shutdown();
                 // Null BEFORE constructing: if the constructor throws, a stale field pointing at the
                 // shut-down consumer would make isFaultURIActive() false FOREVER (its dedicated
                 // connection never restarts) and permanently hang initIOChannels' wait loop.
+                // (Unlike the producer, the old consumer must go first: two consumers would split the inbox.)
                 this.agentConsumer = null;
+                old.shutdown();
             }
             this.agentConsumer = new AgentConsumer(controllerEngine, RXQueueName, URI);
             isInit = true; // Assume success if constructor doesn't throw
@@ -585,19 +590,27 @@ public class ActiveClient {
         return isInit;
     }
 
+    /**
+     * controller#26: build the new producer first, then swap it in, then shut the old one down. Shutting the old
+     * one down first left a window where every send landed on its closed ControlPlaneSender ("ControlPlaneSender:
+     * closed"), and a constructor that threw left that shut-down producer installed for good. On a failure the
+     * field is cleared instead, so senders see "AgentProducer is null" and the caller's re-init retries.
+     */
     public boolean initActiveAgentProducer(String URI) {
         boolean isInit = false;
+        AgentProducer old = this.agentProducer;
         try {
             logger.info("Initializing Agent Producer for URI [{}]", URI);
-            if (this.agentProducer != null) {
-                logger.warn("Existing Agent Producer found. Shutting it down before creating a new one.");
-                this.agentProducer.shutdown();
-            }
             this.agentProducer = new AgentProducer(controllerEngine, URI, this);
             isInit = true; // Assume success if constructor doesn't throw
             logger.info("Agent Producer initialized successfully for URI [{}]", URI);
         } catch (Exception ex) {
             logger.error("initActiveAgentProducer Exception for URI [{}]: {}", URI, ex.getMessage(), ex);
+            this.agentProducer = null;
+        }
+        if (old != null) {
+            logger.warn("Shutting down the previous Agent Producer.");
+            old.shutdown();
         }
         return isInit;
     }
@@ -606,9 +619,13 @@ public class ActiveClient {
         return agentProducer != null;
     }
 
+    /** The current producer (tests). */
+    AgentProducer agentProducer() { return agentProducer; }
+
     public void sendAPMessage(MsgEvent msg) {
-        if (hasActiveProducer()) {
-            agentProducer.sendMessage(msg);
+        AgentProducer p = agentProducer;
+        if (p != null) {
+            p.sendMessage(msg);
         } else {
             logger.error("sendAPMessage called but AgentProducer is null. Message not sent: {}", msg.getParams());
         }
@@ -633,16 +650,20 @@ public class ActiveClient {
             logger.warn("ActiveClient shutdown: disposed {} dead transport(s) up front so teardown cannot park on reconnect", disposed);
         }
 
-        if (this.agentProducer != null) {
+        // clear each field before shutting its object down: a send arriving meanwhile sees "AgentProducer is null"
+        // rather than a closed sender (controller#26)
+        AgentProducer producer = this.agentProducer;
+        this.agentProducer = null;
+        if (producer != null) {
             logger.info("Shutting down AgentProducer...");
-            this.agentProducer.shutdown();
-            this.agentProducer = null;
+            producer.shutdown();
         }
 
-        if (this.agentConsumer != null) {
+        AgentConsumer consumer = this.agentConsumer;
+        this.agentConsumer = null;
+        if (consumer != null) {
             logger.info("Shutting down AgentConsumer...");
-            this.agentConsumer.shutdown();
-            this.agentConsumer = null;
+            consumer.shutdown();
         }
 
         logger.info("Closing all active JMS connections...");
@@ -671,8 +692,9 @@ public class ActiveClient {
     }
 
     public boolean sendMessage(MsgEvent sm) {
-        if (agentProducer != null) {
-            return agentProducer.sendMessage(sm);
+        AgentProducer p = agentProducer;
+        if (p != null) {
+            return p.sendMessage(sm);
         } else {
             logger.error("sendMessage called directly on ActiveClient, but AgentProducer is null. Message not sent: {}", sm.getParams());
             return false;

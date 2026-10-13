@@ -24,6 +24,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * controller#24 and #25: a dead dedicated control connection recovers on its own. The inbox consumer rebuilds when its
  * socket dies (including a real broker restart) and shutdown wins over a rebuild; the producer drops a worker whose
  * own connection failed, and every worker when the base URI failed.
+ * controller#26: the control-plane sender re-opens on the next send after a broker restart, a deliberate shutdown
+ * stays permanent, no send waits behind a stalled re-open, and a producer re-init never leaves a closed sender installed.
  */
 class ControlPlaneRecoveryTest {
 
@@ -33,9 +35,17 @@ class ControlPlaneRecoveryTest {
     private String uri;
 
     private static PluginBuilder plugin() {
-        Map<String, Object> m = new HashMap<>();
+        return plugin(new HashMap<>());
+    }
+
+    private static PluginBuilder plugin(Map<String, Object> extra) {
+        Map<String, Object> m = new HashMap<>(extra);
         m.put("agentconsumer_dedicated_connection", "true");
         return TestAgentService.plugin(System.getProperty("java.io.tmpdir"), m);
+    }
+
+    private static MsgEvent watchdog() {
+        return new MsgEvent(MsgEvent.Type.WATCHDOG, "r1", "a1", null, "r1", "a1", null, false, false);
     }
 
     private void startBroker() throws Exception {
@@ -182,5 +192,91 @@ class ControlPlaneRecoveryTest {
             producer.shutdown();
             engine.getActiveClient().shutdown();
         }
+    }
+
+    @Test
+    void theSenderReopensOnTheNextSendAfterABrokerRestart() throws Exception {
+        ControllerEngine engine = new ControllerEngine(null, plugin(), null, null);
+        ControlPlaneSender sender = new ControlPlaneSender(engine, uri);
+        try {
+            assertTrue(sender.isDedicatedConnection());
+            assertTrue(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
+            ActiveMQConnection before = sender.transportConnection();
+            stopBroker();
+            assertFalse(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS), "a send fails while the broker is down");
+            startBroker();
+            // no timer, no agent restart: the next send re-opens the sender (what the 5 s liveness ping does live)
+            await("the sender re-opened", 10_000, () -> sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
+            assertNotSame(before, sender.transportConnection(), "a fresh dedicated connection");
+            assertTrue(broker.getDestination(new ActiveMQQueue(INBOX)).getDestinationStatistics().getEnqueues().getCount() >= 1,
+                    "the message reached the restarted broker");
+        } finally {
+            sender.shutdown();
+            engine.getActiveClient().shutdown();
+        }
+    }
+
+    @Test
+    void aDeliberateShutdownStaysClosed() throws Exception {
+        ControllerEngine engine = new ControllerEngine(null, plugin(), null, null);
+        ControlPlaneSender sender = new ControlPlaneSender(engine, uri);
+        try {
+            assertTrue(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
+            int withSender = brokerClients();
+            sender.shutdown();
+            assertFalse(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS), "a shut-down sender never re-opens");
+            assertThrows(JMSException.class, sender::transportConnection);
+            assertEquals(withSender - 1, brokerClients(), "its socket is gone and no new one was opened");
+        } finally {
+            engine.getActiveClient().shutdown();
+        }
+    }
+
+    @Test
+    void noSendWaitsBehindAStalledReopen() throws Exception {
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("controlplane_lock_wait_ms", "300");
+        ControllerEngine engine = new ControllerEngine(null, plugin(cfg), null, null);
+        // the agent's own URI shape: a failover transport that parks a (re)connect while the broker is down
+        String failover = "failover:(" + uri + ")?maxReconnectAttempts=30&initialReconnectDelay=100&useExponentialBackOff=false";
+        ControlPlaneSender sender = new ControlPlaneSender(engine, failover);
+        try {
+            stopBroker();
+            Thread stalled = new Thread(() -> sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS), "stalled-reopen");
+            stalled.start();
+            Thread.sleep(200);                                   // the first send now holds the lock inside connect
+            long t0 = System.currentTimeMillis();
+            assertFalse(sender.send(INBOX, watchdog(), MsgQoS.Tier.CONTROL));
+            long waited = System.currentTimeMillis() - t0;
+            assertTrue(waited < 1_500, "a second send gave up after the lock wait (2 x 300 ms), not the reconnect: " + waited + " ms");
+            assertTrue(stalled.isAlive(), "the first send was still parked in the reconnect");
+            startBroker();
+            stalled.join(15_000);
+            await("the sender re-opened once the broker returned", 10_000,
+                    () -> sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
+        } finally {
+            sender.shutdown();
+            engine.getActiveClient().shutdown();
+        }
+    }
+
+    @Test
+    void aProducerReinitSwapsInTheNewOneBeforeClosingTheOld() throws Exception {
+        ControllerEngine engine = new ControllerEngine(null, plugin(), null, null);
+        ActiveClient ac = engine.getActiveClient();
+        try {
+            assertTrue(ac.initActiveAgentProducer(uri));
+            AgentProducer first = ac.agentProducer();
+            assertTrue(ac.sendMessage(watchdog()));
+            assertTrue(ac.initActiveAgentProducer(uri), "a re-init (what a parent-link recovery does)");
+            assertNotSame(first, ac.agentProducer());
+            assertTrue(ac.sendMessage(watchdog()), "control sends go to the new producer, not the closed one");
+            awaitDequeued(0, 1_000);                           // nobody consumes the inbox here
+            assertEquals(2, broker.getDestination(new ActiveMQQueue(INBOX)).getDestinationStatistics().getEnqueues().getCount());
+        } finally {
+            ac.shutdown();
+        }
+        assertNull(ac.agentProducer(), "shutdown clears the producer");
+        assertFalse(ac.sendMessage(watchdog()), "after shutdown a send reports no producer");
     }
 }
