@@ -1140,11 +1140,22 @@ public class ControllerSMHandler {
                 }
                 consumerAgentConnectCount++;
             }
+            // controller#26: an agent with no inbox, or no producer, cannot answer; reporting success here put it in
+            // AGENT anyway, where nothing re-drives a rejoin. Fail the attempt so stateInit's retry loop does.
+            if (!consumerAgentConnected) {
+                logger.error("initIOChannels(): the Agent Consumer never connected after " + consumerAgentConnectCount + " attempts");
+                return false;
+            }
             int discoveryPort = brokerPortFor(discoveredBrokerPort);
+            boolean producerInit;
             if(isLocalBroker(brokerAddress)) {
-                controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
+                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
             } else {
-                controllerEngine.getActiveClient().initActiveAgentProducer("failover:(" + transport + "://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer("failover:(" + transport + "://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+            }
+            if (!producerInit) {
+                logger.error("initIOChannels(): the Agent Producer failed to initialize");
+                return false;
             }
             logger.info("Agent ProducerThread Started..");
             isInit = true;
