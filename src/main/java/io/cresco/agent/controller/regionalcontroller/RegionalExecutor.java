@@ -64,6 +64,11 @@ public class RegionalExecutor implements Executor {
 
                     if(controllerEngine.getGDB().nodeUpdate(incoming)) {
                         incoming.setParam("is_registered",Boolean.TRUE.toString());
+                        // the (re-)registered agent and its plugins are visible here now; a region under a
+                        // global pushes the change up at once (diff-gated, coalesced) instead of on its next tick
+                        if (controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL) {
+                            controllerEngine.requestStateUpdate();
+                        }
 
                     } else {
                         incoming.setParam("is_registered",Boolean.FALSE.toString());

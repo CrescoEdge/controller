@@ -164,11 +164,16 @@ class BrokerMonitor implements Runnable {
 
 			logger.trace("agentpath: " + agentPath + " is being shutdown");
 
+			// Tear this bridge group down BEFORE reporting the failure. Reporting it can run the whole
+			// recovery synchronously on this thread (BrokeredAgent -> globalControllerLost -> stateInit),
+			// which builds a NEW group to the same host under the same key; tearing down afterwards removed
+			// that new group, and the new bridge's own loss report then fell inside the recovery debounce,
+			// leaving the region detached for good.
+			shutdown();
+
             if(controllerEngine.getBrokeredAgents().containsKey(agentPath)) {
                 controllerEngine.getBrokeredAgents().get(agentPath).setBrokerStatus(BrokerStatusType.FAILED);
             }
-
-			shutdown();
 		} catch(Exception ex) {
 			logger.error("BrokerMonitor.run Run {}", ex.getMessage(), ex);
 		}

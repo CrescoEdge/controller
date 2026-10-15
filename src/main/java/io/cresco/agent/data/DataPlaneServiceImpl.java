@@ -1018,6 +1018,11 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    /** The broker topic a dataplane topic type is published on (tenant-qualified when namespacing is on). */
+    public String getTopicPhysicalName(TopicType topicType) {
+        return getTopicName(topicType);
+    }
+
     private String getTopicName(TopicType topicType) {
 
         String topicNameString = null;
