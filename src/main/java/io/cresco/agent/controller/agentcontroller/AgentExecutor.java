@@ -851,6 +851,8 @@ public class AgentExecutor implements Executor {
                 ce.setParam("status_code", statusMap.get("status_code"));
                 ce.setParam("status_desc", statusMap.get("status_desc"));
                 ce.setParam("pluginid", pluginId);
+                // push the changed inventory upstream now, not on the next watchdog tick
+                controllerEngine.requestStateUpdate();
 
             } else {
                 ce.setParam("status_code", "9");
@@ -889,9 +891,13 @@ public class AgentExecutor implements Executor {
 
             } else {
                 logger.info("disabling plugin : " + pluginId);
-                boolean isDisabled = controllerEngine.getPluginAdmin().stopPlugin(pluginId);
+                // removePlugin (not stopPlugin): an explicit remove drops the plugin from the inventory
+                // whatever its persistence code; stopPlugin is the shutdown path that keeps it
+                boolean isDisabled = controllerEngine.getPluginAdmin().removePlugin(pluginId);
 
                 if (isDisabled) {
+                    // push the changed inventory upstream now, not on the next watchdog tick
+                    controllerEngine.requestStateUpdate();
 
                     ce.setParam("status_code", "7");
                     ce.setParam("status_desc", "Plugin Removed");

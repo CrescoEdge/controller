@@ -941,7 +941,27 @@ public class PluginAdmin {
 
     }
 
+    /**
+     * Stop a plugin for an agent SHUTDOWN: persistent plugins (persistence_code &gt; 9: pipeline-placed 10,
+     * system 20) keep their pnode row so StaticPluginLoader restarts them under the same id.
+     */
     public boolean stopPlugin(String pluginId) {
+        return stopPlugin(pluginId, false);
+    }
+
+    /**
+     * Explicitly REMOVE a plugin (pluginremove): stop it and drop its pnode row whatever its persistence
+     * code. The local DB is the inventory this agent exports upstream (stateUpdate pluginconfigs) and, on
+     * the global's own agent, the very table the global's listplugins reads -- keeping the row of a
+     * removed persistent plugin (e.g. the system stunnel, code 20) left it listed fabric-wide forever, so
+     * clients' deploy_plugin believed it was still loaded, and a removed code-10 plugin was resurrected
+     * on the next agent restart. The plugin-data of a persistent plugin is kept (identity-keyed state).
+     */
+    public boolean removePlugin(String pluginId) {
+        return stopPlugin(pluginId, true);
+    }
+
+    private boolean stopPlugin(String pluginId, boolean isRemove) {
         boolean isStopped = false;
         try {
 
@@ -952,16 +972,24 @@ public class PluginAdmin {
             boolean isPluginStopped = false;
             long bundleID = -1;
 
+            boolean isKnown;
             synchronized (lockPlugin) {
-                if (pluginMap.containsKey(pluginId)) {
+                isKnown = pluginMap.containsKey(pluginId);
+                if (isKnown) {
                     jarFilePath = pluginMap.get(pluginId).getJarPath();
                     isPluginStopped = pluginMap.get(pluginId).getPluginService().isStopped();
                     bundleID = pluginMap.get(pluginId).getBundleID();
-                } else {
-                    logger.error("stopPlugin() no key found for pluginid: " + pluginId);
-                    //not found return true
-                    return true;
                 }
+            }
+            if (!isKnown) {
+                logger.error("stopPlugin() no key found for pluginid: " + pluginId);
+                if (isRemove) {
+                    // not running here, but a leftover row (e.g. a plugin that failed to start)
+                    // would otherwise stay in the exported inventory after a "successful" remove
+                    gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
+                }
+                //not found return true
+                return true;
             }
 
             logger.debug("stopPlugin jarfilePath: " + jarFilePath);
@@ -1020,7 +1048,11 @@ public class PluginAdmin {
                         int pluginPersistenceCode = gdb.getPNodePersistenceCode(pluginId);
 
                         try {
-                            if (pluginPersistenceCode <= 9) {
+                            if (isRemove && pluginPersistenceCode > 9) {
+                                // explicit remove of a persistent plugin: drop it from the inventory
+                                // (and from restart-on-boot), keep its plugin-data
+                                gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
+                            } else if (pluginPersistenceCode <= 9) {
 
                                 //remove from database
                                 gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);

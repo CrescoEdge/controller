@@ -482,6 +482,18 @@ public class ControllerEngine {
         this.discoveryTCPEngineThread = discoveryTCPEngineThread;
     }
 
+    /**
+     * Ask the state machine to export this node's (diff-gated) config upstream now rather than on the
+     * next watchdog tick; used after an explicit plugin add/remove. No-op before start / when there is
+     * no parent (GLOBAL/REGION/STANDALONE share or own the DB the inventory is read from).
+     */
+    public void requestStateUpdate() {
+        ControllerSMHandler handler = controllerSMHandler;
+        if (handler != null) {
+            handler.requestStateUpdate();
+        }
+    }
+
     public AgentHealthWatcher getAgentHealthWatcher() {return this.agentHealthWatcher;}
     public void setAgentHealthWatcher(AgentHealthWatcher agentHealthWatcher) {
         this.agentHealthWatcher = agentHealthWatcher;
