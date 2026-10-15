@@ -496,6 +496,75 @@ public class ActiveBroker {
 		return destinations;
 	}
 
+	/**
+	 * True if this broker has a live route for the queue {@code physicalName}: the queue exists AND has a
+	 * consumer (a local inbox, or a network bridge's demand subscription for a node behind a bridge). A
+	 * destination without consumers is what a dead bridge leaves behind, so it does not count.
+	 *
+	 * @see io.cresco.agent.controller.core.ControllerEngine#isReachableAgent(String)
+	 */
+	public boolean hasLiveQueueRoute(String physicalName) {
+		return hasLiveQueueRoute(broker, physicalName);
+	}
+
+	/**
+	 * True if a network bridge subscribes to the topic {@code physicalName} on this broker, i.e. a consumer on the
+	 * far side of a bridge (the global's state-update listener, for a region) is reachable from here. Local
+	 * subscribers do not count. A region's state export published before its data bridge has that demand is
+	 * dropped, which is how the first export after a (re-)join used to be lost.
+	 */
+	public boolean hasNetworkSubscription(String topicPhysicalName) {
+		return hasNetworkSubscription(broker, topicPhysicalName);
+	}
+
+	static boolean hasNetworkSubscription(BrokerService service, String topicPhysicalName) {
+		if (service == null || topicPhysicalName == null) {
+			return false;
+		}
+		try {
+			Broker b = service.getRegionBroker();
+			if (b == null) {
+				return false;
+			}
+			for (Map.Entry<ActiveMQDestination, org.apache.activemq.broker.region.Destination> e : b.getDestinationMap().entrySet()) {
+				ActiveMQDestination d = e.getKey();
+				if (d.isTopic() && topicPhysicalName.equals(d.getPhysicalName()) && e.getValue() != null) {
+					for (org.apache.activemq.broker.region.Subscription sub : e.getValue().getConsumers()) {
+						if (sub.getConsumerInfo() != null && sub.getConsumerInfo().isNetworkSubscription()) {
+							return true;
+						}
+					}
+				}
+			}
+		} catch (Exception ex) {
+			return false;
+		}
+		return false;
+	}
+
+	/** {@link #hasLiveQueueRoute(String)} on any broker (static so it can be proven on embedded brokers). */
+	static boolean hasLiveQueueRoute(BrokerService service, String physicalName) {
+		if (service == null || physicalName == null) {
+			return false;
+		}
+		try {
+			Broker b = service.getRegionBroker();
+			if (b == null) {
+				return false;
+			}
+			for (Map.Entry<ActiveMQDestination, org.apache.activemq.broker.region.Destination> e : b.getDestinationMap().entrySet()) {
+				ActiveMQDestination d = e.getKey();
+				if (d.isQueue() && physicalName.equals(d.getPhysicalName())
+						&& e.getValue() != null && !e.getValue().getConsumers().isEmpty()) {
+					return true;
+				}
+			}
+		} catch (Exception ex) {
+			return false;
+		}
+		return false;
+	}
+
 	public ActiveMQDestination[] getRegionalBrokerDestinations() {
 		ActiveMQDestination[] destinations = null;
 		try {

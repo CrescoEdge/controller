@@ -72,6 +72,7 @@ public class ControllerSMHandler {
     private Timer stateUpdateTimer;
     private stateUpdateTask stateUpdater;
     private final AtomicBoolean stateUpdateRequested = new AtomicBoolean();
+    private final AtomicBoolean globalRecheckPending = new AtomicBoolean();
     private Collection<org.apache.mina.statemachine.State> stateCollection = null;
 
     private ControllerMode currentState = null;
@@ -110,7 +111,8 @@ public class ControllerSMHandler {
         long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
 
         this.stateUpdateTimer = new Timer();
-        this.stateUpdater = new stateUpdateTask();
+        this.stateUpdater = new stateUpdateTask(
+                new StateExportGate(plugin.getConfig().getIntegerParam("state_update_full_resend_ticks", 4)));
         this.stateUpdateTimer.scheduleAtFixedRate(stateUpdater, watchDogIntervalDelay, watchDogInterval);
     }
 
@@ -121,6 +123,10 @@ public class ControllerSMHandler {
      * coalesce: a burst of plugin adds/removes costs at most one extra export, not one per change.
      */
     public void requestStateUpdate() {
+        requestStateUpdate(0L);
+    }
+
+    private void requestStateUpdate(long delayMs) {
         final stateUpdateTask task = stateUpdater;
         if (task == null || !stateUpdateRequested.compareAndSet(false, true)) {
             return;
@@ -132,11 +138,30 @@ public class ControllerSMHandler {
                     stateUpdateRequested.set(false);
                     task.run();
                 }
-            }, 0L);
+            }, Math.max(0L, delayMs));
         } catch (java.lang.IllegalStateException stopping) {
             // timer cancelled: the controller is stopping, nothing to push
             stateUpdateRequested.set(false);
         }
+    }
+
+    /**
+     * Send this node's FULL state (region/agent/plugin configs) to its parent now, bypassing the export's
+     * diff-gate. Called when the node (re-)registers with its parent: if the parent had marked it LOST, the
+     * parent shows none of its plugins (status 50) until an export restores them, and the diff-gate would send
+     * nothing until the periodic full tick (up to state_update_full_resend_ticks x watchdog_interval, 60 s by
+     * default). The request stays pending until an export in AGENT / REGION_GLOBAL mode actually goes out.
+     * {@code state_update_full_on_register=false} restores the old behaviour.
+     *
+     * @param reason logged with the export it causes
+     */
+    public void requestFullStateUpdate(String reason) {
+        final stateUpdateTask task = stateUpdater;
+        if (task == null || !plugin.getConfig().getBooleanParam("state_update_full_on_register", true)) {
+            return;
+        }
+        task.requestFull(reason);
+        requestStateUpdate();
     }
 
     @Transition(on = "start", in = EMPTY)
@@ -164,12 +189,44 @@ public class ControllerSMHandler {
         return false;
     }
 
+    /**
+     * A loss report inside the recovery debounce is usually a second detector repeating the loss just recovered
+     * from -- but it can also be a NEW loss (the bridge built by that recovery failing). Look again once the
+     * debounce has passed: if the global still has no live route, raise the loss again so the region rebuilds
+     * its bridge instead of staying detached.
+     */
+    private void recheckGlobalAfterDebounce(String desc) {
+        if (!globalRecheckPending.compareAndSet(false, true)) {
+            return;
+        }
+        long delay = Math.max(1000L, RECOVERY_DEBOUNCE_MS - (System.currentTimeMillis() - lastRecoveryComplete) + 1000L);
+        try {
+            stateUpdateTimer.schedule(new TimerTask() {
+                public void run() {
+                    globalRecheckPending.set(false);
+                    String globalPath = cstate.getGlobalControllerPath();
+                    if (cstate.getControllerState() == ControllerMode.REGION_GLOBAL && globalPath != null
+                            && !controllerEngine.isReachableAgent(globalPath)) {
+                        logger.warn("global " + globalPath + " still unreachable after the recovery debounce; "
+                                + "re-raising the loss (" + desc + ")");
+                        // through the state machine proxy, off the timer thread (recovery can take a while)
+                        new Thread(() -> controllerEngine.getControllerSM().globalControllerLost("recheck: " + desc),
+                                "global-loss-recheck").start();
+                    }
+                }
+            }, delay);
+        } catch (java.lang.IllegalStateException stopping) {
+            globalRecheckPending.set(false);
+        }
+    }
+
     @Transitions({
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL_FAILED),
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL)
     })
     public void globalControllerLost(StateContext context, String desc) {
         if (isDuplicateLossReport("globalControllerLost")) {
+            recheckGlobalAfterDebounce(desc);
             return;
         }
         logger.error("GLOBAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
@@ -768,6 +825,9 @@ public class ControllerSMHandler {
                     if(registerAgent(discoveryNode.discovered_region,cstate.getAgent())) {
                         controllerEngine.setAgentHealthWatcher(new AgentHealthWatcher(controllerEngine));
                         isInit = true;
+                        // agent_enable carried our plugins; also push the full export at once so nothing the
+                        // parent marked LOST waits for the periodic full tick
+                        requestFullStateUpdate("registered with region " + discoveryNode.discovered_region);
                     }
                 }
 
@@ -926,9 +986,8 @@ public class ControllerSMHandler {
                     Thread.sleep(1000);
                 }
             } else {
-                logger.error("HOW IS THIS THING DISCOVERABLE? ");
-                logger.error("getDiscoveredPath() " + discoveryNode.getDiscoveredPath());
-                logger.error("is Reachable: " + controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath()));
+                // a live route already exists (isReachableAgent requires a consumer, i.e. a working bridge)
+                logger.info("Global " + discoveryNode.getDiscoveredPath() + " already reachable over an existing bridge");
             }
 
             if(controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
@@ -940,6 +999,9 @@ public class ControllerSMHandler {
 
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL)); //1
                 cstate.setRegionalGlobalSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "isRegionGlobal() Success");
+                // (re-)joined the global: send the full region export now -- if the global marked this region
+                // LOST, its agents and plugins stay hidden there until an export restores them
+                requestFullStateUpdate("joined global " + discoveryNode.getDiscoveredPath());
             } else {
                 logger.debug("Regional Global Failure");
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_FAILED)); //1
@@ -1582,10 +1644,26 @@ public class ControllerSMHandler {
 
     class stateUpdateTask extends TimerTask {
 
-        private String lastRegionconfigs = "";
-        private String lastAgentconfigs = "";
-        private String lastpluginconfigs = "";
-        private long tick = 0;
+        private final StateExportGate gate;
+        private volatile String fullReason;
+        private volatile long fullRequestedAt;
+
+        stateUpdateTask(StateExportGate gate) {
+            this.gate = gate;
+        }
+
+        // a requested full export published before the route to the parent's listener exists is lost; it is
+        // retried this often, at most this many times, then left to the periodic ticks (still full until served)
+        private static final long FULL_RETRY_MS = 1000L;
+        private static final int FULL_RETRY_MAX = 30;
+        private int fullRetries;
+
+        void requestFull(String reason) {
+            fullReason = reason;
+            fullRequestedAt = System.currentTimeMillis();
+            fullRetries = 0;
+            gate.requestFull();
+        }
 
         public void run() {
 
@@ -1593,16 +1671,12 @@ public class ControllerSMHandler {
 
                     // Periodic FULL resend: config exports ride best-effort topics, so a lost
                     // first export (bridge/subscription still forming at startup) previously left
-                    // the parent without this node's rows FOREVER — the diff-gate never re-sends
+                    // the parent without this node's rows FOREVER -- the diff-gate never re-sends
                     // unchanged configs, and later property-only updates cannot create rows.
                     // Forcing a full export every N ticks makes any loss self-heal within
-                    // N x watchdog_interval at negligible steady-state cost.
-                    tick++;
-                    if (tick % Math.max(1, plugin.getConfig().getIntegerParam("state_update_full_resend_ticks", 4)) == 0) {
-                        lastRegionconfigs = "";
-                        lastAgentconfigs = "";
-                        lastpluginconfigs = "";
-                    }
+                    // N x watchdog_interval at negligible steady-state cost. A node that has just
+                    // (re-)registered asks for one immediately (requestFullStateUpdate).
+                    boolean requestedFull = gate.beginTick();
 
                     switch (plugin.getAgentService().getAgentState().getControllerState()) {
 
@@ -1621,17 +1695,15 @@ public class ControllerSMHandler {
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
 
-                                String canidateAgentConfigs = exportMap.get("agentconfigs");
-                                if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
-                                    updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                    lastAgentconfigs = canidateAgentConfigs;
-                                    logger.debug("exportMap: updating agents: " + canidateAgentConfigs);
+                                String agentConfigs = gate.changed("agentconfigs", exportMap.get("agentconfigs"));
+                                if (agentConfigs != null) {
+                                    updateMap.setString("agentconfigs", agentConfigs);
+                                    logger.debug("exportMap: updating agents: " + agentConfigs);
                                 }
-                                String canidatePluginConfigs = exportMap.get("pluginconfigs");
-                                if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
-                                    updateMap.setString("pluginconfigs", canidatePluginConfigs);
-                                    lastpluginconfigs = canidatePluginConfigs;
-                                    logger.debug("exportMap: updating plugins: " + canidatePluginConfigs);
+                                String pluginConfigs = gate.changed("pluginconfigs", exportMap.get("pluginconfigs"));
+                                if (pluginConfigs != null) {
+                                    updateMap.setString("pluginconfigs", pluginConfigs);
+                                    logger.debug("exportMap: updating plugins: " + pluginConfigs);
                                 }
 
                                 updateMap.setStringProperty("update_mode", "AGENT");
@@ -1639,8 +1711,7 @@ public class ControllerSMHandler {
                                 updateMap.setStringProperty("agent_id", plugin.getAgent());
 
                                 //logger.error("SENDING AGENT UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
-
+                                sendExport(updateMap, requestedFull);
 
                             } catch (Exception ex) {
                                 logger.error("stateUpdateTask() AGENT ", ex);
@@ -1661,31 +1732,27 @@ public class ControllerSMHandler {
 
                                 MapMessage updateMap = plugin.getAgentService().getDataPlaneService().createMapMessage();
 
-                                String canidateRegionalConfigs = exportMap.get("regionconfigs");
-                                if(!lastRegionconfigs.equals(canidateRegionalConfigs)) {
-                                    updateMap.setString("regionconfigs", canidateRegionalConfigs);
-                                    lastRegionconfigs = canidateRegionalConfigs;
-                                    logger.debug("exportMap: updating agents: " + canidateRegionalConfigs);
+                                String regionConfigs = gate.changed("regionconfigs", exportMap.get("regionconfigs"));
+                                if (regionConfigs != null) {
+                                    updateMap.setString("regionconfigs", regionConfigs);
+                                    logger.debug("exportMap: updating regions: " + regionConfigs);
                                 }
-
-                                String canidateAgentConfigs = exportMap.get("agentconfigs");
-                                if(!lastAgentconfigs.equals(canidateAgentConfigs)) {
-                                    updateMap.setString("agentconfigs", exportMap.get("agentconfigs"));
-                                    lastAgentconfigs = canidateAgentConfigs;
-                                    logger.debug("exportMap: updating agents: " + canidateAgentConfigs);
+                                String agentConfigs = gate.changed("agentconfigs", exportMap.get("agentconfigs"));
+                                if (agentConfigs != null) {
+                                    updateMap.setString("agentconfigs", agentConfigs);
+                                    logger.debug("exportMap: updating agents: " + agentConfigs);
                                 }
-                                String canidatePluginConfigs = exportMap.get("pluginconfigs");
-                                if(!lastpluginconfigs.equals(exportMap.get("pluginconfigs"))) {
-                                    updateMap.setString("pluginconfigs", canidatePluginConfigs);
-                                    lastpluginconfigs = canidatePluginConfigs;
-                                    logger.debug("exportMap: updating plugins: " + canidatePluginConfigs);
+                                String pluginConfigs = gate.changed("pluginconfigs", exportMap.get("pluginconfigs"));
+                                if (pluginConfigs != null) {
+                                    updateMap.setString("pluginconfigs", pluginConfigs);
+                                    logger.debug("exportMap: updating plugins: " + pluginConfigs);
                                 }
 
                                 updateMap.setStringProperty("update_mode", "REGION");
                                 updateMap.setStringProperty("region_id", plugin.getRegion());
 
                                 //logger.error("SENDING REGIONAL UPDATE!!!");
-                                plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
+                                sendExport(updateMap, requestedFull);
 
                             } catch (Exception ex) {
                                 logger.error("stateUpdateTask() REGION_GLOBAL ", ex);
@@ -1707,6 +1774,41 @@ public class ControllerSMHandler {
                     }
 
                 }
+        }
+
+        private void sendExport(MapMessage updateMap, boolean requestedFull) throws Exception {
+            // measured before publishing: a full export only counts once it can reach the parent's listener
+            boolean routeLive = !requestedFull || controllerEngine.isParentExportRouteLive();
+            boolean sent = false;
+            try {
+                sent = plugin.getAgentService().getDataPlaneService().sendMessage(MsgEvent.Type.WATCHDOG, TopicType.AGENT, updateMap);
+            } finally {
+                if (!sent) {
+                    gate.sendFailed();   // re-send these sections next tick (and keep a requested full pending)
+                }
+            }
+            if (!sent) {
+                logger.warn("state export: send to the parent failed; re-sending next tick");
+                return;
+            }
+            if (!routeLive) {
+                // e.g. right after a region (re-)joins: the data bridge has no demand for the global's listener
+                // yet, so this export is dropped -- keep the full export pending and retry shortly
+                gate.sendFailed();
+                if (fullRetries++ < FULL_RETRY_MAX) {
+                    if (fullRetries == 1) {
+                        logger.info("state export: no route to the parent's listener yet; retrying the FULL export every "
+                                + FULL_RETRY_MS + " ms (" + fullReason + ")");
+                    }
+                    requestStateUpdate(FULL_RETRY_MS);
+                }
+                return;
+            }
+            gate.sent();
+            if (requestedFull) {
+                logger.info("state export: FULL export sent to the parent " + (System.currentTimeMillis() - fullRequestedAt)
+                        + " ms after it was requested (" + fullReason + ")");
+            }
         }
     }
 
@@ -1807,15 +1909,13 @@ public class ControllerSMHandler {
             enableMsg.setParam("mode","AGENT");
 
             Map<String, String> exportMap = controllerEngine.getGDB().getDBExport(false, true, true, plugin.getRegion(), plugin.getAgent(), null);
-            String agentconfigs = (exportMap != null) ? exportMap.get("agentconfigs") : null;
             // A registration whose export lacks our own anode row would "succeed" on the regional
             // side without restoring the watchdog row (the zombie-LOST trap). Fail this attempt so
             // the state machine retries once the local DB row is back.
-            if (agentconfigs == null || controllerEngine.getGDB().getANode(plugin.getAgent()) == null) {
+            if (!putRegistrationExport(enableMsg, exportMap) || controllerEngine.getGDB().getANode(plugin.getAgent()) == null) {
                 logger.error("registerAgent(): local anode export unavailable; aborting registration attempt.");
                 return false;
             }
-            enableMsg.setCompressedParam("agentconfigs",agentconfigs);
 
             logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
 
@@ -1849,6 +1949,28 @@ public class ControllerSMHandler {
         }
 
         return isRegistered;
+    }
+
+    /**
+     * Put this agent's own export on its {@code agent_enable}: its agent row AND its plugin rows. With the plugin
+     * rows the parent restores them in the same (acknowledged) RPC that re-registers the agent: after the parent
+     * had marked the agent LOST, its plugins (status 50 there) were otherwise hidden until a later state export
+     * restored them, and the diff-gated export sends unchanged plugins only on the periodic full tick (up to 60 s).
+     * The parent applies them as the agent's complete plugin list (DBEngine.nodeUpdateStatus, mode AGENT).
+     *
+     * @return false (nothing put) when the export lacks the agent row
+     */
+    static boolean putRegistrationExport(MsgEvent enableMsg, Map<String, String> exportMap) {
+        String agentconfigs = (exportMap != null) ? exportMap.get("agentconfigs") : null;
+        if (agentconfigs == null) {
+            return false;
+        }
+        enableMsg.setCompressedParam("agentconfigs", agentconfigs);
+        String pluginconfigs = exportMap.get("pluginconfigs");
+        if (pluginconfigs != null) {
+            enableMsg.setCompressedParam("pluginconfigs", pluginconfigs);
+        }
+        return true;
     }
 
     private boolean unregisterAgent(String localRegion, String localAgent) {

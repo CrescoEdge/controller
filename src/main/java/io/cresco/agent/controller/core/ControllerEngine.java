@@ -286,48 +286,50 @@ public class ControllerEngine {
     }
 
      */
+    /**
+     * Whether messages for {@code remoteAgentPath} currently have somewhere to go from this node.
+     *
+     * <p>On a regional controller this means a LIVE route on the local broker: a queue named after the path
+     * that has a consumer -- the remote node's own inbox, or the network bridge's demand subscription for a
+     * node behind a bridge (the global, a peer region). The destination merely EXISTING is not enough: it
+     * outlives the bridge that created it (and our own sends to the path re-create it), so after a global
+     * restart the old check answered "reachable" for a dead bridge, {@code isRegionGlobal} skipped submitting
+     * the global as a broker candidate, no bridge was rebuilt, and the region never re-attached (every PING
+     * unanswered, the global aged it to LOST).
+     */
     public boolean isReachableAgent(String remoteAgentPath) {
-        boolean isReachableAgent = false;
-        if (this.cstate.isRegionalController()) {
-            try {
-                ActiveMQDestination[] er = this.broker.getBrokerDestinations();
-
-                for (ActiveMQDestination des : er) {
-
-                    if (des.isQueue()) {
-
-                        String testPath = des.getPhysicalName();
-
-                        if (testPath.equals(remoteAgentPath)) {
-                            isReachableAgent = true;
-                        }
-                        logger.trace("isReachable " + isReachableAgent + " isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName() + " remote_agent = " + remoteAgentPath);
-
-                    }
-                }
-
-                er = this.broker.getRegionalBrokerDestinations();
-                for (ActiveMQDestination des : er) {
-                    //for(String despaths : des.getDestinationPaths()) {
-                    //    logger.info("isReachable destPaths: " + despaths);
-                    //}
-
-                    if (des.isQueue()) {
-                        String testPath = des.getPhysicalName();
-                        if (testPath.equals(remoteAgentPath)) {
-                            isReachableAgent = true;
-                        }
-                        logger.trace("Regional isReachable " + isReachableAgent + " isQueue: physical = " + testPath + " qualified = " + des.getQualifiedName() + " remote_agent = " + remoteAgentPath);
-                    }
-                }
-
-            } catch (Exception ex) {
-                logger.error("isReachableAgent Error: {}", ex.getMessage());
-            }
-        } else {
-            isReachableAgent = true; //send all messages to regional controller if not broker
+        if (!this.cstate.isRegionalController()) {
+            return true; //send all messages to regional controller if not broker
         }
-        return isReachableAgent;
+        try {
+            return this.broker != null && this.broker.hasLiveQueueRoute(remoteAgentPath);
+        } catch (Exception ex) {
+            logger.error("isReachableAgent Error: {}", ex.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Whether a state export published now reaches the parent's state-update listener. A regional controller
+     * under a global publishes on its OWN broker and depends on the data bridge having the global's
+     * subscription; an agent publishes straight onto its parent's broker, where the listener lives, so for it
+     * (and when this cannot be determined) the answer is true.
+     */
+    public boolean isParentExportRouteLive() {
+        try {
+            if (cstate.getControllerState() != io.cresco.library.agent.ControllerMode.REGION_GLOBAL || broker == null) {
+                return true;
+            }
+            Object dps = plugin.getAgentService().getDataPlaneService();
+            if (!(dps instanceof io.cresco.agent.data.DataPlaneServiceImpl)) {
+                return true;
+            }
+            String topic = ((io.cresco.agent.data.DataPlaneServiceImpl) dps).getTopicPhysicalName(io.cresco.library.data.TopicType.AGENT);
+            return broker.hasNetworkSubscription(topic);
+        } catch (Exception ex) {
+            logger.error("isParentExportRouteLive Error: {}", ex.getMessage());
+            return true;
+        }
     }
 
     public List<String> reachableAgents() {
