@@ -70,6 +70,8 @@ public class ControllerSMHandler {
     private StateContext stateContext;
 
     private Timer stateUpdateTimer;
+    private stateUpdateTask stateUpdater;
+    private final AtomicBoolean stateUpdateRequested = new AtomicBoolean();
     private Collection<org.apache.mina.statemachine.State> stateCollection = null;
 
     private ControllerMode currentState = null;
@@ -108,7 +110,33 @@ public class ControllerSMHandler {
         long watchDogInterval = plugin.getConfig().getLongParam("watchdog_interval",15000L);
 
         this.stateUpdateTimer = new Timer();
-        this.stateUpdateTimer.scheduleAtFixedRate(new stateUpdateTask(), watchDogIntervalDelay, watchDogInterval);
+        this.stateUpdater = new stateUpdateTask();
+        this.stateUpdateTimer.scheduleAtFixedRate(stateUpdater, watchDogIntervalDelay, watchDogInterval);
+    }
+
+    /**
+     * Run one (diff-gated) config export now instead of waiting for the next tick. It runs on the update
+     * timer's own thread, so it is serialized with the periodic task and shares its diff state; the cost
+     * is this node's own export (an agent exports only its own rows), never a fabric-wide scan. Requests
+     * coalesce: a burst of plugin adds/removes costs at most one extra export, not one per change.
+     */
+    public void requestStateUpdate() {
+        final stateUpdateTask task = stateUpdater;
+        if (task == null || !stateUpdateRequested.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            stateUpdateTimer.schedule(new TimerTask() {
+                public void run() {
+                    // cleared before the export so a change made while it runs is pushed by a new request
+                    stateUpdateRequested.set(false);
+                    task.run();
+                }
+            }, 0L);
+        } catch (java.lang.IllegalStateException stopping) {
+            // timer cancelled: the controller is stopping, nothing to push
+            stateUpdateRequested.set(false);
+        }
     }
 
     @Transition(on = "start", in = EMPTY)
