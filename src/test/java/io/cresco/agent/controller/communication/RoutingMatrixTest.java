@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end routing map over a small fabric, driven by {@link MsgRouter#routePath} / {@link MsgRouter#decide}
@@ -23,10 +24,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * </pre>
  *
  * A relay hop ({@code forwardTo*Region/Global}) is the broker network delivering to the queue named by the
- * message's forward destination, i.e. the next hop is that node. The regional-controller hop models
- * {@code RegionHealthWatcher.sendRegionalMsg}: a global message at a non-global region goes on to the global
- * ({@code remoteGlobalSend}); any other message runs on this node's RegionalExecutor when it is addressed to
- * it. Controllers have a null plugin id, the wsapi is {@code plugin/1}.
+ * message's forward destination, i.e. the next hop is that node. Each hop first applies the controller-tier step
+ * ({@link MsgRouter#tierStep}, trail entry "(tier)"), then the route table. The regional-controller hop models
+ * {@code RegionalExecutor.dispatch}: a message for the global ({@link ControllerTiers#targetsGlobal}) runs on the
+ * global or, at a non-global region, goes on to the global ({@code remoteGlobalSend}); a regional-only function
+ * with the global flag is refused; any other message runs on this node's RegionalExecutor when it is addressed
+ * to it. Controllers have a null plugin id, the wsapi is {@code plugin/1}.
  */
 class RoutingMatrixTest {
 
@@ -61,9 +64,18 @@ class RoutingMatrixTest {
     static String trace(Node at, MsgEvent m) {
         List<String> trail = new ArrayList<>();
         for (int hops = 0; hops < 12; hops++) {
+            // MsgRouter.route: the controller-tier step first (it may rewrite the address), then the route table
+            MsgRouter.TierStep step = MsgRouter.tierStep(m, at.rc, at.region, at.agent);
+            if (step == MsgRouter.TierStep.REFUSE) {
+                trail.add(at.name + "(tier)");
+                return String.join(">", trail) + " => REFUSED@" + at.name;
+            }
+            if (step == MsgRouter.TierStep.GLOBAL_VIA_THIS_CONTROLLER) {
+                m.setForwardDst(at.region, at.agent, null);
+            }
             int rp = MsgRouter.routePath(m, at.rc, at.gc, at.region, at.agent, null);
-            Hop hop = MsgRouter.decide(rp, m, at.region, at.agent, null);
-            trail.add(at.name + "(" + rp + ")");
+            Hop hop = step.hop != null ? step.hop : MsgRouter.decide(rp, m, at.region, at.agent, null);
+            trail.add(at.name + (step.hop != null ? "(tier)" : "(" + rp + ")"));
             String path = String.join(">", trail);
             switch (hop) {
                 case LOCAL_AGENT:
@@ -72,7 +84,9 @@ class RoutingMatrixTest {
                     return path + " => " + m.getDstPlugin() + "@" + at.name;
                 case LOCAL_REGIONAL_CONTROLLER:
                     if (!at.rc) return path + " => DROP(no regional controller)@" + at.name;
-                    if (m.isGlobal()) {
+                    // RegionalExecutor.dispatch
+                    if (ControllerTiers.refusal(m) != null) return path + " => REFUSED@" + at.name;
+                    if (ControllerTiers.targetsGlobal(m)) {
                         if (at.gc) return path + " => GlobalExecutor@" + at.name;
                         m.setForwardDst(G.region, G.agent, null);      // remoteGlobalSend
                         at = G;
@@ -126,7 +140,11 @@ class RoutingMatrixTest {
         return out;
     }
 
-    /** The map; the cells marked "191d895:" are the ones this fix changed (all else as of 1.3 191d895). */
+    /**
+     * The map; "191d895:" marks the cells 0e06721 changed, "1d466ba:" the cells the controller-tier step changed
+     * (every global controller message now runs on the real global, whatever node it is addressed to; before, one
+     * addressed to another region or an agent ran on that node's AgentExecutor).
+     */
     static final Map<String, String> EXPECTED = new LinkedHashMap<>();
     static {
         EXPECTED.put("regional | G wsapi -> global(self)",
@@ -178,29 +196,29 @@ class RoutingMatrixTest {
         EXPECTED.put("regional(ctrl) | A1 controller -> agent under remote region",
                 "A1(17039)>A2(16719) => AgentExecutor@A2");
         EXPECTED.put("global | G wsapi -> global(self)",
-                "G(29679) => GlobalExecutor@G");
+                "G(tier) => GlobalExecutor@G"); // 1d466ba: G(29679) => GlobalExecutor@G
         EXPECTED.put("global | G wsapi -> remote region ctrl",
-                "G(29359)>R1(20847) => AgentExecutor@R1");
+                "G(tier) => GlobalExecutor@G"); // 1d466ba: G(29359)>R1(20847) => AgentExecutor@R1
         EXPECTED.put("global | G wsapi -> agent under remote region",
-                "G(29359)>A1(16751) => AgentExecutor@A1");
+                "G(tier) => GlobalExecutor@G"); // 1d466ba: G(29359)>A1(16751) => AgentExecutor@A1
         EXPECTED.put("global | G wsapi -> agent under global",
-                "G(29423)>AG(16879) => AgentExecutor@AG");
+                "G(tier) => GlobalExecutor@G"); // 1d466ba: G(29423)>AG(16879) => AgentExecutor@AG
         EXPECTED.put("global | R1 wsapi -> global",
-                "R1(21167)>G(29039) => GlobalExecutor@G");
+                "R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: R1(21167)>G(29039) => GlobalExecutor@G
         EXPECTED.put("global | R1 wsapi -> own region ctrl(self)",
-                "R1(21487)>G(29039) => GlobalExecutor@G");
+                "R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: R1(21487)>G(29039) => GlobalExecutor@G
         EXPECTED.put("global | R1 wsapi -> remote region ctrl",
-                "R1(21167)>R2(20847) => AgentExecutor@R2");
+                "R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: R1(21167)>R2(20847) => AgentExecutor@R2
         EXPECTED.put("global | R1 wsapi -> agent under remote region",
-                "R1(21167)>A2(16751) => AgentExecutor@A2");
+                "R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: R1(21167)>A2(16751) => AgentExecutor@A2
         EXPECTED.put("global | A1 wsapi -> global",
-                "A1(17071)>G(29039) => GlobalExecutor@G");
+                "A1(tier)>R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: A1(17071)>G(29039) => GlobalExecutor@G
         EXPECTED.put("global | A1 wsapi -> own region ctrl",
-                "A1(17135)>R1(20975)>G(29039) => GlobalExecutor@G");
+                "A1(tier)>R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: A1(17135)>R1(20975)>G(29039) => GlobalExecutor@G
         EXPECTED.put("global | A1 wsapi -> remote region ctrl",
-                "A1(17071)>R2(20847) => AgentExecutor@R2");
+                "A1(tier)>R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: A1(17071)>R2(20847) => AgentExecutor@R2
         EXPECTED.put("global | A1 wsapi -> agent under remote region",
-                "A1(17071)>A2(16751) => AgentExecutor@A2");
+                "A1(tier)>R1(tier)>G(tier) => GlobalExecutor@G"); // 1d466ba: A1(17071)>A2(16751) => AgentExecutor@A2
         EXPECTED.put("agent | G wsapi -> global(self)",
                 "G(13295) => AgentExecutor@G");
         EXPECTED.put("agent | G wsapi -> remote region ctrl",
@@ -267,5 +285,89 @@ class RoutingMatrixTest {
         m.forEach((k, v) -> sb.append(String.format("%-60s %s%n", k, v)));
         System.out.println("RoutingMatrixTest map:\n" + sb);
         assertEquals(EXPECTED, m);
+    }
+
+    // --- functions: the tier of the ACTION decides (ControllerTiers), the address only picks the node ---------
+
+    /** The node whose controller serves a REGIONAL function addressed to {@code dst}: the regional controller of its region. */
+    static Node regionalControllerOf(Node dst) {
+        return dst.regional;
+    }
+
+    static MsgEvent controllerMsg(Node origin, boolean global, String action, Node dst) {
+        MsgEvent m = new MsgEvent(action.equals("agent_enable") || action.equals("rpipelinesubmit")
+                ? MsgEvent.Type.CONFIG : MsgEvent.Type.EXEC,
+                origin.region, origin.agent, WSAPI, dst.region, dst.agent, null, true, global);
+        m.setParam("action", action);
+        return m;
+    }
+
+    @Test
+    void everyControllerFunctionRunsOnTheTierThatServesIt() {
+        Node[] origins = {G, R1, A1, AG};
+        Node[] dsts = {G, R1, R2, AG, A1, A2};
+        Map<String, String> out = new LinkedHashMap<>();
+        StringBuilder bad = new StringBuilder();
+        for (String action : new String[]{"listplugins", "gpipelinesubmit", "agent_enable", "rpipelinesubmit", "getmetricinventory", "listagents"}) {
+            for (boolean global : new boolean[]{true, false}) {
+                for (Node origin : origins) {
+                    for (Node dst : dsts) {
+                        MsgEvent m = controllerMsg(origin, global, action, dst);
+                        if (action.equals("gpipelinesubmit")) m.setMsgType(MsgEvent.Type.CONFIG);
+                        ControllerTiers.Tier tier = ControllerTiers.tierOf(m);
+                        String got = trace(origin, m);
+                        String want;
+                        if (tier == ControllerTiers.Tier.GLOBAL) {
+                            want = "=> GlobalExecutor@G";                                  // either flag, any address
+                        } else if (tier == ControllerTiers.Tier.REGIONAL) {
+                            want = global ? "=> REFUSED@" + origin.name                    // refused at the first hop
+                                    : "=> RegionalExecutor@" + regionalControllerOf(dst).name;
+                        } else {                                                           // EITHER: the flag picks the tier
+                            // regional flag: the addressed controller; a plain agent answers for itself, except
+                            // that an agent's own (default-addressed) controller message means its region's controller
+                            want = global ? "=> GlobalExecutor@G"
+                                    : dst.rc ? "=> RegionalExecutor@" + dst.name
+                                    : dst == origin ? "=> RegionalExecutor@" + dst.regional.name
+                                    : "=> AgentExecutor@" + dst.name;
+                        }
+                        String key = action + (global ? " [global]" : " [regional]") + " | " + origin.name + " -> " + dst.name;
+                        out.put(key, got);
+                        if (!got.endsWith(want)) bad.append(key).append(": ").append(got).append(" (want ").append(want).append(")\n");
+                    }
+                }
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        out.forEach((k, v) -> sb.append(String.format("%-55s %s%n", k, v)));
+        System.out.println("RoutingMatrixTest functions:\n" + sb);
+        assertEquals("", bad.toString());
+        assertEquals(6 * 2 * 4 * 6, out.size());
+    }
+
+    @Test
+    void aGlobalFunctionAddressedToARemoteRegionRunsOnTheGlobalAndItsReplyReturnsToTheWsapi() {
+        // global_controller_msgevent(listplugins, region_id=r2, agent_id=rc2) at R1's wsapi: the owner's question
+        MsgEvent req = controllerMsg(R1, true, "listplugins", R2);
+        assertEquals("R1(tier)>G(tier) => GlobalExecutor@G", trace(R1, req));
+        assertEquals("rg", req.getDstRegion());                // re-addressed to the global, which answers it
+        req.setReturn();                                     // the global's reply: back to the caller's wsapi
+        String back = trace(G, req);
+        assertTrue(back.startsWith("G(") && back.endsWith(">R1(" + MsgRouter.routePath(req, true, false, "r1", "rc1", null)
+                + ") => plugin/1@R1"), back);
+        assertTrue(!back.contains("tier"), "a reply is never re-classified: " + back);
+    }
+
+    @Test
+    void aRegionalFunctionAddressedToAnAgentRunsOnItsRegionsController() {
+        // regional_controller_msgevent(agent_enable) addressed to a plain agent: that agent has no regional
+        // controller; the function runs on the controller of the region it was addressed to
+        assertEquals("G(29423)>AG(tier)>G(29679) => RegionalExecutor@G", trace(G, controllerMsg(G, false, "agent_enable", AG)));
+        assertTrue(trace(G, controllerMsg(G, false, "agent_enable", A1)).endsWith("A1(tier)>R1(20847) => RegionalExecutor@R1"));
+    }
+
+    @Test
+    void aRegionalFunctionWithTheGlobalFlagIsRefusedAtOnce() {
+        assertEquals("R1(tier) => REFUSED@R1", trace(R1, controllerMsg(R1, true, "agent_enable", R1)));
+        assertEquals("G(tier) => REFUSED@G", trace(G, controllerMsg(G, true, "rpipelinesubmit", G)));
     }
 }
