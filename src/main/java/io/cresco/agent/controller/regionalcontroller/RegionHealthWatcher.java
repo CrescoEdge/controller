@@ -24,7 +24,6 @@ public class RegionHealthWatcher {
     // New Timer for active pinging Global Controller
     public Timer activePingTimer;
 
-    private RegionalExecutor regionalExecutor;
     private AtomicBoolean communicationsHealthTimerActive = new AtomicBoolean();
     private AtomicBoolean regionalUpdateTimerActive = new AtomicBoolean();
     // New AtomicBoolean for ping timer
@@ -61,7 +60,6 @@ public class RegionHealthWatcher {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(RegionHealthWatcher.class.getName(),CLogger.Level.Info);
-        this.regionalExecutor = new RegionalExecutor(controllerEngine);
 
         this.phiSuspect = plugin.getConfig().getDoubleParam("failure_phi_suspect", 4.0);
         this.phiDead = plugin.getConfig().getDoubleParam("failure_phi_dead", 8.0);
@@ -432,66 +430,13 @@ public class RegionHealthWatcher {
         }
     }
 
-    // sendRegionalMsg remains largely the same, handling incoming messages for the region
+    /**
+     * Run a regional-controller message on this node. Kept for callers that hold the watcher; the work is
+     * done by the engine's single, stable {@link RegionalExecutor#dispatch} (MsgRouter calls that directly),
+     * so regional messages are served even while this watcher is torn down and rebuilt.
+     */
     public void sendRegionalMsg(MsgEvent incoming) {
-        try {
-            if (incoming.isGlobal()) {
-                if(controllerEngine.cstate.isGlobalController()) {
-                    // If this node IS the global controller, execute locally
-                    regionalExecutor.sendGlobalMsg(incoming);
-                } else {
-                    // If this node is just a region, forward to the known global controller
-                    regionalExecutor.remoteGlobalSend(incoming);
-                }
-            } else {
-                // Handle messages destined for this region or its agents
-                if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
-                    MsgEvent retMsg = null;
-                    switch (incoming.getMsgType().toString().toUpperCase()) {
-                        case "CONFIG":
-                            retMsg = regionalExecutor.executeCONFIG(incoming);
-                            break;
-                        case "DISCOVER":
-                            retMsg = regionalExecutor.executeDISCOVER(incoming);
-                            break;
-                        case "ERROR":
-                            retMsg = regionalExecutor.executeERROR(incoming);
-                            break;
-                        case "EXEC":
-                            retMsg = regionalExecutor.executeEXEC(incoming);
-                            break;
-                        case "INFO":
-                            retMsg = regionalExecutor.executeINFO(incoming);
-                            break;
-                        case "WATCHDOG":
-                            retMsg = regionalExecutor.executeWATCHDOG(incoming);
-                            break;
-                        case "KPI":
-                            retMsg = regionalExecutor.executeKPI(incoming);
-                            break;
-                        default:
-                            logger.error("UNKNOWN MESSAGE TYPE! {}", incoming.getParams());
-                            break;
-                    }
-
-                    // Handle RPC response if necessary
-                    if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
-                        retMsg.setReturn();
-                        String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +
-                                plugin.getAgent() + "-" + plugin.getPluginID()));
-                        if (callId != null) {
-                            plugin.receiveRPC(callId, retMsg);
-                        } else {
-                            plugin.msgOut(retMsg);
-                        }
-                    }
-                } else {
-                    logger.error("RegionalController received message not destined for it: {}", incoming.printHeader());
-                }
-            }
-        } catch(Exception ex) {
-            logger.error("sendRegionalMsg Error: {}", ex.getMessage(), ex);
-        }
+        controllerEngine.getRegionalExecutor().dispatch(incoming);
     }
 
     // Task to check health of local communication components (broker, discovery)
