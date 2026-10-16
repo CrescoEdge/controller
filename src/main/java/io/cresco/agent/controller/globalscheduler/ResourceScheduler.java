@@ -62,9 +62,7 @@ public class ResourceScheduler implements IncomingResource {
 
                     //schedule agentcontroller
                     logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
-                    MsgEvent me = addPlugin(region,agent,ce.getParam("configparams"));
-                    //me.setCompressedParam("pnode",gson.toJson(pluginNode));
-                    me.setParam("edges",ce.getParam("edges"));
+                    MsgEvent me = pluginAddFor(ce);
 
                     logger.debug("pluginadd message: " + me.getParams().toString());
 
@@ -124,6 +122,17 @@ public class ResourceScheduler implements IncomingResource {
         return sortedMap;
     }
 	
+    /**
+     * The agent pluginadd for a scheduled addplugin request ({@link PollAddPipeline#schedulingRequest}): its
+     * compressed configparams and edges pass through unchanged, in the shape {@link PluginAddRequest} defines.
+     */
+    public MsgEvent pluginAddFor(MsgEvent addpluginRequest) {
+        MsgEvent me = addPlugin(addpluginRequest.getParam("location_region"),
+                addpluginRequest.getParam("location_agent"), addpluginRequest.getParam("configparams"));
+        if (addpluginRequest.getParam("edges") != null) me.setParam("edges", addpluginRequest.getParam("edges"));
+        return me;
+    }
+
 	public MsgEvent addPlugin(String region, String agent, String configParams) {
 
         MsgEvent me = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG,region,agent);
