@@ -36,7 +36,6 @@ import java.util.Date;
  */
 public final class RegionCA {
 
-    private static final String SIG_ALG = "SHA256withRSA";
 
     private final X509Certificate rootCert;
     private final KeyPair caKeyPair;      // the issuing intermediate — signs enrolling nodes' leaves
@@ -120,8 +119,9 @@ public final class RegionCA {
                 issuer, new BigInteger(64, new SecureRandom()), notBefore, notAfter, subject, subjectKey);
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
         builder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
+        // the signature suite is the crypto policy's choice (SHA384withRSA under the default cnsa1)
         return new JcaX509CertificateConverter().getCertificate(
-                builder.build(new JcaContentSignerBuilder(SIG_ALG).setProvider("BC").build(signingKey)));
+                builder.build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").build(signingKey)));
     }
 
     private static String safe(String s) {

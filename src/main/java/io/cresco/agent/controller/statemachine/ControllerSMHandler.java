@@ -1845,6 +1845,8 @@ public class ControllerSMHandler {
             }
 
             if(isRegistered) {
+                // the global's crypto policy rides its registration reply
+                CryptoPolicySync.adopt(re, controllerEngine.cstate, "global " + globalRegion, logger);
                 logger.info("Region: " + localRegion + " registered with Global: " + globalRegion);
             } else {
                 logger.error("Region: " + localRegion + " failed to register with Global: " + globalRegion + "!");
@@ -1938,6 +1940,8 @@ public class ControllerSMHandler {
             }
 
             if (isRegistered) {
+                // the fabric's crypto policy rides the region's registration reply
+                CryptoPolicySync.adopt(re, controllerEngine.cstate, "region " + localRegion, logger);
                 logger.info("Agent: " + localAgent + " registered with Region: " + localRegion);
 
             } else {
