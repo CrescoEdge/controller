@@ -134,8 +134,10 @@ class ReRegistrationAfterLostTest {
         regionDbe.addPNode("a1", "plugin-gone", 50, "lost", 15000, System.currentTimeMillis(), "io.cresco.x", "x.jar", "1", "m", "{}", 0);
 
         assertTrue(region.nodeUpdate(agentEnable(true)));
-        // listed = exactly the agent's own list; the stale row stays hidden (LOST), it is not revived
+        // listed = exactly the agent's own list; the stale row is not revived -- and it is deleted, not left
+        // hidden (LOST) forever (LostRowReconcileTest)
         assertEquals(List.of("system-stunnel"), region.getNodeList("r1", "a1"));
+        assertFalse(regionDbe.nodeExist(null, null, "plugin-gone"));
     }
 
     @Test

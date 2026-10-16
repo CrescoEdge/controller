@@ -254,6 +254,15 @@ public class GlobalExecutor implements Executor {
     }
 
     private MsgEvent pingReply(MsgEvent msg) {
+        // a region we hold as not ACTIVE (LOST but it kept its session, or no row) is asked for its full state on
+        // the pong (StateResync); one primary-key lookup per ping
+        String childRegion = msg.getSrcRegion();
+        if (childRegion != null && !childRegion.equals(plugin.getRegion())) {
+            int status = controllerEngine.getGDB().getNodeStatusCode(childRegion, null);
+            if (io.cresco.agent.controller.statemachine.StateResync.stampPong(msg, status)) {
+                logger.info("ping from region {} which is status {} here: asking it for its full state", childRegion, status);
+            }
+        }
         // mesh health: record the region's advertised rolled-up health carried on the ping...
         io.cresco.agent.controller.health.MeshHealthPing.recordChild(controllerEngine, msg);
         msg.setParam("action", "pong");

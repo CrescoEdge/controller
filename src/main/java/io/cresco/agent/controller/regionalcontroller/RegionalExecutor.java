@@ -282,6 +282,16 @@ public class RegionalExecutor implements Executor {
 
     private MsgEvent pingReply(MsgEvent msg) {
         logger.debug("ping message type found");
+        // an agent of this region we hold as not ACTIVE (LOST but it kept its session, or no row) is asked
+        // for its full state on the pong (StateResync); one primary-key lookup per ping
+        String childRegion = msg.getSrcRegion();
+        String childAgent = msg.getSrcAgent();
+        if (childAgent != null && plugin.getRegion().equals(childRegion) && !plugin.getAgent().equals(childAgent)) {
+            int status = controllerEngine.getGDB().getNodeStatusCode(childRegion, childAgent);
+            if (io.cresco.agent.controller.statemachine.StateResync.stampPong(msg, status)) {
+                logger.info("ping from agent {} which is status {} here: asking it for its full state", childAgent, status);
+            }
+        }
         // mesh health: record the agent's advertised rolled-up health carried on the ping...
         io.cresco.agent.controller.health.MeshHealthPing.recordChild(controllerEngine, msg);
         msg.setParam("action","pong");
