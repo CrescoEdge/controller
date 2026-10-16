@@ -121,7 +121,7 @@ public class GlobalExecutor implements Executor {
 
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
-                    return null;
+                    return unknownAction(ce);
             }
         }
         return null;
@@ -249,12 +249,26 @@ public class GlobalExecutor implements Executor {
 
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
-                    return null;
+                    return unknownAction(ce);
             }
         } catch (Exception ex) {
             logger.error("executeEXEC() ", ex);
         }
         return null;
+    }
+
+    /**
+     * A global controller message whose action the global does not serve (not in ControllerTiers as GLOBAL or
+     * EITHER): an RPC caller gets an error at once instead of a timeout. An agent-tier action belongs in an agent
+     * message to the node that should run it.
+     */
+    private MsgEvent unknownAction(MsgEvent ce) {
+        if (ce.getParam("is_rpc") == null) {
+            return null;
+        }
+        ce.setParam("error", "'" + ce.getParam("action") + "' (" + ce.getMsgType() + ") is not a global-controller "
+                + "function; send an agent-tier action as an agent message (global_agent_msgevent) to the node that runs it");
+        return ce;
     }
 
     private MsgEvent pingReply(MsgEvent msg) {

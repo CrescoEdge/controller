@@ -44,6 +44,11 @@ public class MsgRouter {
     // to time out silently. route_ready_wait_ms bounds the wait (it holds a msgIn pool thread).
     /** Param set on an error reply the router generated; such a message is never answered again. */
     public static final String ROUTE_UNAVAILABLE = "route_unavailable";
+    /**
+     * Param set on the error reply to a controller message the tier table refuses (a regional-only function sent
+     * with the global flag, see {@link ControllerTiers}); such a message is never answered again either.
+     */
+    public static final String ROUTE_REFUSED = "route_refused";
     private static final long READY_POLL_MS = 50L;
 
     private void forwardToLocalAgent(MsgEvent rm) {
@@ -127,7 +132,7 @@ public class MsgRouter {
         if (controllerEngine.getGDB() == null) {
             return NotReady.rebuilding("regional database not available (state " + mode + ")");
         }
-        if (rm.isGlobal()) {
+        if (ControllerTiers.targetsGlobal(rm)) {
             if (cs.isGlobalController()) {
                 // globalInit: GLOBAL_INIT until startGlobalSchedulers has run
                 if (controllerEngine.getAppScheduler() == null || controllerEngine.getResourceScheduler() == null) {
@@ -204,10 +209,40 @@ public class MsgRouter {
             return;
         }
         logger.warn("route: " + hop + " unavailable (" + reason + "); answering RPC with an error " + what);
+        if (!answerWithError(plugin, rm, ROUTE_UNAVAILABLE, String.valueOf(hop), "route unavailable at "
+                + plugin.getRegion() + "_" + plugin.getAgent() + ": " + hop + ": " + reason)) {
+            logger.error("route: error reply for " + what + " failed");
+        }
+    }
+
+    /**
+     * {@code rm} names a controller function on the wrong tier (see {@link ControllerTiers#refusal}): it is not run
+     * anywhere. An RPC request is answered with an error reply (params error + route_refused), anything else is
+     * dropped with one log line.
+     */
+    void refuse(MsgEvent rm, String reason) {
+        String what = "type=" + rm.getMsgType() + " action=" + rm.getParam("action")
+                + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
+                + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin();
+        if (!isRpcRequest(rm)) {
+            logger.warn("route: refused (" + reason + "); dropping " + what);
+            return;
+        }
+        logger.warn("route: refused (" + reason + "); answering RPC with an error " + what);
+        if (!answerWithError(plugin, rm, ROUTE_REFUSED, "tier", "refused at " + plugin.getRegion() + "_"
+                + plugin.getAgent() + ": " + reason)) {
+            logger.error("route: error reply for " + what + " failed");
+        }
+    }
+
+    /**
+     * Answer the RPC request {@code rm} with an error through the normal reply path: params error + {@code marker}
+     * (a reply carrying a marker is never answered again), returned to the caller under its own call id.
+     */
+    public static boolean answerWithError(PluginBuilder plugin, MsgEvent rm, String marker, String markerValue, String error) {
         try {
-            rm.setParam("error", "route unavailable at " + plugin.getRegion() + "_" + plugin.getAgent()
-                    + ": " + hop + ": " + reason);
-            rm.setParam(ROUTE_UNAVAILABLE, String.valueOf(hop));
+            rm.setParam("error", error);
+            rm.setParam(marker, markerValue);
             rm.setReturn();
             String callId = rm.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
             if (callId != null) {
@@ -215,8 +250,9 @@ public class MsgRouter {
             } else {
                 plugin.msgOut(rm);
             }
+            return true;
         } catch (Exception ex) {
-            logger.error("route: error reply for " + what + " failed: " + ex.getMessage());
+            return false;
         }
     }
 
@@ -224,8 +260,8 @@ public class MsgRouter {
      * An RPC request (not its reply): RPC.call keys the call id by the CALLER, which is the source of a
      * request and the destination of a reply (setReturn swaps them).
      */
-    static boolean isRpcRequest(MsgEvent rm) {
-        if (rm.getParam("is_rpc") == null || rm.getParam(ROUTE_UNAVAILABLE) != null) {
+    public static boolean isRpcRequest(MsgEvent rm) {
+        if (rm.getParam("is_rpc") == null || rm.getParam(ROUTE_UNAVAILABLE) != null || rm.getParam(ROUTE_REFUSED) != null) {
             return false;
         }
         return rm.getParam("callId-" + rm.getSrcRegion() + "-" + rm.getSrcAgent() + "-" + rm.getSrcPlugin()) != null;
@@ -265,6 +301,23 @@ public class MsgRouter {
             rm = getTTL(rm);
 
             if(rm != null) {
+
+                // Controller tiers (ControllerTiers): a controller function runs on the tier that serves it, not
+                // wherever its address happens to point. Decided at the first hop, before any cost/source route
+                // is attached; a source-routed message in transit was decided at its origin.
+                ControllerStateImp tierState = controllerEngine.cstate;
+                TierStep tierStep = (tierState != null && rm.getParam(SRCROUTE) == null)
+                        ? tierStep(rm, tierState.isRegionalController(), plugin.getRegion(), plugin.getAgent())
+                        : TierStep.NONE;
+                if (tierStep == TierStep.REFUSE) {
+                    refuse(rm, ControllerTiers.refusal(rm));
+                    return;
+                }
+                if (tierStep == TierStep.GLOBAL_VIA_THIS_CONTROLLER && !rm.dstIsLocal(plugin.getRegion(), plugin.getAgent(), null)) {
+                    logger.debug("route: global function " + rm.getParam("action") + " addressed to " + rm.getForwardDst()
+                            + " -> the global controller (via this controller)");
+                    rm.setForwardDst(plugin.getRegion(), plugin.getAgent(), null);
+                }
 
                 // Cost-aware source-route INJECTION (ingress enforcement). ActiveMQ will not pick an
                 // optimal path for us -- it pins one arbitrary path and never load-balances or routes
@@ -310,7 +363,8 @@ public class MsgRouter {
                 //}
 
 
-                Hop hop = decide(routePath, rm, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
+                Hop hop = tierStep.hop != null ? tierStep.hop
+                        : decide(routePath, rm, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
                 logger.debug("route rp=" + routePath + " -> " + hop);
                 logger.trace(rm.getParams().toString());
 
@@ -557,6 +611,51 @@ public class MsgRouter {
         // 001011 10 11 11
         String routeString = GM + RM + GC + RC + TXp + RXp + TXa + RXa + TXr + RXr + TXpe + RXpe + TXae + RXae + TXre + RXre;
         return Integer.parseInt(routeString, 2);
+    }
+
+    /** The controller-tier step of {@link #route}: what the tier table makes of a message before the route table. */
+    enum TierStep {
+        /** Not a controller-function request, or already headed for the right tier: the route table decides. */
+        NONE(null),
+        /** A global function at a regional controller: run on this node's controller, which is the global or forwards it there. */
+        GLOBAL_VIA_THIS_CONTROLLER(Hop.LOCAL_REGIONAL_CONTROLLER),
+        /** A controller function at a node with no regional controller: to this node's regional controller. */
+        VIA_PARENT_REGIONAL_CONTROLLER(Hop.REMOTE_REGIONAL_CONTROLLER),
+        /** A function sent to the wrong tier that cannot be rerouted: answered with an error, run nowhere. */
+        REFUSE(null);
+
+        final Hop hop;
+        TierStep(Hop hop) { this.hop = hop; }
+    }
+
+    /**
+     * The tier step for {@code rm} at the node (region, agent) that is ({@code regionalController}) or is not a
+     * regional controller. Pure: the rules of {@link ControllerTiers} applied to one hop.
+     * <ul>
+     *   <li>a regional-only function with the global flag: REFUSE;</li>
+     *   <li>a function for the global (ControllerTiers#targetsGlobal), whatever its address: at a regional
+     *       controller run it there (the global runs it, a region forwards it to its global); at an agent, hand it
+     *       to the agent's regional controller;</li>
+     *   <li>a regional-only function addressed to THIS node when this node has no regional controller: to this
+     *       node's regional controller (the controller of the region it was addressed to);</li>
+     *   <li>anything else: the route table.</li>
+     * </ul>
+     */
+    static TierStep tierStep(MsgEvent rm, boolean regionalController, String region, String agent) {
+        if (!ControllerTiers.isTierRouted(rm)) {
+            return TierStep.NONE;
+        }
+        if (ControllerTiers.refusal(rm) != null) {
+            return TierStep.REFUSE;
+        }
+        if (ControllerTiers.targetsGlobal(rm)) {
+            return regionalController ? TierStep.GLOBAL_VIA_THIS_CONTROLLER : TierStep.VIA_PARENT_REGIONAL_CONTROLLER;
+        }
+        if (!regionalController && ControllerTiers.tierOf(rm) == ControllerTiers.Tier.REGIONAL
+                && region.equals(rm.getDstRegion()) && agent.equals(rm.getDstAgent())) {
+            return TierStep.VIA_PARENT_REGIONAL_CONTROLLER;
+        }
+        return TierStep.NONE;
     }
 
     /** Where {@link #route} hands a message: one value per forwardTo* method. */
