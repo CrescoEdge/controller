@@ -255,8 +255,10 @@ public class CertificateManager {
             // key usage restrictions
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
+            // every signature suite below is the crypto policy's choice (SHA384withRSA under the default cnsa1);
+            // certificates are made before the node holds the fabric policy, so CrescoCrypto uses the effective one
             X509Certificate rootCA = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
                             build(rootCAKeyPair.getPrivate()))); // private key of signing authority , here it is self signed
 
 
@@ -270,7 +272,7 @@ public class CertificateManager {
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
             X509Certificate intermedCA = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
                             build(rootCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by rootCA
 
             //create end user cert signed by Intermediate CA
@@ -296,7 +298,7 @@ public class CertificateManager {
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
             X509Certificate endUserCert = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
                             build(intermedCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by intermedCA
 
 

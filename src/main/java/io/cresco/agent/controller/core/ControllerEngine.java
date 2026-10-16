@@ -508,6 +508,9 @@ public class ControllerEngine {
      * StateResync), request one full state export -- at most once per state_resync_min_interval_ms.
      */
     public void onParentPong(MsgEvent pong) {
+        // a policy change at the global reaches this node on its parent's pong (CryptoPolicySync)
+        io.cresco.agent.controller.statemachine.CryptoPolicySync.adopt(pong, cstate,
+                "parent " + pong.getSrcRegion() + "/" + pong.getSrcAgent(), logger);
         StateResync resync = stateResync;
         if (resync == null) {
             resync = initStateResync();

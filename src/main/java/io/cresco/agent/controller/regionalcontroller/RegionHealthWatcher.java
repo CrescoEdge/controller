@@ -623,6 +623,8 @@ public class RegionHealthWatcher {
                     pingRequest.setParam("desc", "region-ping-request"); // Identify the ping
                     // mesh health: advertise our rolled-up health (local + subtree) up to the global.
                     io.cresco.agent.controller.health.MeshHealthPing.advertiseChild(controllerEngine, pingRequest);
+                    // the id of the crypto policy we hold: the pong carries the policy when the global's differs
+                    io.cresco.agent.controller.statemachine.CryptoPolicySync.advertise(pingRequest);
 
                     // Retry within this tick before counting a miss; a single delayed pong (GC pause,
                     // load burst) must never drop the global.

@@ -243,6 +243,10 @@ public class GlobalExecutor implements Executor {
                 case "getcapabilityinventory":
                     return getCapabilityInventory(ce);
 
+                case "getcryptopolicy":
+                    // the global answers about itself like any agent (AgentExecutor)
+                    return controllerEngine.getAgentExecutor().executeEXEC(ce);
+
                 default:
                     logger.error("Unknown configtype found: {} {}", ce.getParam("action"), ce.getMsgType());
                     return null;
@@ -254,6 +258,7 @@ public class GlobalExecutor implements Executor {
     }
 
     private MsgEvent pingReply(MsgEvent msg) {
+        String childPolicyId = msg.getParam(io.cresco.agent.controller.statemachine.CryptoPolicySync.ID_PARAM);
         // a region we hold as not ACTIVE (LOST but it kept its session, or no row) is asked for its full state on
         // the pong (StateResync); one primary-key lookup per ping
         String childRegion = msg.getSrcRegion();
@@ -270,6 +275,8 @@ public class GlobalExecutor implements Executor {
         msg.setParam("type", "global_controller");
         // ...and advertise our own rolled-up health back down on the pong.
         io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
+        // the fabric's crypto policy: its id always, the policy itself when the region holds another one
+        io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
         return msg;
     }
     @Override
@@ -1096,6 +1103,8 @@ public class GlobalExecutor implements Executor {
             ce.removeParam("agentconfigs");
 
             ce.setParam("is_registered",Boolean.TRUE.toString());
+            // the fabric's crypto policy rides the registration reply (CryptoPolicySync)
+            io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(ce, null);
         }
         catch(Exception ex) {
             ce.setParam("is_registered",Boolean.FALSE.toString());

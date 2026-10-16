@@ -48,6 +48,7 @@ import java.util.Map;
     @CrescoAction(name = "getlog", summary = "Fetch this agent's main log (compressed inline or as a file).", why = "Retrieve agent logs for diagnostics.", params = @CrescoParam(name = "action_inmessage", type = "boolean", description = "true=compress into reply; else attach file"), returns = @CrescoReturn(name = "log", type = "binary", compressed = true)),
     @CrescoAction(name = "getfileinfo", summary = "Return metadata (md5, size) for a file on this agent.", why = "Prepare a chunked file transfer / verify a file.", params = @CrescoParam(name = "filepath", required = true), returns = {@CrescoReturn(name = "md5"), @CrescoReturn(name = "size", type = "integer")}),
     @CrescoAction(name = "getfiledata", summary = "Stream a chunk of a file on this agent (seek+read).", why = "Transfer large files in parts.", params = {@CrescoParam(name = "filepath", required = true), @CrescoParam(name = "skiplength", type = "integer", required = true), @CrescoParam(name = "partsize", type = "integer", required = true)}, returns = @CrescoReturn(name = "payload", type = "binary", compressed = true)),
+    @CrescoAction(name = "getcryptopolicy", summary = "Return the fabric crypto policy this node holds (set at the global controller).", why = "Check that every node holds the global's crypto policy.", returns = {@CrescoReturn(name = "crypto_policy"), @CrescoReturn(name = "crypto_policy_id"), @CrescoReturn(name = "crypto_policy_level"), @CrescoReturn(name = "crypto_policy_source")}),
     @CrescoAction(name = "getcontrollerstatus", summary = "Return this agent's controller state code.", why = "Check controller lifecycle state.", returns = @CrescoReturn(name = "controller_status", type = "integer")),
     @CrescoAction(name = "iscontrolleractive", summary = "Return whether this agent's controller is active.", why = "Readiness check.", returns = @CrescoReturn(name = "is_controller_active", type = "boolean")),
     @CrescoAction(name = "getbroadcastdiscovery", summary = "Return this agent's network discovery list.", why = "Inspect discovered neighbors.", returns = @CrescoReturn(name = "broadcast_discovery", type = "object")),
@@ -179,6 +180,8 @@ public class AgentExecutor implements Executor {
                     return getFileData(incoming);
                 case "getcontrollerstatus":
                     return getControllerStatus(incoming);
+                case "getcryptopolicy":
+                    return getCryptoPolicy(incoming);
                 case "iscontrolleractive":
                     return isControllerActive(incoming);
                 case "getbroadcastdiscovery":
@@ -697,6 +700,17 @@ public class AgentExecutor implements Executor {
 
     }
 
+
+    /** The fabric crypto policy this node holds; "none" while it has not arrived (CryptoPolicySync). */
+    private MsgEvent getCryptoPolicy(MsgEvent ce) {
+        io.cresco.library.crypto.CryptoPolicy p = io.cresco.library.crypto.CryptoPolicy.current();
+        ce.setParam("crypto_policy", p == null ? "none" : p.canonical());
+        ce.setParam("crypto_policy_id", p == null ? "none" : p.id());
+        ce.setParam("crypto_policy_level", p == null ? "none" : p.describe());
+        String src = io.cresco.library.crypto.CryptoPolicy.currentSource();
+        ce.setParam("crypto_policy_source", src == null ? "none" : src);
+        return ce;
+    }
 
     private MsgEvent getControllerStatus(MsgEvent ce) {
 

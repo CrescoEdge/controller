@@ -171,6 +171,8 @@ public class ControllerStateImp implements ControllerState {
 			this.regionalRegion = regionalRegion;
 			this.regionalAgent = regionalAgent;
 
+		// below a parent: the global's crypto policy governs; local crypto policy keys are ignored
+		io.cresco.agent.controller.statemachine.CryptoPolicySync.warnIfLocalPolicyIgnored(plugin, logger);
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
@@ -246,6 +248,8 @@ public class ControllerStateImp implements ControllerState {
 			this.regionalAgent = localAgent;
 			this.regionalRegion = localRegion;
 
+		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
+		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
@@ -257,6 +261,8 @@ public class ControllerStateImp implements ControllerState {
 			this.regionalAgent = localAgent;
 			this.regionalRegion = localRegion;
 
+		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
+		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
@@ -289,6 +295,8 @@ public class ControllerStateImp implements ControllerState {
 			this.globalRegion = globalRegion;
 			this.globalAgent = globalAgent;
 
+		// below a parent: the global's crypto policy governs; local crypto policy keys are ignored
+		io.cresco.agent.controller.statemachine.CryptoPolicySync.warnIfLocalPolicyIgnored(plugin, logger);
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
@@ -336,6 +344,8 @@ public class ControllerStateImp implements ControllerState {
 			globalAgent = null;
 			globalRegion = null;
 
+		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
+		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 

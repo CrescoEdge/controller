@@ -65,6 +65,8 @@ public class RegionalExecutor implements Executor {
 
                     if(controllerEngine.getGDB().nodeUpdate(incoming)) {
                         incoming.setParam("is_registered",Boolean.TRUE.toString());
+                        // the fabric's crypto policy rides the registration reply (CryptoPolicySync)
+                        io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(incoming, null);
                         // the (re-)registered agent and its plugins are visible here now; a region under a
                         // global pushes the change up at once (diff-gated, coalesced) instead of on its next tick
                         if (controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL) {
@@ -286,6 +288,7 @@ public class RegionalExecutor implements Executor {
     }
 
     private MsgEvent pingReply(MsgEvent msg) {
+        String childPolicyId = msg.getParam(io.cresco.agent.controller.statemachine.CryptoPolicySync.ID_PARAM);
         logger.debug("ping message type found");
         // an agent of this region we hold as not ACTIVE (LOST but it kept its session, or no row) is asked
         // for its full state on the pong (StateResync); one primary-key lookup per ping
@@ -304,6 +307,8 @@ public class RegionalExecutor implements Executor {
         msg.setParam("type", "agent_controller");
         // ...and advertise our own rolled-up health back down on the pong.
         io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
+        // the fabric's crypto policy: its id always, the policy itself when the agent holds another one
+        io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
         logger.debug("Returning communication details to Cresco agent");
         return msg;
     }
