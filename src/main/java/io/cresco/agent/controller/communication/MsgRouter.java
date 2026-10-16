@@ -2,6 +2,7 @@ package io.cresco.agent.controller.communication;
 
 
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.core.ControllerStateImp;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
@@ -34,35 +35,200 @@ public class MsgRouter {
         this.logger = plugin.getLogger(MsgRouter.class.getName(),CLogger.Level.Trace);
     }
 
+    // --- Rebuild windows -------------------------------------------------------------------------
+    // route() runs on broker/msgIn threads concurrently with the state machine, which tears components
+    // down and rebuilds them (isAgentShutdown/stateInit on a parent loss, isRegionalGlobalShutdown on a
+    // global loss, regionInit/globalInit at boot, stop). Every dispatch below re-reads its target, never
+    // assumes it is there, and when it is not either waits a bounded time for it (a transient rebuild)
+    // or gives up with ONE log line -- and, for an RPC request, an error reply so the caller is not left
+    // to time out silently. route_ready_wait_ms bounds the wait (it holds a msgIn pool thread).
+    /** Param set on an error reply the router generated; such a message is never answered again. */
+    public static final String ROUTE_UNAVAILABLE = "route_unavailable";
+    private static final long READY_POLL_MS = 50L;
+
     private void forwardToLocalAgent(MsgEvent rm) {
-                    controllerEngine.getPluginBuilder().msgIn(rm);
+        // PluginBuilder.msgIn -> the engine's AgentExecutor: both set once at construction, never replaced
+        controllerEngine.getPluginBuilder().msgIn(rm);
     }
 
     private void forwardToLocalPlugin(MsgEvent rm) {
-                    controllerEngine.getPluginAdmin().msgIn(rm);
+        io.cresco.agent.controller.agentcontroller.PluginAdmin admin = controllerEngine.getPluginAdmin();
+        if (admin == null) {
+            unavailable(rm, Hop.LOCAL_PLUGIN, "plugin admin not available");
+            return;
+        }
+        admin.msgIn(rm);
     }
 
     private void forwardToLocalRegionalController(MsgEvent rm) {
-                controllerEngine.getRegionHealthWatcher().sendRegionalMsg(rm);
+        NotReady notReady = awaitReady(() -> regionalControllerNotReady(rm));
+        if (notReady != null) {
+            unavailable(rm, Hop.LOCAL_REGIONAL_CONTROLLER, notReady.reason);
+            return;
+        }
+        // the engine's single RegionalExecutor, NOT getRegionHealthWatcher(): the watcher is null from a
+        // global-link loss until the global is re-joined (and before the first join), while this region
+        // keeps serving its agents -- an agent ping (20943) in that window used to NPE here and be lost
+        controllerEngine.getRegionalExecutor().dispatch(rm);
     }
 
     private void forwardToRemoteRegionalController(MsgEvent rm) {
-
+        // the agent's regional controller is unknown between setAgentFailed/setAgentInit and setAgentSuccess
+        // (a re-init after the region was lost): forwarding then addressed the message to null_null
+        NotReady notReady = awaitReady(() -> (controllerEngine.cstate.getRegionalRegion() == null
+                || controllerEngine.cstate.getRegionalAgent() == null)
+                ? NotReady.rebuilding("regional controller not known (state " + controllerEngine.cstate.getControllerState() + ")")
+                : null);
+        if (notReady != null) {
+            unavailable(rm, Hop.REMOTE_REGIONAL_CONTROLLER, notReady.reason);
+            return;
+        }
         //set remote regional controller address
         rm.setForwardDst(controllerEngine.cstate.getRegionalRegion(),controllerEngine.cstate.getRegionalAgent(),null);
-        controllerEngine.getActiveClient().sendMessage(rm);
-
+        send(rm, Hop.REMOTE_REGIONAL_CONTROLLER);
     }
 
     private void forwardToLocalRegion(MsgEvent rm) {
-        controllerEngine.getActiveClient().sendMessage(rm);
-
+        send(rm, Hop.LOCAL_REGION);
     }
 
     private void forwardToRemoteRegion(MsgEvent rm) {
+        send(rm, Hop.REMOTE_REGION);
+    }
 
-        controllerEngine.getActiveClient().sendMessage(rm);
+    /** Hand {@code rm} to the broker; a send that cannot happen (producer torn down for a re-init) is reported. */
+    private void send(MsgEvent rm, Hop hop) {
+        ActiveClient client = controllerEngine.getActiveClient();
+        if (client == null) {
+            unavailable(rm, hop, "broker client not available");
+            return;
+        }
+        if (!client.sendMessage(rm)) {
+            unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed");
+        }
+    }
 
+    /**
+     * Why this node's regional controller cannot run {@code rm} right now, or null when it can. The
+     * RegionalExecutor itself is always there; what can be missing is the state it needs.
+     */
+    NotReady regionalControllerNotReady(MsgEvent rm) {
+        ControllerStateImp cs = controllerEngine.cstate;
+        if (cs == null) {
+            return NotReady.rebuilding("controller state not initialized");
+        }
+        io.cresco.library.agent.ControllerMode mode = cs.getControllerState();
+        if (mode != null && mode.name().endsWith("_SHUTDOWN")) {
+            return NotReady.settled("controller shutting down (state " + mode + ")");
+        }
+        if (!cs.isRegionalController()) {
+            return NotReady.rebuilding("not a regional controller (state " + mode + ")");
+        }
+        if (controllerEngine.getGDB() == null) {
+            return NotReady.rebuilding("regional database not available (state " + mode + ")");
+        }
+        if (rm.isGlobal()) {
+            if (cs.isGlobalController()) {
+                // globalInit: GLOBAL_INIT until startGlobalSchedulers has run
+                if (controllerEngine.getAppScheduler() == null || controllerEngine.getResourceScheduler() == null) {
+                    return NotReady.rebuilding("global controller starting (state " + mode + ")");
+                }
+            } else if (cs.getGlobalRegion() == null || cs.getGlobalAgent() == null) {
+                // a region with no global joined (global lost / not yet joined / region-first): nowhere to
+                // send a global message. Not a transient rebuild (a global can be gone for minutes), so
+                // this is answered at once rather than waited on.
+                return NotReady.settled("no global controller joined (state " + mode + ")");
+            }
+        }
+        return null;
+    }
+
+    /** Why a dispatch target cannot take a message now; {@code worthWaiting} reasons are worth waiting out. */
+    static final class NotReady {
+        final String reason;
+        final boolean worthWaiting;
+        private NotReady(String reason, boolean worthWaiting) { this.reason = reason; this.worthWaiting = worthWaiting; }
+        /** A component being (re)built: wait up to route_ready_wait_ms for it. */
+        static NotReady rebuilding(String reason) { return new NotReady(reason, true); }
+        /** Not going to change soon (shutdown, no global joined): answer at once. */
+        static NotReady settled(String reason) { return new NotReady(reason, false); }
+        @Override public String toString() { return reason; }
+    }
+
+    /**
+     * Poll {@code check} until it reports ready (null) or route_ready_wait_ms has passed; returns null when
+     * ready, else the last reason. A non-transient reason is returned at once.
+     */
+    private NotReady awaitReady(java.util.function.Supplier<NotReady> check) {
+        NotReady why = check.get();
+        if (why == null || !why.worthWaiting) {
+            return why;
+        }
+        long waitMs = plugin.getConfig().getLongParam("route_ready_wait_ms", 3000L);
+        long deadline = System.currentTimeMillis() + waitMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(READY_POLL_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return why;
+            }
+            why = check.get();
+            if (why == null || !why.worthWaiting) {
+                return why;
+            }
+        }
+        return why;
+    }
+
+    /**
+     * {@code rm} could not be delivered to {@code hop}: log it once, and answer an RPC request with an error
+     * reply (params error + route_unavailable) through the normal reply path so the caller fails fast.
+     * A reply, or a message that is itself such an error reply, is only logged (no reply loops); so is a
+     * liveness ping (an error reply would read as a pong).
+     */
+    private void unavailable(MsgEvent rm, Hop hop, String reason) {
+        String what = "type=" + rm.getMsgType() + " action=" + rm.getParam("action")
+                + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
+                + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin();
+        if (!isRpcRequest(rm)) {
+            logger.warn("route: " + hop + " unavailable (" + reason + "); dropping " + what);
+            return;
+        }
+        if ("ping".equals(rm.getParam("action"))) {
+            // A liveness/RTT ping is not answered with an error: every pinger (AgentHealthWatcher,
+            // RegionHealthWatcher, the peer cost probes) reads ANY reply as a pong and would stamp the
+            // parent alive (and record a bogus RTT) for a node that cannot serve it. The pinger records
+            // a truthful miss instead; the health checks' grace window decides.
+            logger.warn("route: " + hop + " unavailable (" + reason + "); not answering liveness ping (pinger records a miss) " + what);
+            return;
+        }
+        logger.warn("route: " + hop + " unavailable (" + reason + "); answering RPC with an error " + what);
+        try {
+            rm.setParam("error", "route unavailable at " + plugin.getRegion() + "_" + plugin.getAgent()
+                    + ": " + hop + ": " + reason);
+            rm.setParam(ROUTE_UNAVAILABLE, String.valueOf(hop));
+            rm.setReturn();
+            String callId = rm.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
+            if (callId != null) {
+                plugin.receiveRPC(callId, rm);
+            } else {
+                plugin.msgOut(rm);
+            }
+        } catch (Exception ex) {
+            logger.error("route: error reply for " + what + " failed: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * An RPC request (not its reply): RPC.call keys the call id by the CALLER, which is the source of a
+     * request and the destination of a reply (setReturn swaps them).
+     */
+    static boolean isRpcRequest(MsgEvent rm) {
+        if (rm.getParam("is_rpc") == null || rm.getParam(ROUTE_UNAVAILABLE) != null) {
+            return false;
+        }
+        return rm.getParam("callId-" + rm.getSrcRegion() + "-" + rm.getSrcAgent() + "-" + rm.getSrcPlugin()) != null;
     }
 
     private void forwardToLocalGlobal2(MsgEvent rm) {
@@ -162,7 +328,7 @@ public class MsgRouter {
             }
 
         } catch (Exception ex) {
-            logger.error("MsgRouter.route Route Failed " + ex.toString() + " " + rm.getParams().toString(), ex);
+            logger.error("MsgRouter.route Route Failed " + ex + " " + (rm != null ? rm.getParams() : "rm=null"), ex);
 
         }
         finally

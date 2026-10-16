@@ -67,6 +67,11 @@ public class ControllerEngine {
     private AgentHealthWatcher agentHealthWatcher;
     private RegionHealthWatcher regionHealthWatcher;
     private GlobalHealthWatcher globalHealthWatcher;
+    // The regional controller's message executor. One per engine, created on first use and never replaced:
+    // the RegionHealthWatcher (timers) is nulled and rebuilt across state-machine re-inits, but the
+    // router must reach the regional executor throughout (see MsgRouter.forwardToLocalRegionalController).
+    private volatile io.cresco.agent.controller.regionalcontroller.RegionalExecutor regionalExecutor;
+    private final Object regionalExecutorLock = new Object();
     private ExecutorService msgInProcessQueue;
     private PluginAdmin pluginAdmin;
     private AgentExecutor executor;
@@ -535,6 +540,21 @@ public class ControllerEngine {
     }
 
     public GlobalHealthWatcher getGlobalHealthWatcher() {return this.globalHealthWatcher;}
+
+    /** This node's regional-controller executor: created on first use, never null, never replaced. */
+    public io.cresco.agent.controller.regionalcontroller.RegionalExecutor getRegionalExecutor() {
+        io.cresco.agent.controller.regionalcontroller.RegionalExecutor re = regionalExecutor;
+        if (re == null) {
+            synchronized (regionalExecutorLock) {
+                re = regionalExecutor;
+                if (re == null) {
+                    re = new io.cresco.agent.controller.regionalcontroller.RegionalExecutor(this);
+                    regionalExecutor = re;
+                }
+            }
+        }
+        return re;
+    }
     public void setGlobalHealthWatcher(GlobalHealthWatcher globalHealthWatcher) {
         this.globalHealthWatcher = globalHealthWatcher;
     }

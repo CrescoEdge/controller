@@ -308,6 +308,72 @@ public class RegionalExecutor implements Executor {
         return msg;
     }
 
+    /**
+     * Run a message the router handed to this node's regional controller (MsgRouter LOCAL_REGIONAL_CONTROLLER):
+     * a global message runs here when this node is the global, else goes on to the global; any other message
+     * runs on this executor when it is addressed to this node, and an RPC gets its reply.
+     *
+     * <p>This used to live on RegionHealthWatcher, which the state machine nulls and rebuilds on every
+     * global-link loss (isRegionalGlobalShutdown -> stateInit) and creates only once a global is joined. A
+     * region keeps serving its agents through that window, so the router now reaches this method through
+     * the engine's single RegionalExecutor ({@code ControllerEngine.getRegionalExecutor()}), which is never
+     * replaced: an agent ping arriving mid-rebuild is answered instead of NPE-ing in the router.
+     */
+    public void dispatch(MsgEvent incoming) {
+        try {
+            if (incoming.isGlobal()) {
+                if (controllerEngine.cstate.isGlobalController()) {
+                    sendGlobalMsg(incoming);
+                } else {
+                    remoteGlobalSend(incoming);
+                }
+            } else if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
+                MsgEvent retMsg = null;
+                switch (incoming.getMsgType().toString().toUpperCase()) {
+                    case "CONFIG":
+                        retMsg = executeCONFIG(incoming);
+                        break;
+                    case "DISCOVER":
+                        retMsg = executeDISCOVER(incoming);
+                        break;
+                    case "ERROR":
+                        retMsg = executeERROR(incoming);
+                        break;
+                    case "EXEC":
+                        retMsg = executeEXEC(incoming);
+                        break;
+                    case "INFO":
+                        retMsg = executeINFO(incoming);
+                        break;
+                    case "WATCHDOG":
+                        retMsg = executeWATCHDOG(incoming);
+                        break;
+                    case "KPI":
+                        retMsg = executeKPI(incoming);
+                        break;
+                    default:
+                        logger.error("UNKNOWN MESSAGE TYPE! {}", incoming.getParams());
+                        break;
+                }
+
+                if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
+                    retMsg.setReturn();
+                    String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +
+                            plugin.getAgent() + "-" + plugin.getPluginID()));
+                    if (callId != null) {
+                        plugin.receiveRPC(callId, retMsg);
+                    } else {
+                        plugin.msgOut(retMsg);
+                    }
+                }
+            } else {
+                logger.error("RegionalController received message not destined for it: {}", incoming.printHeader());
+            }
+        } catch (Exception ex) {
+            logger.error("regional dispatch error: {}", ex.getMessage(), ex);
+        }
+    }
+
     public void sendGlobalMsg(MsgEvent incoming) {
 
      try {
