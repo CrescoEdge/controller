@@ -72,7 +72,6 @@ public class ControllerSMHandler {
     private Timer stateUpdateTimer;
     private stateUpdateTask stateUpdater;
     private final AtomicBoolean stateUpdateRequested = new AtomicBoolean();
-    private final AtomicBoolean globalRecheckPending = new AtomicBoolean();
     private Collection<org.apache.mina.statemachine.State> stateCollection = null;
 
     private ControllerMode currentState = null;
@@ -174,50 +173,70 @@ public class ControllerSMHandler {
 
     // Two independent detectors (HC->MINA bridge and BrokeredAgent) can report the SAME loss
     // episode; MINA queues the second event and would replay a full recovery on the freshly
-    // recovered controller. A genuinely new loss re-fires from the next health tick after the
-    // window, so debouncing duplicates is safe.
-    private volatile long lastRecoveryComplete = 0;
+    // recovered controller, so a report inside the window does not recover again. The detectors
+    // are edge-triggered (link:parent fires once on the crossing to CRITICAL), so a suppressed
+    // report is never dropped: it is rechecked once the window has passed (LossReportDebounce).
     private static final long RECOVERY_DEBOUNCE_MS = 30000;
+    private final LossReportDebounce lossDebounce = new LossReportDebounce(RECOVERY_DEBOUNCE_MS);
+    // its own timer: the state-export task on stateUpdateTimer can block on a send to the lost parent
+    private final Timer lossRecheckTimer = new Timer("parent-loss-recheck-timer", true);
 
-    private boolean isDuplicateLossReport(String event) {
-        long sinceRecovery = System.currentTimeMillis() - lastRecoveryComplete;
-        if ((lastRecoveryComplete > 0) && (sinceRecovery < RECOVERY_DEBOUNCE_MS)) {
-            logger.warn(event + " ignored: recovery completed " + sinceRecovery
-                    + "ms ago (duplicate loss report from a second detector)");
-            return true;
+    private boolean isDuplicateLossReport(String event, String desc) {
+        if (!lossDebounce.suppress()) {
+            return false;
         }
-        return false;
+        logger.warn(event + " deferred: recovery completed " + lossDebounce.sinceRecovery()
+                + "ms ago (duplicate report, or a new loss right after recovery); rechecking the parent link in "
+                + lossDebounce.recheckDelayMs() + "ms");
+        lossDebounce.scheduleRecheck(lossRecheckTimer, () -> recheckLoss(desc));
+        return true;
     }
 
     /**
-     * A loss report inside the recovery debounce is usually a second detector repeating the loss just recovered
-     * from -- but it can also be a NEW loss (the bridge built by that recovery failing). Look again once the
-     * debounce has passed: if the global still has no live route, raise the loss again so the region rebuilds
-     * its bridge instead of staying detached.
+     * Runs just after the recovery debounce of a suppressed loss report: if this node's parent link is still
+     * down, raise the loss again so the node re-attaches instead of staying detached -- an agent whose parent
+     * restarted again right after it recovered, or a region whose freshly built bridge failed. Through the state
+     * machine proxy and off the timer thread (recovery can take a while); if yet another recovery completed in the
+     * meantime the re-raised report is suppressed again and re-arms this recheck.
      */
-    private void recheckGlobalAfterDebounce(String desc) {
-        if (!globalRecheckPending.compareAndSet(false, true)) {
+    private void recheckLoss(String desc) {
+        ControllerMode mode = cstate.getControllerState();
+        String event = LossReportDebounce.lossEventToReraise(mode, isParentLinkLive(mode));
+        if (event == null) {
+            logger.info("loss recheck (" + desc + "): parent link of " + mode + " is up, nothing to recover");
             return;
         }
-        long delay = Math.max(1000L, RECOVERY_DEBOUNCE_MS - (System.currentTimeMillis() - lastRecoveryComplete) + 1000L);
-        try {
-            stateUpdateTimer.schedule(new TimerTask() {
-                public void run() {
-                    globalRecheckPending.set(false);
-                    String globalPath = cstate.getGlobalControllerPath();
-                    if (cstate.getControllerState() == ControllerMode.REGION_GLOBAL && globalPath != null
-                            && !controllerEngine.isReachableAgent(globalPath)) {
-                        logger.warn("global " + globalPath + " still unreachable after the recovery debounce; "
-                                + "re-raising the loss (" + desc + ")");
-                        // through the state machine proxy, off the timer thread (recovery can take a while)
-                        new Thread(() -> controllerEngine.getControllerSM().globalControllerLost("recheck: " + desc),
-                                "global-loss-recheck").start();
-                    }
-                }
-            }, delay);
-        } catch (java.lang.IllegalStateException stopping) {
-            globalRecheckPending.set(false);
+        logger.warn("parent of " + mode + " still unreachable after the recovery debounce; re-raising " + event
+                + " (" + desc + ")");
+        final String reraised = "recheck: " + desc;
+        new Thread(() -> {
+            if ("regionalControllerLost".equals(event)) {
+                controllerEngine.getControllerSM().regionalControllerLost(reraised);
+            } else {
+                controllerEngine.getControllerSM().globalControllerLost(reraised);
+            }
+        }, "parent-loss-recheck").start();
+    }
+
+    /**
+     * Whether this node's parent link is up now. An agent judges it as link:parent does (pong age against the
+     * same stale threshold; isReachableAgent is always true on an agent); a region under a global by whether the
+     * global has a live route over the bridge.
+     */
+    private boolean isParentLinkLive(ControllerMode mode) {
+        if (mode == ControllerMode.AGENT) {
+            AgentHealthWatcher w = controllerEngine.getAgentHealthWatcher();
+            if (w == null) {
+                return true; // nothing to judge by; link:parent reports it (and escalates) on its own
+            }
+            long age = System.currentTimeMillis() - w.getLastParentPongTs();
+            return age < io.cresco.agent.controller.health.ParentLinkHealthCheck.staleThresholdMs(plugin, w.getPingIntervalMs());
         }
+        if (mode == ControllerMode.REGION_GLOBAL) {
+            String globalPath = cstate.getGlobalControllerPath();
+            return globalPath == null || controllerEngine.isReachableAgent(globalPath);
+        }
+        return true;
     }
 
     @Transitions({
@@ -225,8 +244,7 @@ public class ControllerSMHandler {
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL)
     })
     public void globalControllerLost(StateContext context, String desc) {
-        if (isDuplicateLossReport("globalControllerLost")) {
-            recheckGlobalAfterDebounce(desc);
+        if (isDuplicateLossReport("globalControllerLost", desc)) {
             return;
         }
         logger.error("GLOBAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
@@ -240,7 +258,7 @@ public class ControllerSMHandler {
               logger.error("!isRegionalGlobalShutdown() Dirty Shutdown!");
             }
             stateInit();
-            lastRecoveryComplete = System.currentTimeMillis();
+            lossDebounce.recoveryCompleted();
             logger.info("RegionalGlobalFailed Recovered");
             //startup things
         } else {
@@ -252,8 +270,8 @@ public class ControllerSMHandler {
             @Transition(on = "regionalControllerLost", in = AGENT_FAILED),
             @Transition(on = "regionalControllerLost", in = AGENT)
     })
-    public void regionalControllerLost(StateContext context) {
-        if (isDuplicateLossReport("regionalControllerLost")) {
+    public void regionalControllerLost(StateContext context, String desc) {
+        if (isDuplicateLossReport("regionalControllerLost", desc)) {
             return;
         }
         logger.error("REGIONAL CONTROLLER LOST : CURRENT STATE: " + context.getCurrentState().getId());
@@ -265,7 +283,7 @@ public class ControllerSMHandler {
                 logger.error("!isAgentShutdown() Dirty Shutdown!");
             }
             stateInit();
-            lastRecoveryComplete = System.currentTimeMillis();
+            lossDebounce.recoveryCompleted();
             logger.info("AgentFailed Recovered");
             //startup things
         } else {
@@ -297,6 +315,7 @@ public class ControllerSMHandler {
 
         //stop internal update timer
         stateUpdateTimer.cancel();
+        lossRecheckTimer.cancel();
 
         //don't try to unregister if agent has failed
         if(cstate.getControllerState() != ControllerMode.AGENT_FAILED) {
@@ -322,6 +341,7 @@ public class ControllerSMHandler {
     public void stopRegion() {
         //stop internal update timer
         stateUpdateTimer.cancel();
+        lossRecheckTimer.cancel();
 
         // Graceful shutdown: if this region is federated to a global, unregister from it
         // (region_disable RPC) and tear down the region->global link WHILE THE BROKER IS STILL ALIVE,
@@ -350,6 +370,7 @@ public class ControllerSMHandler {
 
         //stop internal update timer
         stateUpdateTimer.cancel();
+        lossRecheckTimer.cancel();
 
         logger.debug("STOP CALLED GLOBAL");
         cstate.setGlobalShutdown("Shutdown Called");

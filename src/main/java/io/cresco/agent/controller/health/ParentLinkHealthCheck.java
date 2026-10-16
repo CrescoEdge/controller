@@ -73,11 +73,21 @@ public class ParentLinkHealthCheck implements HealthCheck {
         }
     }
 
-    private Result evaluate(String label, long lastPongTs, long pingIntervalMs) {
-        long staleMs = ce.getPluginBuilder().getConfig().getLongParam("health_link_stale_ms", 0L);
+    /**
+     * Pong age at which the parent link counts as stale: {@code health_link_stale_ms}, or by default twice the
+     * ping interval (at least 10 s). Shared with the state machine's post-debounce loss recheck so both judge
+     * the link the same way.
+     */
+    public static long staleThresholdMs(io.cresco.library.plugin.PluginBuilder plugin, long pingIntervalMs) {
+        long staleMs = plugin.getConfig().getLongParam("health_link_stale_ms", 0L);
         if (staleMs <= 0) {
             staleMs = Math.max(pingIntervalMs * 2, 10000L);
         }
+        return staleMs;
+    }
+
+    private Result evaluate(String label, long lastPongTs, long pingIntervalMs) {
+        long staleMs = staleThresholdMs(ce.getPluginBuilder(), pingIntervalMs);
         long age = System.currentTimeMillis() - lastPongTs;
         if (age < staleMs) {
             staleEpisode = false;
