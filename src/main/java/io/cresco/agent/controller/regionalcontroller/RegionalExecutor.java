@@ -1,6 +1,8 @@
 package io.cresco.agent.controller.regionalcontroller;
 
 import com.google.gson.reflect.TypeToken;
+import io.cresco.agent.controller.communication.ControllerTiers;
+import io.cresco.agent.controller.communication.MsgRouter;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
 import io.cresco.agent.controller.globalscheduler.PluginAddRequest;
@@ -270,6 +272,11 @@ public class RegionalExecutor implements Executor {
                 if (controllerEngine.cstate.getGlobalRegion() == null || controllerEngine.cstate.getGlobalAgent() == null) {
                     logger.warn("remoteGlobalSend: no global controller joined (region-first); dropping global-scoped message action="
                             + incoming.getParam("action"));
+                    if (MsgRouter.isRpcRequest(incoming) && !"ping".equals(incoming.getParam("action"))) {
+                        MsgRouter.answerWithError(plugin, incoming, MsgRouter.ROUTE_UNAVAILABLE, "REMOTE_GLOBAL",
+                                "route unavailable at " + plugin.getRegion() + "_" + plugin.getAgent()
+                                        + ": no global controller joined");
+                    }
                     return;
                 }
                 incoming.setForwardDst(controllerEngine.cstate.getGlobalRegion(),controllerEngine.cstate.getGlobalAgent(), null);
@@ -309,9 +316,11 @@ public class RegionalExecutor implements Executor {
     }
 
     /**
-     * Run a message the router handed to this node's regional controller (MsgRouter LOCAL_REGIONAL_CONTROLLER):
-     * a global message runs here when this node is the global, else goes on to the global; any other message
-     * runs on this executor when it is addressed to this node, and an RPC gets its reply.
+     * Run a message the router handed to this node's regional controller (MsgRouter LOCAL_REGIONAL_CONTROLLER).
+     * The function's tier decides ({@link ControllerTiers}): a message for the global runs here when this node is
+     * the global (whatever node it was addressed to), else goes on to the global; a regional-only function sent
+     * with the global flag is refused with an error; any other message runs on this executor when it is
+     * addressed to this node, and an RPC gets its reply.
      *
      * <p>This used to live on RegionHealthWatcher, which the state machine nulls and rebuilds on every
      * global-link loss (isRegionalGlobalShutdown -> stateInit) and creates only once a global is joined. A
@@ -321,8 +330,31 @@ public class RegionalExecutor implements Executor {
      */
     public void dispatch(MsgEvent incoming) {
         try {
-            if (incoming.isGlobal()) {
+            // a reply to an RPC this controller sent (e.g. a regional controller message to another region's
+            // controller comes back here addressed to this node): hand it to the waiting call, never run it again
+            String ownCallId = incoming.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
+            if (ownCallId != null && ControllerTiers.isReply(incoming)) {
+                plugin.receiveRPC(ownCallId, incoming);
+                return;
+            }
+            // the controller tier of the FUNCTION decides (ControllerTiers), not the address or the flag alone
+            String refusal = ControllerTiers.refusal(incoming);
+            if (refusal != null) {
+                logger.warn("regional dispatch: refused {}: {}", incoming.printHeader(), refusal);
+                if (MsgRouter.isRpcRequest(incoming)) {
+                    MsgRouter.answerWithError(plugin, incoming, MsgRouter.ROUTE_REFUSED, "tier",
+                            "refused at " + plugin.getRegion() + "_" + plugin.getAgent() + ": " + refusal);
+                }
+                return;
+            }
+            if (ControllerTiers.targetsGlobal(incoming)) {
                 if (controllerEngine.cstate.isGlobalController()) {
+                    if (!incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
+                        // a global function addressed to another node: it runs here, on the global
+                        logger.debug("regional dispatch: global function {} addressed to {} runs on this global",
+                                incoming.getParam("action"), incoming.getForwardDst());
+                        incoming.setForwardDst(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
+                    }
                     sendGlobalMsg(incoming);
                 } else {
                     remoteGlobalSend(incoming);
