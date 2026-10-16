@@ -1,5 +1,8 @@
 # Region↔Global federation on one host — root cause & design
 
+> Which controller functions a global serves and which a regional serves (and how a controller message is
+> routed to the right tier): see [controller-tier-routing.md](controller-tier-routing.md).
+
 Evidence-based findings from a deep read of the controller source (file:line cited inline).
 Goal: let a **regional controller (case 24)** federate to a **global** when both run on one host,
 and fix the conflated self-detection so two agents on one host work in general.

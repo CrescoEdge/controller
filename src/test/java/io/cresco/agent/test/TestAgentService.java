@@ -23,17 +23,7 @@ public final class TestAgentService implements AgentService {
 
     private final AgentServiceImpl loggers = new AgentServiceImpl();
     private final String dataDirectory;
-    private final AgentState state = new AgentState((ControllerState) Proxy.newProxyInstance(
-            ControllerState.class.getClassLoader(), new Class<?>[]{ControllerState.class},
-            (p, m, a) -> {
-                switch (m.getName()) {
-                    case "getRegion": return "r1";
-                    case "getAgent": return "a1";
-                    case "getAgentPath": return AGENT_PATH;
-                    case "isActive": return Boolean.TRUE;
-                    default: return m.getReturnType() == boolean.class ? Boolean.FALSE : null;
-                }
-            }));
+    private final AgentState state;
 
     private final java.util.function.Consumer<MsgEvent> sink;
 
@@ -43,13 +33,36 @@ public final class TestAgentService implements AgentService {
 
     /** A service whose msgOut hands every outgoing message to {@code sink} (instead of dropping it). */
     public TestAgentService(String dataDirectory, java.util.function.Consumer<MsgEvent> sink) {
+        this(dataDirectory, sink, "r1", "a1");
+    }
+
+    /** As {@link #TestAgentService(String, java.util.function.Consumer)}, as the node {@code region}/{@code agent}. */
+    public TestAgentService(String dataDirectory, java.util.function.Consumer<MsgEvent> sink, String region, String agent) {
         this.dataDirectory = dataDirectory;
         this.sink = sink;
+        this.state = new AgentState((ControllerState) Proxy.newProxyInstance(
+                ControllerState.class.getClassLoader(), new Class<?>[]{ControllerState.class},
+                (p, m, a) -> {
+                    switch (m.getName()) {
+                        case "getRegion": return region;
+                        case "getAgent": return agent;
+                        case "getAgentPath": return region + "_" + agent;
+                        case "isActive": return Boolean.TRUE;
+                        default: return m.getReturnType() == boolean.class ? Boolean.FALSE : null;
+                    }
+                }));
     }
 
     /** A PluginBuilder over this service with the given agent config (values as strings, like agent.ini). */
     public static PluginBuilder plugin(String dataDirectory, Map<String, Object> cfg) {
         return new PluginBuilder(new TestAgentService(dataDirectory), AgentServiceImpl.class.getName(),
+                new MockBundleContext(), new HashMap<>(cfg));
+    }
+
+    /** A PluginBuilder of the node {@code region}/{@code agent}, every message it sends handed to {@code sink}. */
+    public static PluginBuilder plugin(String dataDirectory, Map<String, Object> cfg,
+                                       java.util.function.Consumer<MsgEvent> sink, String region, String agent) {
+        return new PluginBuilder(new TestAgentService(dataDirectory, sink, region, agent), AgentServiceImpl.class.getName(),
                 new MockBundleContext(), new HashMap<>(cfg));
     }
 
