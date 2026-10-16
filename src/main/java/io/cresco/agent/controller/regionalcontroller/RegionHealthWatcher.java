@@ -550,6 +550,13 @@ public class RegionHealthWatcher {
                 }
                 try {
                     logger.debug("RegionalNodeStatusWatchDog running check...");
+                    // LOST retention: agents/plugins LOST longer than lost_node_retention_days leave the region DB
+                    // (the global's own sweep and the region's next full-state reconcile drop them there)
+                    try {
+                        controllerEngine.getGDB().purgeExpiredLostNodes();
+                    } catch (Exception ex) {
+                        logger.error("RegionalNodeStatusWatchDog: LOST retention sweep failed: {}", ex.getMessage());
+                    }
                     Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(plugin.getRegion(), null, null);
 
                     if (edgeStatus != null) {

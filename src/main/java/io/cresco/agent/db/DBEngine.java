@@ -154,6 +154,10 @@ public class DBEngine {
             }
 
 
+            // LOST retention: every node table records when its row went LOST (lost_ts), on databases created
+            // before the column existed too
+            ensureLostTsColumns();
+
             /*
             if (!checkSchema()) {
 
@@ -576,19 +580,19 @@ public class DBEngine {
                 }
 
                 stmtString = "UPDATE pnode SET status_code=?, status_desc=?, watchdog_period=?" +
-                        ", watchdog_ts=?, configparams=? " +
+                        ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                         "WHERE plugin_id=?";
                 nodeId = plugin;
 
             } else if (((region != null) && (agent != null) && (plugin == null)) || ((region == null) && (agent != null) && (plugin == null))) {
                 stmtString = "UPDATE anode SET status_code=?, status_desc=?, watchdog_period=?" +
-                        ", watchdog_ts=?, configparams=? " +
+                        ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                         "WHERE agent_id=?";
                 nodeId = agent;
 
             } else if ((region != null) && (agent == null) && (plugin == null)) {
                 stmtString = "UPDATE rnode SET status_code=?, status_desc=?, watchdog_period=?" +
-                        ", watchdog_ts=?, configparams=? " +
+                        ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                         "WHERE region_id=?";
                 nodeId = region;
             }
@@ -600,7 +604,7 @@ public class DBEngine {
                 stmt.setInt(3, watchdog_period);
                 stmt.setLong(4, watchdog_ts);
                 stmt.setString(5, textParam(configparams));
-                stmt.setString(6, textParam(nodeId));
+                stmt.setString(bindLostTs(stmt, 6, status_code), textParam(nodeId));
 
                 stmt.executeUpdate();
                 stmt.close();
@@ -763,7 +767,7 @@ public class DBEngine {
         try (Connection conn = ds.getConnection()) {
 
             String stmtString = "UPDATE rnode SET status_code=?, status_desc=?, watchdog_period=?" +
-                    ", watchdog_ts=?, configparams=? " +
+                    ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                     "WHERE region_id=?";
 
             try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
@@ -773,7 +777,7 @@ public class DBEngine {
                 stmt.setInt(3, watchdog_period);
                 stmt.setLong(4, watchdog_ts);
                 stmt.setString(5, textParam(configparams));
-                stmt.setString(6, textParam(region));
+                stmt.setString(bindLostTs(stmt, 6, status_code), textParam(region));
 
                 stmt.executeUpdate();
                 stmt.close();
@@ -791,7 +795,7 @@ public class DBEngine {
         try (Connection conn = ds.getConnection()) {
 
             String stmtString = "UPDATE anode SET status_code=?, status_desc=?, watchdog_period=?" +
-                    ", watchdog_ts=?, configparams=? " +
+                    ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                     "WHERE agent_id=?";
 
             try (PreparedStatement stmt = conn.prepareStatement(stmtString)) {
@@ -801,7 +805,7 @@ public class DBEngine {
                 stmt.setInt(3, watchdog_period);
                 stmt.setLong(4, watchdog_ts);
                 stmt.setString(5, textParam(configparams));
-                stmt.setString(6, textParam(agent));
+                stmt.setString(bindLostTs(stmt, 6, status_code), textParam(agent));
 
                 stmt.executeUpdate();
                 stmt.close();
@@ -1366,8 +1370,8 @@ public class DBEngine {
             try (Connection conn = ds.getConnection()) {
                 conn.setAutoCommit(false);
 
-                String insertRNodeString = "insert into rnode (region_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
-                        "values (?,?,?,?,?,?)";
+                String insertRNodeString = "insert into rnode (region_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams,lost_ts) " +
+                        "values (?,?,?,?,?,?,?)";
 
                 try (PreparedStatement stmt = conn.prepareStatement(insertRNodeString)) {
 
@@ -1377,6 +1381,7 @@ public class DBEngine {
                     stmt.setInt(4, watchdog_period);
                     stmt.setLong(5, watchdog_ts);
                     stmt.setString(6, textParam(configparams));
+                    setLostTsValue(stmt, 7, status_code);
 
                     stmt.executeUpdate();
                     conn.commit();
@@ -1450,8 +1455,8 @@ public class DBEngine {
 
                 conn.setAutoCommit(false);
 
-                String insertANodeString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams) " +
-                        "values (?,?,?,?,?,?)";
+                String insertANodeString = "insert into anode (agent_id,status_code,status_desc,watchdog_period,watchdog_ts,configparams,lost_ts) " +
+                        "values (?,?,?,?,?,?,?)";
 
                 try (PreparedStatement stmt = conn.prepareStatement(insertANodeString)) {
 
@@ -1461,6 +1466,7 @@ public class DBEngine {
                     stmt.setInt(4, watchdog_period);
                     stmt.setLong(5, watchdog_ts);
                     stmt.setString(6, textParam(configparams));
+                    setLostTsValue(stmt, 7, status_code);
 
                     stmt.executeUpdate();
                     conn.commit();
@@ -1607,7 +1613,7 @@ public class DBEngine {
         try(Connection conn = ds.getConnection()) {
 
             String insertPNodeString = "UPDATE pnode SET status_code=?, status_desc=?, watchdog_period=?" +
-                    ", watchdog_ts=?, configparams=? " +
+                    ", watchdog_ts=?, configparams=?" + lostTsSet(status_code) +
                     "WHERE plugin_id=?";
 
             try (PreparedStatement stmt = conn.prepareStatement(insertPNodeString)) {
@@ -1617,7 +1623,7 @@ public class DBEngine {
                 stmt.setInt(3, watchdog_period);
                 stmt.setLong(4, watchdog_ts);
                 stmt.setString(5, textParam(configparams));
-                stmt.setString(6, textParam(plugin));
+                stmt.setString(bindLostTs(stmt, 6, status_code), textParam(plugin));
 
                 stmt.executeUpdate();
                 //force update of pnode, so the next command does not fail.
@@ -1640,8 +1646,8 @@ public class DBEngine {
 
                 conn.setAutoCommit(false);
 
-            String insertPNodeString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams,persistence_code) " +
-                    "values (?,?,?,?,?,?,?,?,?,?,?)";
+            String insertPNodeString = "insert into pnode (plugin_id,status_code,status_desc,watchdog_period,watchdog_ts,pluginname,jarfile,version,md5,configparams,persistence_code,lost_ts) " +
+                    "values (?,?,?,?,?,?,?,?,?,?,?,?)";
 
             String insertPNodeToANode = "insert into pluginof (agent_id, plugin_id) " +
                     "values (?,?)";
@@ -1659,6 +1665,7 @@ public class DBEngine {
                 stmt.setString(9, textParam(md5));
                 stmt.setString(10, textParam(configparams));
                 stmt.setInt(11, persistence_code);
+                setLostTsValue(stmt, 12, status_code);
 
                 status = stmt.executeUpdate();
                 //force update of pnode, so the next command does not fail.
@@ -2053,7 +2060,8 @@ public class DBEngine {
                 "   status_desc varchar(255)," +
                 "   watchdog_period int," +
                 "   watchdog_ts bigint," +
-                "   configparams " + largeFieldType +
+                "   configparams " + largeFieldType + "," +
+                "   lost_ts bigint" +
                 ")";
 
         String createANode = "CREATE TABLE anode" +
@@ -2064,7 +2072,8 @@ public class DBEngine {
                 "   status_desc varchar(255)," +
                 "   watchdog_period int," +
                 "   watchdog_ts bigint," +
-                "   configparams " + largeFieldType +
+                "   configparams " + largeFieldType + "," +
+                "   lost_ts bigint" +
                 //"   FOREIGN KEY (region_id) REFERENCES rnode(region_id) " +
                 ")";
 
@@ -2090,7 +2099,8 @@ public class DBEngine {
                 "   version varchar(255)," +
                 "   md5 varchar(255)," +
                 "   configparams " + largeFieldType + "," +
-                "   persistence_code int DEFAULT 0" +
+                "   persistence_code int DEFAULT 0," +
+                "   lost_ts bigint" +
                 //"   FOREIGN KEY (region_id) REFERENCES rnode(region_id), " +
                 //"   FOREIGN KEY (agent_id) REFERENCES anode(agent_id), " +
                 //"   CONSTRAINT pNodeID PRIMARY KEY (region_id, agent_id, plugin_id)" +
@@ -2694,6 +2704,153 @@ public class DBEngine {
     }
 
 
+    // --- LOST retention ---------------------------------------------------------------------------------------
+    // A node row records when it went LOST (status_code 50) in lost_ts: set by the first write of status 50 and
+    // kept by every later one (COALESCE), cleared by any other status (the node came back). It is a column of the
+    // row, so it survives a controller restart; it is never derived from watchdog_ts, which a parent's full-state
+    // update rewrites with the time of that update.
+
+    /** status_code of a LOST node. */
+    public static final int STATUS_LOST = 50;
+
+    /** SET fragment for an UPDATE writing {@code statusCode}: keep/stamp lost_ts on LOST, clear it otherwise. */
+    static String lostTsSet(int statusCode) {
+        return statusCode == STATUS_LOST ? ", lost_ts=COALESCE(lost_ts, ?) " : ", lost_ts=NULL ";
+    }
+
+    /** Bind the parameter of {@link #lostTsSet} at {@code index} if it has one; returns the next free index. */
+    static int bindLostTs(PreparedStatement stmt, int index, int statusCode) throws SQLException {
+        if (statusCode == STATUS_LOST) {
+            stmt.setLong(index++, System.currentTimeMillis());
+        }
+        return index;
+    }
+
+    static void addLostTsParam(List<Object> queryParams, int statusCode) {
+        if (statusCode == STATUS_LOST) {
+            queryParams.add(System.currentTimeMillis());
+        }
+    }
+
+    /** The lost_ts value of a row being INSERTed with {@code statusCode}. */
+    static void setLostTsValue(PreparedStatement stmt, int index, int statusCode) throws SQLException {
+        if (statusCode == STATUS_LOST) {
+            stmt.setLong(index, System.currentTimeMillis());
+        } else {
+            stmt.setNull(index, Types.BIGINT);
+        }
+    }
+
+    /**
+     * Add lost_ts to rnode/anode/pnode where it is missing (a database created before LOST retention) and stamp
+     * every LOST row without one with now: a pre-existing LOST row gets the full retention period from the upgrade,
+     * never less. Idempotent; runs at every start.
+     */
+    void ensureLostTsColumns() {
+        long now = System.currentTimeMillis();
+        for (String table : new String[]{"rnode", "anode", "pnode"}) {
+            try (Connection conn = ds.getConnection()) {
+                boolean has;
+                DatabaseMetaData md = conn.getMetaData();
+                try (ResultSet rs = md.getColumns(null, null, table.toUpperCase(), "LOST_TS")) {
+                    has = rs.next();
+                }
+                if (!has) {
+                    try (ResultSet rs = md.getColumns(null, null, table, "lost_ts")) {
+                        has = rs.next();
+                    }
+                }
+                if (!has) {
+                    try (Statement stmt = conn.createStatement()) {
+                        stmt.executeUpdate("ALTER TABLE " + table + " ADD COLUMN lost_ts BIGINT");
+                    }
+                    logger.info("DBEngine: added lost_ts to {} (LOST retention)", table);
+                }
+                try (PreparedStatement stmt = conn.prepareStatement(
+                        "UPDATE " + table + " SET lost_ts=? WHERE status_code=? AND lost_ts IS NULL")) {
+                    stmt.setLong(1, now);
+                    stmt.setInt(2, STATUS_LOST);
+                    int stamped = stmt.executeUpdate();
+                    if (stamped > 0) {
+                        logger.info("DBEngine: {} LOST {} row(s) had no lost_ts; retention counts from now", stamped, table);
+                    }
+                }
+            } catch (Exception ex) {
+                logger.error("DBEngine.ensureLostTsColumns() " + table, ex);
+            }
+        }
+    }
+
+    /**
+     * When the node (region, agent or plugin, as for {@link #setNodeStatusCode}) went LOST, or null when it is not
+     * LOST or has no row.
+     */
+    public Long getLostSince(String regionId, String agentId, String pluginId) {
+        String table, idCol, id;
+        if (pluginId != null) {
+            table = "pnode"; idCol = "plugin_id"; id = pluginId;
+        } else if (agentId != null) {
+            table = "anode"; idCol = "agent_id"; id = agentId;
+        } else {
+            table = "rnode"; idCol = "region_id"; id = regionId;
+        }
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT lost_ts FROM " + table + " WHERE " + idCol + "=?")) {
+            stmt.setString(1, textParam(id));
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    long v = rs.getLong(1);
+                    return rs.wasNull() ? null : v;
+                }
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.getLostSince()", ex);
+        }
+        return null;
+    }
+
+    /**
+     * Delete every node that has been LOST since {@code lostBefore} or earlier (lost_ts <= lostBefore), with what
+     * it holds: a region with its agents and plugins, an agent with its plugins, a plugin. Rows of this node itself
+     * ({@code selfRegion}/{@code selfAgent}) are never deleted. Indexed on status_code: the cost grows with the
+     * number of LOST rows, not with the fabric. Returns the region/agent/plugin ids deleted.
+     */
+    public List<String> purgeLostNodes(long lostBefore, String selfRegion, String selfAgent) {
+        List<String> purged = new ArrayList<>();
+        for (String[] t : new String[][]{{"rnode", "region_id"}, {"anode", "agent_id"}, {"pnode", "plugin_id"}}) {
+            List<String> ids = new ArrayList<>();
+            try (Connection conn = ds.getConnection();
+                 PreparedStatement stmt = conn.prepareStatement("SELECT " + t[1] + " FROM " + t[0]
+                         + " WHERE status_code=? AND lost_ts IS NOT NULL AND lost_ts<=?")) {
+                stmt.setInt(1, STATUS_LOST);
+                stmt.setLong(2, lostBefore);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    while (rs.next()) {
+                        ids.add(rs.getString(1));
+                    }
+                }
+            } catch (Exception ex) {
+                logger.error("DBEngine.purgeLostNodes() " + t[0], ex);
+                continue;
+            }
+            for (String id : ids) {
+                if ("rnode".equals(t[0])) {
+                    if (id.equals(selfRegion)) continue;
+                    removeNode(id, null, null);
+                    purged.add(id);
+                } else if ("anode".equals(t[0])) {
+                    if (id.equals(selfAgent)) continue;
+                    removeNode(null, id, null);
+                    purged.add(id);
+                } else {
+                    removeNode(null, null, id);
+                    purged.add(id);
+                }
+            }
+        }
+        return purged;
+    }
+
     public boolean removeNode(String regionId, String agentId, String pluginId) {
 
         //System.out.println("regionId: " + regionId + " agentId: " + agentId + " pluginId:c" + pluginId);
@@ -3151,26 +3308,29 @@ public class DBEngine {
             if((regionId != null) && (agentId != null) && (pluginId != null)) {
                 //plugin
 
-                queryString = "UPDATE pnode SET status_code=?, status_desc=?"
+                queryString = "UPDATE pnode SET status_code=?, status_desc=?" + lostTsSet(status_code)
                         + " WHERE plugin_id=?";
                 queryParams.add(status_code);
                 queryParams.add(status_desc);
+                addLostTsParam(queryParams, status_code);
                 queryParams.add(pluginId);
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
                 //agent
-                queryString = "UPDATE anode SET status_code=?, status_desc=?"
+                queryString = "UPDATE anode SET status_code=?, status_desc=?" + lostTsSet(status_code)
                         + " WHERE agent_id=?";
                 queryParams.add(status_code);
                 queryParams.add(status_desc);
+                addLostTsParam(queryParams, status_code);
                 queryParams.add(agentId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
-                queryString = "UPDATE rnode SET status_code=?, status_desc=?"
+                queryString = "UPDATE rnode SET status_code=?, status_desc=?" + lostTsSet(status_code)
                         + " WHERE region_id=?";
                 queryParams.add(status_code);
                 queryParams.add(status_desc);
+                addLostTsParam(queryParams, status_code);
                 queryParams.add(regionId);
             }
 

@@ -59,6 +59,13 @@ public class GlobalHealthWatcher {
             if (controllerEngine.cstate.isGlobalController()) { //only run if node is regional controller
                 logger.debug("GlobalNodeStatusWatchDog");
 
+                // LOST retention: regions/agents/plugins LOST longer than lost_node_retention_days leave the global DB
+                try {
+                    controllerEngine.getGDB().purgeExpiredLostNodes();
+                } catch (Exception ex) {
+                    logger.error("GlobalNodeStatusWatchDog: LOST retention sweep failed: " + ex.getMessage());
+                }
+
                 Map<String, NodeStatusType> edgeStatus = controllerEngine.getGDB().getEdgeHealthStatus(null, null, null);
 
                 for (Map.Entry<String, NodeStatusType> entry : edgeStatus.entrySet()) {

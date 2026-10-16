@@ -269,6 +269,56 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getNodeStatusCode(regionId, agentId);
     }
 
+    // --- LOST retention (docs/controller-tier-routing.md#lost-node-retention) -----------------------------------
+    /** Days a node stays listed as LOST before its rows are deleted; &lt;= 0 keeps LOST nodes forever. */
+    public static final String LOST_RETENTION_DAYS = "lost_node_retention_days";
+    public static final double DEFAULT_LOST_RETENTION_DAYS = 30.0;
+    /** Minimum time between two retention sweeps of this node's DB. */
+    public static final String LOST_SWEEP_INTERVAL_MS = "lost_node_sweep_interval_ms";
+    public static final long DEFAULT_LOST_SWEEP_INTERVAL_MS = 3_600_000L;
+    private final java.util.concurrent.atomic.AtomicLong lastLostSweep = new java.util.concurrent.atomic.AtomicLong(0L);
+
+    /** The configured LOST retention in milliseconds, or -1 when LOST nodes are kept forever. */
+    public long lostRetentionMs() {
+        double days = plugin.getConfig().getDoubleParam(LOST_RETENTION_DAYS, DEFAULT_LOST_RETENTION_DAYS);
+        if (days <= 0) {
+            return -1L;
+        }
+        return (long) (days * 86_400_000d);
+    }
+
+    /**
+     * Delete the nodes that have been LOST longer than lost_node_retention_days, measured from when each went LOST
+     * (persisted lost_ts). Called from the node-status watchdogs; does the work at most once per
+     * lost_node_sweep_interval_ms. Returns the ids deleted (empty when nothing was due or the sweep was skipped).
+     */
+    public List<String> purgeExpiredLostNodes() {
+        return purgeExpiredLostNodes(System.currentTimeMillis());
+    }
+
+    public List<String> purgeExpiredLostNodes(long now) {
+        long retention = lostRetentionMs();
+        if (retention < 0 || dbe == null) {
+            return Collections.emptyList();
+        }
+        long interval = plugin.getConfig().getLongParam(LOST_SWEEP_INTERVAL_MS, DEFAULT_LOST_SWEEP_INTERVAL_MS);
+        long last = lastLostSweep.get();
+        if (now - last < interval || !lastLostSweep.compareAndSet(last, now)) {
+            return Collections.emptyList();
+        }
+        List<String> purged = dbe.purgeLostNodes(now - retention, plugin.getRegion(), plugin.getAgent());
+        if (!purged.isEmpty()) {
+            logger.info("LOST retention: deleted {} node(s) LOST for more than {} day(s): {}", purged.size(),
+                    plugin.getConfig().getDoubleParam(LOST_RETENTION_DAYS, DEFAULT_LOST_RETENTION_DAYS), purged);
+        }
+        return purged;
+    }
+
+    /** When the node went LOST here (epoch ms), or null when it is not LOST. */
+    public Long getLostSince(String regionId, String agentId, String pluginId) {
+        return dbe == null ? null : dbe.getLostSince(regionId, agentId, pluginId);
+    }
+
     public int setNodeStatusCode(String regionId, String agentId, String pluginId, int status_code, String status_desc) {
         return dbe.setNodeStatusCode(regionId,agentId,pluginId,status_code,status_desc);
     }
