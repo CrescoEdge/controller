@@ -866,6 +866,9 @@ public class AgentExecutor implements Executor {
 
             //return ce;
 
+            // the reply never carries the plugin config back: it is the whole config, secrets included (OUT-03)
+            ce.removeParam("configparams");
+
 
         } catch(Exception ex) {
 
@@ -874,7 +877,7 @@ public class AgentExecutor implements Executor {
             ce.setParam("status_desc", "Plugin Could Not Be Added Exception");
 
             ce.setParam("error", ex.getMessage());
-
+            ce.removeParam("configparams");
         }
 
         return ce;

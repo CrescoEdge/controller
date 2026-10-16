@@ -1349,6 +1349,8 @@ public class GlobalExecutor implements Executor {
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
         }
+        // stored on the iNode above; the reply never carries the plugin config back (OUT-03)
+        ce.removeParam("configparams");
 
         return ce;
     }

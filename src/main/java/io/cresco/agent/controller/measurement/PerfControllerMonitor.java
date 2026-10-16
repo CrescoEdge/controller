@@ -40,6 +40,7 @@ public class PerfControllerMonitor {
         initControllerMetrics();
         initCEPMetrics();
         initDataplaneLossMetrics();
+        initBrokerMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
 
@@ -85,6 +86,23 @@ public class PerfControllerMonitor {
             me.setExisting("dataplane.broker.slow.consumers", "dataplane");
         } catch (Exception ex) {
             logger.error("initDataplaneLossMetrics ", ex);
+        }
+    }
+
+    // OUT-32: the embedded broker's own memory/store/temp usage and a bounded per-destination sample, in the
+    // unified inventory (group "broker"). Resolved through the engine on every read, so a restarted broker
+    // is followed. Per-destination sampling is bounded: broker_metrics_destination_scan_max destinations per
+    // refresh, at most once per broker_metrics_refresh_ms (see BrokerMemoryMetrics).
+    public void initBrokerMetrics() {
+        try {
+            BrokerMemoryMetrics bmm = new BrokerMemoryMetrics(() -> {
+                io.cresco.agent.controller.communication.ActiveBroker ab = controllerEngine.getBroker();
+                return ab == null ? null : ab.getBrokerService();
+            }, plugin.getConfig().getIntegerParam("broker_metrics_destination_scan_max", 256),
+                    plugin.getConfig().getLongParam("broker_metrics_refresh_ms", 10_000L));
+            for (String name : bmm.register(me.getCrescoMeterRegistry())) me.setExisting(name, BrokerMemoryMetrics.GROUP);
+        } catch (Exception ex) {
+            logger.error("initBrokerMetrics ", ex);
         }
     }
 
