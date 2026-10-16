@@ -126,13 +126,13 @@ class RoutingMatrixTest {
         return out;
     }
 
-    /** The map as of controller 1.3 191d895. */
+    /** The map; the cells marked "191d895:" are the ones this fix changed (all else as of 1.3 191d895). */
     static final Map<String, String> EXPECTED = new LinkedHashMap<>();
     static {
         EXPECTED.put("regional | G wsapi -> global(self)",
                 "G(29679) => RegionalExecutor@G");
         EXPECTED.put("regional | G wsapi -> remote region ctrl",
-                "G(29359)>R1(20847) => AgentExecutor@R1");
+                "G(29359)>R1(20847) => RegionalExecutor@R1"); // 191d895: AgentExecutor
         EXPECTED.put("regional | G wsapi -> agent under remote region",
                 "G(29359)>A1(16751) => AgentExecutor@A1");
         EXPECTED.put("regional | G wsapi -> agent under global",
@@ -142,7 +142,7 @@ class RoutingMatrixTest {
         EXPECTED.put("regional | R1 wsapi -> own region ctrl(self)",
                 "R1(21487) => RegionalExecutor@R1");
         EXPECTED.put("regional | R1 wsapi -> remote region ctrl",
-                "R1(21167)>R2(20847) => AgentExecutor@R2");
+                "R1(21167)>R2(20847) => RegionalExecutor@R2"); // 191d895: AgentExecutor
         EXPECTED.put("regional | R1 wsapi -> agent under remote region",
                 "R1(21167)>A2(16751) => AgentExecutor@A2");
         EXPECTED.put("regional | A1 wsapi -> global",
@@ -150,13 +150,13 @@ class RoutingMatrixTest {
         EXPECTED.put("regional | A1 wsapi -> own region ctrl",
                 "A1(17135)>R1(20975) => RegionalExecutor@R1");
         EXPECTED.put("regional | A1 wsapi -> remote region ctrl",
-                "A1(17071)>R2(20847) => AgentExecutor@R2");
+                "A1(17071)>R2(20847) => RegionalExecutor@R2"); // 191d895: AgentExecutor
         EXPECTED.put("regional | A1 wsapi -> agent under remote region",
                 "A1(17071)>A2(16751) => AgentExecutor@A2");
         EXPECTED.put("regional(ctrl) | G controller -> global(self)",
                 "G(29647) => RegionalExecutor@G");
         EXPECTED.put("regional(ctrl) | G controller -> remote region ctrl",
-                "G(29327)>R1(20815) => AgentExecutor@R1");
+                "G(29327)>R1(20815) => RegionalExecutor@R1"); // 191d895: AgentExecutor
         EXPECTED.put("regional(ctrl) | G controller -> agent under remote region",
                 "G(29327)>A1(16719) => AgentExecutor@A1");
         EXPECTED.put("regional(ctrl) | G controller -> agent under global",
@@ -166,7 +166,7 @@ class RoutingMatrixTest {
         EXPECTED.put("regional(ctrl) | R1 controller -> own region ctrl(self)",
                 "R1(21455) => RegionalExecutor@R1");
         EXPECTED.put("regional(ctrl) | R1 controller -> remote region ctrl",
-                "R1(21135)>R2(20815) => AgentExecutor@R2");
+                "R1(21135)>R2(20815) => RegionalExecutor@R2"); // 191d895: AgentExecutor
         EXPECTED.put("regional(ctrl) | R1 controller -> agent under remote region",
                 "R1(21135)>A2(16719) => AgentExecutor@A2");
         EXPECTED.put("regional(ctrl) | A1 controller -> global",
@@ -174,7 +174,7 @@ class RoutingMatrixTest {
         EXPECTED.put("regional(ctrl) | A1 controller -> own region ctrl",
                 "A1(17103)>R1(20943) => RegionalExecutor@R1");
         EXPECTED.put("regional(ctrl) | A1 controller -> remote region ctrl",
-                "A1(17039)>R2(20815) => AgentExecutor@R2");
+                "A1(17039)>R2(20815) => RegionalExecutor@R2"); // 191d895: AgentExecutor
         EXPECTED.put("regional(ctrl) | A1 controller -> agent under remote region",
                 "A1(17039)>A2(16719) => AgentExecutor@A2");
         EXPECTED.put("global | G wsapi -> global(self)",
@@ -249,6 +249,15 @@ class RoutingMatrixTest {
                 "A1(703)>R2(4479) => plugin/7@R2");
         EXPECTED.put("plugin | A1 wsapi -> agent under remote region",
                 "A1(703)>A2(383) => plugin/7@A2");
+    }
+
+    @Test
+    void aRegionalRpcAtTheGlobalForARemoteRegionRunsThereAndItsReplyReturnsToTheWsapi() {
+        MsgEvent req = wsapi(G, "regional", R1);
+        req.setParam("action", "rpipelinesubmit");
+        assertEquals("G(29359)>R1(20847) => RegionalExecutor@R1", trace(G, req));
+        req.setReturn();                                     // sendRegionalMsg: reply from R1's controller
+        assertEquals("R1(21151)>G(29023) => plugin/1@G", trace(R1, req));
     }
 
     @Test

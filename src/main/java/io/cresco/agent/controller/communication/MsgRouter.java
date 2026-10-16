@@ -485,6 +485,19 @@ public class MsgRouter {
             // reply. The strict-tree single-node builds never exercised this hop, so the static
             // table omitted it and the message fell to default-drop (silent RPC timeout).
             case 4463: return Hop.LOCAL_REGIONAL_CONTROLLER;
+            // A REGIONAL-CONTROLLER message from another region (a plugin/wsapi there = 20847, a controller =
+            // 20815) addressed to THIS region's controller: the region-side twin of 29039/29007 at the global
+            // (same bits, GC=0). E.g. regional_controller_msgevent(region_id, agent_id) sent at the global's
+            // wsapi for a remote region: the global relays it here; it must run on this node's
+            // RegionalExecutor (rpipelinesubmit, agent_enable, ...), whose unknown CONFIG/EXEC actions still
+            // fall back to the agent executor. The catch-all handed it straight to the AgentExecutor
+            // ("Unknown configtype", RPC timeout). Local delivery only: sendRegionalMsg runs a non-global
+            // message addressed to this node and never re-forwards it. Global-flagged messages keep the
+            // catch-all (unchanged).
+            case 20815:
+            case 20847:
+                if (rm.isRegional() && !rm.isGlobal()) return Hop.LOCAL_REGIONAL_CONTROLLER;
+                return catchAll(rm, region, agent, pluginId);
             default: return catchAll(rm, region, agent, pluginId);
         }
     }
