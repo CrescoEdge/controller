@@ -608,6 +608,11 @@ public class ActiveBroker {
 
 	*/
 
+	/** The embedded broker itself (null before it is built): its SystemUsage and regions feed BrokerMemoryMetrics. */
+	public org.apache.activemq.broker.BrokerService getBrokerService() {
+		return broker;
+	}
+
 	public boolean isHealthy() {
 		boolean isHealthy = false;
 		try  {

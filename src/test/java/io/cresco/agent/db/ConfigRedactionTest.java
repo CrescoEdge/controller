@@ -210,4 +210,86 @@ class ConfigRedactionTest {
         a.initCause(b);
         assertFalse(ConfigRedaction.redactThrowable(a).getCause().toString().contains("pw-3"));
     }
+
+    // ---- OUT-03 (b): iNode configparams in log lines and message maps ----
+
+    @Test
+    void aJsonConfigInALogLineKeepsItsShapeButNotItsSecrets() {
+        String json = "{\"pluginname\":\"io.cresco.gfs\",\"gfs_secret\":\"s3cr3t-A\",\"port\":\"32010\",\"hsmPin\":1234,"
+                + "\"keyStorePassword\" : \"s3cr3t-B\",\"inode_id\":\"i-1\"}";
+        String line = ConfigRedaction.redactText("pluginAdd configParamsJson: " + json);
+        assertFalse(line.contains("s3cr3t") || line.contains("1234"), line);
+        Map<String, Object> back = GSON.fromJson(line.substring(line.indexOf('{')), new TypeToken<Map<String, Object>>() {}.getType());
+        assertEquals(ConfigRedaction.REDACTED, back.get("gfs_secret"));
+        assertEquals(ConfigRedaction.REDACTED, back.get("hsmPin"), "a bare scalar becomes a redacted string; the JSON stays well formed");
+        assertEquals("32010", back.get("port"));
+        assertEquals("i-1", back.get("inode_id"));
+        assertEquals(line, ConfigRedaction.redactText(line), "stable");
+    }
+
+    @Test
+    void aJsonConfigNestedAsAStringIsRedactedAtEveryDepth() {
+        Map<String, String> cfg = new HashMap<>();
+        cfg.put("pluginname", "io.cresco.repo");
+        cfg.put("password", "s3cr3t-C");
+        cfg.put("note", "has \"quotes\" and a \\ backslash");
+        Map<String, String> node = new HashMap<>();
+        node.put("configparams", GSON.toJson(cfg));          // depth 1: {\"password\":\"...\"}
+        node.put("inode_id", "i-2");
+        String depth1 = GSON.toJson(node);
+        Map<String, String> outer = new HashMap<>();
+        outer.put("node", depth1);                           // depth 2
+        String depth2 = GSON.toJson(outer);
+        for (String text : new String[]{depth1, depth2, "AddPipeline RUN MsgEvent [" + depth2 + "]"}) {
+            String r = ConfigRedaction.redactText(text);
+            assertFalse(r.contains("s3cr3t-C"), r);
+            assertTrue(r.contains("io.cresco.repo"), r);
+            assertEquals(r, ConfigRedaction.redactText(r), "stable");
+        }
+        // still the same documents, with the secret replaced
+        Map<String, String> n1 = GSON.fromJson(ConfigRedaction.redactText(depth1), new TypeToken<Map<String, String>>() {}.getType());
+        Map<String, String> c1 = GSON.fromJson(n1.get("configparams"), new TypeToken<Map<String, String>>() {}.getType());
+        assertEquals(ConfigRedaction.REDACTED, c1.get("password"));
+        assertEquals("has \"quotes\" and a \\ backslash", c1.get("note"));
+        Map<String, String> o2 = GSON.fromJson(ConfigRedaction.redactText(depth2), new TypeToken<Map<String, String>>() {}.getType());
+        Map<String, String> n2 = GSON.fromJson(o2.get("node"), new TypeToken<Map<String, String>>() {}.getType());
+        Map<String, String> c2 = GSON.fromJson(n2.get("configparams"), new TypeToken<Map<String, String>>() {}.getType());
+        assertEquals(ConfigRedaction.REDACTED, c2.get("password"));
+        assertEquals("i-2", n2.get("inode_id"));
+    }
+
+    @Test
+    void aSecretValueWithEscapesIsTakenWhole() {
+        // a quote and a trailing backslash inside the secret: the value still ends at its own closing quote
+        String json = "{\"password\":\"ab\\\"cd-s3cr3t\\\\\",\"k\":\"v\"}";
+        Map<String, String> parsed = GSON.fromJson(json, new TypeToken<Map<String, String>>() {}.getType());
+        assertEquals("ab\"cd-s3cr3t\\", parsed.get("password"), "the fixture is the JSON it claims to be");
+        String r = ConfigRedaction.redactText(json);
+        assertFalse(r.contains("s3cr3t") || r.contains("cd-"), r);
+        Map<String, String> back = GSON.fromJson(r, new TypeToken<Map<String, String>>() {}.getType());
+        assertEquals("v", back.get("k"));
+        // an unterminated secret value (a truncated log line) is redacted to the end
+        String cut = ConfigRedaction.redactText("x {\"token\":\"s3cr3t-trunc");
+        assertFalse(cut.contains("s3cr3t"), cut);
+    }
+
+    @Test
+    void aCompressedConfigInALoggedMessageIsWithheld() {
+        io.cresco.library.messaging.MsgEvent me = new io.cresco.library.messaging.MsgEvent(
+                io.cresco.library.messaging.MsgEvent.Type.CONFIG, "r1", "a1", null, "r1", "a2", null, true, true);
+        me.setParam("action", "pluginadd");
+        me.setCompressedParam("configparams", "{\"pluginname\":\"io.cresco.gfs\",\"gfs_secret\":\"s3cr3t-D\"}");
+        String b64 = me.getParam("configparams");
+        assertTrue(b64.startsWith("H4sI"));
+        // the shapes the controller logs a message in: Map.toString (ResourceScheduler, PollAddPipeline) and JSON
+        for (String line : new String[]{"pluginadd message: " + me.getParams().toString(),
+                "AddPipeline RUN MsgEvent [" + GSON.toJson(me.getParams()) + "]"}) {
+            String r = ConfigRedaction.redactText(line);
+            assertFalse(r.contains(b64) || r.contains(b64.substring(0, 24)), r);
+            assertTrue(r.contains("pluginadd"), r);
+            assertEquals(r, ConfigRedaction.redactText(r));
+        }
+        // other compressed params, and a plain configparams JSON, are left to the other rules
+        assertEquals("edges=H4sIAAAA", ConfigRedaction.redactText("edges=H4sIAAAA"));
+    }
 }
