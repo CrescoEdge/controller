@@ -264,6 +264,11 @@ public class DBInterfaceImpl implements DBInterface {
         return nodeStatusMap;
     }
 
+    /** Status of one region (agentId null) or agent row here; DBEngine.NO_ROW / STATUS_UNKNOWN otherwise. */
+    public int getNodeStatusCode(String regionId, String agentId) {
+        return dbe.getNodeStatusCode(regionId, agentId);
+    }
+
     public int setNodeStatusCode(String regionId, String agentId, String pluginId, int status_code, String status_desc) {
         return dbe.setNodeStatusCode(regionId,agentId,pluginId,status_code,status_desc);
     }

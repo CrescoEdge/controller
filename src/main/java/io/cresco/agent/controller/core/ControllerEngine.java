@@ -14,6 +14,7 @@ import io.cresco.agent.controller.netdiscovery.*;
 import io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher;
 import io.cresco.agent.controller.statemachine.ControllerSM;
 import io.cresco.agent.controller.statemachine.ControllerSMHandler;
+import io.cresco.agent.controller.statemachine.StateResync;
 import io.cresco.agent.core.ControllerStateImp;
 import io.cresco.agent.db.DBInterfaceImpl;
 import io.cresco.library.data.DataPlaneService;
@@ -86,6 +87,7 @@ public class ControllerEngine {
     private Thread discoveryTCPEngineThread;
 
     private ControllerSMHandler controllerSMHandler;
+    private volatile StateResync stateResync;
 
     private CrescoHealthExecutor healthExecutor;
 
@@ -494,6 +496,32 @@ public class ControllerEngine {
         if (handler != null) {
             handler.requestStateUpdate();
         }
+    }
+
+    /**
+     * A pong from this node's parent: when it asks for our full state (the parent holds us as not ACTIVE, see
+     * StateResync), request one full state export -- at most once per state_resync_min_interval_ms.
+     */
+    public void onParentPong(MsgEvent pong) {
+        StateResync resync = stateResync;
+        if (resync == null) {
+            resync = initStateResync();
+        }
+        if (!resync.shouldResync(pong, System.currentTimeMillis())) {
+            return;
+        }
+        ControllerSMHandler handler = controllerSMHandler;
+        if (handler != null) {
+            handler.requestFullStateUpdate("parent " + pong.getSrcRegion() + "_" + pong.getSrcAgent()
+                    + " holds this node as status " + pong.getParam(StateResync.STATUS_PARAM));
+        }
+    }
+
+    private synchronized StateResync initStateResync() {
+        if (stateResync == null) {
+            stateResync = new StateResync(plugin.getConfig().getLongParam("state_resync_min_interval_ms", 10000L));
+        }
+        return stateResync;
     }
 
     public AgentHealthWatcher getAgentHealthWatcher() {return this.agentHealthWatcher;}

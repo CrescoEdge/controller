@@ -256,6 +256,9 @@ public class AgentHealthWatcher {
                         } catch (Exception ignore) { }
                         // mesh health: record the region's advertised health carried back on the pong.
                         io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
+                        // the region holds this agent as not ACTIVE (e.g. LOST while we kept our session): send it
+                        // our full state now rather than on the next periodic full export
+                        controllerEngine.onParentPong(pingResponse);
                         logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());
                     }
                 } catch (Exception ex) {

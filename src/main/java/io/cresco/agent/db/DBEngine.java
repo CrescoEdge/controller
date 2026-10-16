@@ -392,7 +392,10 @@ public class DBEngine {
                     List<String> removeAgentList = null;
 
                     if(isRegionUpdate) {
-                        removeAgentList = getNodeList(region_id,null);
+                        // every agent row this parent holds for the region, whatever its status: a LOST (50)
+                        // or STALE (40) row is invisible to getNodeList (status 10 only), so an agent removed
+                        // while its region was LOST here was never swept and stayed hidden forever
+                        removeAgentList = getChildIdsAnyStatus(region_id, null);
                     }
 
                     List<Map<String,String>> agentList = entry.getValue();
@@ -438,10 +441,12 @@ public class DBEngine {
                     }
 
                     //remove any agents not in the update
-                    if(removeAgentList != null) {
+                    if(removeAgentList != null && !removeAgentList.isEmpty()) {
                         for (String agent_id : removeAgentList) {
                             removeNode(region_id, agent_id, null);
                         }
+                        logger.info("nodeUpdateStatus() reconcile: removed {} agent row(s) of region {} it no longer reports: {}",
+                                removeAgentList.size(), region_id, removeAgentList);
                     }
 
                 }
@@ -459,7 +464,9 @@ public class DBEngine {
 
                     if(region_id != null) {
 
-                    List<String> removePluginList = getNodeList(region_id,agent_id);
+                    // every plugin row this parent holds for the agent, whatever its status (see the agent sweep
+                    // above): a plugin removed while the agent was LOST here kept a hidden status-50 row forever
+                    List<String> removePluginList = getChildIdsAnyStatus(region_id, agent_id);
 
                     List<Map<String,String>> pluginList = entry.getValue();
 
@@ -510,6 +517,10 @@ public class DBEngine {
                     //remove any plugins not in the update
                     for(String plugin_id : removePluginList) {
                         removeNode(region_id,agent_id,plugin_id);
+                    }
+                    if (!removePluginList.isEmpty()) {
+                        logger.info("nodeUpdateStatus() reconcile: removed {} plugin row(s) of agent {} it no longer reports: {}",
+                                removePluginList.size(), agent_id, removePluginList);
                     }
 
                     } else {
@@ -1382,13 +1393,30 @@ public class DBEngine {
 
     }
 
+    /**
+     * The ids of the children this DB holds under a region (its agents) or an agent (its plugins), WHATEVER their
+     * status -- unlike {@link #getNodeList}, which lists only ACTIVE (10) rows. Removal and reconciliation must see
+     * LOST/STALE rows too, or those rows are never deleted. Scoped to one region or one agent (indexed agentof /
+     * pluginof lookups), never a fabric-wide scan. On a DB error the list may be short, which only means fewer
+     * rows are removed this time.
+     */
+    private List<String> getChildIdsAnyStatus(String regionId, String agentId) {
+        if (regionId == null) {
+            return new ArrayList<>();
+        }
+        Map<String, Integer> statusMap = getNodeStatusCodeMap(regionId, agentId);
+        return (statusMap == null) ? new ArrayList<>() : new ArrayList<>(statusMap.keySet());
+    }
+
     private void cleanANodesfromRNode(String region_id) {
 
         try {
 
-            List<String> agentList = getNodeList(region_id,null);
+            // remove the region's agents themselves, not only their plugins: deleting the rnode cascades
+            // agentof only, so the anode rows (and the pnode rows of any non-ACTIVE agent) were orphaned
+            List<String> agentList = getChildIdsAnyStatus(region_id,null);
             for(String agent_id : agentList) {
-                cleanPnodesFromAnode(region_id, agent_id);
+                removeNode(region_id, agent_id, null);
             }
 
 
@@ -1402,7 +1430,8 @@ public class DBEngine {
 
         try {
 
-            List<String> pluginList = getNodeList(region_id,agent_id);
+            // any status: deleting the anode cascades pluginof only, so a pnode left here is orphaned for good
+            List<String> pluginList = getChildIdsAnyStatus(region_id,agent_id);
             for(String plugin_id : pluginList) {
                 removeNode(region_id,agent_id,plugin_id);
             }
@@ -2697,10 +2726,14 @@ public class DBEngine {
                 queryParams.add(pluginId);
 
             } else if ((regionId == null) && (agentId != null) && (pluginId == null)) {
-                //agent
+                //agent, region not given: anode has no region_id column (this query used to fail), so resolve the
+                //region and remove the agent with its plugins
+                String agentRegion = getRNodeFromAnode(agentId);
+                if (agentRegion != null) {
+                    return removeNode(agentRegion, agentId, null);
+                }
                 queryString = "DELETE FROM anode " +
-                        "WHERE region_id = ? and agent_id = ?";
-                queryParams.add(regionId);
+                        "WHERE agent_id = ?";
                 queryParams.add(agentId);
 
             } else if ((regionId != null) && (agentId != null) && (pluginId == null)) {
@@ -2803,6 +2836,37 @@ public class DBEngine {
         }
         return queryReturn;
     }
+
+    /**
+     * The status code this DB holds for one region (agentId null) or one agent, {@link #NO_ROW} when there is no
+     * row, {@link #STATUS_UNKNOWN} on a DB error. One primary-key lookup: cheap enough to answer on every child ping.
+     */
+    public int getNodeStatusCode(String regionId, String agentId) {
+        String queryString;
+        String key;
+        if (agentId != null) {
+            queryString = "SELECT status_code FROM anode WHERE agent_id = ?";
+            key = agentId;
+        } else if (regionId != null) {
+            queryString = "SELECT status_code FROM rnode WHERE region_id = ?";
+            key = regionId;
+        } else {
+            return STATUS_UNKNOWN;
+        }
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement(queryString)) {
+            stmt.setString(1, textParam(key));
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next() ? rs.getInt(1) : NO_ROW;
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.getNodeStatusCode()", ex);
+            return STATUS_UNKNOWN;
+        }
+    }
+
+    public static final int NO_ROW = -1;
+    public static final int STATUS_UNKNOWN = -2;
 
     public List<String> getNodeList(String regionId, String agentId) {
 
