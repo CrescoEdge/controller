@@ -144,484 +144,19 @@ public class MsgRouter {
                 //}
 
 
-                switch (routePath) {
-
-                    case 335:
-                        logger.debug("remote agent sending message to local agent 463");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 351:
-                        logger.debug("remote agent sending message to local plugin 351");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 383:
-                        logger.debug("remote agent sending message to local plugin 383");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 463:
-                        logger.debug("remote agent sending message to local agent 463");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 495:
-                        logger.debug("remote plugin sending message to local agent 495");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 479:
-                        logger.debug("remote agent sending message to local plugin 479");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 511:
-                        logger.debug("remote plugin sending message to local plugin 511");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 655:
-                        logger.debug("Local agent sending message to remote global agent 655");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 671:
-                        logger.debug("Local agent sending message to remote global agentcontroller 671");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 687:
-                        logger.debug("Local agentcontroller sending message to remote global agent 687");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
-                        break;
-
-                    case 703:
-                        logger.debug("Local agentcontroller sending message to remote global agentcontroller 703");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
-                        break;
-
-                    case 719:
-                        logger.debug("Local agent sending message to remote regional agent 719");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 735:
-                        logger.debug("Local agent sending message to remote regional agentcontroller 735");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 751:
-                        logger.debug("Local agentcontroller sending message to remote regional agent 751");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 767:
-                        logger.debug("Local agentcontroller sending message to remote regional agentcontroller 767");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 991:
-                        logger.debug("Local agent sending message to local agentcontroller 991");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 975:
-                        logger.debug("Local agent sending message to self 1007");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 1007:
-                        logger.debug("Local agentcontroller sending message to local agent 1007");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 1023:
-                        logger.debug("Local agentcontroller sending message to local agentcontroller 1023");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 4447:
-                        logger.debug("Remote globalcontroller sending message to local agentcontroller plugin 4447");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 4431:
-                        logger.debug("Remote region sending message to local agent 4431");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 4751:
-                        logger.debug("Local agentcontroller sending message to remote global agent 4751");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 4767:
-                        logger.debug("Local agentcontroller sending message to remote global agent 4767");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 4783:
-                        logger.debug("Local agentcontroller sending message to remote global agent 4783");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
-                        break;
-
-                    case 4799:
-                        logger.debug("Local agentcontroller sending message to remote global agentcontroller 4799");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteGlobal(rm);
-                        break;
-
-                    case 4815:
-                        logger.debug("Local agent sending message to local regional agent 4815");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 4831:
-                        logger.debug("Local agent sending message to local regional agentcontroller 4831");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 4847:
-                        logger.debug("Local agentcontroller sending message to local regional agent 4847");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 4863:
-                        logger.debug("Local agentcontroller sending message to local regional agentcontroller 4863");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 5071:
-                        logger.debug("Local agent sending message to self 5071");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 5087:
-                        logger.debug("Local agent sending message to local agentcontroller 5087");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 5103:
-                        logger.debug("Local agentcontroller sending message to local agent 5103");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 5119:
-                        logger.debug("Local agentcontroller sending message to local agentcontroller 5119");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 12623:
-                        logger.debug("Remote Global or Region sending message to local agent 12623");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 12639:
-                        logger.debug("remote agent sending message to local agent plugin");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 12655:
-                        logger.debug("remote global agent sending message to local global agent");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 12671:
-                        logger.debug("remote agent sending message to local agent");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 12751:
-                        logger.debug("Remote agent sending message to local agent 12751");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 12767:
-                        logger.debug("remote agent sending message to local plugin 12767");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 12799:
-                        logger.debug("remote agent sending message to local plugin 12799");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 12943:
-                        logger.debug("Local region sending message to remote region 12943");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        //forwardToLocalGlobal(rm);
-                        break;
-
-                    case 12959:
-                        logger.debug("Local agent sending message to local regional agentcontroller 12959");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalGlobal(rm);
-                        break;
-
-                    case 12975:
-                        logger.debug("Local agentcontroller sending message to local global agent 12975");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 12991:
-                        logger.debug("Local agentcontroller sending message to local global agentcontroller 12991");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalGlobal(rm);
-                        break;
-
-                    case 13007:
-                        logger.debug("Local agent sending message to local regional agent 13007");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 13023:
-                        logger.debug("Local agent sending message to local regional agentcontroller 13023");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 13039:
-                        logger.debug("Local agentcontroller sending message to local regional agent 13039");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 13055:
-                        logger.debug("Local agentcontroller sending message to local regional agentcontroller 13055");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 13279:
-                        logger.debug("Local agent sending message to local agentcontroller 13279");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 13311:
-                        logger.debug("Local agentcontroller sending message to local agentcontroller 13311");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 13263:
-                        logger.debug("Local agent sending message to self 13263");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 13295:
-                        logger.debug("Local agentcontroller sending message to local agent 13295");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalAgent(rm);
-                        break;
-
-                    case 16863:
-                        logger.debug("remote region sending message to local agent controller 16863");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 17359:
-                        logger.debug("Local agentcontroller sending message to remote regional or global controller 17359");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegionalController(rm);
-                        break;
-
-                    case 17391:
-                        logger.debug("Local agentcontroller sending message to remote regional or global controller 17391");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegionalController(rm);
-                        break;
-
-                    case 20943:
-                        logger.debug("remote agent sending message to local regional controller 20943");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 20975:
-                        logger.debug("remote plugin sending message to local regional controller 20975");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 21135:
-                        logger.debug("Local region sending message to remote global controller 21135");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 21199:
-                        logger.debug("Local region sending message to local regional controller 21199");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 21455:
-                        logger.debug("Local agent sending message to local regional or global controller 21455");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 21487:
-                        logger.debug("Local agent controller sending message to local regional or remote global controller 21487");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 29007:
-                        logger.debug("Remote regional controller sending message to local global controller 29007");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 29039:
-                        logger.debug("Remote plugin sending message to local global controller 29039");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-
-                    case 29135:
-                        logger.debug("Remote agent sending message to local regional controller 29135");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 29167:
-                        logger.debug("Remote agent sending message to local global controller 29167");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 29327:
-                        logger.debug("Local global controller sending message to remote regional controller 29327");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 29391:
-                        logger.debug("Local agent sending message to remote agent 29391");
-                        logger.trace(rm.getParams().toString());
-                        forwardToRemoteRegion(rm);
-                        break;
-
-                    case 29407:
-                        logger.debug("Local agent sending message to remote agent 29407");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegion(rm);
-                        break;
-
-                    case 29647:
-                        logger.debug("Local or remote agent sending message to local regional controller 29647");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 29663:
-                        logger.debug("Local regional or local global controller sending message back to plugin 29663");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalPlugin(rm);
-                        break;
-
-                    case 29679:
-                        logger.debug("Local agentcontroller sending message to local global controller 29679");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    case 4463:
-                        // Remote controller (another region, or the global) -> THIS region's controller.
-                        // A cross-region controller<->controller RPC (e.g. the global's getmetricinventory /
-                        // listagents fan-out to a child region). ActiveMQ delivered it here because it is
-                        // addressed to this region's queue, so this is LOCAL delivery (not transit): hand it
-                        // to the regional controller executor, which processes the action and returns the RPC
-                        // reply. The strict-tree single-node builds never exercised this hop, so the static
-                        // table omitted it and the message fell to default-drop (silent RPC timeout).
-                        logger.debug("Remote controller sending message to local regional controller 4463");
-                        logger.trace(rm.getParams().toString());
-                        forwardToLocalRegionalController(rm);
-                        break;
-
-                    default:
-                        // CATCH-ALL. The static table enumerates the hop patterns the tree/loopback builds
-                        // exercised; a real multi-region mesh produces a few more. Resolve by DESTINATION:
-                        //   - addressed to THIS node  -> deliver locally (controller or a hosted plugin);
-                        //   - addressed ELSEWHERE     -> RELAY it toward its destination. Relaying is the
-                        //     whole point of a bridge: a region acts as a router, forwarding traffic for
-                        //     other regions so the mesh can carry (and, with source-routing/cost selection,
-                        //     steer) cross-region flows -- e.g. R1 -> G -> R2 around a slow direct link.
-                        // SECURITY: this is not an open relay. Every message here already arrived over an
-                        // mTLS-authenticated, secret-gated broker bridge (trusted fabric traffic), it is
-                        // forwarded only toward the destination named in its own header, and getTTL() above
-                        // bounds hop count (drops at >10) so a relay loop cannot amplify. Which bridge a
-                        // transit hop takes is the PATH LOOKUP (gated net_source_routing / cost selector);
-                        // absent a route header we hand it to the broker network toward its dst.
-                        boolean forThisNode = rm.getDstRegion() != null
-                                && rm.getDstRegion().equals(plugin.getRegion())
-                                && rm.getDstAgent() != null
-                                && rm.getDstAgent().equals(plugin.getAgent());
-                        if (forThisNode && (rm.getDstPlugin() == null
-                                || rm.getDstPlugin().equals(plugin.getPluginID()))) {
-                            logger.debug("route catch-all: local controller delivery rp=" + routePath);
-                            // Deliver to THIS node's own controller executor (pluginBuilder.msgIn -> executor),
-                            // not sendRegionalMsg (which forwards up to the regional controller). Using the
-                            // regional path here silently dropped agent-addressed RPCs (e.g. pluginlist) that
-                            // reach a leaf agent via the catch-all, so the reply never came back (RPC timeout).
-                            forwardToLocalAgent(rm);
-                        } else if (forThisNode && rm.getDstPlugin() != null) {
-                            logger.debug("route catch-all: local plugin delivery rp=" + routePath);
-                            forwardToLocalPlugin(rm);
-                        } else {
-                            logger.debug("route catch-all: relay toward " + rm.getForwardDst()
-                                    + " rp=" + routePath);
-                            forwardToRemoteRegion(rm);
-                        }
-                        break;
+                Hop hop = decide(routePath, rm, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
+                logger.debug("route rp=" + routePath + " -> " + hop);
+                logger.trace(rm.getParams().toString());
+
+                switch (hop) {
+                    case LOCAL_AGENT:                forwardToLocalAgent(rm); break;
+                    case LOCAL_PLUGIN:               forwardToLocalPlugin(rm); break;
+                    case LOCAL_REGIONAL_CONTROLLER:  forwardToLocalRegionalController(rm); break;
+                    case REMOTE_REGIONAL_CONTROLLER: forwardToRemoteRegionalController(rm); break;
+                    case LOCAL_REGION:               forwardToLocalRegion(rm); break;
+                    case REMOTE_REGION:              forwardToRemoteRegion(rm); break;
+                    case LOCAL_GLOBAL:               forwardToLocalGlobal(rm); break;
+                    case REMOTE_GLOBAL:              forwardToRemoteGlobal(rm); break;
                 }
 
             }
@@ -755,87 +290,9 @@ public class MsgRouter {
     private int getRoutePath(MsgEvent rm) {
         int routePath;
         try {
-            String RC = "0";
-            if(controllerEngine.cstate.isRegionalController()) {
-                RC = "1";
-            }
-
-            String GC = "0";
-            if(controllerEngine.cstate.isGlobalController()) {
-                GC = "1";
-            }
-
-            // Message-scope route bits. IMPORTANT (do NOT "fix" GM to be set on isGlobal):
-            // A global message is intentionally routed through the REGIONAL (RM) handling cases.
-            // GM is the top positional bit in routeString below; it is a RESERVED placeholder that
-            // keeps every routePath value aligned with the switch(routePath) case numbers (which top
-            // out at 29679, i.e. GM always 0). No GM=1 case exists — setting GM here would push global
-            // traffic to routePath >= 32768, which the switch's default only logs-and-drops (silent
-            // loss of global control-plane traffic). Splitting global vs regional routing is a full
-            // routing-table rework (new GM cases + a routing test matrix), not this one line.
-            String RM = (rm.isRegional() || rm.isGlobal()) ? "1" : "0";
-            String GM = "0"; // reserved positional bit only (see note above); never set to 1
-
-            String RXre = "0";
-            String RXr = "0";
-            String RXae = "0";
-            String RXa = "0";
-            String RXp = "0";
-            String RXpe = "0";
-
-
-            String TXr = "0";
-            String TXre = "0";
-            String TXa = "0";
-            String TXae = "0";
-            String TXp = "0";
-            String TXpe = "0";
-
-
-            if (rm.getDstRegion() != null) {
-                RXre = "1";
-                if (rm.getDstRegion().equals(/*PluginEngine.region*/plugin.getRegion())) {
-                    RXr = "1";
-                }
-            }
-
-            if (rm.getDstAgent() != null) {
-                RXae = "1";
-                if (rm.getDstAgent().equals(/*PluginEngine.agent*/plugin.getAgent())) {
-                    RXa = "1";
-                }
-            }
-
-            if (rm.getDstPlugin() != null) {
-                RXpe = "1";
-                if (rm.getDstPlugin().equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
-                    RXp = "1";
-                }
-            }
-
-            if (rm.getSrcRegion() != null) {
-                TXre = "1";
-                if (rm.getSrcRegion().equals(/*PluginEngine.region*/plugin.getRegion())) {
-                    TXr = "1";
-                }
-            }
-            if (rm.getSrcAgent() != null) {
-                TXae = "1";
-                if (rm.getSrcAgent().equals(/*PluginEngine.agent*/plugin.getAgent())) {
-                    TXa = "1";
-                }
-            }
-            if ( rm.getSrcPlugin() != null) {
-                TXpe = "1";
-                if ( rm.getSrcPlugin().equals(/*PluginEngine.agentcontroller*/plugin.getPluginID())) {
-                    TXp = "1";
-                }
-            }
-
-            // 001011 10 11 11
-            String routeString = GM + RM + GC + RC + TXp + RXp + TXa + RXa + TXr + RXr + TXpe + RXpe + TXae + RXae + TXre + RXre;
-            routePath = Integer.parseInt(routeString, 2);
-            //System.out.println("desc:" + rm.getParam("desc") + "\nroutePath:" + routePath + " RouteString:\n" + routeString + "\n" + rm.getParams());
+            routePath = routePath(rm, controllerEngine.cstate.isRegionalController(),
+                    controllerEngine.cstate.isGlobalController(),
+                    plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
         } catch (Exception ex) {
             if(rm != null) {
                 logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " " + rm.getParams().toString());
@@ -845,9 +302,222 @@ public class MsgRouter {
             logger.error("MsgRouter.getRoutePath getRoutePath failure", ex);
             routePath = -1;
         }
-        //System.out.println("REGIONAL CONTROLLER ROUTEPATH=" + routePath + " MsgType=" + rm.getMsgType() + " Params=" + rm.getParams());
-
         return routePath;
+    }
+
+    /**
+     * The route code of {@code rm} as seen by the node (region, agent, pluginId) whose controller is a
+     * regional controller and/or the global controller: one bit per header comparison, see routeString.
+     */
+    static int routePath(MsgEvent rm, boolean regionalController, boolean globalController,
+                         String region, String agent, String pluginId) {
+        String RC = "0";
+        if (regionalController) {
+            RC = "1";
+        }
+
+        String GC = "0";
+        if (globalController) {
+            GC = "1";
+        }
+
+        // Message-scope route bits. IMPORTANT (do NOT "fix" GM to be set on isGlobal):
+        // A global message is intentionally routed through the REGIONAL (RM) handling cases.
+        // GM is the top positional bit in routeString below; it is a RESERVED placeholder that
+        // keeps every routePath value aligned with the switch(routePath) case numbers (which top
+        // out at 29679, i.e. GM always 0). No GM=1 case exists — setting GM here would push global
+        // traffic to routePath >= 32768, which the switch's default only logs-and-drops (silent
+        // loss of global control-plane traffic). Splitting global vs regional routing is a full
+        // routing-table rework (new GM cases + a routing test matrix), not this one line.
+        String RM = (rm.isRegional() || rm.isGlobal()) ? "1" : "0";
+        String GM = "0"; // reserved positional bit only (see note above); never set to 1
+
+        String RXre = "0";
+        String RXr = "0";
+        String RXae = "0";
+        String RXa = "0";
+        String RXp = "0";
+        String RXpe = "0";
+
+
+        String TXr = "0";
+        String TXre = "0";
+        String TXa = "0";
+        String TXae = "0";
+        String TXp = "0";
+        String TXpe = "0";
+
+
+        if (rm.getDstRegion() != null) {
+            RXre = "1";
+            if (rm.getDstRegion().equals(region)) {
+                RXr = "1";
+            }
+        }
+
+        if (rm.getDstAgent() != null) {
+            RXae = "1";
+            if (rm.getDstAgent().equals(agent)) {
+                RXa = "1";
+            }
+        }
+
+        if (rm.getDstPlugin() != null) {
+            RXpe = "1";
+            if (rm.getDstPlugin().equals(pluginId)) {
+                RXp = "1";
+            }
+        }
+
+        if (rm.getSrcRegion() != null) {
+            TXre = "1";
+            if (rm.getSrcRegion().equals(region)) {
+                TXr = "1";
+            }
+        }
+        if (rm.getSrcAgent() != null) {
+            TXae = "1";
+            if (rm.getSrcAgent().equals(agent)) {
+                TXa = "1";
+            }
+        }
+        if ( rm.getSrcPlugin() != null) {
+            TXpe = "1";
+            if ( rm.getSrcPlugin().equals(pluginId)) {
+                TXp = "1";
+            }
+        }
+
+        // 001011 10 11 11
+        String routeString = GM + RM + GC + RC + TXp + RXp + TXa + RXa + TXr + RXr + TXpe + RXpe + TXae + RXae + TXre + RXre;
+        return Integer.parseInt(routeString, 2);
+    }
+
+    /** Where {@link #route} hands a message: one value per forwardTo* method. */
+    enum Hop {
+        LOCAL_AGENT, LOCAL_PLUGIN, LOCAL_REGIONAL_CONTROLLER, REMOTE_REGIONAL_CONTROLLER,
+        LOCAL_REGION, REMOTE_REGION, LOCAL_GLOBAL, REMOTE_GLOBAL
+    }
+
+    /**
+     * The routing decision for {@code rm} with route code {@code routePath} at the node (region, agent,
+     * pluginId). The static table names the hop patterns the fabric produces; every other code takes the
+     * destination-resolved catch-all ({@link #catchAll}).
+     */
+    static Hop decide(int routePath, MsgEvent rm, String region, String agent, String pluginId) {
+        switch (routePath) {
+            case 335: return Hop.LOCAL_AGENT; // remote agent sending message to local agent
+            case 351: return Hop.LOCAL_PLUGIN; // remote agent sending message to local plugin
+            case 383: return Hop.LOCAL_PLUGIN; // remote agent sending message to local plugin
+            case 463: return Hop.LOCAL_AGENT; // remote agent sending message to local agent
+            case 495: return Hop.LOCAL_AGENT; // remote plugin sending message to local agent
+            case 479: return Hop.LOCAL_PLUGIN; // remote agent sending message to local plugin
+            case 511: return Hop.LOCAL_PLUGIN; // remote plugin sending message to local plugin
+            case 655: return Hop.REMOTE_REGION; // Local agent sending message to remote global agent
+            case 671: return Hop.REMOTE_REGION; // Local agent sending message to remote global agentcontroller
+            case 687: return Hop.REMOTE_GLOBAL; // Local agentcontroller sending message to remote global agent
+            case 703: return Hop.REMOTE_GLOBAL; // Local agentcontroller sending message to remote global agentcontroller
+            case 719: return Hop.REMOTE_REGION; // Local agent sending message to remote regional agent
+            case 735: return Hop.REMOTE_REGION; // Local agent sending message to remote regional agentcontroller
+            case 751: return Hop.REMOTE_REGION; // Local agentcontroller sending message to remote regional agent
+            case 767: return Hop.REMOTE_REGION; // Local agentcontroller sending message to remote regional agentcontroller
+            case 991: return Hop.LOCAL_PLUGIN; // Local agent sending message to local agentcontroller
+            case 975: return Hop.LOCAL_AGENT; // Local agent sending message to self
+            case 1007: return Hop.LOCAL_AGENT; // Local agentcontroller sending message to local agent
+            case 1023: return Hop.LOCAL_PLUGIN; // Local agentcontroller sending message to local agentcontroller
+            case 4447: return Hop.LOCAL_PLUGIN; // Remote globalcontroller sending message to local agentcontroller plugin
+            case 4431: return Hop.LOCAL_AGENT; // Remote region sending message to local agent
+            case 4751: return Hop.REMOTE_REGION; // Local agentcontroller sending message to remote global agent
+            case 4767: return Hop.REMOTE_REGION; // Local agentcontroller sending message to remote global agent
+            case 4783: return Hop.REMOTE_GLOBAL; // Local agentcontroller sending message to remote global agent
+            case 4799: return Hop.REMOTE_GLOBAL; // Local agentcontroller sending message to remote global agentcontroller
+            case 4815: return Hop.LOCAL_REGION; // Local agent sending message to local regional agent
+            case 4831: return Hop.LOCAL_REGION; // Local agent sending message to local regional agentcontroller
+            case 4847: return Hop.LOCAL_REGION; // Local agentcontroller sending message to local regional agent
+            case 4863: return Hop.LOCAL_REGION; // Local agentcontroller sending message to local regional agentcontroller
+            case 5071: return Hop.LOCAL_AGENT; // Local agent sending message to self
+            case 5087: return Hop.LOCAL_PLUGIN; // Local agent sending message to local agentcontroller
+            case 5103: return Hop.LOCAL_AGENT; // Local agentcontroller sending message to local agent
+            case 5119: return Hop.LOCAL_PLUGIN; // Local agentcontroller sending message to local agentcontroller
+            case 12623: return Hop.LOCAL_AGENT; // Remote Global or Region sending message to local agent
+            case 12639: return Hop.LOCAL_PLUGIN; // remote agent sending message to local agent plugin
+            case 12655: return Hop.LOCAL_AGENT; // remote global agent sending message to local global agent
+            case 12671: return Hop.LOCAL_PLUGIN; // remote agent sending message to local agent
+            case 12751: return Hop.LOCAL_AGENT; // Remote agent sending message to local agent
+            case 12767: return Hop.LOCAL_PLUGIN; // remote agent sending message to local plugin
+            case 12799: return Hop.LOCAL_PLUGIN; // remote agent sending message to local plugin
+            case 12943: return Hop.REMOTE_REGION; // Local region sending message to remote region
+            case 12959: return Hop.LOCAL_GLOBAL; // Local agent sending message to local regional agentcontroller
+            case 12975: return Hop.REMOTE_REGION; // Local agentcontroller sending message to local global agent
+            case 12991: return Hop.LOCAL_GLOBAL; // Local agentcontroller sending message to local global agentcontroller
+            case 13007: return Hop.LOCAL_REGION; // Local agent sending message to local regional agent
+            case 13023: return Hop.LOCAL_REGION; // Local agent sending message to local regional agentcontroller
+            case 13039: return Hop.LOCAL_REGION; // Local agentcontroller sending message to local regional agent
+            case 13055: return Hop.LOCAL_REGION; // Local agentcontroller sending message to local regional agentcontroller
+            case 13279: return Hop.LOCAL_PLUGIN; // Local agent sending message to local agentcontroller
+            case 13311: return Hop.LOCAL_PLUGIN; // Local agentcontroller sending message to local agentcontroller
+            case 13263: return Hop.LOCAL_AGENT; // Local agent sending message to self
+            case 13295: return Hop.LOCAL_AGENT; // Local agentcontroller sending message to local agent
+            case 16863: return Hop.LOCAL_PLUGIN; // remote region sending message to local agent controller
+            case 17359: return Hop.REMOTE_REGIONAL_CONTROLLER; // Local agentcontroller sending message to remote regional or global controller
+            case 17391: return Hop.REMOTE_REGIONAL_CONTROLLER; // Local agentcontroller sending message to remote regional or global controller
+            case 20943: return Hop.LOCAL_REGIONAL_CONTROLLER; // remote agent sending message to local regional controller
+            case 20975: return Hop.LOCAL_REGIONAL_CONTROLLER; // remote plugin sending message to local regional controller
+            case 21135: return Hop.REMOTE_REGION; // Local region sending message to remote global controller
+            case 21199: return Hop.LOCAL_REGION; // Local region sending message to local regional controller
+            case 21455: return Hop.LOCAL_REGIONAL_CONTROLLER; // Local agent sending message to local regional or global controller
+            case 21487: return Hop.LOCAL_REGIONAL_CONTROLLER; // Local agent controller sending message to local regional or remote global controller
+            case 29007: return Hop.LOCAL_REGIONAL_CONTROLLER; // Remote regional controller sending message to local global controller
+            case 29039: return Hop.LOCAL_REGIONAL_CONTROLLER; // Remote plugin sending message to local global controller
+            case 29135: return Hop.LOCAL_REGIONAL_CONTROLLER; // Remote agent sending message to local regional controller
+            case 29167: return Hop.LOCAL_REGIONAL_CONTROLLER; // Remote agent sending message to local global controller
+            case 29327: return Hop.REMOTE_REGION; // Local global controller sending message to remote regional controller
+            case 29391: return Hop.REMOTE_REGION; // Local agent sending message to remote agent
+            case 29407: return Hop.LOCAL_REGION; // Local agent sending message to remote agent
+            case 29647: return Hop.LOCAL_REGIONAL_CONTROLLER; // Local or remote agent sending message to local regional controller
+            case 29663: return Hop.LOCAL_PLUGIN; // Local regional or local global controller sending message back to plugin
+            case 29679: return Hop.LOCAL_REGIONAL_CONTROLLER; // Local agentcontroller sending message to local global controller
+            // Remote controller (another region, or the global) -> THIS region's controller.
+            // A cross-region controller<->controller RPC (e.g. the global's getmetricinventory /
+            // listagents fan-out to a child region). ActiveMQ delivered it here because it is
+            // addressed to this region's queue, so this is LOCAL delivery (not transit): hand it
+            // to the regional controller executor, which processes the action and returns the RPC
+            // reply. The strict-tree single-node builds never exercised this hop, so the static
+            // table omitted it and the message fell to default-drop (silent RPC timeout).
+            case 4463: return Hop.LOCAL_REGIONAL_CONTROLLER;
+            default: return catchAll(rm, region, agent, pluginId);
+        }
+    }
+
+    // CATCH-ALL. The static table enumerates the hop patterns the tree/loopback builds
+    // exercised; a real multi-region mesh produces a few more. Resolve by DESTINATION:
+    //   - addressed to THIS node  -> deliver locally (controller or a hosted plugin);
+    //   - addressed ELSEWHERE     -> RELAY it toward its destination. Relaying is the
+    //     whole point of a bridge: a region acts as a router, forwarding traffic for
+    //     other regions so the mesh can carry (and, with source-routing/cost selection,
+    //     steer) cross-region flows -- e.g. R1 -> G -> R2 around a slow direct link.
+    // SECURITY: this is not an open relay. Every message here already arrived over an
+    // mTLS-authenticated, secret-gated broker bridge (trusted fabric traffic), it is
+    // forwarded only toward the destination named in its own header, and getTTL() above
+    // bounds hop count (drops at >10) so a relay loop cannot amplify. Which bridge a
+    // transit hop takes is the PATH LOOKUP (gated net_source_routing / cost selector);
+    // absent a route header we hand it to the broker network toward its dst.
+    static Hop catchAll(MsgEvent rm, String region, String agent, String pluginId) {
+        boolean forThisNode = rm.getDstRegion() != null
+                && rm.getDstRegion().equals(region)
+                && rm.getDstAgent() != null
+                && rm.getDstAgent().equals(agent);
+        if (forThisNode && (rm.getDstPlugin() == null || rm.getDstPlugin().equals(pluginId))) {
+            // Deliver to THIS node's own controller executor (pluginBuilder.msgIn -> executor),
+            // not sendRegionalMsg (which forwards up to the regional controller). Using the
+            // regional path here silently dropped agent-addressed RPCs (e.g. pluginlist) that
+            // reach a leaf agent via the catch-all, so the reply never came back (RPC timeout).
+            return Hop.LOCAL_AGENT;
+        } else if (forThisNode && rm.getDstPlugin() != null) {
+            return Hop.LOCAL_PLUGIN;
+        } else {
+            return Hop.REMOTE_REGION;
+        }
     }
 
     private MsgEvent getTTL(MsgEvent rm) {
