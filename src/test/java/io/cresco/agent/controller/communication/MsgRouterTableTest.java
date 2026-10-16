@@ -34,9 +34,15 @@ class MsgRouterTableTest {
 
     /**
      * The cells this branch deliberately changes against 191d895, keyed "rp=<code> <flags>", valued
-     * "<before> -> <after>". Empty for the pure table refactor.
+     * "<before> -> <after>".
      */
     static final Map<String, String> CHANGED = new TreeMap<>();
+    static {
+        // a regional-controller message from another region addressed to this regional (non-global) controller:
+        // from a plugin/wsapi there (20847) or from a controller there (20815). Global-flagged: unchanged.
+        CHANGED.put("rp=20815 regional", "LOCAL_AGENT -> LOCAL_REGIONAL_CONTROLLER");
+        CHANGED.put("rp=20847 regional", "LOCAL_AGENT -> LOCAL_REGIONAL_CONTROLLER");
+    }
 
     static Map<Integer, Hop> pinnedTable() throws Exception {
         Map<Integer, Hop> table = new TreeMap<>();
