@@ -10,6 +10,7 @@ import io.cresco.library.utilities.CLogger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class PollAddPipeline implements Runnable {
 
@@ -30,6 +31,27 @@ public class PollAddPipeline implements Runnable {
         pipelineNodes = new ArrayList<>(assignedNodes);
         gson = new Gson();
 	}
+    /**
+     * The global scheduler's addplugin request for a CADL node: placement as top-level params, the plugin
+     * config and edges compressed as the agent's pluginadd reads them ({@link PluginAddRequest}).
+     * As before, the node's params lose their placement and edges and get the default persistence_code.
+     */
+    public static MsgEvent schedulingRequest(gNode gnode, String pipelineId) {
+        MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, null, null, null, "add application node");
+        me.setParam("globalcmd", "addplugin");
+        me.setParam("inode_id", gnode.node_id);
+        me.setParam("resource_id", pipelineId);
+        me.setParam("location_region", gnode.params.get("location_region"));
+        me.setParam("location_agent", gnode.params.get("location_agent"));
+        String edges = gnode.params.get("edges");
+        if (edges != null) me.setCompressedParam("edges", edges);
+        Map<String, String> cfg = PluginAddRequest.nodeConfig(gnode.params);
+        gnode.params.clear();
+        gnode.params.putAll(cfg);
+        me.setCompressedParam("configparams", PluginAddRequest.nodeConfigJson(cfg));
+        return me;
+    }
+
 	 public void run() {
 	        try 
 	        {
@@ -37,44 +59,8 @@ public class PollAddPipeline implements Runnable {
                 for(gNode gnode : pipelineNodes) {
 
                     logger.debug("gnode_id : " + gnode.node_id + " params : " + gnode.params);
-                    MsgEvent me = new MsgEvent(MsgEvent.Type.CONFIG, null, null, null, "add application node");
-                    me.setParam("globalcmd", "addplugin");
-                    me.setParam("inode_id", gnode.node_id);
-                    me.setParam("resource_id", pipelineId);
-                    me.setParam("location_region",gnode.params.get("location_region"));
-                    me.setParam("location_agent",gnode.params.get("location_agent"));
-
-                    //todo persistance should be set by the application explicity
-                    //if <9 node will persist, so we will make that the default for CADL plugins
-                    if(!gnode.params.containsKey("persistence_code")) {
-                        gnode.params.put("persistence_code","10");
-                    }
-
-                    gnode.params.remove("location_region");
-                    gnode.params.remove("location_agent");
-
+                    MsgEvent me = schedulingRequest(gnode, pipelineId);
                     logger.debug("AddPipeline RUN MsgEvent [" + gson.toJson(me) + "]");
-
-                    if(gnode.params.containsKey("edges")) {
-                        //remove edges from config if they exist
-                        me.setCompressedParam("edges", gnode.params.get("edges"));
-                        gnode.params.remove("edges");
-                    }
-
-                    /*
-                    StringBuilder configparms = new StringBuilder();
-                    for (Map.Entry<String, String> entry : gnode.params.entrySet())
-                    {
-                        configparms.append(entry.getKey() + "=" + entry.getValue() + ",");
-                        //System.out.println(entry.getKey() + "/" + entry.getValue());
-                    }
-                    if(configparms.length() > 0) {
-                        configparms.deleteCharAt(configparms.length() -1);
-                    }
-                    */
-
-                    me.setCompressedParam("configparams",gson.toJson(gnode.params));
-                    //me.setParam("configparams", configparms.toString());
                     logger.debug("Message [" + me.getParams().toString() + "]");
                     controllerEngine.getGDB().setINodeStatusCode(gnode.node_id, 4,"iNode resources scheduled.");
 

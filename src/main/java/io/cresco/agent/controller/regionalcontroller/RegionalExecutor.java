@@ -3,6 +3,7 @@ package io.cresco.agent.controller.regionalcontroller;
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
+import io.cresco.agent.controller.globalscheduler.PluginAddRequest;
 import io.cresco.library.capability.*;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.plugin.Executor;
@@ -164,13 +165,17 @@ public class RegionalExecutor implements Executor {
         return incoming;
     }
 
-    /** Dispatch a plugin add to a local agent (region-local placement). Best-effort; logs the outcome. */
+    /**
+     * Dispatch a plugin add to a local agent (region-local placement). Best-effort; logs the outcome.
+     * The request is built exactly as the global scheduler builds it ({@link PluginAddRequest}): the node's
+     * config in compressed {@code configparams}, its edges in compressed {@code edges}, never spread over the
+     * message as top-level params (the agent's pluginadd would not find its config there).
+     */
     private void dispatchLocalPluginAdd(String region, String agent, io.cresco.library.app.gNode n) {
         try {
             MsgEvent add = plugin.getGlobalAgentMsgEvent(MsgEvent.Type.CONFIG, region, agent);
             if (add == null) return;
-            add.setParam("action", "pluginadd");
-            if (n.params != null) for (Map.Entry<String, String> e : n.params.entrySet()) add.setParam(e.getKey(), e.getValue());
+            PluginAddRequest.fill(add, n.params);
             add.setParam("no_cost_route", "1");
             plugin.msgOut(add);
         } catch (Exception e) {
