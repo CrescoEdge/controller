@@ -722,7 +722,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             // BOUNDED: parking the caller forever on an inactive controller wedged send threads
             int waited = 0;
             int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
-            while(!controllerEngine.cstate.isActive()) {
+            while(!controllerEngine.cstate.isDataPlaneUsable()) {
                 if (waited++ >= maxWait) {
                     logger.error("sendMessage(shard): controller not active after " + maxWait
                             + "s - dropping send instead of blocking the caller forever");
@@ -944,7 +944,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             // BOUNDED: parking the caller forever on an inactive controller wedged send threads
             int waited = 0;
             int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
-            while(!controllerEngine.cstate.isActive()) {
+            while(!controllerEngine.cstate.isDataPlaneUsable()) {
                 if (waited++ >= maxWait) {
                     logger.error("sendMessage: controller not active after " + maxWait
                             + "s - dropping send instead of blocking the caller forever");

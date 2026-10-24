@@ -41,6 +41,18 @@ public class ControllerStateImp implements ControllerState {
 				|| (currentMode == ControllerMode.GLOBAL));
 	}
 
+	/**
+	 * The node's dataplane may carry traffic. An active mode, and also a regional controller that lost its global
+	 * (REGION_GLOBAL_FAILED) or is joining it again (REGION_GLOBAL_INIT): its own broker, its sessions on it and its
+	 * agents keep running through a global restart, so its dataplane (a regional wsapi gateway's streams, route state)
+	 * must not stall for the global's outage (GaiaKeep gfs#26: a global restart blocked every send of the region's
+	 * controller for dataplane_session_wait_sec, then dropped it).
+	 */
+	public boolean isDataPlaneUsable() {
+		ControllerMode m = getControllerState();
+		return isActive() || m == ControllerMode.REGION_GLOBAL_FAILED || m == ControllerMode.REGION_GLOBAL_INIT;
+	}
+
 	// The failed modes. Was buggy: it listed REGION_GLOBAL (the healthy active state) so a
 	// region+global reported isActive() && isFailed() at once; and it omitted REGION_FAILED.
 	public boolean isFailed() {

@@ -32,6 +32,9 @@ public class AgentConsumer {
 	private ActiveMQSession sess;
 	private ControllerEngine controllerEngine;
     private MessageConsumer consumer;
+	/** gfs#26: the consumer of the former address's inbox (region_alias, {@link RegionAlias}); null without one. */
+	private MessageConsumer aliasConsumer;
+	private String aliasRegion, aliasQueueName;
 	private Gson gson;
 	private boolean dedicatedConnection;
 	private volatile org.apache.activemq.ActiveMQConnection connection;
@@ -90,6 +93,14 @@ public class AgentConsumer {
 		this.uri = URI;
 		this.RXQueueName = RXQueueName;
 		this.callIdKey = "callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID();
+		// gfs#26: a node moved to another region keeps answering at its former address (region_alias)
+		boolean global = controllerEngine.cstate != null && controllerEngine.cstate.isGlobalController();
+		this.aliasRegion = RegionAlias.of(plugin, global);
+		this.aliasQueueName = RegionAlias.aliasQueue(RXQueueName, aliasRegion, plugin.getRegion(), plugin.getAgent());
+		if (aliasRegion != null && aliasQueueName == null) {
+			logger.error("region_alias={} ignored: the inbox queue {} does not name this node", aliasRegion, RXQueueName);
+			aliasRegion = null;
+		}
 		setupTransport(URI);
 
 	}
@@ -133,6 +144,11 @@ public class AgentConsumer {
 		try {
 			RXqueue = sess.createQueue(RXQueueName);
 			consumer = sess.createConsumer(RXqueue);
+			if (aliasQueueName != null) {
+				aliasConsumer = sess.createConsumer(sess.createQueue(aliasQueueName));
+				logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias)",
+						aliasQueueName, aliasRegion);
+			}
 		} catch (JMSException | RuntimeException ex) {
 			if (dedicatedConnection) {
 				try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
@@ -142,7 +158,7 @@ public class AgentConsumer {
 		}
 
 
-		consumer.setMessageListener(new MessageListener() {
+		MessageListener inbox = new MessageListener() {
 			public void onMessage(Message msg) {
 				try {
 
@@ -155,6 +171,8 @@ public class AgentConsumer {
 
 						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 						if(me != null) {
+							// gfs#26: addressed to this node's former address (region_alias): it is for this node
+							RegionAlias.normalize(me, aliasRegion, plugin.getRegion(), plugin.getAgent());
 
 							//logger.info("TEST PLUG 0");
 							//logger.info("Q: " + RXQueueName);
@@ -204,6 +222,10 @@ public class AgentConsumer {
 						String filegroup = msg.getStringProperty("filegroup");
 						String dstRegion = msg.getStringProperty("dst_region");
 						String dstAgent = msg.getStringProperty("dst_agent");
+						// gfs#26: a file part addressed to this node's former address (region_alias) is for this node
+						if (aliasRegion != null && aliasRegion.equals(dstRegion) && plugin.getAgent().equals(dstAgent)) {
+							dstRegion = plugin.getRegion();
+						}
 						String dataName = msg.getStringProperty("dataname");
 						String dataPart = msg.getStringProperty("datapart");
 
@@ -350,7 +372,9 @@ public class AgentConsumer {
 					logger.error("AgentConsumer.onMessage Error : " + ex.getMessage(), ex);
 				}
 			}
-		});
+		};
+		consumer.setMessageListener(inbox);
+		if (aliasConsumer != null) aliasConsumer.setMessageListener(inbox);
 	}
 
 	/**
@@ -398,6 +422,8 @@ public class AgentConsumer {
 	private synchronized void teardownTransport() {
 		if (dedicatedConnection && connection != null) ActiveClient.disposeIfDead(connection);
 		try { if (consumer != null) consumer.close(); } catch (Exception ignore) { }
+		try { if (aliasConsumer != null) aliasConsumer.close(); } catch (Exception ignore) { }
+		aliasConsumer = null;
 		if (dedicatedConnection) {
 			try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
 			ActiveClient.closeConnectionFast(connection);
@@ -495,6 +521,9 @@ public class AgentConsumer {
 				logger.warn("AgentConsumer.shutdown: dedicated transport is dead; disposed it before teardown");
 			}
 		}
+		try {
+			if (aliasConsumer != null) aliasConsumer.close();
+		} catch (Exception ignore) { }
 		try {
 			if (consumer != null) consumer.close();
 		} catch (Exception ex) {

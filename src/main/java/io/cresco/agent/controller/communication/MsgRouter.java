@@ -35,6 +35,24 @@ public class MsgRouter {
         this.logger = plugin.getLogger(MsgRouter.class.getName(),CLogger.Level.Trace);
     }
 
+    /**
+     * gfs#26: this node's former region (region_alias, {@link RegionAlias}), read once: a message for the former
+     * address is this node's. Null on a node without one, and on the global (decided when first asked: the
+     * controller state is not known yet when the router is built).
+     */
+    private volatile String alias;
+    private volatile boolean aliasRead;
+
+    private String alias() {
+        if (!aliasRead) {
+            ControllerStateImp cs = controllerEngine.cstate;
+            if (cs == null || cs.getControllerState() == null) return null;
+            alias = RegionAlias.of(plugin, cs.isGlobalController());
+            aliasRead = true;
+        }
+        return alias;
+    }
+
     // --- Rebuild windows -------------------------------------------------------------------------
     // route() runs on broker/msgIn threads concurrently with the state machine, which tears components
     // down and rebuilds them (isAgentShutdown/stateInit on a parent loss, isRegionalGlobalShutdown on a
@@ -288,7 +306,9 @@ public class MsgRouter {
     }
 
     private void forwardToRemoteGlobal(MsgEvent rm) {
-        logger.error("forwardToRemoteGlobal() " + rm.getParams());
+        // an ordinary relay hop toward the global's region (every message for a region_alias address in that region
+        // takes it, gfs#26): logged at ERROR with its params it flooded the log thousands of times a minute
+        logger.trace("forwardToRemoteGlobal() {}", rm.getParams());
         forwardToRemoteRegion(rm);
     }
 
@@ -301,6 +321,11 @@ public class MsgRouter {
             rm = getTTL(rm);
 
             if(rm != null) {
+
+                // gfs#26: addressed to this node's former address (region_alias): deliver it as addressed to this node
+                if (RegionAlias.normalize(rm, alias(), plugin.getRegion(), plugin.getAgent())) {
+                    logger.trace("route: addressed to the former address in region " + alias + " -> this node");
+                }
 
                 // Controller tiers (ControllerTiers): a controller function runs on the tier that serves it, not
                 // wherever its address happens to point. Decided at the first hop, before any cost/source route
