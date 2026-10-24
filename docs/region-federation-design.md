@@ -85,3 +85,34 @@ in `isRegionalGlobalShutdown()`.
 On this host (VPN owns the default route; only `127.0.0.1` is same-host-reachable), **Fix A is what makes
 a same-host regional controller viable** — without a second routable host or Docker. Until then, the
 verified working multi-node topology is **global + plain agent (case 6) over loopback**.
+
+## Moving an agent to another region without changing its address (`region_alias`, GaiaKeep gfs#26)
+
+An application that names its nodes by Cresco address (`<region>_<agent>`; the GaiaKeep storage core does: Raft peer
+set, node pins, block locations) cannot let those addresses change when a deployment moves from one region (every
+agent on the global's broker) to one region per site (each site's agents on their own regional broker, so a broker
+restart takes down one site's transport, not the fabric's).
+
+`region_alias=<former region>` on a moved agent (`io.cresco.agent.controller.communication.RegionAlias`):
+
+- its inbox (`AgentConsumer`) also consumes the queue of its former address, `<former region>_<agent>` (with the same
+  tenant prefix as its own inbox), on the broker it is attached to;
+- a message addressed to the former address is re-addressed to the agent itself (plugin kept) in the inbox listener and
+  at the first hop of `MsgRouter.route`, so it is delivered locally;
+- senders change nothing. The brokers' demand-forwarding bridges carry a message for the former address to the one
+  consumer of that queue the fewest-hops way: inside the region for the region's own agents, over the direct
+  region-to-region bridge (`regional_peers`, or the inferred one) between regions, and through the global only when it
+  is the only path. With the global's broker down, the region and the region-to-region bridges keep carrying it.
+
+Requirements: agent names unique across the fabric (the global DB already keys agents by name), and no agent of the same
+name left in the former region. Unset, blank, equal to the node's own region, or on the global: nothing changes.
+Proof: `RegionAliasTest` (three embedded brokers: from the region, another region and the global's broker, then with the
+global's broker stopped) and the live GaiaKeep proof `eval/regional_check.py` in GaiaKeep/gfs.
+
+**A region keeps its dataplane through a global restart.** A regional controller that lost its global
+(`REGION_GLOBAL_FAILED`) or is joining it again (`REGION_GLOBAL_INIT`) still runs its own broker, its sessions on it and
+its agents; `ControllerStateImp.isDataPlaneUsable()` lets its dataplane send in those modes. Before, every dataplane send
+of the region's controller (a regional wsapi gateway's streams, route state) waited `dataplane_session_wait_sec` and was
+dropped for the whole outage (`DataPlaneUsableTest`; measured live: writes through a regional gateway went from 2 to 55
+in the 25 s the global was down). The relay hop toward the global's region (`forwardToRemoteGlobal`) logs at TRACE: every
+message for a `region_alias` address takes it, and its ERROR line with the full params flooded the log.
