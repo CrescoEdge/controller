@@ -424,7 +424,10 @@ public class DBEngine {
                                 continue;
                             }
 
-                            if(!nodeExist(region_id,agent_id,null)) {
+                            // the agent row is keyed by agent id alone: an agent known under another region (it moved
+                            // here, gfs#26) is updated, not inserted again (a duplicate key); joining this region below
+                            // then moves its membership
+                            if(!nodeExist(null,agent_id,null)) {
 
                                 //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
                                 addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
@@ -1558,6 +1561,20 @@ public class DBEngine {
 
         if(!assoicateANodetoRNodeExist(region,agent)) {
                 try(Connection conn = ds.getConnection()) {
+
+                    // An agent belongs to ONE region: anode is keyed by agent id alone (agent ids are fabric-unique), so a
+                    // row left in agentof for another region made the agent a member of both. GaiaKeep gfs#26: an agent
+                    // that moved from the global's region into its site's region kept its old (region gaiakeep) row; the
+                    // global's own region watcher then aged the shared anode row by that row (STALE, LOST) and the moved,
+                    // live agent fell out of the fabric's listing. Joining a region leaves any other one.
+                    try (PreparedStatement moved = conn.prepareStatement("delete from agentof where agent_id = ? and region_id <> ?")) {
+                        moved.setString(1, textParam(agent));
+                        moved.setString(2, textParam(region));
+                        int n = moved.executeUpdate();
+                        if (n > 0) {
+                            logger.info("agent " + agent + " joined region " + region + ": left its former region (" + n + " membership row(s))");
+                        }
+                    }
 
                     String insertANodeToRNode = "insert into agentof (region_id, agent_id) " +
                             "values (?,?)";
@@ -3316,13 +3333,15 @@ public class DBEngine {
                 queryParams.add(pluginId);
 
             } else if((regionId != null) && (agentId != null) && (pluginId == null)) {
-                //agent
+                //agent, as a member of that region: the agent row is shared by agent id, so a region the agent left
+                //(gfs#26: it moved to a region of its own) must not set its status (STALE, LOST) in the one it is in
                 queryString = "UPDATE anode SET status_code=?, status_desc=?" + lostTsSet(status_code)
-                        + " WHERE agent_id=?";
+                        + " WHERE agent_id=? AND agent_id IN (SELECT agent_id FROM agentof WHERE region_id=?)";
                 queryParams.add(status_code);
                 queryParams.add(status_desc);
                 addLostTsParam(queryParams, status_code);
                 queryParams.add(agentId);
+                queryParams.add(regionId);
 
             } else if((regionId != null) && (agentId == null) && (pluginId == null)) {
                 //region
