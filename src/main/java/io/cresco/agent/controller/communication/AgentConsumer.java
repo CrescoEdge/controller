@@ -360,6 +360,7 @@ public class AgentConsumer {
 	 */
 	private void onConnectionFailure(String uri, org.apache.activemq.ActiveMQConnection failed, JMSException ex) {
 		if (closed || failed != connection) return;
+		ControlPlaneFailures.INBOX_FAILURES.incrementAndGet();
 		logger.error("AgentConsumer inbox connection failure for URI [{}]: {}; rebuilding the inbox", uri,
 				ex == null || ex.getMessage() == null ? String.valueOf(ex) : ex.getMessage());
 		if (!rebuilding.compareAndSet(false, true)) return;
@@ -382,6 +383,7 @@ public class AgentConsumer {
 						Thread.currentThread().interrupt();
 						return;
 					} catch (Exception retry) {
+						ControlPlaneFailures.INBOX_REBUILD_FAILURES.incrementAndGet();
 						logger.error("AgentConsumer inbox re-init failed for URI [{}]: {}; retrying", uri, retry.getMessage());
 						backoff = Math.min(REBUILD_MAX_BACKOFF_MS, backoff * 2);
 					}

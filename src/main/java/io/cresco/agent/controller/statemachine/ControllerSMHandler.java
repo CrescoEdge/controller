@@ -1809,6 +1809,7 @@ public class ControllerSMHandler {
                 }
             }
             if (!sent) {
+                io.cresco.agent.controller.communication.ControlPlaneFailures.STATE_EXPORT_FAILED.incrementAndGet();
                 logger.warn("state export: send to the parent failed; re-sending next tick");
                 return;
             }

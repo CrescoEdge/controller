@@ -181,6 +181,7 @@ class ControlPlaneSender {
     boolean send(String dstQueueName, MsgEvent sm, MsgQoS.Tier tier) {
         for (int attempt = 1; attempt <= 2; attempt++) {
             if (closed) {
+                ControlPlaneFailures.SEND_REFUSED.incrementAndGet();
                 logger.warn("ControlPlaneSender send to [{}] refused: sender closed (parent link re-init in progress)", dstQueueName);
                 return false;
             }
@@ -201,9 +202,11 @@ class ControlPlaneSender {
                 }
                 return true;
             } catch (JMSException e) {
+                ControlPlaneFailures.SEND_FAILED.incrementAndGet();
                 logger.warn("ControlPlaneSender send to [{}] failed (attempt {}/2): {}", dstQueueName, attempt, e.getMessage());
                 closeIfCurrent(used);
             } catch (Exception e) {
+                ControlPlaneFailures.SEND_FAILED.incrementAndGet();
                 logger.error("ControlPlaneSender unexpected error to [{}]: {}", dstQueueName, e.getMessage(), e);
                 closeIfCurrent(used);
             }

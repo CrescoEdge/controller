@@ -124,8 +124,10 @@ class ControlPlaneRecoveryTest {
             sendToInbox();
             awaitDequeued(1, 10_000);
             ActiveMQConnection before = consumer.getConnection();
+            long inboxFailures = ControlPlaneFailures.INBOX_FAILURES.get();
             // the dedicated socket dies (what a broker or hub restart does): its failure listener fires
             before.getExceptionListener().onException(new JMSException("simulated inbox socket loss"));
+            assertEquals(inboxFailures + 1, ControlPlaneFailures.INBOX_FAILURES.get(), "gfs#25: the inbox failure is counted (controlplane.inbox.failures)");
             assertFalse(consumer.isConnectionActive() && consumer.getConnection() == before,
                     "a failed inbox is not reported active");
             await("the inbox was rebuilt", 10_000, () -> consumer.rebuilds() == 1 && consumer.isConnectionActive());
@@ -203,7 +205,9 @@ class ControlPlaneRecoveryTest {
             assertTrue(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
             ActiveMQConnection before = sender.transportConnection();
             stopBroker();
+            long failed = ControlPlaneFailures.SEND_FAILED.get();
             assertFalse(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS), "a send fails while the broker is down");
+            assertTrue(ControlPlaneFailures.SEND_FAILED.get() > failed, "gfs#25: the failed attempts are counted (controlplane.send.failed)");
             startBroker();
             // no timer, no agent restart: the next send re-opens the sender (what the 5 s liveness ping does live)
             await("the sender re-opened", 10_000, () -> sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
@@ -224,7 +228,9 @@ class ControlPlaneRecoveryTest {
             assertTrue(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS));
             int withSender = brokerClients();
             sender.shutdown();
+            long refused = ControlPlaneFailures.SEND_REFUSED.get();
             assertFalse(sender.send(INBOX, watchdog(), MsgQoS.Tier.LIVENESS), "a shut-down sender never re-opens");
+            assertEquals(refused + 1, ControlPlaneFailures.SEND_REFUSED.get(), "gfs#25: the refusal is counted (controlplane.send.refused)");
             assertThrows(JMSException.class, sender::transportConnection);
             assertEquals(withSender - 1, brokerClients(), "its socket is gone and no new one was opened");
         } finally {

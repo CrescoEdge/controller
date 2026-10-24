@@ -206,6 +206,7 @@ public class AgentProducer {
             if (tier.isControlPlane()) {
                 boolean ok = controlPlane.send(dstPath, sm, tier);
                 if (!ok) {
+                    ControlPlaneFailures.SEND_LOST.incrementAndGet();
                     logger.error("Control-plane send failed to [{}] for {} message.", dstPath, sm.getMsgType());
                 }
                 return ok;
@@ -307,6 +308,7 @@ public class AgentProducer {
         }
 
         if (!isSent) {
+            ControlPlaneFailures.PRODUCER_LOST.incrementAndGet();
             logger.error("Failed to send message to destination [{}] after {} attempts.", dstPath, MAX_SEND_RETRIES_CONFIG);
         }
         return isSent;
