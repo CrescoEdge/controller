@@ -40,6 +40,7 @@ public class PerfControllerMonitor {
         initControllerMetrics();
         initCEPMetrics();
         initDataplaneLossMetrics();
+        initControlPlaneFailureMetrics();
         initBrokerMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
@@ -86,6 +87,39 @@ public class PerfControllerMonitor {
             me.setExisting("dataplane.broker.slow.consumers", "dataplane");
         } catch (Exception ex) {
             logger.error("initDataplaneLossMetrics ", ex);
+        }
+    }
+
+    // gfs#25: the control plane's send-side failures (ControlPlaneFailures), until now only logged, as counters in the
+    // unified inventory (group "controlplane"): a sender or inbox left dead after a hub restart shows as a count that
+    // keeps growing while the agent still looks up.
+    public void initControlPlaneFailureMetrics() {
+        Object[][] counters = {
+                {"controlplane.send.failed", io.cresco.agent.controller.communication.ControlPlaneFailures.SEND_FAILED,
+                        "Control-plane send attempts that failed (the sender retries once, on a fresh session)."},
+                {"controlplane.send.refused", io.cresco.agent.controller.communication.ControlPlaneFailures.SEND_REFUSED,
+                        "Control-plane sends refused because the sender was closed."},
+                {"controlplane.send.lost", io.cresco.agent.controller.communication.ControlPlaneFailures.SEND_LOST,
+                        "Control-plane messages not delivered after every attempt."},
+                {"controlplane.producer.send.lost", io.cresco.agent.controller.communication.ControlPlaneFailures.PRODUCER_LOST,
+                        "Messages the pooled producer could not deliver after all of its retries."},
+                {"controlplane.inbox.failures", io.cresco.agent.controller.communication.ControlPlaneFailures.INBOX_FAILURES,
+                        "Failures of this agent's dedicated inbox connection (each starts a rebuild)."},
+                {"controlplane.inbox.rebuild.failures", io.cresco.agent.controller.communication.ControlPlaneFailures.INBOX_REBUILD_FAILURES,
+                        "Inbox rebuild attempts that failed and were retried."},
+                {"controlplane.state.export.failed", io.cresco.agent.controller.communication.ControlPlaneFailures.STATE_EXPORT_FAILED,
+                        "State exports to the parent that could not be sent (re-sent next tick)."},
+        };
+        for (Object[] c : counters) {
+            try {
+                io.micrometer.core.instrument.FunctionCounter
+                        .builder((String) c[0], (java.util.concurrent.atomic.AtomicLong) c[1], java.util.concurrent.atomic.AtomicLong::get)
+                        .description((String) c[2])
+                        .register(me.getCrescoMeterRegistry());
+                me.setExisting((String) c[0], "controlplane");
+            } catch (Exception ex) {
+                logger.error("initControlPlaneFailureMetrics " + c[0], ex);
+            }
         }
     }
 
