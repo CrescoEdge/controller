@@ -175,6 +175,10 @@ public final class TenantPolicy {
             return Decision.deny("unidentified principal on secured connection");
         }
         String tenant = principal.getTenant();
+        if (!CrescoNames.isValidTenant(tenant)) {
+            // T.<tenant>. must not be a prefix of another tenant's namespace (t1 vs t1.x): such a name is never an identity
+            return Decision.deny("invalid tenant name '" + tenant + "'");
+        }
 
         // Tenant-namespaced destination (T.<tenant>.*): the strong, prefix-clean boundary. A TENANT
         // principal may only touch its OWN subtree; any other tenant's subtree — or a T.*. wildcard —

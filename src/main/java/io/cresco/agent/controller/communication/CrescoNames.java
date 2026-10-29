@@ -15,7 +15,9 @@ import java.util.regex.Pattern;
  * The one grammar for Cresco identity names (tenant, region, agent, uid), and the only ways identities are written
  * into and read out of certificates for security decisions.
  *
- * <p><b>Grammar:</b> 1 to 64 characters from {@code A-Z a-z 0-9 . -}, starting and ending with a letter or digit.
+ * <p><b>Grammar:</b> 1 to 64 characters from {@code A-Z a-z 0-9 . -}, starting and ending with a letter or digit;
+ * a TENANT name has no {@code .} either: tenant-namespaced destinations are {@code T.<tenant>.<name>}, so a tenant
+ * {@code t1} would otherwise be a string prefix of tenant {@code t1.x}'s namespace ({@link #isValidTenant}).
  * No whitespace, no {@code #}, no RFC 2253/4514 specials, no control characters, and no {@code _}: {@code _} joins
  * region and agent in an agent path ({@code <region>_<agent>}, the inbox queue name and the {@code cresco_to}
  * value), and Cresco already splits paths on it, so a name containing it is ambiguous. Every name a controller
@@ -32,20 +34,30 @@ public final class CrescoNames {
     private CrescoNames() { }
 
     private static final Pattern NAME = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9.-]{0,62}[A-Za-z0-9])?");
+    private static final Pattern TENANT = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?");
 
     /** Does {@code s} follow the identity name grammar? */
     public static boolean isValid(String s) {
         return s != null && NAME.matcher(s).matches();
     }
 
+    /** Does {@code s} follow the TENANT name grammar (the name grammar without {@code .})? */
+    public static boolean isValidTenant(String s) {
+        return s != null && TENANT.matcher(s).matches();
+    }
+
     /** Tenant, region and agent all valid, and the uid (when present) too. */
     public static boolean isValid(CrescoIdentity id) {
-        return id != null && isValid(id.getTenant()) && isValid(id.getRegion()) && isValid(id.getAgent())
+        return id != null && isValidTenant(id.getTenant()) && isValid(id.getRegion()) && isValid(id.getAgent())
                 && (id.getUid() == null || isValid(id.getUid()));
     }
 
     /** Why {@code s} is not a valid name (for logs), or null when it is. */
     public static String whyInvalid(String what, String s) {
+        if (what != null && what.startsWith("tenant") && s != null && isValid(s) && !isValidTenant(s)) {
+            return "tenant '" + printable(s) + "' is not a valid Cresco tenant name (no '.': it would be a prefix of another"
+                    + " tenant's T.<tenant>. namespace)";
+        }
         if (isValid(s)) return null;
         if (s == null) return what + " is missing";
         return what + " '" + printable(s) + "' is not a valid Cresco name (1-64 of A-Z a-z 0-9 . -, starting and ending"
@@ -71,7 +83,7 @@ public final class CrescoNames {
      * Throws when any name breaks the grammar: nothing is ever issued for a name that would need escaping.
      */
     public static X500Name x500(CrescoIdentity id) {
-        if (id == null || !isValid(id.getAgent()) || !isValid(id.getRegion()) || !isValid(id.getTenant())
+        if (id == null || !isValid(id.getAgent()) || !isValid(id.getRegion()) || !isValidTenant(id.getTenant())
                 || (id.getUid() != null && !isValid(id.getUid()))) {
             throw new IllegalArgumentException("refusing to build a certificate subject for an invalid identity: " + id);
         }
@@ -94,7 +106,8 @@ public final class CrescoNames {
         for (String[] p : parts) {
             if (p[1] != null) {
                 any = true;
-                if (!isValid(p[1])) throw new IllegalArgumentException("refusing to build a certificate subject: " + whyInvalid(p[0], p[1]));
+                if (!("tenant".equals(p[0]) ? isValidTenant(p[1]) : isValid(p[1])))
+                    throw new IllegalArgumentException("refusing to build a certificate subject: " + whyInvalid(p[0], p[1]));
             }
         }
         if (!any) throw new IllegalArgumentException("refusing to build an empty certificate subject");
@@ -136,7 +149,7 @@ public final class CrescoNames {
                 if (!isValid(value)) return null;
                 if ("CN".equalsIgnoreCase(type)) { if (agent != null) return null; agent = value; }
                 else if ("OU".equalsIgnoreCase(type)) { if (region != null) return null; region = value; }
-                else if ("O".equalsIgnoreCase(type)) { if (tenant != null) return null; tenant = value; }
+                else if ("O".equalsIgnoreCase(type)) { if (tenant != null || !isValidTenant(value)) return null; tenant = value; }
                 else if ("UID".equalsIgnoreCase(type) || UID_OID.equals(type)) { if (uid != null) return null; uid = value; }
                 else return null;                                         // an attribute Cresco never issues
             }
