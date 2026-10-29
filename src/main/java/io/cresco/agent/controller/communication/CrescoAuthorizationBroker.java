@@ -75,6 +75,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final java.util.List<TenantPolicy.CrossTenantSink> crossTenantSinks;
     private final boolean logAllow;
     private final boolean recipientBinding;
+    private final boolean allowUnverifiedBridges;
+    private final String ownTenant;
+    private volatile CrescoIdentity ownIdentity;
 
     public CrescoAuthorizationBroker(PluginBuilder plugin) {
         this(plugin, new PeerTrustRegistry());
@@ -103,6 +106,13 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
         this.logAllow = plugin.getConfig().getBooleanParam("broker_security_log_allow", false);
         this.recipientBinding = plugin.getConfig().getBooleanParam("broker_stream_recipient_binding", true);
+        this.ownTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        // migration escape only: a bridge without a client certificate cannot be verified; keep its old exemption
+        this.allowUnverifiedBridges = plugin.getConfig().getBooleanParam("broker_allow_unverified_bridges", false);
+        if (allowUnverifiedBridges) {
+            logger.warn("broker_allow_unverified_bridges=true: ANY client that claims to be a broker bridge without a client"
+                    + " certificate is exempt from tenant authorization (migration only; turn on broker_require_client_auth)");
+        }
         // W-GFS-1: named cross-tenant sinks (see TenantPolicy.CrossTenantSink). Empty by default -> the
         // strict own-subtree rule, exactly as before.
         this.crossTenantSinks = TenantPolicy.CrossTenantSink.parse(
@@ -122,6 +132,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
 
     @Override
     public Broker installPlugin(Broker next) {
+        // this broker's controller: the broker is named after its agent path (ActiveBroker); a vm:// connection may claim
+        // only this identity with LOCAL_CONTROLLER_PREFIX
+        String[] path = CrescoNames.splitPath(next.getBrokerName());
+        if (path != null) ownIdentity = CrescoIdentity.of(ownTenant, path[0], path[1], null);
         return new AuthFilter(next);
     }
 
@@ -132,11 +146,14 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      */
     private static final class CrescoSecurityContext extends SecurityContext {
         final CrescoIdentity identity;    // certificate-bound, local controller, or (no certificate) asserted username
+        final boolean verified;           // bound by a certificate (or this controller's own vm://): may receive cresco_to
         final boolean certificate;        // the TLS session presented a client certificate
         final boolean localController;    // this controller's own vm:// connection (LOCAL_CONTROLLER_PREFIX)
-        CrescoSecurityContext(String user, CrescoIdentity identity, boolean certificate, boolean localController) {
+        volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
+        CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
             super(user == null ? "" : user);
             this.identity = identity;
+            this.verified = verified;
             this.certificate = certificate;
             this.localController = localController;
         }
@@ -195,7 +212,13 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             } else {
                 String[] why = new String[1];
                 id = peers.verifiedIdentity(chain, why);
-                if (id == null) {
+                if (id == null && peerMode == PeerIdentity.Mode.WARN) {
+                    id = CrescoNames.identityOf(chain[0]);
+                    if (id != null) {
+                        logger.warn("Client certificate names " + id + " but " + why[0] + " -- ACCEPTED because " + PeerIdentity.MODE_KEY
+                                + "=warn (enforce would treat the connection as unidentified)");
+                    }
+                } else if (id == null) {
                     logger.warn("Client certificate '" + chain[0].getSubjectX500Principal().getName() + "' carries no Cresco identity here: "
                             + why[0] + " (the connection is treated as unidentified)");
                 }
@@ -203,14 +226,22 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             if (id != null) {
                 logger.info("mTLS identity bound from certificate: " + id + " (authoritative; overrides any asserted username)");
             }
-            return new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, true, false);
+            return new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false);
         }
         String u = info.getUserName();
         if (isVm(context) && u != null && u.startsWith(LOCAL_CONTROLLER_PREFIX)) {
-            CrescoIdentity id = parseAsserted(u.substring(LOCAL_CONTROLLER_PREFIX.length()));
-            return new CrescoSecurityContext(u, id, false, id != null);
+            CrescoIdentity claimed = parseAsserted(u.substring(LOCAL_CONTROLLER_PREFIX.length()));
+            if (claimed != null && ownIdentity != null && claimed.getRegion().equals(ownIdentity.getRegion())
+                    && claimed.getAgent().equals(ownIdentity.getAgent()) && claimed.getTenant().equals(ownIdentity.getTenant())) {
+                return new CrescoSecurityContext(u, claimed, true, false, true);
+            }
+            logger.warn("An in-JVM connection claimed the controller identity " + claimed + ", which is not this broker's controller "
+                    + ownIdentity + " -- treated as unidentified");
+            return new CrescoSecurityContext(u, null, false, false, false);
         }
-        return new CrescoSecurityContext(u, parseAsserted(u), false, false);
+        // no certificate: the username is asserted, not proven. It still names the tenant for tenant policy (as before),
+        // but it is never an identity for recipient-bound streams and never earns a bridge exemption.
+        return new CrescoSecurityContext(u, parseAsserted(u), false, false, false);
     }
 
     /** Trusted infrastructure connections (local controller vm://, or a verified broker bridge) are exempt. */
@@ -234,7 +265,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private boolean isTrustedBridge(ConnectionContext ctx) {
         CrescoSecurityContext sc = stateOf(ctx);
         if (sc == null) return true;                                   // broker-internal context
-        if (!sc.certificate) return true;                              // no client certificate: unverifiable, as before
+        if (!sc.certificate) return allowUnverifiedBridges;            // no client certificate: unverifiable -> not exempt
         if (peerMode != PeerIdentity.Mode.ENFORCE) return true;
         if (peers.isBridgePeer(sc.identity)) {
             peers.touchBridgePeer(sc.identity);
@@ -266,33 +297,63 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
 
     @Override
     public boolean isAllowedToConsume(ConnectionContext context, Message message) {
+        // an advisory that carries a copy of a message (MessageDiscarded, DLQ'd, ...) is judged as that message: its
+        // recipient binding and its destination's tenant, so properties never leak to other recipients or tenants
+        Message subject = message;
+        boolean advisoryCopy = false;
+        try {
+            Object ds = message.getDataStructure();
+            if (ds instanceof Message) { subject = (Message) ds; advisoryCopy = true; }
+        } catch (Exception ignore) { }
         String to;
         String toTenant;
         try {
-            Object p = message.getProperty(StreamRecipientPolicy.TO);
-            if (p == null) return true;                       // not recipient-bound: the common case, no further work
-            to = p.toString();
-            Object t = message.getProperty(StreamRecipientPolicy.TO_TENANT);
+            Object p = subject.getProperty(StreamRecipientPolicy.TO);
+            to = (p == null) ? null : p.toString();
+            Object t = subject.getProperty(StreamRecipientPolicy.TO_TENANT);
             toTenant = (t == null) ? null : t.toString();
         } catch (Exception e) {
             return false;                                     // unreadable properties on a secured broker: withhold
         }
+        if (to == null && !advisoryCopy) return true;         // not recipient-bound: the common case, no further work
         CrescoSecurityContext sc = stateOf(context);
-        // this controller's own vm:// connection (and so every plugin and wsapi client on it) is the controller's
-        // identity for recipient-bound streams; other vm:// connections (bridges' local sides) and verified bridges
-        // forward, and the next broker applies the same rule
-        if (!(sc != null && sc.localController) && isTrustedInfra(context)) return true;
-        TenantPolicy.Decision d = StreamRecipientPolicy.mayReceive(sc == null ? null : sc.identity, to, toTenant);
-        if (!d.allowed) {
-            long n = withheld.incrementAndGet();
-            long now = System.currentTimeMillis();
-            if (now - lastWithheldLog > 10_000L) {            // one line per 10 s, with the running count
-                lastWithheldLog = now;
-                logger.warn("WITHHELD recipient-bound message on '" + (message.getDestination() == null ? "?" : message.getDestination().getPhysicalName())
-                        + "' from " + (sc == null ? null : sc.identity) + " : " + d.reason + " (" + n + " withheld so far)");
-            }
+        if (isForwarder(context, sc)) return true;            // a verified bridge or a bridge's local side: the next broker judges
+        CrescoIdentity who = (sc != null && sc.verified) ? sc.identity : null;
+        if (advisoryCopy && subject.getDestination() != null) {
+            TenantPolicy.Decision t = TenantPolicy.check(who, subject.getDestination().getPhysicalName(), TenantPolicy.Access.READ,
+                    sharedPrefixes, roleOf(who), crossTenantSinks);
+            if (!t.allowed) return withheld(message, who, "an advisory about another tenant's destination (" + t.reason + ")");
         }
-        return d.allowed;
+        if (to == null) return true;
+        TenantPolicy.Decision d = StreamRecipientPolicy.mayReceive(who, to, toTenant);
+        return d.allowed || withheld(message, who, d.reason + (sc != null && !sc.verified && sc.identity != null ? " (asserted, unverified identity "
+                + sc.identity + ")" : ""));
+    }
+
+    /**
+     * Connections that forward recipient-bound messages without being their recipient: broker-internal contexts, verified
+     * broker bridges, and the local (vm://) side of a bridge (its demand subscriptions are network subscriptions). This
+     * controller's own vm:// connection is NOT one: it is the controller's identity. Any other vm:// connection has no identity.
+     */
+    private boolean isForwarder(ConnectionContext ctx, CrescoSecurityContext sc) {
+        try {
+            if (ctx == null || ctx.getConnector() == null) return true;
+            if (ctx.isNetworkConnection()) return isTrustedBridge(ctx);
+            return sc != null && sc.bridgeLocal && isVm(ctx);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean withheld(Message message, CrescoIdentity who, String reason) {
+        long n = withheld.incrementAndGet();
+        long now = System.currentTimeMillis();
+        if (now - lastWithheldLog > 10_000L) {            // one line per 10 s, with the running count
+            lastWithheldLog = now;
+            logger.warn("WITHHELD recipient-bound message on '" + (message.getDestination() == null ? "?" : message.getDestination().getPhysicalName())
+                    + "' from " + who + " : " + reason + " (" + n + " withheld so far)");
+        }
+        return false;
     }
 
     /** Recipient-bound messages withheld from non-recipients so far. */
@@ -328,8 +389,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     }
                 } else if (!warnedUnverifiableBridge) {
                     warnedUnverifiableBridge = true;
-                    logger.warn("A broker bridge connected without a client certificate: bridge claims cannot be verified"
-                            + " unless broker_require_client_auth=true (logged once)");
+                    logger.warn("A broker bridge connected without a client certificate: its claim cannot be verified, so it is "
+                            + (allowUnverifiedBridges ? "exempt only because broker_allow_unverified_bridges=true" : "NOT exempt from tenant authorization")
+                            + " -- turn on broker_require_client_auth (logged once)");
                 }
             }
             super.addConnection(context, info);
@@ -339,9 +401,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         public Subscription addConsumer(ConnectionContext context, ConsumerInfo info) throws Exception {
             enforce(context, info.getDestination(), TenantPolicy.Access.READ);
             CrescoSecurityContext sc = stateOf(context);
-            boolean local = sc != null && sc.localController;
-            if (recipientBinding && info.getSelector() != null && (local || !isTrustedInfra(context))) {
-                CrescoIdentity id = sc == null ? null : sc.identity;
+            if (sc != null && info.isNetworkSubscription() && isVm(context)) sc.bridgeLocal = true;   // a bridge's local side
+            // the early refusal (a typed error for the client) is for network clients and this controller's own connection
+            // (wsapi clients); any other in-JVM connection is judged per message only
+            boolean judged = sc != null && (sc.localController || !isVm(context));
+            if (recipientBinding && info.getSelector() != null && judged && !isForwarder(context, sc)) {
+                CrescoIdentity id = (sc != null && sc.verified) ? sc.identity : null;
                 TenantPolicy.Decision d = StreamRecipientPolicy.maySubscribe(id, info.getSelector());
                 if (!d.allowed) {
                     String name = info.getDestination() == null ? "?" : info.getDestination().getPhysicalName();

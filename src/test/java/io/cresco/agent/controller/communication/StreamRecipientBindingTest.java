@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,6 +88,7 @@ class StreamRecipientBindingTest {
     private BrokerService securedBroker(String name, TlsTestSupport.Id id) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_id", "t1");                                   // the controller's tenant, as on a real node
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
         BrokerService b = TlsTestSupport.broker(name, id, true, new BrokerPlugin[]{authz}, authz, ca.caCert(), caB.caCert());
@@ -221,13 +223,14 @@ class StreamRecipientBindingTest {
                 "a client of the controller's wsapi subscribed to another agent's stream");
         assertTrue(String.valueOf(e.getMessage()).contains("rgA_a1"), e.getMessage());
         MessageConsumer wide = local.createConsumer(t);
-        Session bridgeSide = vm(g, null);                                            // e.g. a bridge's local side: forwards
-        MessageConsumer forwarder = bridgeSide.createConsumer(bridgeSide.createTopic(TOPIC));
+        Session unmarked = vm(g, null);                       // in-JVM, but neither the controller nor a bridge's local side
+        MessageConsumer other = unmarked.createConsumer(unmarked.createTopic(TOPIC));
         Session tx = client(g, sender);
         send(tx, "for-a1", "rgA_a1", null);
         send(tx, "for-gc", "rgA_gc", null);
         assertEquals(List.of("for-gc"), drain(wide, 3000), "the controller's own connection received a stream bound to another agent");
-        assertEquals(List.of("for-a1", "for-gc"), drain(forwarder, 3000), "infrastructure vm:// connections must still forward");
+        assertEquals(List.of(), drain(other, 2000), "an in-JVM connection that is neither the controller nor a bridge received"
+                + " recipient-bound messages (bridges forwarding is covered by aBridgeFromADiscoveredController...)");
     }
 
     @Test
@@ -244,6 +247,43 @@ class StreamRecipientBindingTest {
         MessageConsumer c = spy.createConsumer(spy.createTopic(TOPIC));
         send(client(b, sender), "for-a1", "rgA_a1", null);
         assertNotNull(c.receive(3000), "with peer_identity_mode=off the certificate's name alone is the identity, as before this change");
+    }
+
+    @Test
+    void aBridgeClaimWithoutACertificateIsNotExemptUnlessTheMigrationFlagSaysSo() throws Exception {
+        for (boolean allow : new boolean[]{false, true}) {
+            Map<String, Object> cfg = new HashMap<>();
+            cfg.put("broker_security_enabled", "true");
+            cfg.put("broker_allow_unverified_bridges", String.valueOf(allow));
+            PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
+            CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
+            BrokerService b = TlsTestSupport.broker("rgA_gc" + allow, global, false, new BrokerPlugin[]{authz}, authz, ca.caCert());
+            brokers.add(b);
+            ActiveMQSslConnectionFactory f = new ActiveMQSslConnectionFactory("nio+ssl://127.0.0.1:" + TlsTestSupport.port(b) + "?verifyHostName=false");
+            f.setKeyAndTrustManagers(null, TlsTestSupport.trustManagers(ca.caCert()), new SecureRandom());   // no client certificate
+            ActiveMQConnection conn = (ActiveMQConnection) f.createConnection();
+            connections.add(conn);
+            conn.start();
+            Session s = conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            BrokerInfo claim = new BrokerInfo();
+            claim.setBrokerId(new BrokerId("fake-" + System.nanoTime()));
+            claim.setBrokerName("rgB_rc");
+            claim.setNetworkConnection(true);
+            conn.syncSendPacket(claim);
+            Thread.sleep(200);
+            boolean read;
+            try { s.createConsumer(s.createQueue("rgA_a1")); read = true; } catch (JMSException e) { read = false; }
+            assertEquals(allow, read, "a certificate-less bridge claim with broker_allow_unverified_bridges=" + allow);
+        }
+    }
+
+    @Test
+    void clientCertificatesAreRequiredByDefaultWhenBrokerSecurityIsOn() throws Exception {
+        java.util.function.Function<Map<String, Object>, Boolean> req = m -> ActiveBroker.requireClientAuth(
+                TestAgentService.plugin(System.getProperty("java.io.tmpdir"), m).getConfig());
+        assertFalse(req.apply(Map.of()));
+        assertTrue(req.apply(Map.of("broker_security_enabled", "true")));
+        assertFalse(req.apply(Map.of("broker_security_enabled", "true", "broker_require_client_auth", "false")));
     }
 
     /** A bridge from {@code local} into the global, presenting {@code id}, as ActiveBroker builds one. */

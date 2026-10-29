@@ -408,7 +408,17 @@ public class ActiveBroker {
 					// managers validate, so identity is cryptographically bound (not a self-asserted
 					// username). The CrescoAuthorizationBroker then derives the principal from the cert DN.
 					// Gated separately from broker_security_enabled so authz can run without mTLS if wanted.
-					if (plugin.getConfig().getBooleanParam("broker_require_client_auth", false)) {
+					// Default: client certificates are required whenever broker security is on -- without them an identity is a
+					// typed username, which can neither receive recipient-bound streams nor earn a bridge exemption.
+					boolean securityOn = plugin.getConfig().getBooleanParam("broker_security_enabled", false);
+					boolean clientAuth = requireClientAuth(plugin.getConfig());
+					if (securityOn && !clientAuth) {
+						logger.warn("BROKER SECURITY WITHOUT CLIENT CERTIFICATES (broker_require_client_auth=false): identities are"
+								+ " asserted usernames, so recipient-bound dataplane streams reach no network client and broker bridges are"
+								+ " NOT exempt from tenant authorization (federation will fail) unless broker_allow_unverified_bridges=true."
+								+ " Set broker_require_client_auth=true (the default with broker security).");
+					}
+					if (clientAuth) {
 						txOpts += "&needClientAuth=true";
 						logger.info("Broker mutual-TLS ENABLED — clients must present a trusted certificate (needClientAuth)");
 					}
@@ -584,6 +594,11 @@ public class ActiveBroker {
 		}
 
 		return destinations;
+	}
+
+	/** broker_require_client_auth, defaulting to broker_security_enabled (identities must be proven when security is on). */
+	static boolean requireClientAuth(io.cresco.library.plugin.Config config) {
+		return config.getBooleanParam("broker_require_client_auth", config.getBooleanParam("broker_security_enabled", false));
 	}
 
 	public void updateTrustManager() {
