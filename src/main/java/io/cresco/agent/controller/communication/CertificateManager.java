@@ -197,6 +197,12 @@ public class CertificateManager {
         o.revoke = csv(plugin.getConfig().getStringParam("peer_bridge_revoke", ""));
         o.bridgePruneDays = plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30);
         o.bindingPruneDays = plugin.getConfig().getIntegerParam("peer_binding_prune_days", 90);
+        // the registry is created on this node's first start, before its persistent identity: when that identity exists, a
+        // registry that is missing entirely was deleted, and is sealed rather than silently started empty
+        o.expectExisting = plugin.getConfig().getBooleanParam("node_identity_persist", true)
+                && plugin.getConfig().getStringParam("keystorefile") == null
+                && Files.exists(identityDir().resolve("node-identity.p12"));
+        PeerTrustRegistry.secureDirectory(identityDir(), m -> logger.error(m));
         return PeerTrustRegistry.open(file, o, m -> logger.error(m));
     }
 
