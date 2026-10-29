@@ -203,6 +203,49 @@ class StreamRecipientBindingTest {
                 "an identity-less certificate plus a bridge claim earned the bridge exemption");
     }
 
+    private Session vm(BrokerService b, String user) throws Exception {
+        org.apache.activemq.ActiveMQConnectionFactory f = new org.apache.activemq.ActiveMQConnectionFactory("vm://" + b.getBrokerName() + "?create=false");
+        if (user != null) f.setUserName(user);
+        Connection c = f.createConnection();
+        connections.add(c);
+        c.start();
+        return c.createSession(false, Session.AUTO_ACKNOWLEDGE);
+    }
+
+    @Test
+    void theControllersOwnVmConnectionIsItsIdentityForRecipientBoundStreams() throws Exception {
+        // what ActiveClient opens on a controller: every plugin on it, wsapi and its clients included, uses this connection
+        Session local = vm(g, CrescoAuthorizationBroker.LOCAL_CONTROLLER_PREFIX + "t1|rgA|gc");
+        Topic t = local.createTopic(TOPIC);
+        JMSException e = assertThrows(JMSException.class, () -> local.createConsumer(t, StreamRecipientPolicy.TO + "='rgA_a1'"),
+                "a client of the controller's wsapi subscribed to another agent's stream");
+        assertTrue(String.valueOf(e.getMessage()).contains("rgA_a1"), e.getMessage());
+        MessageConsumer wide = local.createConsumer(t);
+        Session bridgeSide = vm(g, null);                                            // e.g. a bridge's local side: forwards
+        MessageConsumer forwarder = bridgeSide.createConsumer(bridgeSide.createTopic(TOPIC));
+        Session tx = client(g, sender);
+        send(tx, "for-a1", "rgA_a1", null);
+        send(tx, "for-gc", "rgA_gc", null);
+        assertEquals(List.of("for-gc"), drain(wide, 3000), "the controller's own connection received a stream bound to another agent");
+        assertEquals(List.of("for-a1", "for-gc"), drain(forwarder, 3000), "infrastructure vm:// connections must still forward");
+    }
+
+    @Test
+    void peerIdentityModeOffIsTheOldNameOnlyBehaviour() throws Exception {
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("broker_security_enabled", "true");
+        cfg.put(PeerIdentity.MODE_KEY, "off");
+        PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
+        CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, new PeerTrustRegistry());
+        TlsTestSupport.Id forged = TlsTestSupport.selfRooted("anyone", "t1", "rgA", "a1");
+        BrokerService b = TlsTestSupport.broker("off", global, true, new BrokerPlugin[]{authz}, authz, ca.caCert(), forged.chain[1]);
+        brokers.add(b);
+        Session spy = client(b, forged);
+        MessageConsumer c = spy.createConsumer(spy.createTopic(TOPIC));
+        send(client(b, sender), "for-a1", "rgA_a1", null);
+        assertNotNull(c.receive(3000), "with peer_identity_mode=off the certificate's name alone is the identity, as before this change");
+    }
+
     /** A bridge from {@code local} into the global, presenting {@code id}, as ActiveBroker builds one. */
     private NetworkConnector bridge(BrokerService local, TlsTestSupport.Id id) throws Exception {
         NetworkConnector nc = local.addNetworkConnector(new URI("static:(nio+ssl://127.0.0.1:" + TlsTestSupport.port(g)

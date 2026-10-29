@@ -507,6 +507,11 @@ public class ActiveClient {
             activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger));
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
+                // mark this controller's own in-JVM connections: for recipient-bound dataplane streams the broker treats
+                // them (and so every plugin and wsapi client using them) as this controller's identity, not infrastructure
+                String tenant = controllerEngine.getPluginBuilder().getConfig().getStringParam("tenant_id", "default");
+                activeMQSslConnectionFactory.setUserName(CrescoAuthorizationBroker.LOCAL_CONTROLLER_PREFIX
+                        + tenant + "|" + controllerEngine.cstate.getRegion() + "|" + controllerEngine.cstate.getAgent());
             } else {
                 // vm:// is in-JVM and never does TLS: only network URIs need the key/trust managers
                 // the broker's certificate must name the peer this URI was opened to (PeerIdentity); a URI with no
