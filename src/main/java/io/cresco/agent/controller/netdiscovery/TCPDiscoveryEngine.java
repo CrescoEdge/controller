@@ -11,9 +11,6 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.serialization.ClassResolvers;
-import io.netty.handler.codec.serialization.ObjectDecoder;
-import io.netty.handler.codec.serialization.ObjectEncoder;
 import io.netty.handler.logging.LogLevel;
 import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContext;
@@ -78,10 +75,9 @@ public class TCPDiscoveryEngine implements Runnable {
                             }
 
                             p.addLast(new IdleStateHandler(30,30,30));
-                            p.addLast(
-                                    new ObjectEncoder(),
-                                    new ObjectDecoder(DiscoveryWire.MAX_OBJECT_BYTES, DiscoveryWire.STRINGS_ONLY),
-                                    new TCPDiscoveryEngineHandler(controllerEngine));
+                            // String-only decoding: this port is unauthenticated (see DiscoveryWire)
+                            DiscoveryWire.install(p);
+                            p.addLast(new TCPDiscoveryEngineHandler(controllerEngine));
                         }
                     });
 
