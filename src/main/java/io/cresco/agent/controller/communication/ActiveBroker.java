@@ -53,8 +53,9 @@ public class ActiveBroker {
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(ActiveBroker.class.getName(),CLogger.Level.Info);
 		transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
-		// every client-side URI (bridges here, agent connections in ControllerSMHandler): TLS host check
-		// off (Cresco verifies peers by its own trust managers) and socketBufferSize=0 = kernel autotuning
+		// every client-side URI (bridges here, agent connections in ControllerSMHandler): TLS host check off
+		// (brokers are dialled by address/dynamic port; each bridge's TLS is instead bound to the controller identity
+		// discovery returned, see PeerIdentity and bridgeSslContext) and socketBufferSize=0 = kernel autotuning
 		verifyTransport = BrokerTransport.clientQuery(plugin, transport);
 		// the fixed broker-side nio+ssl transport must be registered before the connector binds
 		BrokerTransport.installTransportFactories(plugin, logger);
@@ -457,6 +458,8 @@ public class ActiveBroker {
 		return (port > 0 && port != def) ? hostname + ":" + port : hostname;
 	}
 	private final Map<String, String[]> groupTargets = new HashMap<>(); // key -> {hostname, port}
+	// key -> the controller the bridge group is meant to reach (from discovery); its TLS is bound to it (PeerIdentity)
+	private final Map<String, PeerIdentity.Expected> groupExpected = new HashMap<>();
 
 	// Total pending (undispatched) message count across this broker's topics — the cheapest, highest-
 	// signal native congestion indicator. Read in-process from ActiveMQ's DestinationViewMBean via the
@@ -583,6 +586,22 @@ public class ActiveBroker {
 		} catch(Exception ex) {
 			logger.error("updateTrustManager() : Error " + ex.getMessage());
 		}
+		// Bridges with their own (identity-bound) context: their trust manager reads the current truststore at each
+		// handshake, but the key managers are a snapshot -- re-init so a re-issued identity is presented on reconnect.
+		List<NetworkConnector> own = new ArrayList<>();
+		synchronized (bridgeGroups) {
+			for (List<NetworkConnector> g : bridgeGroups.values()) own.addAll(g);
+		}
+		for (NetworkConnector nc : own) {
+			try {
+				SslContext ctx = nc.getSslContext();
+				if (ctx != null) {
+					ctx.getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), ctx.getTrustManagersAsArray(), new SecureRandom());
+				}
+			} catch (Exception ex) {
+				logger.error("updateTrustManager() bridge " + nc.getName() + " : Error " + ex.getMessage());
+			}
+		}
 	}
 
 	/*
@@ -700,6 +719,20 @@ public class ActiveBroker {
 	// port <= 0 -> discovery_port_remote (the multi-host default); otherwise the peer's advertised
 	// broker port (W-GFS-5).
 	public NetworkConnector AddNetworkConnector(String hostname, int port) {
+		return AddNetworkConnector(hostname, port, null);
+	}
+
+	/**
+	 * @param expected the controller this bridge is meant to reach (from the discovery that found it). Every connector
+	 *                 of the group dials with a TLS context bound to it: a broker whose certificate names anyone else
+	 *                 is refused (peer_identity_mode=enforce). Null under enforce refuses the bridge (fail closed).
+	 */
+	public NetworkConnector AddNetworkConnector(String hostname, int port, PeerIdentity.Expected expected) {
+		synchronized (bridgeGroups) {
+			String key = bridgeKey(hostname, port);
+			if (expected != null) groupExpected.put(key, expected);
+			else groupExpected.remove(key);
+		}
 		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		int shards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
 		int count;
@@ -722,12 +755,29 @@ public class ActiveBroker {
 	// connector forwards exactly one shard-topic: connector i owns global.event.i; connector 0 also
 	// carries everything else (control queues, advisories, unsharded topics) by excluding the other
 	// shards. This gives one TLS socket per shard -> real cross-node parallelism, no duplicates.
-	private NetworkConnector buildConnector(String hostname, int port, int index) throws Exception {
+	/**
+	 * The TLS context of one outbound bridge connector: this node's identity (key managers) and a trust manager bound to
+	 * {@code expected}. Null with peer_identity_mode=off: the connector then uses the broker's shared context, as before.
+	 */
+	static SslContext bridgeSslContext(CertificateManager cm, PeerIdentity.Expected expected, String endpoint) {
+		if (cm.peerIdentityMode() == PeerIdentity.Mode.OFF) return null;
+		return new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
+	}
+
+	private NetworkConnector buildConnector(String hostname, int port, int index, PeerIdentity.Expected expected) throws Exception {
 		int discoveryPort = (port > 0) ? port : plugin.getConfig().getIntegerParam("discovery_port_remote",32010);
 		int messageTTL = plugin.getConfig().getIntegerParam("broker_message_ttl",5);
 		boolean split = plugin.getConfig().getBooleanParam("broker_control_bridge_split", true);
 		URI uri = new URI("static:(" + transport +"://" + hostname + ":"+ discoveryPort + verifyTransport + ")?maxReconnectAttempts=" + plugin.getConfig().getStringParam("max_reconnect_attempts","5") + "&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=" + plugin.getConfig().getStringParam("use_exponential_backOff","false"));
 		NetworkConnector bridge = broker.addNetworkConnector(new URI(BrokerTransport.forActiveMQ(uri.toString(), logger)));
+		if (transport != null && transport.contains("ssl")) {
+			if (expected == null && controllerEngine.getCertificateManager().peerIdentityMode() != PeerIdentity.Mode.OFF) {
+				logger.warn("Bridge to " + hostname + ":" + discoveryPort + " has no expected peer identity; it will be refused under "
+						+ PeerIdentity.MODE_KEY + "=enforce");
+			}
+			SslContext ctx = bridgeSslContext(controllerEngine.getCertificateManager(), expected, "bridge " + brokerName + " -> " + hostname + ":" + discoveryPort);
+			if (ctx != null) bridge.setSslContext(ctx);
+		}
 		String role = split ? (index == 0 ? "ctl" : "data") : "mixed";
 		bridge.setName("cresco-bridge-" + hostname + "-" + discoveryPort + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
 		bridge.setDuplex(true);
@@ -811,7 +861,7 @@ public class ActiveBroker {
 				int startIndex = group.size();
 				for (int i = 0; i < count; i++) {
 					int idx = startIndex + i;
-					NetworkConnector bridge = buildConnector(hostname, port, idx);
+					NetworkConnector bridge = buildConnector(hostname, port, idx, groupExpected.get(key));
 					group.add(bridge);
 					if (startAll || idx > 0) {
 						bridge.start();

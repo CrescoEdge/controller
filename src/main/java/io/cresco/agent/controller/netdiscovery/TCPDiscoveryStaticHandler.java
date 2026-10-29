@@ -177,7 +177,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                                             discoveredList.add(discoveryNode);
                                         } else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFIED) {
                                             discoveredList.add(discoveryNode);
-                                            if(discoveryProcessor.setCertTrust(discoveryNode.getDiscoveredPath(),discoveryNode.discovered_cert)) {
+                                            if(discoveryProcessor.setCertTrust(discoveryNode)) {
                                                 logger.debug("Added Static discovered host to discoveredList.");
                                             } else {
                                                 logger.debug("Could not set Trust");

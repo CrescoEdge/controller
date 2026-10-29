@@ -93,6 +93,10 @@ public class ActiveClient {
     private final long CONNECTION_START_RETRY_DELAY_MS = 500;
 
 
+    // The peer each network broker URI is meant to reach (from the discovery that chose it). Every TLS connection
+    // to the URI is bound to it (PeerIdentity): a broker whose certificate names somebody else is refused.
+    private final Map<String, PeerIdentity.Expected> expectedPeers = new ConcurrentHashMap<>();
+
     public ActiveClient(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -154,6 +158,27 @@ public class ActiveClient {
     }
 
     /**
+     * Record the peer a network broker URI is meant to reach (the region/agent discovery returned for that address).
+     * Must be called before the first connection to the URI; with {@code peer_identity_mode=enforce} a URI with no
+     * recorded peer is refused. Re-recording a different peer drops the URI's cached factory so new connections
+     * bind to the new peer.
+     */
+    public void expectPeer(String uri, String region, String agent) {
+        if (uri == null || uri.startsWith("vm://")) return;
+        PeerIdentity.Expected e = new PeerIdentity.Expected(region, agent);
+        PeerIdentity.Expected prev = expectedPeers.put(uri, e);
+        if (prev != null && !prev.equals(e)) {
+            connectionFactoryMap.remove(uri);
+            logger.info("Broker URI [{}] now expects peer {} (was {}); its connection factory will be rebuilt", BrokerTransport.forActiveMQ(uri, null), e, prev);
+        }
+    }
+
+    /** The peer recorded for {@code uri} by {@link #expectPeer}, or null. */
+    public PeerIdentity.Expected expectedPeer(String uri) {
+        return uri == null ? null : expectedPeers.get(uri);
+    }
+
+    /**
      * B-1: Confirm a remote broker's TLS endpoint is actually TRUST-ready before we hand its URI to the
      * ActiveMQ failover transport. On a rapid same-host bring-up the agent can reach the connect step a
      * beat before the regional broker's certificate has been installed in our truststore (discovery cert
@@ -161,8 +186,10 @@ public class ActiveClient {
      * first handshake then fails with "PKIX path building failed: unable to find valid certification path"
      * and dumps full reconnect stack traces before the mesh self-heals — false-alarm log noise, not a real
      * fault. This probe performs a bounded, QUIET TLS handshake with our CURRENT key/trust managers (the
-     * same material the real connection uses, minus hostname verification — which is off, see
-     * verifyHostName=false), so the failover transport only ever touches a ready endpoint.
+     * same material the real connection uses, including the binding of the broker's certificate to the identity
+     * this node meant to reach, see {@link PeerIdentity}; TLS hostname verification is off because brokers are
+     * dialled by address and dynamic port), so the failover transport only ever touches a ready endpoint. An
+     * identity refusal ends the probe at once: waiting cannot fix it, and the real connection logs the refusal.
      *
      * Bounded and non-blocking-forever: if the endpoint is not confirmed ready within maxWaitMs we log one
      * WARN and return false; the caller proceeds anyway and the failover transport retries exactly as
@@ -172,6 +199,11 @@ public class ActiveClient {
      * @return true if a clean TLS handshake completed within the window; false if we gave up (caller proceeds).
      */
     public boolean waitForBrokerTlsReady(String host, int port, long maxWaitMs) {
+        return waitForBrokerTlsReady(host, port, maxWaitMs, null);
+    }
+
+    /** As {@link #waitForBrokerTlsReady(String, int, long)}, binding the probe to {@code expected}. */
+    public boolean waitForBrokerTlsReady(String host, int port, long maxWaitMs, PeerIdentity.Expected expected) {
         String probeHost = (host == null) ? null : host.replace("[", "").replace("]", "");
         if (probeHost == null || probeHost.isEmpty()) {
             logger.warn("waitForBrokerTlsReady: no host to probe — skipping");
@@ -185,8 +217,9 @@ public class ActiveClient {
             attempt++;
             try {
                 javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
-                ctx.init(controllerEngine.getCertificateManager().getKeyManagers(),
-                        controllerEngine.getCertificateManager().getTrustManagers(),
+                CertificateManager cm = controllerEngine.getCertificateManager();
+                ctx.init(cm.getKeyManagers(),
+                        expected != null ? cm.clientTrustManagers(expected, "readiness probe " + probeHost + ":" + port) : cm.getTrustManagers(),
                         new SecureRandom());
                 try (javax.net.ssl.SSLSocket socket =
                              (javax.net.ssl.SSLSocket) ctx.getSocketFactory().createSocket()) {
@@ -200,6 +233,11 @@ public class ActiveClient {
                 return true;
             } catch (Exception ex) {
                 lastError = ex.getMessage();
+                if (PeerIdentityTrustManager.isIdentityRefusal(ex)) {
+                    logger.error("Broker TLS endpoint [{}:{}] presented a certificate that is not {}: not waiting for it (see the PEER IDENTITY MISMATCH line)",
+                            probeHost, port, expected);
+                    return false;
+                }
                 logger.debug("Broker TLS endpoint [{}:{}] not trust-ready yet (probe {}): {}", probeHost, port, attempt, lastError);
                 try {
                     Thread.sleep(500);
@@ -471,9 +509,16 @@ public class ActiveClient {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
             } else {
                 // vm:// is in-JVM and never does TLS: only network URIs need the key/trust managers
+                // the broker's certificate must name the peer this URI was opened to (PeerIdentity); a URI with no
+                // recorded peer gets a null expectation, which peer_identity_mode=enforce refuses (fail closed)
+                PeerIdentity.Expected expected = expectedPeers.get(URI);
+                if (expected == null && controllerEngine.getCertificateManager().peerIdentityMode() != PeerIdentity.Mode.OFF) {
+                    logger.warn("No expected peer identity recorded for broker URI [{}]; its TLS connections will be refused under {}=enforce",
+                            BrokerTransport.forActiveMQ(URI, null), PeerIdentity.MODE_KEY);
+                }
                 activeMQSslConnectionFactory.setKeyAndTrustManagers(
                         controllerEngine.getCertificateManager().getKeyManagers(),
-                        controllerEngine.getCertificateManager().getTrustManagers(),
+                        controllerEngine.getCertificateManager().clientTrustManagers(expected, "broker connection " + endpointOf(URI)),
                         new SecureRandom()
                 );
             }
@@ -497,6 +542,16 @@ public class ActiveClient {
             // Return null on failure
         }
         return activeMQSslConnectionFactory;
+    }
+
+    /** host:port of the first transport in a (failover:/static:) broker URI, for logs. */
+    static String endpointOf(String uri) {
+        if (uri == null) return "?";
+        int s = uri.indexOf("://");
+        if (s < 0) return uri;
+        int e = s + 3;
+        while (e < uri.length() && "?,)".indexOf(uri.charAt(e)) < 0) e++;
+        return uri.substring(s + 3, e);
     }
 
     public synchronized void handleConnectionFailure(String uri) {

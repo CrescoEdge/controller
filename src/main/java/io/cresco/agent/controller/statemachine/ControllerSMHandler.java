@@ -100,7 +100,8 @@ public class ControllerSMHandler {
         gson = new Gson();
 
         transport = plugin.getConfig().getStringParam("activemq_transport", "nio+ssl");
-        // client transport options for every broker connection: TLS host check off, socketBufferSize=0
+        // client transport options for every broker connection: TLS host check off (the broker's certificate is
+        // bound to the controller identity discovery returned instead, see PeerIdentity), socketBufferSize=0
         // (kernel autotuning; ActiveMQ's default pins 64 KiB) -- see BrokerTransport
         verifyTransport = io.cresco.agent.controller.communication.BrokerTransport.clientQuery(plugin, transport);
 
@@ -832,7 +833,9 @@ public class ControllerSMHandler {
 
                 logger.info("AgentPath=" + cstate.getAgentPath());
 
-                if(initIOChannels(cbrokerAddress, discoveryNode.discovered_broker_port)) {
+                // the broker we connect to must prove it is the controller discovery just certified (PeerIdentity)
+                if(initIOChannels(cbrokerAddress, discoveryNode.discovered_broker_port,
+                        new io.cresco.agent.controller.communication.PeerIdentity.Expected(discoveryNode.discovered_region, discoveryNode.discovered_agent))) {
 
                     logger.info("initIOChannels Success");
                     //agent name not set on core init
@@ -1162,7 +1165,12 @@ public class ControllerSMHandler {
     }
 
     private  boolean initIOChannels(String brokerAddress) {
-        return initIOChannels(brokerAddress, -1);
+        return initIOChannels(brokerAddress, -1, null);
+    }
+
+    /** The failover URI an agent uses for its regional broker (consumer, producer and dataplane share it). */
+    private String agentBrokerURI(String brokerAddress, int discoveryPort) {
+        return "failover:(" + transport +"://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
     }
 
     // W-GFS-5: the discovered controller advertises the port its broker is bound to; prefer it over the
@@ -1174,7 +1182,12 @@ public class ControllerSMHandler {
         return plugin.getConfig().getIntegerParam("discovery_port",32010);
     }
 
-    private  boolean initIOChannels(String brokerAddress, int discoveredBrokerPort) {
+    /**
+     * @param expected the controller whose broker this is (from the discovery exchange); every TLS connection to it
+     *                 is bound to that identity. Null only for the node's own broker (vm://, no TLS).
+     */
+    private  boolean initIOChannels(String brokerAddress, int discoveredBrokerPort,
+                                    io.cresco.agent.controller.communication.PeerIdentity.Expected expected) {
         boolean isInit = false;
         try {
 
@@ -1189,7 +1202,10 @@ public class ControllerSMHandler {
                     if(isLocalBroker(brokerAddress)) {
                         URI = "vm://localhost";
                     } else {
-                        URI = "failover:(" + transport +"://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
+                        URI = agentBrokerURI(brokerAddress, discoveryPort);
+                        if (expected != null) {
+                            controllerEngine.getActiveClient().expectPeer(URI, expected.region, expected.agent);
+                        }
 
                         // B-1: on a same-host bring-up the regional broker's cert may not be trust-ready the
                         // instant we connect, making the failover transport's first handshake fail with PKIX
@@ -1199,7 +1215,7 @@ public class ControllerSMHandler {
                         if (transport != null && transport.contains("ssl")
                                 && plugin.getConfig().getBooleanParam("broker_tls_ready_probe", true)) {
                             long tlsReadyWaitMs = plugin.getConfig().getLongParam("broker_tls_ready_wait_ms", 15000L);
-                            controllerEngine.getActiveClient().waitForBrokerTlsReady(brokerAddress, discoveryPort, tlsReadyWaitMs);
+                            controllerEngine.getActiveClient().waitForBrokerTlsReady(brokerAddress, discoveryPort, tlsReadyWaitMs, expected);
                         }
                     }
 
@@ -1262,7 +1278,11 @@ public class ControllerSMHandler {
             if(isLocalBroker(brokerAddress)) {
                 producerInit = controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
             } else {
-                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer("failover:(" + transport + "://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false");
+                String producerURI = agentBrokerURI(brokerAddress, discoveryPort);
+                if (expected != null) {
+                    controllerEngine.getActiveClient().expectPeer(producerURI, expected.region, expected.agent);
+                }
+                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer(producerURI);
             }
             if (!producerInit) {
                 logger.error("initIOChannels(): the Agent Producer failed to initialize");
