@@ -16,6 +16,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     private CLogger logger;
     private Gson gson;
     private DiscoveryProcessor discoveryProcessor;
+    private DiscoveryAuth.Msg hello, challenge;             // this connection's v2 exchange
 
     public TCPDiscoveryEngineHandler(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
@@ -32,6 +33,10 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
         DiscoveryNode discoveryNode = null;
         try {
             MsgEvent rme = gson.fromJson((String)msg, MsgEvent.class);
+            if (rme != null && rme.getParam(DiscoveryAuth.PARAM) != null) {
+                readV2(ctx, rme.getParam(DiscoveryAuth.PARAM));
+                return;
+            }
             if(rme != null) {
                 if(rme.paramsContains("discovery_node")) {
                     if (rme.getParam("discovery_node") != null) {
@@ -64,6 +69,31 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
             //ctx.write(gson.toJson(rme));
         }
 
+    }
+
+    private void readV2(ChannelHandlerContext ctx, String json) {
+        String remote = ((InetSocketAddress) ctx.channel().remoteAddress()).getAddress().getHostAddress();
+        DiscoveryAuth.Msg m;
+        try {
+            m = gson.fromJson(json, DiscoveryAuth.Msg.class);
+        } catch (Exception e) {
+            ctx.close();
+            return;
+        }
+        DiscoveryAuth.Msg reply = null;
+        boolean last = true;
+        if (m != null && "hello".equals(m.step) && hello == null) {
+            reply = discoveryProcessor.serverChallenge(m, remote);
+            if (reply != null) { hello = m; challenge = reply; last = false; }
+        } else if (m != null && "proof".equals(m.step) && hello != null && challenge != null) {
+            reply = discoveryProcessor.serverResult(hello, challenge, m, remote);
+            hello = null; challenge = null;                  // one proof per challenge
+        }
+        if (reply == null) { ctx.close(); return; }
+        MsgEvent me = new MsgEvent(MsgEvent.Type.DISCOVER, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "Discovery v2.");
+        me.setParam(DiscoveryAuth.PARAM, gson.toJson(reply));
+        if (last) ctx.writeAndFlush(gson.toJson(me)).addListener(io.netty.channel.ChannelFutureListener.CLOSE);
+        else ctx.writeAndFlush(gson.toJson(me));
     }
 
     @Override

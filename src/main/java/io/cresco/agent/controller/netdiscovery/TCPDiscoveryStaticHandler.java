@@ -24,8 +24,19 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     private Gson gson;
     private DiscoveryProcessor discoveryProcessor;
     private boolean readProcessed;
+    private final boolean v2;
+    private final java.util.concurrent.atomic.AtomicBoolean legacyPeer;
+    private DiscoveryAuth.Msg hello, challenge;
+    private boolean done;
 
     public TCPDiscoveryStaticHandler(ControllerEngine controllerEngine, List<DiscoveryNode> discoveredList, DiscoveryType disType, String hostAddress, int discoveryPort, boolean sendCert) {
+        this(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, false, null);
+    }
+
+    public TCPDiscoveryStaticHandler(ControllerEngine controllerEngine, List<DiscoveryNode> discoveredList, DiscoveryType disType, String hostAddress, int discoveryPort, boolean sendCert,
+                                     boolean v2, java.util.concurrent.atomic.AtomicBoolean legacyPeer) {
+        this.v2 = v2 && sendCert;
+        this.legacyPeer = legacyPeer;
 
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -43,6 +54,21 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelActive(ChannelHandlerContext ctx) {
         logger.debug("channelActive Thread" + Thread.currentThread());
+        if (v2) {
+            hello = discoveryProcessor.clientHello(disType);
+            if (hello == null) { done = true; ctx.close(); return; }
+            MsgEvent me = new MsgEvent(MsgEvent.Type.DISCOVER, this.plugin.getRegion(), this.plugin.getAgent(), this.plugin.getPluginID(), "Discovery v2 hello.");
+            me.setParam(DiscoveryAuth.PARAM, gson.toJson(hello));
+            // a legacy responder ignores the v2 hello and answers this unverifiable certify node unchanged, which tells
+            // us at once (no timeout) that it is legacy; it records nothing, the validator being random
+            DiscoveryNode probe = new DiscoveryNode(disType);
+            byte[] junk = new byte[16];
+            new java.security.SecureRandom().nextBytes(junk);
+            probe.setCertify(java.util.Base64.getEncoder().encodeToString(junk), null, plugin.getRegion(), plugin.getAgent());
+            me.setCompressedParam("discovery_node", gson.toJson(probe));
+            ctx.writeAndFlush(gson.toJson(me));
+            return;
+        }
         // Send the first message if this handler is a client-side handler.
         MsgEvent me = genDiscoverMsg();
 
@@ -62,6 +88,10 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
         logger.debug("channelRead Thread" + Thread.currentThread());
         String remoteHost = ((InetSocketAddress)ctx.channel().remoteAddress()).getAddress().getHostAddress();
+        if (v2) {
+            readV2(ctx, (String) msg, remoteHost.contains("%") ? remoteHost.split("%")[0] : remoteHost);
+            return;
+        }
         processIncoming((String)msg, remoteHost);
         readProcessed = true;
     }
@@ -69,6 +99,10 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     @Override
     public void channelReadComplete(ChannelHandlerContext ctx) {
         logger.debug("channelReadComplete Thread" + Thread.currentThread());
+        if (v2) {
+            if (done) { ctx.flush(); ctx.close(); }
+            return;
+        }
         if(readProcessed) {
             ctx.flush();
             ctx.close();
@@ -95,6 +129,37 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
         //cause.printStackTrace();
         ctx.close();
         discoveredList = null;
+    }
+
+    private void readV2(ChannelHandlerContext ctx, String json, String remoteHost) {
+        try {
+            MsgEvent me = gson.fromJson(json, MsgEvent.class);
+            String v = (me == null) ? null : me.getParam(DiscoveryAuth.PARAM);
+            if (v == null) {                                   // a legacy responder answered the probe node
+                if (legacyPeer != null) legacyPeer.set(true);
+                done = true;
+                return;
+            }
+            DiscoveryAuth.Msg m = gson.fromJson(v, DiscoveryAuth.Msg.class);
+            if (m != null && "challenge".equals(m.step) && challenge == null) {
+                DiscoveryAuth.Msg proof = discoveryProcessor.clientProof(hello, m, remoteHost);
+                if (proof == null) { done = true; return; }
+                challenge = m;
+                MsgEvent out = new MsgEvent(MsgEvent.Type.DISCOVER, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID(), "Discovery v2 proof.");
+                out.setParam(DiscoveryAuth.PARAM, gson.toJson(proof));
+                ctx.writeAndFlush(gson.toJson(out));
+            } else if (m != null && "result".equals(m.step) && challenge != null) {
+                DiscoveryNode n = discoveryProcessor.clientResult(hello, challenge, m, remoteHost, discoveryPort);
+                if (n != null) discoveredList.add(n);
+                done = true;
+            } else {
+                logger.error("discovery v2: unexpected message from " + remoteHost);
+                done = true;
+            }
+        } catch (Exception ex) {
+            logger.error("discovery v2 client: " + ex.getMessage());
+            done = true;
+        }
     }
 
     public MsgEvent genDiscoverMsg() {

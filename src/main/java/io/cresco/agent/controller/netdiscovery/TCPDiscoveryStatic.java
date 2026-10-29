@@ -41,6 +41,28 @@ public class TCPDiscoveryStatic {
     }
 
     public List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, Boolean sendCert) throws Exception  {
+        if (!Boolean.TRUE.equals(sendCert)) {
+            return discover(disType, discoveryTimeout, hostAddress, discoveryPort, false, false, null);
+        }
+        // certificate exchanges are discovery v2 (mutually authenticated, replay-proof); a responder that only speaks
+        // the legacy exchange is used only with discovery_auth=compat
+        java.util.concurrent.atomic.AtomicBoolean legacyPeer = new java.util.concurrent.atomic.AtomicBoolean();
+        List<DiscoveryNode> found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, true, legacyPeer);
+        if (legacyPeer.get()) {
+            DiscoveryAuth.Mode mode = DiscoveryAuth.Mode.parse(plugin.getConfig().getStringParam(DiscoveryAuth.MODE_KEY, "v2"));
+            if (mode == DiscoveryAuth.Mode.COMPAT) {
+                logger.warn("Discovery: " + hostAddress + ":" + discoveryPort + " speaks only the LEGACY certificate exchange;"
+                        + " using it because discovery_auth=compat (upgrade that node, then remove compat)");
+                return discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, false, null);
+            }
+            logger.error("Discovery: " + hostAddress + ":" + discoveryPort + " speaks only the legacy, unauthenticated certificate"
+                    + " exchange; refusing it. Upgrade that node, or set discovery_auth=compat on this one during the upgrade");
+        }
+        return found;
+    }
+
+    private List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, boolean sendCert,
+                                         boolean v2, java.util.concurrent.atomic.AtomicBoolean legacyPeer) throws Exception {
         // Configure SSL.
 
         final List<DiscoveryNode> discoveredList = new ArrayList<>();
@@ -85,8 +107,8 @@ public class TCPDiscoveryStatic {
                                 */
                                 p.addLast(
                                         new ObjectEncoder(),
-                                        new ObjectDecoder(ClassResolvers.cacheDisabled(getClass().getClassLoader())),
-                                        new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
+                                        new ObjectDecoder(DiscoveryWire.MAX_OBJECT_BYTES, DiscoveryWire.STRINGS_ONLY),
+                                        new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, v2, legacyPeer));
                             }
                         });
 
