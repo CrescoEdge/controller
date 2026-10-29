@@ -69,8 +69,13 @@ public class DiscoveryClientWorkerIPv6 {
 
     private synchronized void processIncoming(DatagramPacket packet) {
         synchronized (lockPacket) {
-            String json = new String(packet.getData()).trim();
+            String json = DiscoveryGuard.datagramText(packet);
             try {
+                if (discoveredList.size() >= DiscoveryGuard.MAX_DISCOVERED_PER_ROUND) {
+                    DiscoveryGuard.warnLimited(logger, "discovery-udp6-answers", "Discovery: more than "
+                            + DiscoveryGuard.MAX_DISCOVERED_PER_ROUND + " answers in one round; ignoring the rest");
+                    return;
+                }
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
                 if (me != null) {
 
@@ -99,7 +104,8 @@ public class DiscoveryClientWorkerIPv6 {
 
                 }
             } catch (Exception ex) {
-                logger.error("DiscoveryClientWorker in loop {}", ex.getMessage());
+                DiscoveryGuard.warnLimited(logger, "discovery-udp6-answer", "Discovery: refused an answer from "
+                        + packet.getAddress() + ": " + ex.getMessage());
             }
         }
     }

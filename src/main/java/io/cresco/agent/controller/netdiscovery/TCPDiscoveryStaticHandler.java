@@ -213,7 +213,8 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
                 if (me != null) {
 
                     if(me.paramsContains("discovery_node")) {
-                        discoveryNode = gson.fromJson(me.getCompressedParam("discovery_node"), DiscoveryNode.class);
+                        // the answer is unauthenticated until validated below: bounded inflate (DiscoveryGuard)
+                        discoveryNode = DiscoveryGuard.discoveryNode(gson, me);
 
                         if(discoveryNode != null) {
                             logger.debug("Discovery Node Found: " + discoveryNode.discovered_ip + " latency: " + discoveryNode.getDiscoveryLatency());
@@ -270,7 +271,8 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
 
                 }
             } catch (Exception ex) {
-                logger.error("DiscoveryClientWorker in loop {}", ex.getMessage());
+                DiscoveryGuard.warnLimited(logger, "discovery-static-answer", "Discovery: refused an answer from "
+                        + remoteAddress + ": " + ex.getMessage());
             }
     }
 

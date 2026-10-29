@@ -94,7 +94,8 @@ public class TCPDiscoveryStatic {
                                 ChannelPipeline p = ch.pipeline()
                                         .addFirst(new WriteTimeoutHandler(writeTimeout, TimeUnit.MILLISECONDS))
                                         .addFirst(new ReadTimeoutHandler(readTimeout, TimeUnit.MILLISECONDS))
-                                        .addLast(new IdleStateHandler(idleTimeout,idleTimeout,idleTimeout));
+                                        .addLast(new IdleStateHandler(idleTimeout,idleTimeout,idleTimeout))
+                                        .addLast(DiscoveryGuard.CloseOnIdle.INSTANCE);
 
                                 /*
                                 if (sslCtx != null) {

@@ -255,23 +255,19 @@ public class UDPDiscoveryEngine implements Runnable {
 
                 if (!(intAddr.containsKey(remoteAddress)) && (isRemoteBroadcast) && (localAddress != null)) {
 
-                    String message = new String(packet.getData()).trim();
+                    String message = DiscoveryGuard.datagramText(packet);
 
                     DiscoveryNode discoveryNode = null;
 
                     try {
 
                         try {
+                            // pre-auth: bounded inflate of the node (DiscoveryGuard), never the 128 MiB library cap
                             MsgEvent rme = gson.fromJson(message, MsgEvent.class);
-                            if(rme != null) {
-                                if(rme.paramsContains("discovery_node")) {
-                                    if (rme.getParam("discovery_node") != null) {
-                                        discoveryNode = gson.fromJson(rme.getCompressedParam("discovery_node"), DiscoveryNode.class);
-                                    }
-                                }
-                            }
+                            discoveryNode = DiscoveryGuard.discoveryNode(gson, rme);
                         } catch (Exception ex) {
-                            logger.error(" failed to marshal discovery {}" + ex.getMessage());
+                            DiscoveryGuard.warnLimited(logger, "discovery-udp-refused", "Discovery: refused a datagram from "
+                                    + remoteAddress + ": " + ex.getMessage());
                         }
 
                         if (discoveryNode != null) {
@@ -302,12 +298,12 @@ public class UDPDiscoveryEngine implements Runnable {
                                 }
                             }
                          else {
-                            logger.error("DiscoveryNode = NULL");
+                            logger.trace("DiscoveryNode = NULL");
                             packet = null;
                         }
                     } catch (Exception ex) {
-                        logger.error("sendPacket() " + ex.getMessage());
-                        logger.error("DiscoveryEngineWorker.sendPacket", ex);
+                        DiscoveryGuard.warnLimited(logger, "discovery-udp-error", "Discovery: sendPacket() " + ex.getMessage());
+                        logger.debug("DiscoveryEngineWorker.sendPacket", ex);
                         packet = null;
                     }
                 } else {
