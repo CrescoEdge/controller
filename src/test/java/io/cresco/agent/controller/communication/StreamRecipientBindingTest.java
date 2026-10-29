@@ -46,7 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class StreamRecipientBindingTest {
 
     private static final String TOPIC = "global.event";
-    private static RegionCA ca;
+    private static RegionCA ca, caB;                                // region rgA's CA and region rgB's CA
     private static TlsTestSupport.Id global, a1, a2, sender, regionCtl, strayAgent;
 
     private final List<BrokerService> brokers = new ArrayList<>();
@@ -58,18 +58,22 @@ class StreamRecipientBindingTest {
     static void pki() throws Exception {
         TlsTestSupport.provider();
         ca = RegionCA.generate("t1", "rgA", 2048, 1);
+        caB = RegionCA.generate("t1", "rgB", 2048, 1);
         global = TlsTestSupport.issued(ca, "t1", "rgA", "gc");
         a1 = TlsTestSupport.issued(ca, "t1", "rgA", "a1");        // the stream's recipient
         a2 = TlsTestSupport.issued(ca, "t1", "rgA", "a2");        // another agent of the same tenant and region
         sender = TlsTestSupport.issued(ca, "t1", "rgA", "s1");
-        regionCtl = TlsTestSupport.issued(ca, "t1", "rgB", "rc"); // a region controller that discovered the global
+        regionCtl = TlsTestSupport.issued(caB, "t1", "rgB", "rc"); // a region controller that discovered the global
         strayAgent = TlsTestSupport.issued(ca, "t1", "rgA", "a9"); // a leaf agent with a valid certificate
     }
 
     @BeforeEach
     void start() throws Exception {
         peers = new PeerTrustRegistry();
-        peers.allowBridgePeer("rgB", "rc");                       // what a GLOBAL discovery exchange from rgB/rc records
+        // what discovery records: each region's CA, scoped to its region, and rgB/rc as a bridge peer
+        assertNull(peers.trustCa(ca.caCert(), "rgA", "t1", "test"));
+        assertNull(peers.trustCa(caB.caCert(), "rgB", "t1", "test"));
+        peers.allowBridgePeer("rgB", "rc");
         g = securedBroker("rgA_gc", global);
     }
 
@@ -85,7 +89,7 @@ class StreamRecipientBindingTest {
         cfg.put("broker_security_enabled", "true");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
-        BrokerService b = TlsTestSupport.broker(name, id, true, new BrokerPlugin[]{authz}, authz, ca.caCert());
+        BrokerService b = TlsTestSupport.broker(name, id, true, new BrokerPlugin[]{authz}, authz, ca.caCert(), caB.caCert());
         brokers.add(b);
         return b;
     }
@@ -96,7 +100,7 @@ class StreamRecipientBindingTest {
 
     private Session client(BrokerService b, TlsTestSupport.Id id, String assertedUser) throws Exception {
         ActiveMQSslConnectionFactory f = new ActiveMQSslConnectionFactory("nio+ssl://127.0.0.1:" + TlsTestSupport.port(b) + "?verifyHostName=false");
-        f.setKeyAndTrustManagers(id.keyManagers(), TlsTestSupport.trustManagers(ca.caCert()), new SecureRandom());
+        f.setKeyAndTrustManagers(id.keyManagers(), TlsTestSupport.trustManagers(ca.caCert(), caB.caCert()), new SecureRandom());
         if (assertedUser != null) f.setUserName(assertedUser);
         Connection c = f.createConnection();
         connections.add(c);
@@ -205,7 +209,7 @@ class StreamRecipientBindingTest {
                 + "?verifyHostName=false)?maxReconnectAttempts=2&initialReconnectDelay=200"));
         nc.setName("test-bridge-" + System.nanoTime());
         nc.setDuplex(true);
-        nc.setSslContext(new SslContext(id.keyManagers(), TlsTestSupport.trustManagers(ca.caCert()), new SecureRandom()));
+        nc.setSslContext(new SslContext(id.keyManagers(), TlsTestSupport.trustManagers(ca.caCert(), caB.caCert()), new SecureRandom()));
         nc.start();
         return nc;
     }
@@ -225,7 +229,7 @@ class StreamRecipientBindingTest {
     @Test
     void aBridgeFromALeafAgentIsRefused() throws Exception {
         // the stray side runs no Cresco authorization (an attacker's broker would not): the global must refuse alone
-        BrokerService stray = TlsTestSupport.broker("rgA_a9", strayAgent, false, null, null, ca.caCert());
+        BrokerService stray = TlsTestSupport.broker("rgA_a9", strayAgent, false, null, null, ca.caCert(), caB.caCert());
         brokers.add(stray);
         bridge(stray, strayAgent);
         assertTrue(!bridgeAdmitted(g, 4000), "the global accepted a broker bridge from a leaf agent's certificate");
@@ -246,7 +250,7 @@ class StreamRecipientBindingTest {
         MessageConsumer wide = spy.createConsumer(spy.createTopic(TOPIC));
         Thread.sleep(1500);                                                           // demand crosses the bridge
 
-        TlsTestSupport.Id remoteSender = TlsTestSupport.issued(ca, "t1", "rgB", "s2");
+        TlsTestSupport.Id remoteSender = TlsTestSupport.issued(caB, "t1", "rgB", "s2");
         send(client(region, remoteSender), "for-a1-via-bridge", "rgA_a1", null);
         assertEquals(List.of("for-a1-via-bridge"), drain(mine, 8000), "the recipient did not receive its stream across the bridge");
         assertTrue(drain(wide, 1000).isEmpty(), "a non-recipient received the stream across the bridge");

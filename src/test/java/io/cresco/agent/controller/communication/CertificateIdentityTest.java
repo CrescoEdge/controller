@@ -104,9 +104,16 @@ class CertificateIdentityTest {
         ControllerEngine sameRegion = TlsTestSupport.engine("rgA", "rc2", null);    // a "region" taking our region name
         assertNull(issue(regionCtl, sameRegion, DiscoveryType.REGION));
 
-        ControllerEngine peerRegion = TlsTestSupport.engine("rgB", "rc", null);
+        // a joining controller is not re-issued: the two region CAs record each other, each scoped to its own region
+        ControllerEngine peerRegion = TlsTestSupport.engine("rgB", "rc", Map.of("security_regional_ca", "true"));
+        peerRegion.getCertificateManager().ensureRegionCA();
         String peer = issue(regionCtl, peerRegion, DiscoveryType.GLOBAL);
         assertNotNull(peer);
-        assertEquals("rgB", CrescoIdentity.fromCertificate(regionCtl.getCertificateManager().getCertsfromJson(peer)[0]).getRegion());
+        X509Certificate[] returned = regionCtl.getCertificateManager().getCertsfromJson(peer);
+        assertEquals("rgA", PeerTrustRegistry.caScopeOf(returned[0])[0], "the CA returned to a federating controller is ours");
+        assertTrue(peerRegion.getCertificateManager().installEnrollment(peer, "rgA"));
+        assertEquals("rgB", leafOf(peerRegion).getRegion(), "the federating controller kept its own identity");
+        // a joining controller without its own region CA is refused
+        assertNull(issue(regionCtl, TlsTestSupport.engine("rgC", "rc", null), DiscoveryType.GLOBAL));
     }
 }

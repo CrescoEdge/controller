@@ -50,7 +50,7 @@ public class CertificateManager {
     private RegionCA regionCA;
     // What discovery taught us about peers (pinned keys, bridge-capable controllers): binds TLS connections to
     // the identity they were opened to (PeerIdentity). In memory; re-learned by the next discovery exchange.
-    private final PeerTrustRegistry peerTrust = new PeerTrustRegistry();
+    private PeerTrustRegistry peerTrust = new PeerTrustRegistry();
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
@@ -68,6 +68,7 @@ public class CertificateManager {
         try {
 
             Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+            peerTrust = openPeerTrust();
 
             int minKeySize = io.cresco.library.crypto.CrescoCrypto.MIN_RSA_KEY_BITS;
             keySize = plugin.getConfig().getIntegerParam("messagekeysize", minKeySize);
@@ -136,10 +137,18 @@ public class CertificateManager {
                 trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
                 trustStore.load(null, null);
 
-                generateCertChain();
+                // the node's key survives restarts (identity bindings at peers and CAs follow the key)
+                if (!loadNodeIdentity()) {
+                    generateCertChain();
+                    saveNodeIdentity();
+                }
 
                 //trust self
                 addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            }
+            // CAs recorded for regions before a restart stay trusted for TLS (their scope is in the registry)
+            for (X509Certificate ca : peerTrust.recordedCas()) {
+                trustStore.setCertificateEntry("recordedCA-" + PeerIdentity.spkiFingerprint(ca).substring(0, 16), ca);
             }
 
             // Export the public key
@@ -154,6 +163,126 @@ public class CertificateManager {
             logger.error("CertificateManager.<init> CertificateChainGeneration() Error: " + ex.getMessage(), ex);
         }
 
+    }
+
+    // ---------------------------------------------------------------- persistent identity material
+
+    /** Directory for this node's identity material: node_identity_dir, else <agent data dir>/security. */
+    private Path identityDir() {
+        String d = plugin.getConfig().getStringParam("node_identity_dir");
+        if (d == null || d.isBlank()) {
+            String base = null;
+            try { base = plugin.getAgentService().getAgentDataDirectory(); } catch (Exception ignore) { }
+            if (base == null) base = System.getProperty("cresco_data_location", "cresco-data");
+            d = Paths.get(base, "security").toString();
+        }
+        return Paths.get(d);
+    }
+
+    private static java.util.List<String> csv(String v) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (v == null) return out;
+        for (String x : v.split(",")) if (!x.trim().isEmpty()) out.add(x.trim());
+        return out;
+    }
+
+    private PeerTrustRegistry openPeerTrust() {
+        if (!plugin.getConfig().getBooleanParam("peer_trust_persist", true)) {
+            return new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
+        }
+        String f = plugin.getConfig().getStringParam("peer_trust_file");
+        Path file = (f == null || f.isBlank()) ? identityDir().resolve("peer-trust.json") : Paths.get(f);
+        return PeerTrustRegistry.open(file,
+                csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")),
+                csv(plugin.getConfig().getStringParam("peer_bridge_revoke", "")),
+                plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30),
+                m -> logger.error(m));
+    }
+
+    private boolean persistIdentity() {
+        return plugin.getConfig().getBooleanParam("node_identity_persist", true) && keyStoreFilePath == null;
+    }
+
+    /** Password for an identity store: a random value in an owner-only file next to it, created on first use. */
+    private char[] storePassword(Path store) throws IOException {
+        Path pass = store.resolveSibling(store.getFileName() + ".pass");
+        if (!Files.exists(pass)) {
+            byte[] r = new byte[32];
+            new SecureRandom().nextBytes(r);
+            Files.createDirectories(pass.getParent());
+            Path tmp = pass.resolveSibling(pass.getFileName() + ".tmp");
+            Files.writeString(tmp, java.util.HexFormat.of().formatHex(r));
+            try { Files.setPosixFilePermissions(tmp, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")); } catch (Exception ignore) { }
+            Files.move(tmp, pass, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        return Files.readString(pass).trim().toCharArray();
+    }
+
+    private void writeStore(Path store, String alias, PrivateKey key, X509Certificate[] certs) throws Exception {
+        char[] pw = storePassword(store);
+        KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+        ks.load(null, null);
+        ks.setKeyEntry(alias, key, pw, certs);
+        Path tmp = store.resolveSibling(store.getFileName() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(tmp.toFile())) {
+            ks.store(out, pw);
+            out.getFD().sync();
+        }
+        try { Files.setPosixFilePermissions(tmp, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")); } catch (Exception ignore) { }
+        Files.move(tmp, store, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private Object[] readStore(Path store, String alias) throws Exception {
+        if (!Files.exists(store)) return null;
+        char[] pw = storePassword(store);
+        KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+        try (FileInputStream in = new FileInputStream(store.toFile())) {
+            ks.load(in, pw);
+        }
+        Key k = ks.getKey(alias, pw);
+        Certificate[] c = ks.getCertificateChain(alias);
+        if (!(k instanceof PrivateKey) || c == null || c.length == 0) return null;
+        X509Certificate[] x = new X509Certificate[c.length];
+        for (int i = 0; i < c.length; i++) x[i] = (X509Certificate) c[i];
+        return new Object[]{k, x};
+    }
+
+    /** Save this node's key and chain (node_identity_persist, default true; not when keystorefile is configured). */
+    private synchronized void saveNodeIdentity() {
+        if (!persistIdentity()) return;
+        try {
+            PrivateKey k = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+            if (k != null && chain != null) writeStore(identityDir().resolve("node-identity.p12"), "node", k, chain);
+        } catch (Exception ex) {
+            logger.error("Could not save this node's identity key (it will be new after a restart, and peers that bound"
+                    + " the old key will refuse it): " + ex.getMessage());
+        }
+    }
+
+    /** Load the persisted key; re-issue the leaf with it when it names another identity. */
+    private boolean loadNodeIdentity() {
+        if (!persistIdentity()) return false;
+        try {
+            Object[] kc = readStore(identityDir().resolve("node-identity.p12"), "node");
+            if (kc == null) return false;
+            PrivateKey key = (PrivateKey) kc[0];
+            X509Certificate[] stored = (X509Certificate[]) kc[1];
+            CrescoIdentity have = CrescoNames.identityOf(stored[0]);
+            String region = controllerEngine.cstate.getRegion(), agent = controllerEngine.cstate.getAgent();
+            if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent)) {
+                this.chain = stored;
+                storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, key, stored);
+            } else {
+                generateCertChain(new KeyPair(stored[0].getPublicKey(), key));
+                saveNodeIdentity();
+            }
+            logger.info("Loaded this node's persisted identity key (" + PeerIdentity.shortFp(PeerIdentity.spkiFingerprint(chain[0])) + ")");
+            return true;
+        } catch (Exception ex) {
+            logger.error("Persisted node identity unreadable (" + ex.getMessage() + "); making a new key -- peers that bound"
+                    + " the old one will refuse this node until it is re-enrolled (peer_identity_rebind)");
+            return false;
+        }
     }
 
     private void exportPublicKey() {
@@ -430,6 +559,7 @@ public class CertificateManager {
             }
             PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
             generateCertChain(myKey != null ? new KeyPair(chain[0].getPublicKey(), myKey) : null);   // same key, new name
+            saveNodeIdentity();
             addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
             try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             try { if (controllerEngine.getActiveClient() != null) controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
@@ -566,19 +696,62 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
             String region = controllerEngine.cstate.getRegion();
             String agent = controllerEngine.cstate.getAgent();
-            regionCA = RegionCA.generate(tenant, region, keySize, YEARS_VALID);
+            regionCA = loadRegionCA(tenant, region);
+            if (regionCA == null) {
+                regionCA = RegionCA.generate(tenant, region, keySize, YEARS_VALID);
+                saveRegionCA();
+            }
             addCertificatesToTrustStore("localRegionCA-" + region, new X509Certificate[]{ regionCA.caCert() });
-            // self-enroll: replace our self-signed leaf with one signed by our own region CA
+            String scope = peerTrust.trustCa(regionCA.caCert(), region, tenant, "own");
+            if (scope != null) {
+                logger.error("This node's region CA is not the one recorded for region " + region + ": " + scope);
+            }
+            // self-enroll: replace our self-signed leaf with one signed by our own region CA (same key)
             PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
             if (myKey != null && getPublicCertificate() != null && getPublicCertificate()[0] != null) {
+                PeerTrustRegistry.BindResult own = peerTrust.bind(tenant, region, agent, getPublicCertificate()[0].getPublicKey(), "own");
+                if (!own.ok) logger.error("This controller's own identity " + region + "/" + agent + " is bound to another key: " + own.reason);
                 X509Certificate[] selfChain = regionCA.enroll(getPublicCertificate()[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
                 this.chain = selfChain;
                 storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, selfChain);
+                saveNodeIdentity();
             }
             try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             logger.info("Region CA established for region '" + region + "' (tenant=" + tenant + "); own identity re-issued under it");
         } catch (Exception ex) {
             logger.error("ensureRegionCA error: " + ex.getMessage(), ex);
+        }
+    }
+
+    private Path regionCaStore() {
+        return identityDir().resolve("region-ca.p12");
+    }
+
+    private void saveRegionCA() {
+        if (!plugin.getConfig().getBooleanParam("node_identity_persist", true)) return;
+        try {
+            writeStore(regionCaStore(), "region-ca", regionCA.caPrivateKey(), regionCA.caChain());
+        } catch (Exception ex) {
+            logger.error("Could not save the region CA (a restart will make a new one, which peers that recorded this CA refuse): " + ex.getMessage());
+        }
+    }
+
+    private RegionCA loadRegionCA(String tenant, String region) {
+        if (!plugin.getConfig().getBooleanParam("node_identity_persist", true)) return null;
+        try {
+            Object[] kc = readStore(regionCaStore(), "region-ca");
+            if (kc == null) return null;
+            X509Certificate[] c = (X509Certificate[]) kc[1];
+            String[] scope = PeerTrustRegistry.caScopeOf(c[0]);
+            if (scope == null || !scope[0].equals(region) || !scope[1].equals(tenant) || c.length < 2) {
+                logger.error("The persisted region CA is for " + (scope == null ? "?" : scope[0] + "/" + scope[1]) + ", not " + region + "/" + tenant + "; making a new one");
+                return null;
+            }
+            logger.info("Loaded the persisted region CA for region " + region);
+            return RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
+        } catch (Exception ex) {
+            logger.error("Persisted region CA unreadable (" + ex.getMessage() + "); making a new one");
+            return null;
         }
     }
 
@@ -610,75 +783,61 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 return null;
             }
             X509Certificate[] joinerCerts = getCertsfromJson(joinerCertJson);
-            if (joinerCerts == null || joinerCerts[0] == null) {
+            if (joinerCerts == null || joinerCerts.length == 0 || joinerCerts[0] == null) {
                 logger.error("issueEnrollment: no joiner certificate");
                 return null;
             }
             // The joiner's claim, read strictly: every name in the Cresco grammar (no spaces, '#', '_' or specials that
             // a DN parser would normalise into somebody else's name), or nothing is issued.
-            CrescoIdentity claimed = CrescoNames.identityOf(joinerCerts[0]);
+            boolean controllerJoin = joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
+                    || joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL;
+            // an agent's claimed region and tenant are replaced by this CA's, so only its agent name must be present
+            CrescoIdentity claimed = controllerJoin ? CrescoNames.identityOf(joinerCerts[0]) : CrescoNames.claimOf(joinerCerts[0]);
             if (claimed == null) {
                 logger.error("Enrollment REFUSED: the joiner's certificate names no valid Cresco identity (subject '"
                         + joinerCerts[0].getSubjectX500Principal().getName() + "'); names must be "
                         + "1-64 of A-Z a-z 0-9 . - starting and ending with a letter or digit");
                 return null;
             }
-            String tenant = claimed.getTenant();
-            String region = claimed.getRegion();
-            String agent  = claimed.getAgent();
             String myRegion = controllerEngine.cstate.getRegion();
             String myAgent = controllerEngine.cstate.getAgent();
-            if (joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.AGENT && myRegion != null) {
-                if (!myRegion.equals(region)) {
-                    logger.info("Enrollment: agent " + agent + " claimed region '" + region + "'; stamping this region '" + myRegion + "' (it joined here)");
-                }
-                region = myRegion;
+            String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            if (controllerJoin) {
+                return federateController(joinerCerts, claimed, myRegion, myAgent);
             }
-            if (myRegion != null && myAgent != null && myRegion.equals(region) && myAgent.equals(agent)) {
+
+            // An AGENT joins THIS region: its certificate names this region and this CA's tenant (a region CA vouches for
+            // its own region and tenant only), whatever its self-signed certificate claimed.
+            String tenant = myTenant;
+            String region = myRegion;
+            String agent = claimed.getAgent();
+            if (!region.equals(claimed.getRegion()) || !tenant.equals(claimed.getTenant())) {   // (absent counts as differing)
+                logger.info("Enrollment: agent " + agent + " claimed " + claimed.getTenant() + "/" + claimed.getRegion()
+                        + "; stamping this CA's " + tenant + "/" + region + " (it joined here)");
+            }
+            if (myAgent != null && myAgent.equals(agent)) {
                 logger.error("Enrollment REFUSED: a joiner asked for this controller's own identity region=" + region + ", agent=" + agent);
                 return null;
             }
-            if ((joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
-                    || joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL)
-                    && myRegion != null && myRegion.equals(region)) {
-                logger.error("Enrollment REFUSED: a joining " + joinType + " controller (agent=" + agent + ") asked for this controller's region '" + region + "'");
+            // one key per name: a second key for a name this CA already issued is refused unless the operator rebinds it
+            java.security.PublicKey joinerKey = joinerCerts[0].getPublicKey();
+            PeerTrustRegistry.BindResult free = peerTrust.canBind(tenant, region, agent, joinerKey);
+            if (!free.ok) {
+                logger.error("Enrollment REFUSED: identity " + region + "/" + agent + " is taken: " + free.reason);
                 return null;
             }
-            // Stricter: a purely-regional CA stamps ITS tenant (an agent cannot cross tenants). A global
-            // federates multiple tenants, so it preserves the joining region's tenant.
-            boolean isGlobal = controllerEngine.cstate.isGlobalController();
-            // W2 PEER FEDERATION: when enabled, two independently-rooted REGIONS trust each other as EQUALS
-            // rather than one subordinating the other. The joiner presents its OWN region-CA chain
-            // ([leaf, joinerRegionCA, joinerRoot]); we add that CA to OUR truststore (so we trust the peer's
-            // own-signed identities), and we PRESERVE the joiner's tenant/region/agent instead of re-stamping
-            // it under our tenant. This is the bilateral cross-trust that removes the need for a common
-            // global as trust broker. Default off -> legacy subordinating behaviour unchanged.
-            boolean peerFederation = plugin.getConfig().getBooleanParam("security_peer_federation", false);
-            boolean joinerIsRegionPeer = (claimed != null && claimed.getAgent() != null
-                    && joinerCerts.length > 1 && joinerCerts[1] != null);
-            if (peerFederation && !isGlobal && joinerIsRegionPeer) {
-                // trust the peer's own CA (+ root) — bilateral: the peer likewise trusts ours via the chain
-                // we return below, which installEnrollment adds to its truststore.
-                addCertificatesToTrustStore("peerCA-" + joinerCerts[1].getSerialNumber(),
-                        joinerCerts.length > 2 && joinerCerts[2] != null
-                                ? new X509Certificate[]{ joinerCerts[1], joinerCerts[2] }
-                                : new X509Certificate[]{ joinerCerts[1] });
-                try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
-                logger.info("PEER-FEDERATION: cross-trusted peer region " + region + " (tenant=" + tenant
-                        + ") as an EQUAL — added its CA to truststore, preserved its identity (no subordination).");
-                // return OUR CA chain so the peer trusts us too (bilateral), WITHOUT re-signing the peer.
-                return getJsonFromCerts(regionCA.caChain());
-            }
-            if (!isGlobal) {
-                tenant = plugin.getConfig().getStringParam("tenant_id", tenant);
-            }
-            X509Certificate[] signed = regionCA.enroll(joinerCerts[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
+            X509Certificate[] signed = regionCA.enroll(joinerKey, tenant, region, agent, YEARS_VALID);
             // run the guards again on the name AS ISSUED (what every verifier will read), not on the strings we passed in
             CrescoIdentity issued = CrescoNames.identityOf(signed[0]);
             if (issued == null || !tenant.equals(issued.getTenant()) || !region.equals(issued.getRegion()) || !agent.equals(issued.getAgent())
-                    || (myRegion != null && myAgent != null && myRegion.equals(issued.getRegion()) && myAgent.equals(issued.getAgent()))) {
+                    || (myRegion.equals(issued.getRegion()) && myAgent != null && myAgent.equals(issued.getAgent()))) {
                 logger.error("Enrollment REFUSED: the certificate as issued names " + issued + ", not tenant=" + tenant
                         + ", region=" + region + ", agent=" + agent + " (or names this controller)");
+                return null;
+            }
+            PeerTrustRegistry.BindResult bound = peerTrust.bind(tenant, region, agent, joinerKey, "enrolled");
+            if (!bound.ok) {
+                logger.error("Enrollment REFUSED: " + region + "/" + agent + ": " + bound.reason);
                 return null;
             }
             logger.info("Enrolled node " + region + "_" + agent + " (tenant=" + tenant + ") under region CA");
@@ -690,14 +849,89 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     }
 
     /**
+     * A region or global controller joining over a REGION/GLOBAL discovery exchange is not re-issued: it presents its
+     * own region CA chain {@code [leaf, itsRegionCA, root]}, and the two CAs are recorded as each other's peers, each
+     * scoped to its own region and tenant (a region CA vouches only for its own region's names). Refused when the
+     * joiner's leaf was not issued by its CA, the CA does not name the joiner's region and tenant, the region is this
+     * controller's, the tenant is not one this controller federates ({@code security_federated_tenants}, empty = any),
+     * or another CA / key is already recorded for that region / controller identity.
+     *
+     * @return our CA chain {@code [ourCA, ourRoot]} for the joiner to record, or null when refused
+     */
+    private String federateController(X509Certificate[] joinerCerts, CrescoIdentity claimed, String myRegion, String myAgent) {
+        String region = claimed.getRegion(), agent = claimed.getAgent(), tenant = claimed.getTenant();
+        if (region.equals(myRegion)) {
+            logger.error("Enrollment REFUSED: a joining controller (" + region + "/" + agent + ") asked for this controller's region '" + region + "'");
+            return null;
+        }
+        java.util.List<String> tenants = csv(plugin.getConfig().getStringParam("security_federated_tenants", ""));
+        if (!tenants.isEmpty() && !tenants.contains(tenant)) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + " is tenant " + tenant
+                    + ", which is not in security_federated_tenants " + tenants);
+            return null;
+        }
+        if (joinerCerts.length < 2 || joinerCerts[1] == null) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + " presented no region CA"
+                    + " (security_regional_ca must be on for every controller of a regional-CA fabric)");
+            return null;
+        }
+        X509Certificate joinerCa = joinerCerts[1];
+        String[] scope = PeerTrustRegistry.caScopeOf(joinerCa);
+        try {
+            joinerCa.checkValidity();
+            joinerCerts[0].checkValidity();
+            if (joinerCa.getBasicConstraints() < 0) throw new IllegalArgumentException("its CA certificate is not a CA");
+            if (!joinerCerts[0].getIssuerX500Principal().equals(joinerCa.getSubjectX500Principal())) throw new IllegalArgumentException("its leaf was not issued by its CA");
+            joinerCerts[0].verify(joinerCa.getPublicKey());
+            if (joinerCerts.length > 2 && joinerCerts[2] != null) joinerCa.verify(joinerCerts[2].getPublicKey());
+        } catch (Exception e) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + ": " + e.getMessage());
+            return null;
+        }
+        if (scope == null || !scope[0].equals(region) || !scope[1].equals(tenant)) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + " presented a CA for "
+                    + (scope == null ? "no valid region" : scope[1] + "/" + scope[0]) + ", not its own " + tenant + "/" + region);
+            return null;
+        }
+        PeerTrustRegistry.BindResult free = peerTrust.canBind(tenant, region, agent, joinerCerts[0].getPublicKey());
+        if (!free.ok) {
+            logger.error("Enrollment REFUSED: controller identity " + region + "/" + agent + " is taken: " + free.reason);
+            return null;
+        }
+        String why = peerTrust.trustCa(joinerCa, region, tenant, "federated");
+        if (why != null) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + ": " + why);
+            return null;
+        }
+        peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated");
+        addCertificatesToTrustStore("peerCA-" + region, joinerCerts.length > 2 && joinerCerts[2] != null
+                ? new X509Certificate[]{joinerCa, joinerCerts[2]} : new X509Certificate[]{joinerCa});
+        try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+        logger.info("Federated with controller " + region + "/" + agent + " (tenant=" + tenant + "): recorded its region CA, scoped to "
+                + region + "; returning this region's CA");
+        return getJsonFromCerts(regionCA.caChain());
+    }
+
+    /**
      * Install a region-CA-signed identity received at enrollment: keep our private key, swap our cert
      * chain to the region-signed one, trust the issuing CA (which rides inside the chain), and refresh
      * the live broker + client SSL contexts so the new identity and anchor take effect immediately.
      */
     public boolean installEnrollment(String chainJson) {
+        return installEnrollment(chainJson, null);
+    }
+
+    /**
+     * Install what a regional-CA controller returned in a discovery exchange with the controller of {@code peerRegion}:
+     * either our identity re-issued by that region's CA {@code [ourLeaf, regionCA, root]} (we joined as an agent), or
+     * that controller's own CA chain {@code [itsCA, root]} (we are a controller federating with it). The CA is recorded
+     * scoped to the region it names, which must be {@code peerRegion} (when given) -- and for our re-issued identity,
+     * the region the leaf names.
+     */
+    public boolean installEnrollment(String chainJson, String peerRegion) {
         try {
             X509Certificate[] signedChain = getCertsfromJson(chainJson);
-            if (signedChain == null || signedChain[0] == null) {
+            if (signedChain == null || signedChain.length == 0 || signedChain[0] == null) {
                 logger.error("installEnrollment: empty enrollment chain");
                 return false;
             }
@@ -706,32 +940,60 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("installEnrollment: no private key for alias " + keyStoreAlias);
                 return false;
             }
-            // W2 PEER FEDERATION: if the returned bundle is the PEER's CA (its leaf public key does not match
-            // OUR key), it is a cross-trust bundle, not a re-issue of our identity. Add it to the truststore
-            // and KEEP our own identity — the equal-peer relationship (no subordination).
-            try {
-                java.security.cert.Certificate ourCert = keyStore.getCertificate(keyStoreAlias);
-                if (ourCert != null && !ourCert.getPublicKey().equals(signedChain[0].getPublicKey())) {
-                    addCertificatesToTrustStore("peerCA-" + signedChain[0].getSerialNumber(), signedChain);
-                    try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
-                    try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
-                    logger.info("PEER-FEDERATION: installed peer CA bundle (kept our own identity, no subordination): "
-                            + CrescoIdentity.fromCertificate(signedChain[0]));
-                    return true;
+            java.security.cert.Certificate ourCert = keyStore.getCertificate(keyStoreAlias);
+            if (ourCert != null && !ourCert.getPublicKey().equals(signedChain[0].getPublicKey())) {
+                // the peer controller's own CA chain: record it for its region, keep our identity
+                X509Certificate peerCa = signedChain[0];
+                String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
+                if (scope == null || peerCa.getBasicConstraints() < 0 || (peerRegion != null && !peerRegion.equals(scope[0]))) {
+                    logger.error("installEnrollment REFUSED: the CA returned by " + peerRegion + " names region "
+                            + (scope == null ? "?" : scope[0]) + " (or is not a CA)");
+                    return false;
                 }
-            } catch (Exception ignore) { /* fall through to normal enrollment install */ }
+                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated");
+                if (why != null) {
+                    logger.error("installEnrollment REFUSED: " + why);
+                    return false;
+                }
+                addCertificatesToTrustStore("peerCA-" + scope[0], signedChain);
+                try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+                try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
+                logger.info("Federated with region " + scope[0] + " (tenant=" + scope[1] + "): recorded its CA, kept our own identity");
+                return true;
+            }
+            // our identity, issued by the region we joined
+            CrescoIdentity mine = CrescoNames.identityOf(signedChain[0]);
+            if (mine == null || signedChain.length < 2 || signedChain[1] == null) {
+                logger.error("installEnrollment REFUSED: the returned certificate names no valid identity or has no issuing CA");
+                return false;
+            }
+            X509Certificate issuer = signedChain[1];
+            String[] scope = PeerTrustRegistry.caScopeOf(issuer);
+            try {
+                signedChain[0].verify(issuer.getPublicKey());
+            } catch (Exception e) {
+                logger.error("installEnrollment REFUSED: the returned identity was not signed by the CA that came with it");
+                return false;
+            }
+            if (scope == null || !scope[0].equals(mine.getRegion()) || !scope[1].equals(mine.getTenant())
+                    || (peerRegion != null && !peerRegion.equals(mine.getRegion()))) {
+                logger.error("installEnrollment REFUSED: identity " + mine + " issued by a CA for " + (scope == null ? "?" : scope[1] + "/" + scope[0])
+                        + (peerRegion != null ? " while joining region " + peerRegion : ""));
+                return false;
+            }
+            String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined");
+            if (why != null) {
+                logger.error("installEnrollment REFUSED: " + why);
+                return false;
+            }
             this.chain = signedChain;
             storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, signedChain);
-            // trust the issuing CA (chain[1]) and its root (chain[2]) — the O(regions) trust anchors
-            if (signedChain.length > 1 && signedChain[1] != null) {
-                addCertificatesToTrustStore("issuingCA-" + signedChain[1].getSerialNumber(),
-                        signedChain.length > 2 && signedChain[2] != null
-                                ? new X509Certificate[]{ signedChain[1], signedChain[2] }
-                                : new X509Certificate[]{ signedChain[1] });
-            }
+            saveNodeIdentity();
+            addCertificatesToTrustStore("issuingCA-" + scope[0], signedChain.length > 2 && signedChain[2] != null
+                    ? new X509Certificate[]{ issuer, signedChain[2] } : new X509Certificate[]{ issuer });
             try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
-            logger.info("Installed region-CA-signed identity: " + CrescoIdentity.fromCertificate(signedChain[0]));
+            logger.info("Installed region-CA-signed identity: " + mine);
             return true;
         } catch (Exception ex) {
             logger.error("installEnrollment error: " + ex.getMessage(), ex);

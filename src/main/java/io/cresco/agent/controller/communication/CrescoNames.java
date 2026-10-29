@@ -114,6 +114,15 @@ public final class CrescoNames {
      * identity. This is the parser for every security decision (binding, pins, the broker's principal, enrollment).
      */
     public static CrescoIdentity identityOf(X509Certificate cert) {
+        CrescoIdentity id = claimOf(cert);
+        return (id == null || id.getRegion() == null || id.getTenant() == null) ? null : id;
+    }
+
+    /**
+     * As {@link #identityOf}, but region and tenant may be absent (an agent's enrollment claim: its region CA stamps
+     * both). Every attribute present is still read strictly; the agent name (CN) is required.
+     */
+    public static CrescoIdentity claimOf(X509Certificate cert) {
         if (cert == null) return null;
         try {
             LdapName ln = new LdapName(cert.getSubjectX500Principal().getName());
@@ -131,7 +140,7 @@ public final class CrescoNames {
                 else if ("UID".equalsIgnoreCase(type) || UID_OID.equals(type)) { if (uid != null) return null; uid = value; }
                 else return null;                                         // an attribute Cresco never issues
             }
-            if (agent == null || region == null || tenant == null) return null;
+            if (agent == null) return null;
             return CrescoIdentity.of(tenant, region, agent, uid);
         } catch (Exception e) {
             return null;
