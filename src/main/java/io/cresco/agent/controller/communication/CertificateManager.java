@@ -613,7 +613,13 @@ public class CertificateManager {
             KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
             keyManagerFactory.init(keyStore, keyStorePassword);
             keyManagers = keyManagerFactory.getKeyManagers();
-
+            // always present the node's identity as a client, even when the server's CA hints do not name its issuer
+            // (a restarted server under per-node trust): see NodeIdentityKeyManager
+            for (int i = 0; i < keyManagers.length; i++) {
+                if (keyManagers[i] instanceof X509KeyManager) {
+                    keyManagers[i] = new NodeIdentityKeyManager((X509KeyManager) keyManagers[i], () -> keyStoreAlias);
+                }
+            }
         } catch(Exception ex) {
             logger.error("getKeyManagers Error : " + ex.getMessage());
         }

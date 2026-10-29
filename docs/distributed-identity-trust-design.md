@@ -273,7 +273,11 @@ data directory, NOT tampering by someone who can read and write it.
 **Restarts.** The node's TLS trust managers (broker and client, both directions) accept a chain PKIX validates over the
 in-memory truststore OR one whose leaf, valid now, carries the key bound to the identity it names
 (`BoundKeyTrustManager`): a restarted controller trusts its agents and bridges at once, without their rediscovering.
-Truststore entries are named by certificate fingerprint and never overwritten (a peer's certificate that copied an
+As a client the node always presents its one identity (`NodeIdentityKeyManager`): a server that requires client
+certificates names the CAs it accepts, from its truststore, and the JDK key manager presents a certificate only when its
+chain names one of them; a restarted server no longer names its bound peers' self-rooted issuers, so they presented no
+certificate and failed the handshake silently, and the bound-key check never ran (seen in the live restart drill: agents
+and bridges were readmitted only after rediscovering). Truststore entries are named by certificate fingerprint and never overwritten (a peer's certificate that copied an
 anchor's subject used to replace it).
 
 ### 7.4 Discovery v2 (`DiscoveryAuth`)
