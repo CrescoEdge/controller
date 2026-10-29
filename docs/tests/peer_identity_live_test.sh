@@ -21,7 +21,8 @@ rm -rf "$WORK"; mkdir -p "$WORK/logs"
 rnd() { "$PY" -c 'import secrets; print(secrets.token_hex(16))'; }
 KEY="$(rnd)"
 SEC="-Ddiscovery_secret_global=$(rnd) -Ddiscovery_secret_region=$(rnd) -Ddiscovery_secret_agent=$(rnd) -Dcresco_service_key=$KEY"
-SECURITY="-Dbroker_security_enabled=true -Dbroker_require_client_auth=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce"
+# broker_require_client_auth is left to its default (on, because broker security is on)
+SECURITY="-Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce"
 [ "${REGIONAL_CA:-0}" = "1" ] && SECURITY="$SECURITY -Dsecurity_regional_ca=true"
 COMMON="-Djava.net.preferIPv4Stack=true -Xmx1024M -Droot_log_level=INFO -Denable_console=false -Denable_dashboard=false"
 PIDS="$WORK/pids"; : > "$PIDS"
@@ -77,6 +78,7 @@ ck "$(has global "DENY READ 'global.event.*glob, agent=gc.*stream of recipient r
 typed() { echo "$PROBE" | "$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); v=d.get(sys.argv[1]) or ""; sys.exit(0 if "Subscription refused" in v else 1)' "$1" && echo 1; }
 ck "$(typed bound_spy_refused)" "the spy's client got a typed refusal (DataplaneSubscriptionRefused)"
 ck "$(typed bound_spy2_refused)" "the global's wsapi client got a typed refusal (DataplaneSubscriptionRefused)"
+for n in global region; do ck "$(has $n 'Broker mutual-TLS ENABLED')" "$n: client certificates required by default with broker security"; done
 ck "$(has global 'discovery v2: authenticated GLOBAL exchange with rgr/rc')" "the region and the global authenticated each other with discovery v2"
 ck "$(has b1 'discovery v2: authenticated AGENT exchange with rgr/rc')" "b1 and the region authenticated each other with discovery v2"
 ck "$(has global "DENY READ 'global.event.*a1.*stream of recipient rgr_b1")" "the global broker refused a1's subscription to rgr_b1's stream"
