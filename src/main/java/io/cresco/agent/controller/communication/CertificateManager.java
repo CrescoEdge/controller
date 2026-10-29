@@ -503,20 +503,32 @@ public class CertificateManager {
         return kpGen.generateKeyPair();
     }
 
+    /**
+     * This node's TLS trust managers: PKIX over the truststore, or a chain whose leaf key is bound to the identity it names
+     * in the peer trust registry ({@link BoundKeyTrustManager}) -- so bound peers are still trusted after a restart, when
+     * the in-memory truststore no longer holds their self-rooted chains.
+     */
     public TrustManager[] getTrustManagers() {
         TrustManager[] trustManagers = null;
         try {
             TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             trustManagerFactory.init(trustStore);
             trustManagers = trustManagerFactory.getTrustManagers();
-
+            for (int i = 0; i < trustManagers.length; i++) {
+                if (trustManagers[i] instanceof X509TrustManager) {
+                    trustManagers[i] = new BoundKeyTrustManager((X509TrustManager) trustManagers[i], peerTrust, logger);
+                }
+            }
         } catch(Exception ex) {
             logger.error("getTrustManagers Error : " + ex.getMessage());
         }
         return trustManagers;
     }
 
-    /** The node's current PKIX trust manager over its truststore (built per call, so it sees every addition). */
+    /**
+     * The node's current trust manager (built per call, so it sees every addition): PKIX over its truststore, or a
+     * registry-bound key (see {@link #getTrustManagers}).
+     */
     public X509TrustManager currentPkixTrustManager() {
         TrustManager[] tms = getTrustManagers();
         if (tms != null) {
