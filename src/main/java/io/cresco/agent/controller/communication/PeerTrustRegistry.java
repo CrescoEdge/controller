@@ -215,7 +215,7 @@ public final class PeerTrustRegistry {
      *               come, a different key is refused unless an unconsumed rebind for the name exists
      */
     public BindResult bind(String tenant, String region, String agent, java.security.PublicKey leafKey, String source, String role, boolean follow) {
-        if (!CrescoNames.isValid(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
+        if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
             return new BindResult(false, "invalid identity " + tenant + "/" + region + "/" + agent);
         }
         String fp = fingerprint(leafKey.getEncoded());
@@ -265,7 +265,7 @@ public final class PeerTrustRegistry {
 
     /** Is {@code region/agent} free, or bound to this key? (Checks only.) */
     public BindResult canBind(String tenant, String region, String agent, java.security.PublicKey leafKey) {
-        if (!CrescoNames.isValid(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
+        if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
             return new BindResult(false, "invalid identity " + tenant + "/" + region + "/" + agent);
         }
         String fp = fingerprint(leafKey.getEncoded());
@@ -333,7 +333,7 @@ public final class PeerTrustRegistry {
      * @return null when recorded, else why not
      */
     public String trustCa(X509Certificate ca, String region, String tenant, String source, boolean follow) {
-        if (ca == null || !CrescoNames.isValid(region) || !CrescoNames.isValid(tenant)) return "invalid CA scope " + tenant + "/" + region;
+        if (ca == null || !CrescoNames.isValid(region) || !CrescoNames.isValidTenant(tenant)) return "invalid CA scope " + tenant + "/" + region;
         String[] scope = caScopeOf(ca);
         if (scope == null || !region.equals(scope[0]) || !tenant.equals(scope[1])) {
             return "the CA certificate '" + ca.getSubjectX500Principal().getName() + "' does not name region " + region + ", tenant " + tenant;
@@ -384,7 +384,7 @@ public final class PeerTrustRegistry {
                 if ("OU".equalsIgnoreCase(rdn.getType())) { if (ou != null) return null; ou = (String) rdn.getValue(); }
                 else if ("O".equalsIgnoreCase(rdn.getType())) { if (o != null) return null; o = (String) rdn.getValue(); }
             }
-            return (CrescoNames.isValid(ou) && CrescoNames.isValid(o)) ? new String[]{ou, o} : null;
+            return (CrescoNames.isValid(ou) && CrescoNames.isValidTenant(o)) ? new String[]{ou, o} : null;
         } catch (Exception e) {
             return null;
         }

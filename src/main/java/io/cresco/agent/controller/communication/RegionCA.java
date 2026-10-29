@@ -54,7 +54,7 @@ public final class RegionCA {
 
     /** Generate a fresh region CA (self-signed root + issuing intermediate) for {@code tenant/region}. */
     public static RegionCA generate(String tenant, String region, int keySize, int validityYears) throws Exception {
-        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(safe(tenant))) {
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValidTenant(safe(tenant))) {
             throw new IllegalArgumentException("a region CA needs a valid region and tenant name: " + region + "/" + tenant);
         }
         KeyPair rootKp = keyPair(keySize);
