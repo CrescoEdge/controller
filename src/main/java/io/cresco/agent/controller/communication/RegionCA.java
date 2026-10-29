@@ -123,11 +123,10 @@ public final class RegionCA {
 
     private static X509Certificate build(X500Name subject, X500Name issuer, PublicKey subjectKey,
                                          PrivateKey signingKey, int years, boolean isCa, int keyUsage) throws Exception {
-        long now = System.currentTimeMillis();
-        Date notBefore = new Date(now - 60_000L); // small backdate for clock skew
-        Date notAfter = new Date(now + years * 365L * 24 * 60 * 60 * 1000L);
+        Date notBefore = CertValidity.notBefore();       // backdated an hour for peers whose clocks are behind
+        Date notAfter = CertValidity.notAfterYears(years);
         JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
-                issuer, new BigInteger(64, new SecureRandom()), notBefore, notAfter, subject, subjectKey);
+                issuer, CertValidity.serial(), notBefore, notAfter, subject, subjectKey);
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));
         builder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
         // the signature suite is the crypto policy's choice (SHA384withRSA under the default cnsa1)
