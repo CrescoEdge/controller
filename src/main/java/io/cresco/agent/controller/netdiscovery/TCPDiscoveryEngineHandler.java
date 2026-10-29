@@ -32,20 +32,19 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
 
         DiscoveryNode discoveryNode = null;
         try {
+            // pre-auth: the frame is bounded by DiscoveryWire, the gunzipped node by DiscoveryGuard (never the
+            // 128 MiB MsgEvent.getCompressedParam cap)
             MsgEvent rme = gson.fromJson((String)msg, MsgEvent.class);
             if (rme != null && rme.getParam(DiscoveryAuth.PARAM) != null) {
                 readV2(ctx, rme.getParam(DiscoveryAuth.PARAM));
                 return;
             }
-            if(rme != null) {
-                if(rme.paramsContains("discovery_node")) {
-                    if (rme.getParam("discovery_node") != null) {
-                        discoveryNode = gson.fromJson(rme.getCompressedParam("discovery_node"), DiscoveryNode.class);
-                    }
-                }
-            }
+            discoveryNode = DiscoveryGuard.discoveryNode(gson, rme);
         } catch (Exception ex) {
-            logger.error(" failed to marshal discovery {}" + ex.getMessage());
+            DiscoveryGuard.warnLimited(logger, "discovery-tcp-refused", "Discovery: refused a request from "
+                    + remote(ctx) + ": " + ex.getMessage());
+            if (ctx != null) ctx.close();
+            return;
         }
 
         if (discoveryNode != null) {
@@ -96,6 +95,10 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
         else ctx.writeAndFlush(gson.toJson(me));
     }
 
+    private static String remote(ChannelHandlerContext ctx) {
+        return ctx == null ? "?" : DiscoveryGuard.addressKey(ctx.channel().remoteAddress());
+    }
+
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         ctx.close();
@@ -114,10 +117,11 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
 
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-        logger.error("exeception Thread" + Thread.currentThread() + " 0");
-        logger.error("TCPDiscoveryEngineHandler.exceptionCaught", cause);
+        // pre-auth input (an oversized or refused frame): one rate-limited line, no stack trace per peer frame
+        DiscoveryGuard.warnLimited(logger, "discovery-tcp-error", "Discovery: closed a connection from " + remote(ctx)
+                + ": " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+        logger.debug("TCPDiscoveryEngineHandler.exceptionCaught", cause);
         ctx.close();
-        logger.error("exeception Thread" + Thread.currentThread() + " 1");
     }
 
 

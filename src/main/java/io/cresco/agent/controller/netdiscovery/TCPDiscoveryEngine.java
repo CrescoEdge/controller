@@ -25,6 +25,8 @@ public class TCPDiscoveryEngine implements Runnable {
     private CLogger logger;
     private boolean isSSL = false;
     private int discoveryPort;
+    private final DiscoveryGuard.Admission admission;
+    private final int idleSeconds;
 
     private static EventLoopGroup bossGroup;
     private static EventLoopGroup workerGroup;
@@ -41,6 +43,8 @@ public class TCPDiscoveryEngine implements Runnable {
         //enable when client supports
         isSSL = false;
         discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
+        admission = admission(plugin, logger);
+        idleSeconds = Math.max(1, plugin.getConfig().getIntegerParam("discovery_idle_seconds", DiscoveryGuard.DEFAULT_IDLE_SECONDS));
         logger.info("Started DiscoveryTCPEngine");
     }
 
@@ -65,21 +69,7 @@ public class TCPDiscoveryEngine implements Runnable {
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
                     .handler(new LoggingHandler(LogLevel.INFO))
-                    .childHandler(new ChannelInitializer<SocketChannel>() {
-                        @Override
-                        public void initChannel(SocketChannel ch) {
-                            ChannelPipeline p = ch.pipeline();
-
-                            if (sslCtx != null) {
-                                p.addLast(sslCtx.newHandler(ch.alloc()));
-                            }
-
-                            p.addLast(new IdleStateHandler(30,30,30));
-                            // String-only decoding: this port is unauthenticated (see DiscoveryWire)
-                            DiscoveryWire.install(p);
-                            p.addLast(new TCPDiscoveryEngineHandler(controllerEngine));
-                        }
-                    });
+                    .childHandler(childInitializer(admission, idleSeconds, controllerEngine, sslCtx));
 
             controllerEngine.setTCPDiscoveryActive(true);
 
@@ -95,6 +85,38 @@ public class TCPDiscoveryEngine implements Runnable {
         }
     }
 
+
+    /** The listener's connection limits, from config (see {@link DiscoveryGuard}). */
+    static DiscoveryGuard.Admission admission(PluginBuilder plugin, CLogger logger) {
+        int total = plugin.getConfig().getIntegerParam("discovery_max_connections", DiscoveryGuard.DEFAULT_MAX_CONNECTIONS);
+        int perAddress = plugin.getConfig().getIntegerParam("discovery_max_connections_per_address", DiscoveryGuard.DEFAULT_MAX_CONNECTIONS_PER_ADDRESS);
+        int seconds = plugin.getConfig().getIntegerParam("discovery_max_connection_seconds", DiscoveryGuard.DEFAULT_MAX_CONNECTION_SECONDS);
+        return new DiscoveryGuard.Admission(total, perAddress, seconds * 1000L, logger);
+    }
+
+    /**
+     * The responder's channel pipeline: the connection limits first (nothing else is set up for a refused connection),
+     * idle detection (a channel that reads nothing for idleSeconds is closed; one that trickles is closed by the
+     * lifetime limit), the String-only codec (this port is unauthenticated, see
+     * DiscoveryWire) and the handler.
+     */
+    static ChannelInitializer<SocketChannel> childInitializer(DiscoveryGuard.Admission admission, int idleSeconds,
+                                                              ControllerEngine controllerEngine, SslContext sslCtx) {
+        return new ChannelInitializer<SocketChannel>() {
+            @Override
+            public void initChannel(SocketChannel ch) {
+                ChannelPipeline p = ch.pipeline();
+                p.addLast(admission);
+                if (sslCtx != null) {
+                    p.addLast(sslCtx.newHandler(ch.alloc()));
+                }
+                p.addLast(new IdleStateHandler(idleSeconds, 0, 0));          // nothing read for idleSeconds
+                p.addLast(admission.idleCloser());
+                DiscoveryWire.install(p);
+                p.addLast(new TCPDiscoveryEngineHandler(controllerEngine));
+            }
+        };
+    }
 
     public static void shutdown() {
         try {
