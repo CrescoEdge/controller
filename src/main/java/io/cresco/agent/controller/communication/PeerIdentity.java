@@ -69,7 +69,8 @@ public final class PeerIdentity {
 
         public String path() { return region + "_" + agent; }
 
-        public boolean isComplete() { return region != null && !region.isEmpty() && agent != null && !agent.isEmpty(); }
+        /** Both names present and valid (CrescoNames grammar). */
+        public boolean isComplete() { return CrescoNames.isValid(region) && CrescoNames.isValid(agent); }
 
         @Override public boolean equals(Object o) {
             if (!(o instanceof Expected)) return false;
@@ -112,9 +113,9 @@ public final class PeerIdentity {
             return Verdict.refuse(null, "the peer presented no certificate");
         }
         X509Certificate leaf = chain[0];
-        CrescoIdentity presented = CrescoIdentity.fromCertificate(leaf);
-        if (presented == null || presented.getRegion() == null || presented.getAgent() == null) {
-            return Verdict.refuse(presented, "the certificate names no Cresco region/agent (subject '"
+        CrescoIdentity presented = CrescoNames.identityOf(leaf);
+        if (presented == null) {
+            return Verdict.refuse(null, "the certificate names no valid Cresco region/agent (subject '"
                     + leaf.getSubjectX500Principal().getName() + "')");
         }
         if (!expected.region.equals(presented.getRegion()) || !expected.agent.equals(presented.getAgent())) {

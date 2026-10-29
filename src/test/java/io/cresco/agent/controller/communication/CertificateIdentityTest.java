@@ -38,11 +38,47 @@ class CertificateIdentityTest {
     }
 
     @Test
-    void underTheRegionalCaTheIssuerStampsTheIdentityInstead() throws Exception {
-        ControllerEngine agent = TlsTestSupport.engine("region-start-uuid", "a1", Map.of("security_regional_ca", "true"));
+    void theLeafIsReissuedWithTheSameKey() throws Exception {
+        ControllerEngine agent = TlsTestSupport.engine("region-start-uuid", "a1", null);
+        java.security.PublicKey before = agent.getCertificateManager().getPublicCertificate()[0].getPublicKey();
         ((TlsTestSupport.State) agent.cstate).region = "rgA";
-        assertFalse(agent.getCertificateManager().ensureLeafIdentity());
-        assertEquals("region-start-uuid", leafOf(agent).getRegion());
+        assertTrue(agent.getCertificateManager().ensureLeafIdentity());
+        assertEquals(before, agent.getCertificateManager().getPublicCertificate()[0].getPublicKey(),
+                "re-issuing the leaf for a new name changed the key the node's identity bindings follow");
+    }
+
+    @Test
+    void aRegionCaHolderNeverReissuesItsOwnLeaf() throws Exception {
+        ControllerEngine regionCtl = TlsTestSupport.engine("rgA", "rc", Map.of("security_regional_ca", "true"));
+        regionCtl.getCertificateManager().ensureRegionCA();
+        ((TlsTestSupport.State) regionCtl.cstate).region = "rgZ";
+        assertFalse(regionCtl.getCertificateManager().ensureLeafIdentity());
+        assertEquals("rgA", leafOf(regionCtl).getRegion());
+    }
+
+    @Test
+    void namesOutsideTheGrammarAreNeverIssued() throws Exception {
+        ControllerEngine regionCtl = TlsTestSupport.engine("rgA", "rc", Map.of("security_regional_ca", "true"));
+        for (String bad : new String[]{" a1", "a1 ", "#0c026131", "a_1", "a1,OU=x", "a\u0000", ""}) {
+            ControllerEngine joiner = TlsTestSupport.engine("rgA", "a1", null);
+            java.security.KeyPair kp = TlsTestSupport.rsa();
+            X509Certificate self = new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(
+                    new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                            new org.bouncycastle.asn1.x500.X500NameBuilder(org.bouncycastle.asn1.x500.style.BCStyle.INSTANCE)
+                                    .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.CN, new org.bouncycastle.asn1.DERUTF8String(bad))
+                                    .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.OU, new org.bouncycastle.asn1.DERUTF8String("rgA"))
+                                    .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.O, new org.bouncycastle.asn1.DERUTF8String("t1")).build(),
+                            java.math.BigInteger.ONE, new java.util.Date(System.currentTimeMillis() - 60_000L),
+                            new java.util.Date(System.currentTimeMillis() + 86_400_000L),
+                            new org.bouncycastle.asn1.x500.X500NameBuilder(org.bouncycastle.asn1.x500.style.BCStyle.INSTANCE)
+                                    .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.CN, new org.bouncycastle.asn1.DERUTF8String(bad)).build(),
+                            kp.getPublic()).build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA")
+                            .setProvider("BC").build(kp.getPrivate())));
+            assertNull(regionCtl.getCertificateManager().issueEnrollment(
+                    regionCtl.getCertificateManager().getJsonFromCerts(new X509Certificate[]{self}), DiscoveryType.AGENT),
+                    "issued a certificate for the agent name '" + bad + "'");
+            assertNotNull(joiner);
+        }
     }
 
     private static String issue(ControllerEngine issuer, ControllerEngine joiner, DiscoveryType type) {

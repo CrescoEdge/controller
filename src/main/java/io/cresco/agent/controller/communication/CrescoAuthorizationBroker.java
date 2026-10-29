@@ -164,7 +164,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
         String[] p = u.split("\\|");
         if (p.length >= 3) {
-            return CrescoIdentity.of(p[0], p[1], p[2], p.length >= 4 ? p[3] : null);
+            CrescoIdentity asserted = CrescoIdentity.of(p[0], p[1], p[2], p.length >= 4 ? p[3] : null);
+            return CrescoNames.isValid(asserted) ? asserted : null;
         }
         return null;
     }
@@ -285,8 +286,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     X509Certificate[] chain = (X509Certificate[]) tc;
                     if (chain.length > 0) {
                         certificate = true;
-                        CrescoIdentity id = CrescoIdentity.fromCertificate(chain[0]);
-                        if (id != null && id.getTenant() != null) {
+                        CrescoIdentity id = CrescoNames.identityOf(chain[0]);   // strict: valid names only
+                        if (id != null) {
                             String dn = id.toX500Name();
                             info.setUserName(dn);
                             context.setSecurityContext(new CertSecurityContext(dn));

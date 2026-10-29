@@ -49,6 +49,9 @@ public final class RegionCA {
 
     /** Generate a fresh region CA (self-signed root + issuing intermediate) for {@code tenant/region}. */
     public static RegionCA generate(String tenant, String region, int keySize, int validityYears) throws Exception {
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(safe(tenant))) {
+            throw new IllegalArgumentException("a region CA needs a valid region and tenant name: " + region + "/" + tenant);
+        }
         KeyPair rootKp = keyPair(keySize);
         X500Name rootName = new X500Name("CN=rootCA-" + region + ", O=" + safe(tenant));
         X509Certificate root = build(rootName, rootName, rootKp.getPublic(), rootKp.getPrivate(),
@@ -68,7 +71,9 @@ public final class RegionCA {
      * that the node installs as its keystore identity.
      */
     public X509Certificate[] issueLeaf(PublicKey subjectPublicKey, CrescoIdentity identity, int validityYears) throws Exception {
-        X500Name subject = new X500Name(identity.toX500Name());
+        // built from the attribute values (never a string DN, which other parsers normalise differently); throws for a
+        // name outside the Cresco grammar, so nothing that would need escaping is ever issued
+        X500Name subject = CrescoNames.x500Partial(identity);
         // Take the issuer name directly from the CA certificate so its DER encoding byte-matches the
         // CA's subject (reconstructing it from a string can change the encoding and break PKIX name-chaining).
         X500Name issuer = new JcaX509CertificateHolder(caCert).getSubject();
@@ -85,6 +90,7 @@ public final class RegionCA {
      * Returns the region-signed chain [leaf, regionCA, root] the node installs as its identity.
      */
     public X509Certificate[] enroll(PublicKey nodePublicKey, String tenant, String region, String agent, int validityYears) throws Exception {
+        CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null));   // throws unless all three names are valid
         return issueLeaf(nodePublicKey, CrescoIdentity.of(tenant, region, agent, null), validityYears);
     }
 

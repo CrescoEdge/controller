@@ -50,7 +50,7 @@ class PeerIdentityPolicyTest {
         TlsTestSupport.Id legacy = TlsTestSupport.selfRooted("x", null, null, "endUserCert-1234");
         PeerIdentity.Verdict v = PeerIdentity.verify(RC, legacy.chain, null);
         assertFalse(v.ok);
-        assertTrue(v.reason.contains("names no Cresco region/agent"), v.reason);
+        assertTrue(v.reason.contains("names no valid Cresco region/agent"), v.reason);
     }
 
     @Test

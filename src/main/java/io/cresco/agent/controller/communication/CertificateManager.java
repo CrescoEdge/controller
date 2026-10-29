@@ -237,6 +237,15 @@ public class CertificateManager {
     }
 
     private void generateCertChain() {
+        generateCertChain(null);
+    }
+
+    /**
+     * (Re)make this node's self-rooted chain [leaf, intermediate, root]. With {@code leafKeyPair} the leaf keeps that
+     * key: identity bindings (pins, a CA's name-to-key records) follow the key, so re-issuing a leaf for a new name
+     * must not change it.
+     */
+    private void generateCertChain(KeyPair leafKeyPair) {
 
         try {
             // Create self signed Root CA certificate
@@ -279,7 +288,7 @@ public class CertificateManager {
                             build(rootCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by rootCA
 
             //create end user cert signed by Intermediate CA
-            KeyPair endUserCertKeyPair = generateKeyPair();
+            KeyPair endUserCertKeyPair = (leafKeyPair != null) ? leafKeyPair : generateKeyPair();
             // Identity-bearing leaf: bind tenant/region/agent into the subject DN so the broker (and
             // any peer) can cryptographically identify this node from its certificate rather than a
             // spoofable connection username. Falls back to the legacy UUID CN before identity is known.
@@ -287,17 +296,26 @@ public class CertificateManager {
             String idTenant = plugin.getConfig().getStringParam("tenant_id", "default");
             String idRegion = controllerEngine.cstate.getRegion();
             String idAgent = controllerEngine.cstate.getAgent();
-            if (idRegion != null && idAgent != null) {
-                leafDN = io.cresco.library.security.CrescoIdentity.of(idTenant, idRegion, idAgent, null).toX500Name();
+            X500Name leafName;
+            CrescoIdentity own = CrescoIdentity.of(idTenant, idRegion, idAgent, null);
+            if (CrescoNames.isValid(own)) {
+                leafName = CrescoNames.x500(own);                      // from the attribute values, never a string DN
+                leafDN = leafName.toString();
                 logger.info("Issuing identity-bearing leaf certificate: " + leafDN);
             } else {
+                if (idRegion != null && idAgent != null) {
+                    logger.error("This node's identity cannot be put in a certificate: "
+                            + firstNonNull(CrescoNames.whyInvalid("tenant_id", idTenant), CrescoNames.whyInvalid("region", idRegion),
+                            CrescoNames.whyInvalid("agent", idAgent)) + ". Peers that bind connections to identities (peer_identity_mode=enforce) will refuse it.");
+                }
                 leafDN = "CN=endUserCert-" + functionName;
+                leafName = new X500Name(leafDN);
             }
             builder = new JcaX509v3CertificateBuilder(
                     intermedCA, //here intermedCA is issuer authority
                     BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
                     new DateTime().plusYears(YEARS_VALID).toDate(),
-                    new X500Name(leafDN), endUserCertKeyPair.getPublic());
+                    leafName, endUserCertKeyPair.getPublic());
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
             X509Certificate endUserCert = new JcaX509CertificateConverter().getCertificate(builder
@@ -326,6 +344,11 @@ public class CertificateManager {
             logger.error("CertificateManager.generateCertChain failure", ex);
         }
 
+    }
+
+    private static String firstNonNull(String... s) {
+        for (String x : s) if (x != null) return x;
+        return null;
     }
 
     private KeyPair generateKeyPair() throws NoSuchAlgorithmException, NoSuchProviderException {
@@ -381,27 +404,32 @@ public class CertificateManager {
     }
 
     /**
-     * Legacy (per-node) trust only: make our own leaf name our CURRENT identity. The leaf is made when the node
+     * Make our own leaf name our CURRENT identity. The leaf is made when the node
      * starts, before an agent joins a region, so an agent that was not configured with the region it later joins
      * carries {@code OU=<its start-up region>} while the fabric (and its inbox, and stream recipients) know it by
-     * the region it joined. Called before our certificate goes out in a discovery exchange; re-issues the chain
-     * (new keys: the issuing keys are not kept) only when the names differ. Under the regional CA the issuing
-     * region stamps the identity instead, so this is a no-op there.
+     * the region it joined. Called before our certificate goes out in a discovery exchange; re-issues the chain only
+     * when the names differ, keeping the leaf key (identity bindings follow the key). A node that holds a region CA
+     * stamps its own identity, so this is a no-op there; under the regional CA a joining agent's leaf is replaced
+     * by the one its region issues at enrollment anyway.
      *
      * @return true when the leaf was re-issued
      */
     public synchronized boolean ensureLeafIdentity() {
         try {
-            if (regionCA != null || plugin.getConfig().getBooleanParam("security_regional_ca", false)) return false;
+            if (regionCA != null) return false;                        // a CA holder's identity is its own CA's to stamp
             String region = controllerEngine.cstate.getRegion();
             String agent = controllerEngine.cstate.getAgent();
             String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
             if (region == null || agent == null || chain == null || chain[0] == null) return false;
-            CrescoIdentity have = CrescoIdentity.fromCertificate(chain[0]);
-            if (have != null && region.equals(have.getRegion()) && agent.equals(have.getAgent()) && tenant.equals(have.getTenant())) {
+            CrescoIdentity have = CrescoNames.identityOf(chain[0]);
+            // under the regional CA the issuer stamps the tenant, so only region/agent must match there
+            boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
+            if (have != null && region.equals(have.getRegion()) && agent.equals(have.getAgent())
+                    && (regionalCa || tenant.equals(have.getTenant()))) {
                 return false;
             }
-            generateCertChain();
+            PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+            generateCertChain(myKey != null ? new KeyPair(chain[0].getPublicKey(), myKey) : null);   // same key, new name
             addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
             try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             try { if (controllerEngine.getActiveClient() != null) controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
@@ -586,11 +614,18 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("issueEnrollment: no joiner certificate");
                 return null;
             }
-            CrescoIdentity claimed = CrescoIdentity.fromCertificate(joinerCerts[0]);
-            String tenant = (claimed != null && claimed.getTenant() != null) ? claimed.getTenant()
-                    : plugin.getConfig().getStringParam("tenant_id", "default");
-            String region = (claimed != null && claimed.getRegion() != null) ? claimed.getRegion() : "unknown";
-            String agent  = (claimed != null && claimed.getAgent()  != null) ? claimed.getAgent()  : "unknown";
+            // The joiner's claim, read strictly: every name in the Cresco grammar (no spaces, '#', '_' or specials that
+            // a DN parser would normalise into somebody else's name), or nothing is issued.
+            CrescoIdentity claimed = CrescoNames.identityOf(joinerCerts[0]);
+            if (claimed == null) {
+                logger.error("Enrollment REFUSED: the joiner's certificate names no valid Cresco identity (subject '"
+                        + joinerCerts[0].getSubjectX500Principal().getName() + "'); names must be "
+                        + "1-64 of A-Z a-z 0-9 . - starting and ending with a letter or digit");
+                return null;
+            }
+            String tenant = claimed.getTenant();
+            String region = claimed.getRegion();
+            String agent  = claimed.getAgent();
             String myRegion = controllerEngine.cstate.getRegion();
             String myAgent = controllerEngine.cstate.getAgent();
             if (joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.AGENT && myRegion != null) {
@@ -638,6 +673,14 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 tenant = plugin.getConfig().getStringParam("tenant_id", tenant);
             }
             X509Certificate[] signed = regionCA.enroll(joinerCerts[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
+            // run the guards again on the name AS ISSUED (what every verifier will read), not on the strings we passed in
+            CrescoIdentity issued = CrescoNames.identityOf(signed[0]);
+            if (issued == null || !tenant.equals(issued.getTenant()) || !region.equals(issued.getRegion()) || !agent.equals(issued.getAgent())
+                    || (myRegion != null && myAgent != null && myRegion.equals(issued.getRegion()) && myAgent.equals(issued.getAgent()))) {
+                logger.error("Enrollment REFUSED: the certificate as issued names " + issued + ", not tenant=" + tenant
+                        + ", region=" + region + ", agent=" + agent + " (or names this controller)");
+                return null;
+            }
             logger.info("Enrolled node " + region + "_" + agent + " (tenant=" + tenant + ") under region CA");
             return getJsonFromCerts(signed);
         } catch (Exception ex) {

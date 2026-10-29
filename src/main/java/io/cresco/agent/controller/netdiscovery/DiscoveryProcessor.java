@@ -240,6 +240,11 @@ public class DiscoveryProcessor {
 
 	private void learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf) {
 		try {
+			if (!io.cresco.agent.controller.communication.CrescoNames.isValid(region)
+					|| !io.cresco.agent.controller.communication.CrescoNames.isValid(agent)) {
+				logger.warn("Discovery: not learning a peer with an invalid identity name " + region + "/" + agent);
+				return;
+			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry reg = controllerEngine.getCertificateManager().getPeerTrust();
 			if (pinLeaf && certJson != null) {
 				java.security.cert.X509Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(certJson);
