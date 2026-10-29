@@ -63,7 +63,7 @@ public final class TlsTestSupport {
     }
 
     /** A leaf issued by {@code ca} for tenant/region/agent (the regional-CA path, RegionCA.enroll). */
-    static Id issued(RegionCA ca, String tenant, String region, String agent) throws Exception {
+    public static Id issued(RegionCA ca, String tenant, String region, String agent) throws Exception {
         KeyPair kp = rsa();
         return new Id(kp, ca.enroll(kp.getPublic(), tenant, region, agent, 1));
     }
@@ -112,7 +112,7 @@ public final class TlsTestSupport {
     }
 
     /** A started non-persistent TLS broker presenting {@code id}, trusting {@code anchors}. */
-    static BrokerService broker(String name, Id id, boolean needClientAuth, BrokerPlugin[] plugins,
+    public static BrokerService broker(String name, Id id, boolean needClientAuth, BrokerPlugin[] plugins,
                                 org.apache.activemq.security.MessageAuthorizationPolicy map, X509Certificate... anchors) throws Exception {
         SslBrokerService b = new SslBrokerService();
         b.setBrokerName(name);
@@ -130,7 +130,7 @@ public final class TlsTestSupport {
         return b;
     }
 
-    static int port(BrokerService b) throws Exception {
+    public static int port(BrokerService b) throws Exception {
         return b.getTransportConnectorByName("tls").getConnectUri().getPort();
     }
 
