@@ -636,6 +636,16 @@ public final class PeerTrustRegistry {
         }
     }
 
+    /** {@code region_agent} paths of the controllers this node joined (bound by following, as a client). */
+    public Set<String> joinedControllers() {
+        Set<String> out = new HashSet<>();
+        for (Map.Entry<String, Binding> e : identities.entrySet()) {
+            Binding b = e.getValue();
+            if (b.follow && ROLE_CONTROLLER.equals(b.role)) out.add(e.getKey().replace('/', '_'));
+        }
+        return out;
+    }
+
     /** Tests: pretend an identity binding was last seen {@code ms} ago (in memory only). */
     void backdateBinding(String region, String agent, long ms) {
         String n = name(region, agent);

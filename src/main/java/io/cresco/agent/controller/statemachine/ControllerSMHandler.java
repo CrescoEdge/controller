@@ -1435,35 +1435,39 @@ public class ControllerSMHandler {
 
         logger.debug("getDiscoveryNode discoveryNodeList Size = " + discoveryNodeList.size() );
 
-        while(discoveryNodeList.size() != 0) {
-
-            int agent_count = Integer.MAX_VALUE;
-            DiscoveryNode discoveryNodeCanidate = null;
-
-            //pick lowest number canidate
-            for (DiscoveryNode tmpDiscoveryNode : discoveryNodeList) {
-                if (tmpDiscoveryNode.discovered_agent_count < agent_count) {
-                    agent_count = tmpDiscoveryNode.discovered_agent_count; // was never updated -> always picked the LAST node
-                    discoveryNodeCanidate = tmpDiscoveryNode;
-                }
-            }
-            if(discoveryNodeCanidate != null) {
-                logger.info("Found canidate: " + discoveryNodeCanidate.discovered_ip);
-            } else {
-                logger.info("No canidate found ");
-            }
-
+        java.util.Set<String> joined = java.util.Set.of();
+        try { joined = controllerEngine.getCertificateManager().getPeerTrust().joinedControllers(); } catch (Exception ignore) { }
+        for (DiscoveryNode discoveryNodeCanidate : orderCandidates(discoveryNodeList, joined)) {
+            logger.info("Found canidate: " + discoveryNodeCanidate.discovered_ip + " (" + discoveryNodeCanidate.discovered_region + "_"
+                    + discoveryNodeCanidate.discovered_agent + ", reports " + discoveryNodeCanidate.discovered_agent_count + " agents)");
             //see if we can exchange keys with the canidate host
             discoveryNode = exchangeKeyWithBroker(discoveryNodeCanidate.discovery_type, discoveryNodeCanidate.discovered_ip, discoveryNodeCanidate.discovered_port);
             if(discoveryNode != null) {
                 logger.debug("Found node: " + discoveryNode.discovered_ip);
                 break;
-            } else {
-                discoveryNodeList.remove(discoveryNodeCanidate);
             }
-
         }
+        if (discoveryNode == null) logger.info("No canidate found ");
         return discoveryNode;
+    }
+
+    /** Agent counts a candidate may report; anything outside is treated as unknown (least preferred). */
+    static final int MAX_PLAUSIBLE_AGENT_COUNT = 1_000_000;
+
+    /**
+     * The order in which to try discovered responders. Their reports are unauthenticated (anyone who saw an answer can
+     * replay or forge one), so a self-reported agent count is a load hint at best: a negative or implausible count is
+     * treated as unknown and tried last, never first. A responder that claims to be a controller this node already joined
+     * (bound by following) is tried first; the rest by reported count, ties in random order.
+     */
+    static List<DiscoveryNode> orderCandidates(List<DiscoveryNode> found, java.util.Set<String> joinedControllers) {
+        List<DiscoveryNode> order = new java.util.ArrayList<>(found);
+        java.util.Collections.shuffle(order);
+        order.sort(java.util.Comparator
+                .comparingInt((DiscoveryNode n) -> joinedControllers.contains(n.discovered_region + "_" + n.discovered_agent) ? 0 : 1)
+                .thenComparingInt(n -> (n.discovered_agent_count < 0 || n.discovered_agent_count > MAX_PLAUSIBLE_AGENT_COUNT)
+                        ? Integer.MAX_VALUE : n.discovered_agent_count));
+        return order;
     }
 
     public String getCurrentState() {
