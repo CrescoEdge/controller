@@ -53,9 +53,8 @@ class PeerTrustPersistenceTest {
         PeerTrustRegistry after = open(f, List.of());
         assertTrue(after.isSealed());
         assertFalse(after.bind("t1", "rgA", "a2", TlsTestSupport.rsa().getPublic(), "test").ok);
-        try (var s = Files.list(f.getParent())) {
-            assertTrue(s.anyMatch(p -> p.getFileName().toString().startsWith("peer-trust.json.rejected-")));
-        }
+        assertTrue(Files.exists(f.resolveSibling("peer-trust.json.sealed")), "the seal was not persisted");
+        assertTrue(open(f, List.of()).isSealed(), "a restart lifted the seal");
     }
 
     @Test
