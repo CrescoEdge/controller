@@ -10,6 +10,7 @@
 # region they join instead (the only way a pre-fix controller forms this secured fabric).
 #
 # Usage: peer_identity_live_test.sh <agent.jar> <workdir> <python-with-pycrescolib> [extra -D flags for every node]
+#   PYCRESCOLIB_PATH, when set, is put first on the probe's PYTHONPATH (to test a pycrescolib checkout).
 #   PORT0 (default 33000) and WS0 (default 8482) move the port block. Set REGIONAL_CA=1 to run under the regional CA.
 # Starts only its own JVMs and stops only those (by PID). Secrets are generated per run.
 set -uo pipefail
@@ -49,7 +50,8 @@ for _ in $(seq 1 60); do grep -q "Starting Bridge" "$WORK/logs/region.log" 2>/de
 sleep 15   # registrations + first full exports settle
 
 echo "### dataplane probe (plain stream, recipient-bound stream, spy)"
-PROBE=$("$PY" "$HERE/peer_identity_dataplane.py" --tx-port "$WS0" --rx-port $((WS0+2)) --spy-port $((WS0+1)) --rx-path rgr_b1 --key "$KEY" --messages 200)
+PROBE=$(PYTHONPATH="${PYCRESCOLIB_PATH:-}${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$HERE/peer_identity_dataplane.py" --tx-port "$WS0" --rx-port $((WS0+2)) \
+  --spy-port $((WS0+1)) --spy2-port "$WS0" --rx-path rgr_b1 --key "$KEY" --messages 200)
 echo "$PROBE"
 sleep 2
 
@@ -70,6 +72,13 @@ done
 ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo 1)" "an ordinary stream crossed global -> bridge -> region -> b1 in full (200/200)"
 ck "$(echo "$PROBE" | grep -q '"bound_received": 200' && echo 1)" "the recipient-bound stream reached its recipient rgr_b1 in full (200/200)"
 ck "$(echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "the spy agent glob/a1 received none of rgr_b1's stream"
+ck "$(echo "$PROBE" | grep -q '"bound_spy2_received": 0' && echo 1)" "a client of the global's own wsapi received none of rgr_b1's stream"
+ck "$(has global "DENY READ 'global.event.*glob, agent=gc.*stream of recipient rgr_b1")" "the global broker refused its own controller's (wsapi client's) subscription to rgr_b1's stream"
+typed() { echo "$PROBE" | "$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); v=d.get(sys.argv[1]) or ""; sys.exit(0 if "Subscription refused" in v else 1)' "$1" && echo 1; }
+ck "$(typed bound_spy_refused)" "the spy's client got a typed refusal (DataplaneSubscriptionRefused)"
+ck "$(typed bound_spy2_refused)" "the global's wsapi client got a typed refusal (DataplaneSubscriptionRefused)"
+ck "$(has global 'discovery v2: authenticated GLOBAL exchange with rgr/rc')" "the region and the global authenticated each other with discovery v2"
+ck "$(has b1 'discovery v2: authenticated AGENT exchange with rgr/rc')" "b1 and the region authenticated each other with discovery v2"
 ck "$(has global "DENY READ 'global.event.*a1.*stream of recipient rgr_b1")" "the global broker refused a1's subscription to rgr_b1's stream"
 echo "--- other DENY lines (tenant policy), per node:"
 for n in global region a1 b1; do echo "  $n: $(grep -E 'DENY ' "$L/$n.log" 2>/dev/null | grep -vc 'stream of recipient')"; done

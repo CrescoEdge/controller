@@ -258,6 +258,10 @@ earlier) and **namespacing** (this work). Namespacing is only meaningful with th
 | `broker_security_log_allow` | `false` | Verbose: log every ALLOW decision (debugging ACLs). DENY is always logged. |
 | `peer_identity_mode` | `enforce` | Every outbound broker TLS connection (agent to its regional/global broker, each end of a broker bridge) must present a certificate naming the controller discovery returned for that address (and its pinned key, under per-node trust); `warn` logs and connects, `off` is chain-only as before. Under mTLS it also gates the broker-bridge exemption to discovered region/global controllers. See distributed-identity-trust-design §7. |
 | `broker_stream_recipient_binding` | `true` | With `broker_security_enabled`: a dataplane message carrying `cresco_to=<region>_<agent>` (optionally `cresco_to_tenant`) is dispatched only to that agent's connection; a subscription whose selector asks for another identity's `cresco_to` is refused. Messages without `cresco_to` are unaffected. |
+| `discovery_auth` | `v2` | Certificate trust is learned only over the mutually authenticated, replay-proof discovery v2 exchange; `compat` also accepts the legacy exchange during a rolling upgrade. See distributed-identity-trust-design §7.4. |
+| `peer_identity_rebind` / `peer_bridge_revoke` / `peer_bridge_prune_days` | empty / empty / `30` | Operator controls over the persistent peer trust registry (one key per name, one CA per region, bridge peers). §7.3. |
+| `node_identity_persist` / `peer_trust_persist` | `true` / `true` | The node's key, region CA and peer trust registry survive restarts (`<data>/security`). |
+| `security_federated_tenants` | empty (any) | Tenants a regional-CA controller federates with. |
 
 **Recommended enablement order (staged, per region, never blind):**
 1. Turn on `security_regional_ca` fabric-wide; confirm every node enrolls and bridges under mTLS

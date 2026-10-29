@@ -197,67 +197,106 @@ allowed, so a bad rule can never lock a controller out of its own broker.
 ## 7. Peer identity binding and stream recipient binding (OUT-28, 2026-10-28)
 
 ### 7.1 What the trust managers verified before
-`CertificateManager.getTrustManagers()` is the JDK PKIX `TrustManagerFactory` over the node's truststore, and
-every broker client URI carried `verifyHostName=false` (`BrokerTransport.clientQuery`). So a TLS connection was
-accepted when the peer's chain reached ANY anchor in the truststore; nothing tied the certificate to the
-controller the connection was opened to. The truststore holds every peer that ever did a certified discovery
-exchange with the node (per-node trust: each peer's own self-generated root; regional CA: every region CA), so any
-holder of a fabric certificate could answer for the regional controller, the global, or a bridged region. Under
-per-node trust every node generated its own root CA, so a peer that kept that key could even mint a certificate
-naming somebody else. Separately, on the broker side, any client could send a `BrokerInfo` and be treated as a
-broker bridge, which `CrescoAuthorizationBroker` exempted from all tenant authorization.
+`CertificateManager.getTrustManagers()` is the JDK PKIX `TrustManagerFactory` over the node's truststore, and every
+broker client URI carried `verifyHostName=false` (`BrokerTransport.clientQuery`). A TLS connection was accepted when the
+peer's chain reached ANY anchor in the truststore. The truststore holds every peer that did a certified discovery
+exchange with the node (per-node trust: each peer's own self-made root CA, whose key the peer may keep; regional CA:
+every region CA), so any holder of a fabric certificate could answer for the regional controller, the global or a
+bridged region, or mint a certificate naming anyone. On the broker side any client could send a `BrokerInfo` and be
+treated as an (authorization-exempt) bridge, and identity came from the certificate's name alone. Discovery, which all
+trust rests on, was authenticated by a constant AES/ECB token anyone could replay.
 
-### 7.2 What is verified now
-- **Outbound binding** (`PeerIdentity`, `PeerIdentityTrustManager`). Each outbound broker connection gets its own
-  trust manager: PKIX over the current truststore (read per handshake), then the leaf must name the region/agent
-  that discovery returned for that address (`ControllerSMHandler.initIOChannels` -> `ActiveClient.expectPeer`;
-  `BrokeredAgent`/`BrokerMonitor` -> `ActiveBroker.AddNetworkConnector(host, port, expected)` ->
-  `bridgeSslContext`). Under per-node trust the leaf key learned in that discovery exchange is pinned to the
-  identity (`PeerTrustRegistry`, `DiscoveryProcessor.setCertTrust(DiscoveryNode)`), and a certificate naming the
-  right peer with another key is refused. Hostname verification stays off: brokers are dialled by address and
-  dynamic port and certificates name Cresco identities, not hosts; agents that move host re-discover, which
-  records the new address against the identity. A refusal is one ERROR line: `PEER IDENTITY MISMATCH on
-  <endpoint>: the connection was opened to region=R, agent=A but <what the certificate presented> -- connection
-  REFUSED (peer_identity_mode=enforce)`; the readiness probe stops at once on it.
-- **Bridge claims** (`CrescoAuthorizationBroker`). With client certificates (`broker_require_client_auth=true`) a
-  connection claiming to be a bridge must present a certificate naming a region/global controller that completed a
-  REGION or GLOBAL discovery exchange with this node (either direction); otherwise it is refused at connect (`BRIDGE
-  REFUSED ...`) and a late claim never earns the exemption. Without client certificates a claim cannot be checked
-  and keeps the old exemption (logged once).
-- **Own identity**. An agent's leaf is made at start-up, before it joins a region, so an agent not configured with
-  the region it joins presented `OU=<start-up region>`; under mTLS the broker then denied the agent its own inbox
-  (the secured fabric did not form). Before its certificate goes out in a discovery exchange the node now re-issues
-  its leaf when it names another identity (per-node trust), and a regional CA stamps its own region on an agent it
-  enrolls, never issues its own identity, and never gives a joining controller its region name.
-- **Stream recipients** (`StreamRecipientPolicy`, broker `MessageAuthorizationPolicy`). A dataplane message with
-  `cresco_to=<region>_<agent>` (optionally `cresco_to_tenant`) is dispatched only to infrastructure (the broker's
-  own controller over vm://, verified bridges -- the next broker applies the same rule) and to the client connection
-  whose identity is that agent; other subscriptions do not receive it whatever their selector, and a subscription
-  whose selector asks for another identity's `cresco_to` is refused (`DENY READ ... selector asks for the stream of
-  recipient ...`). The recipient is an agent connection: plugins inside one agent share its identity (GKT's
-  end-to-end encryption covers that level).
+### 7.2 Names
+One grammar for tenant, region, agent and uid (`CrescoNames`): 1-64 of `A-Z a-z 0-9 . -`, starting and ending with a
+letter or digit. No spaces, `#`, DN specials, control characters or `_` (the separator in `<region>_<agent>`, already
+split on by Cresco). Certificates are built from attribute values (never a string DN, which parsers normalise
+differently) and read strictly (`CrescoNames.identityOf`: CN, OU, O once each, UID at most once, nothing else, every
+value valid). A regional CA re-runs its guards on the identity parsed back from the certificate it issued. `cresco_to`
+is exactly two valid names. (library `fix/peer-identity` makes `CrescoIdentity.toX500Name` escape per RFC 4514 and adds
+the same grammar for plugins.)
 
-### 7.3 Configuration and upgrade
-`peer_identity_mode` = `enforce` (default) | `warn` | `off`; `broker_stream_recipient_binding` = `true` (default,
-active with `broker_security_enabled`). Mixed versions during a rolling upgrade:
-- new agent/region -> older controller: every controller since 2026-07-02 (665ee45, in 1.3) presents an
-  identity-bearing leaf naming its own region/agent, so the binding passes; a controller whose leaf has no Cresco
-  identity is refused with the reason in the log. Upgrade controllers first, or roll with `peer_identity_mode=warn`
-  and switch to `enforce` once the logs show no `PEER IDENTITY MISMATCH`.
-- older agent -> new controller: older agents do not check; nothing changes for them. Under mTLS an older agent not
-  configured with its joined region still presents its start-up region (as before this change).
-- older region -> new global under mTLS: the region's GLOBAL discovery exchange registers it as a bridge peer, so its
-  bridge is admitted. A region whose bridge reconnects to a restarted global that kept its keystore (keystorefile)
-  is refused until it re-discovers the global (the registry is in memory; with the default in-memory keystores a
-  restarted peer has new keys and re-discovery was already required).
-- `cresco_to` is honoured only by upgraded brokers (the broker the consumer is connected to enforces). Senders
-  should start binding streams after the brokers their recipients connect to are upgraded, and after agents are
-  upgraded (an agent's certificate must name its joined region for it to be recognised as the recipient).
+### 7.3 Which key may answer for which name (`PeerTrustRegistry`)
+- **Identity bindings** `region/agent -> (tenant, key)`: per-node trust records the key a peer presented in an
+  authenticated discovery exchange; a regional CA records every name it enrolls. One key per name: a second key, or the
+  same name under another tenant, is refused unless the operator lists the name in `peer_identity_rebind`
+  (re-install, key rotation: a deliberate act).
+- **CA scopes** `region -> (tenant, CA)`: a region CA vouches only for names in its own region and tenant. A node records
+  its own CA, the CA of each region/global controller it federated with, and the CA that enrolled it. One CA per region
+  (rebind as above). Controllers joining over REGION/GLOBAL discovery are no longer re-issued by the other side's CA:
+  each keeps its own-CA identity and the two CAs record each other (`security_federated_tenants`, empty = any, limits the
+  tenants a controller federates with). An agent's enrollment stamps the CA's own region and tenant.
+- **Bridge peers**: region/global controllers that completed a REGION or GLOBAL discovery exchange with this node.
+  Revocable (`peer_bridge_revoke`), pruned when unseen for `peer_bridge_prune_days` (default 30).
 
-### 7.4 Tests
-Unit: `PeerIdentityPolicyTest`. Real TLS + real brokers: `PeerImpersonationTest` (failed on main: the agent opened a
-session to a broker presenting another node's valid certificate), `PeerIdentityBindingTest`,
-`StreamRecipientBindingTest` (6 of 7 failed on main), `CertificateIdentityTest`, `DiscoveryPeerLearningTest`. Live:
-`docs/tests/peer_identity_live_test.sh` (global + region + two agents, mTLS, authorization, enforce; per-node trust
-and `REGIONAL_CA=1`).
+A certificate's identity counts only when its key is bound to its name, or it was issued (signature and issuer) by the
+CA recorded for its name's region and tenant. That rule is applied outbound (`PeerIdentity`, every broker connection
+and bridge, as before bound to the identity discovery returned for the address) and inbound (`CrescoAuthorizationBroker`:
+a client certificate that is not bound carries no identity, and a certificate-presenting client's asserted username is
+never used; a bridge claim needs a bound identity that is a bridge peer). Per-connection state lives on each
+connection's own context, so a duplicate ConnectionInfo cannot alter a live connection.
 
+The registry is persisted (`<agent data dir>/security/peer-trust.json`, `peer_trust_persist`/`peer_trust_file`),
+written atomically with an HMAC-SHA-384 under an owner-only per-node key; a file failing the check is moved aside and the
+registry is sealed (nothing new is bound) until an operator looks at it. A node's key and region CA persist too
+(`node-identity.p12`, `region-ca.p12`, `node_identity_persist`, `node_identity_dir`), so a restart presents the same key
+and CA and is welcomed by its bindings.
+
+### 7.4 Discovery v2 (`DiscoveryAuth`)
+```
+client  HELLO     type, Nc, client region/agent, client chain
+server  CHALLENGE Ns, server region/agent, server chain, broker port, MAC(K, "S1", T)
+client  PROOF     MAC(K, "C", T)          -- server records/issues nothing before this verifies
+server  RESULT    ok, reason, result chain, MAC(K, "S2", T, H(result))   -- client installs after this verifies
+```
+T is the length-prefixed transcript: label, type, Nc, Ns, both identities, both leaf-key SHA-384 fingerprints and the
+broker port. K = PBKDF2-HMAC-SHA-384(discovery secret of the type, per-purpose salt, 210,000 iterations), cached. MACs are
+HMAC-SHA-384 compared in constant time; nonces 32 bytes from SecureRandom. Each leaf must name the identity its sender
+claims. A replay, a man in the middle (changed certificate, identity or port) or a wrong secret records nothing.
+Locator validators (DISCOVER) are AES-256-GCM with a fresh IV; the discovery decoders accept only `String` (no arbitrary
+Java deserialization). An agent checks that the region it adopted from the locator reply is the one certified.
+
+**Default and migration.** `discovery_auth=v2` (default): only v2 for certificate exchanges, legacy validators refused.
+`discovery_auth=compat`: a node also answers, and falls back to, the legacy single-message exchange for peers that
+are not upgraded (a v2 client detects a legacy responder at once). Rolling upgrade: set `compat` on each node as it is
+upgraded; when the last old node is gone, remove `compat` everywhere (restart). Without `compat`, an upgraded node and an
+old node cannot exchange certificates, by design.
+
+### 7.5 Stream recipients
+A message with `cresco_to=<region>_<agent>` (optionally `cresco_to_tenant`) is dispatched only to that agent's
+connection, to verified bridges and to bridges' local (vm://) sides; a subscription whose selector asks for another
+identity's stream is refused. The controller's own vm:// connections (marked `cresco-local|tenant|region|agent` by
+ActiveClient) serve every plugin on it, wsapi and its clients included, so for recipient-bound streams they are the
+controller's identity, not infrastructure. A refusal reaches the subscriber: the dataplane throws `SecurityException`,
+wsapi answers status 40 "Subscription refused", pycrescolib raises `DataplaneSubscriptionRefused` and clientlib
+`SubscriptionRefusedException` for a receiver (a pure sender stays open).
+
+**Senders (GaiaKeep GKT):** set the string property `cresco_to` to the recipient agent's path (the agent whose dataplane
+connection the receiving plugin uses: `<region>_<agent>` of the node hosting it), and `cresco_to_tenant` under tenant
+namespacing; receivers may keep their selectors (`gfs_to`, `stream_name`), the broker does the rest. Turn it on only after
+the brokers and the agents involved are upgraded. A plugin that subscribes on a secured broker should expect
+`SecurityException` for a refused subscription.
+
+### 7.6 Settings and modes
+| Setting | Default | |
+|---|---|---|
+| `peer_identity_mode` | `enforce` | `warn`: log and accept; `off`: exactly the old connection and broker behaviour (chain-only outbound, name-only inbound identity, bridge claims exempt). Name grammar, CA uniqueness/scope and discovery v2 still apply under `off`; recipient binding has its own setting. |
+| `discovery_auth` | `v2` | `compat` during a rolling upgrade only |
+| `peer_identity_rebind` | empty | `region/agent` names (or `region` for a region's CA) whose binding may be replaced |
+| `peer_bridge_revoke` | empty | `region/agent` bridge peers to drop and refuse |
+| `peer_bridge_prune_days` | 30 | 0 = never |
+| `peer_trust_persist`, `peer_trust_file` | true, `<data>/security/peer-trust.json` | |
+| `node_identity_persist`, `node_identity_dir` | true, `<data>/security` | |
+| `security_federated_tenants` | empty (any) | tenants a regional-CA controller federates with |
+| `broker_stream_recipient_binding` | true | with `broker_security_enabled` |
+
+Mixed versions: new agents/regions bind to 1.3 controllers (identity-bearing leaves since 2026-07-02), but certificate
+exchanges with old nodes need `discovery_auth=compat` on the new side. Under the regional CA, a new controller federates
+CA-to-CA: an old global still re-issues a joining new region (the new region records the old global's CA for the
+global's region only and refuses a re-issued identity for itself). Upgrade globals and regions first.
+
+### 7.7 Tests
+Unit and real-TLS/real-broker: `PeerIdentityPolicyTest`, `StreamRecipientPolicyTest`, `PeerImpersonationTest`,
+`PeerIdentityBindingTest`, `StreamRecipientBindingTest`, `CertificateIdentityTest`, `PeerTrustPersistenceTest`,
+`DiscoveryPeerLearningTest`, `DataPlaneRefusalTest`, and the independent review's `AdversarialPeerIdentityReviewTest`.
+Live: `docs/tests/peer_identity_live_test.sh` (global + region + two agents, mTLS, authorization, enforce; per-node
+trust, `REGIONAL_CA=1`, `AGENT_REGIONS=1`).
