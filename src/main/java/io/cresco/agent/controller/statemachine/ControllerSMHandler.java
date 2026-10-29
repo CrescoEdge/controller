@@ -1002,27 +1002,54 @@ public class ControllerSMHandler {
         }
     }
 
+    /**
+     * Whether a region joining its global must submit the global as a broker candidate (build its own bridge to it).
+     * Not reachable: yes, as always. Reachable: only when this region has no bridge of its own to the global (none, or
+     * FAILED / STOPPED) -- the live route then runs over the GLOBAL's bridge to this region, which the region does not
+     * control. After this region restarts, the global's connector reconnects by failover within a second (its key is
+     * bound here), the region found the global "already reachable" and built nothing, and then the global's monitor
+     * failed the group it had seen drop and tore it down: no bridge either way, the region detached for good (live
+     * restart drill, regional-CA and configured-region fabrics).
+     */
+    static boolean needsOwnUplink(boolean reachable, BrokerStatusType ownStatus) {
+        if (!reachable) return true;
+        return ownStatus == null || ownStatus == BrokerStatusType.FAILED || ownStatus == BrokerStatusType.STOPPED;
+    }
+
     private boolean isRegionGlobal(DiscoveryNode discoveryNode) {
 
         boolean isInit = false;
         logger.debug("isRegionGlobal Called");
 
         try {
-            if(!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {
-                logger.debug(discoveryNode.getDiscoveredPath() + " NOT REACHABLE");
+            String globalPath = discoveryNode.getDiscoveredPath();
+            BrokeredAgent own = controllerEngine.getBrokeredAgents().get(globalPath);
+            boolean reachable = controllerEngine.isReachableAgent(globalPath);
+            if (needsOwnUplink(reachable, own == null ? null : own.getBrokerStatus())) {
+                if (reachable) {
+                    logger.info("Global " + globalPath + " is reachable only over its own bridge to this region; building this"
+                            + " region's bridge to it (the global may tear its bridge down at any time)");
+                } else {
+                    logger.debug(globalPath + " NOT REACHABLE");
+                }
                 controllerEngine.getIncomingCanidateBrokers().add(discoveryNode);
-                logger.debug(discoveryNode.getDiscoveredPath() + " submitted canidate broker ip " + discoveryNode.discovered_ip);
+                logger.debug(globalPath + " submitted canidate broker ip " + discoveryNode.discovered_ip);
 
+                // wait for a live route -- and, when one already exists over the global's bridge, for this region's own
+                // bridge as well (bounded: a route that exists is used after gc_connect_retry seconds regardless)
                 int timeout = 0;
                 int gcRetry = plugin.getConfig().getIntegerParam("gc_connect_retry", 25);
-                while ((!controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) && (timeout < gcRetry)) {
-                    logger.debug("Trying to connect to Global Controller : " + discoveryNode.getDiscoveredPath());
+                while (timeout < gcRetry) {
+                    BrokeredAgent ba = controllerEngine.getBrokeredAgents().get(globalPath);
+                    boolean ownUp = ba != null && ba.getBrokerStatus() == BrokerStatusType.ACTIVE;
+                    if (controllerEngine.isReachableAgent(globalPath) && (ownUp || !reachable)) break;
+                    logger.debug("Trying to connect to Global Controller : " + globalPath);
                     timeout++;
                     Thread.sleep(1000);
                 }
             } else {
-                // a live route already exists (isReachableAgent requires a consumer, i.e. a working bridge)
-                logger.info("Global " + discoveryNode.getDiscoveredPath() + " already reachable over an existing bridge");
+                // a live route over this region's own bridge (isReachableAgent requires a consumer, i.e. a working bridge)
+                logger.info("Global " + globalPath + " already reachable over this region's bridge");
             }
 
             if(controllerEngine.isReachableAgent(discoveryNode.getDiscoveredPath())) {

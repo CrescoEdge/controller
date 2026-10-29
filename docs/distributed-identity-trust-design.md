@@ -277,7 +277,13 @@ As a client the node always presents its one identity (`NodeIdentityKeyManager`)
 certificates names the CAs it accepts, from its truststore, and the JDK key manager presents a certificate only when its
 chain names one of them; a restarted server no longer names its bound peers' self-rooted issuers, so they presented no
 certificate and failed the handshake silently, and the bound-key check never ran (seen in the live restart drill: agents
-and bridges were readmitted only after rediscovering). Truststore entries are named by certificate fingerprint and never overwritten (a peer's certificate that copied an
+and bridges were readmitted only after rediscovering). With readmission that fast, a restarted region found the global
+"already reachable" over the GLOBAL's bridge into it (reconnected by failover) and built no bridge of its own; the
+global's monitor then tore that group down (it rebuilds a group once a member has been down for a 5 s tick) and the
+region stayed detached. A region now builds its own bridge to its global unless it already has one
+(`ControllerSMHandler.needsOwnUplink`). Bridge groups in either direction are still rebuilt by their monitors after a
+loss, so a bridge may come back by its region's re-attach rather than by failover; the drill judges only what TLS
+decides (a failover handshake that was made must be admitted before any rediscovery). Truststore entries are named by certificate fingerprint and never overwritten (a peer's certificate that copied an
 anchor's subject used to replace it).
 
 ### 7.4 Discovery v2 (`DiscoveryAuth`)
