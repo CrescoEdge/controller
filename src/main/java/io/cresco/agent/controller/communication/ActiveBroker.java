@@ -367,8 +367,15 @@ public class ActiveBroker {
 				}
 				// Tenant isolation authorization plugin (OFF by default).
 				if (plugin.getConfig().getBooleanParam("broker_security_enabled", false)) {
-					brokerPlugins.add(new CrescoAuthorizationBroker(plugin));
+					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
+					brokerPlugins.add(authz);
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
+					// Recipient-bound dataplane messages (cresco_to) reach only their recipient's connection; set on the
+					// broker before start so every transport connector inherits it.
+					if (plugin.getConfig().getBooleanParam("broker_stream_recipient_binding", true)) {
+						broker.setMessageAuthorizationPolicy(authz);
+						logger.info("Dataplane stream recipient binding ENABLED (" + StreamRecipientPolicy.TO + ")");
+					}
 				}
 				// Slow-subscriber discards: counted (dataplane.broker.discarded) and logged instead of silent.
 				if (discardAccounting) {
