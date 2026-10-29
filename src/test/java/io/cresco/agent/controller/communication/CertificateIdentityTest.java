@@ -116,4 +116,18 @@ class CertificateIdentityTest {
         // a joining controller without its own region CA is refused
         assertNull(issue(regionCtl, TlsTestSupport.engine("rgC", "rc", null), DiscoveryType.GLOBAL));
     }
+
+    @Test
+    void certificatesAreValidForPeersWhoseClocksAreBehind() throws Exception {
+        ControllerEngine node = TlsTestSupport.engine("rgA", "a1", null);
+        ControllerEngine regionCtl = TlsTestSupport.engine("rgA", "rc", Map.of("security_regional_ca", "true"));
+        regionCtl.getCertificateManager().ensureRegionCA();
+        X509Certificate[] perNode = node.getCertificateManager().getPublicCertificate();
+        X509Certificate[] caIssued = regionCtl.getCertificateManager().getPublicCertificate();
+        for (long behind : new long[]{2_000L, 5 * 60_000L}) {
+            java.util.Date peerClock = new java.util.Date(System.currentTimeMillis() - behind);
+            for (X509Certificate c : perNode) c.checkValidity(peerClock);
+            for (X509Certificate c : caIssued) c.checkValidity(peerClock);
+        }
+    }
 }

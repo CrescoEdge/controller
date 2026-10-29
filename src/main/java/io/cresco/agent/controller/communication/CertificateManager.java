@@ -387,9 +387,9 @@ public class CertificateManager {
 
             X509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
                     new X500Name("CN=rootCA-" + agentName), // issuer authority
-                    BigInteger.valueOf(new Random().nextInt()), //serial number of certificate
-                    DateTime.now().toDate(), // start of validity
-                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    CertValidity.serial(), //serial number of certificate
+                    CertValidity.notBefore(), // start of validity (backdated for peers whose clocks are behind)
+                    CertValidity.notAfterYears(YEARS_VALID),
                     //new DateTime(2025, 12, 31, 0, 0, 0, 0).toDate(), //end of certificate validity
                     new X500Name("CN=rootCA-" + agentName), // subject name of certificate
                     rootCAKeyPair.getPublic()); // public key of certificate
@@ -407,8 +407,8 @@ public class CertificateManager {
             KeyPair intermedCAKeyPair = generateKeyPair();
             builder = new JcaX509v3CertificateBuilder(
                     rootCA, // here rootCA is issuer authority
-                    BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
-                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    CertValidity.serial(), CertValidity.notBefore(),
+                    CertValidity.notAfterYears(YEARS_VALID),
                     new X500Name("CN=IntermedCA-" + pluginName), intermedCAKeyPair.getPublic());
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
@@ -442,8 +442,8 @@ public class CertificateManager {
             }
             builder = new JcaX509v3CertificateBuilder(
                     intermedCA, //here intermedCA is issuer authority
-                    BigInteger.valueOf(new Random().nextInt()), DateTime.now().toDate(),
-                    new DateTime().plusYears(YEARS_VALID).toDate(),
+                    CertValidity.serial(), CertValidity.notBefore(),
+                    CertValidity.notAfterYears(YEARS_VALID),
                     leafName, endUserCertKeyPair.getPublic());
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
