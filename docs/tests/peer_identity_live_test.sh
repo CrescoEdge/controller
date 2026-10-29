@@ -97,8 +97,10 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   # lines after a mark (taken just before a restart) only
   markall() { for n in global region a1 b1; do wc -l < "$L/$n.log" | tr -d ' ' > "$WORK/mark.$n"; done; }
   newlines() { tail -n +$(( $(cat "$WORK/mark.$1") + 1 )) "$L/$1.log" 2>/dev/null; }
-  after() { newlines "$1" | grep -qE "$2" && echo 1; }
-  nofail() { for n in global region a1 b1; do newlines "$n" | grep -qE 'PKIX path|unable to find valid certification path|certificate_unknown|bad_certificate|BRIDGE REFUSED|PEER IDENTITY MISMATCH' && return; done; echo 1; }
+  # (no "producer | grep -q" under pipefail: grep exits at the first match, the producer dies of SIGPIPE, and the
+  # pipeline then reports failure for a line that IS there -- a missed match, or a false "no failure")
+  after() { [ -n "$(newlines "$1" | grep -m1 -E "$2")" ] && echo 1; }
+  nofail() { for n in global region a1 b1; do [ -n "$(newlines "$n" | grep -m1 -E 'PKIX path|unable to find valid certification path|certificate_unknown|bad_certificate|certificate_required|Empty client certificate|BRIDGE REFUSED|PEER IDENTITY MISMATCH')" ] && return; done; echo 1; }
   waitlog() { # seconds node regex -> seconds it took (or "timeout")
     local s=0; while [ $s -lt "$1" ]; do after "$2" "$3" >/dev/null && { echo $s; return; }; sleep 1; s=$((s+1)); done; echo timeout; }
   restart() { # name: stop it (TERM, then KILL) and start it again on the same data directory
@@ -109,7 +111,7 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   firstts() { newlines "$1" | grep -E "$2" | head -1 | awk '{print $4}'; }
   # the SERVER ($1) admitted the client by certificate ($2) before the client ($3) ran any new discovery exchange:
   # the connection came back by failover, not because the client rediscovered (a client-side "verified" line alone
-  # only means the client accepted the server)
+  # only means the client accepted the server; a client that presents no certificate fails silently at the server)
   noredisc() { local a d; a=$(firstts "$1" "$2"); d=$(firstts "$3" 'discovery v2: authenticated'); [ -n "$a" ] && { [ -z "$d" ] || [[ "$a" < "$d" ]]; } && echo 1; }
 
   echo "### restart drill 1: the global restarts (same data directory)"

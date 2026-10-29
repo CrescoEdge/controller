@@ -9,11 +9,20 @@ import io.cresco.agent.test.TestAgentService;
 import io.cresco.library.plugin.PluginBuilder;
 import org.junit.jupiter.api.Test;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
+import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -54,6 +63,71 @@ class RestartTrustTest {
 
     private static boolean trustsServer(ControllerEngine e, X509Certificate[] chain) {
         try { e.getCertificateManager().currentPkixTrustManager().checkServerTrusted(chain, "RSA"); return true; } catch (Exception x) { return false; }
+    }
+
+    private static SSLContext tls(ControllerEngine e) throws Exception {
+        SSLContext c = SSLContext.getInstance("TLS");
+        c.init(e.getCertificateManager().getKeyManagers(), e.getCertificateManager().getTrustManagers(), new SecureRandom());
+        return c;
+    }
+
+    /**
+     * A real TLS handshake with client certificates required, the node's own key and trust managers on both ends: the
+     * client chain the server accepted, or null when the server refused the handshake.
+     */
+    private static X509Certificate[] handshake(ControllerEngine server, ControllerEngine client) throws Exception {
+        InetAddress lo = InetAddress.getLoopbackAddress();
+        ExecutorService ex = Executors.newSingleThreadExecutor();
+        try (SSLServerSocket ss = (SSLServerSocket) tls(server).getServerSocketFactory().createServerSocket(0, 1, lo)) {
+            ss.setNeedClientAuth(true);
+            Future<X509Certificate[]> seen = ex.submit(() -> {
+                try (SSLSocket s = (SSLSocket) ss.accept()) {
+                    s.setSoTimeout(10_000);
+                    s.startHandshake();                       // completes only once the client's certificate is verified
+                    return (X509Certificate[]) s.getSession().getPeerCertificates();
+                } catch (Exception refused) {
+                    return null;
+                }
+            });
+            try (SSLSocket c = (SSLSocket) tls(client).getSocketFactory().createSocket(lo, ss.getLocalPort())) {
+                c.setSoTimeout(10_000);
+                c.startHandshake();
+                c.getInputStream().read();                    // until the server closes (or alerts)
+            } catch (Exception ignore) {
+            }
+            return seen.get(20, TimeUnit.SECONDS);
+        } finally {
+            ex.shutdownNow();
+        }
+    }
+
+    /**
+     * The same, end to end: a restarted server's truststore no longer names its bound peers' issuers, so its certificate
+     * request hints at none of them, and the JDK key manager then presented NO client certificate -- the server's trust
+     * of the bound key never got a chance (live restart drill). The node always presents its identity.
+     */
+    @Test
+    void aRestartedServerAdmitsItsBoundClientsInARealHandshake() throws Exception {
+        Path g = Files.createTempDirectory("rh-g"), r = Files.createTempDirectory("rh-r"), a = Files.createTempDirectory("rh-a");
+        ControllerEngine global = at(g, "glob", "gc", true), region = at(r, "rgr", "rc", true), agent = at(a, "rgr", "b1", false);
+        join(region, global, DiscoveryType.GLOBAL);
+        join(agent, region, DiscoveryType.AGENT);
+        assertNotNull(handshake(global, region), "the bridge handshake failed before any restart");
+
+        ControllerEngine global2 = at(g, "glob", "gc", true);                     // the global restarts
+        X509Certificate[] bridge = handshake(global2, region);
+        assertNotNull(bridge, "a restarted global refused the region's bridge handshake (no client certificate?)");
+        assertEquals(region.getCertificateManager().getPublicCertificate()[0], bridge[0]);
+
+        ControllerEngine region2 = at(r, "rgr", "rc", true);                      // the region restarts
+        X509Certificate[] agentSeen = handshake(region2, agent);
+        assertNotNull(agentSeen, "a restarted region refused its agent's handshake (no client certificate?)");
+        assertEquals(agent.getCertificateManager().getPublicCertificate()[0], agentSeen[0]);
+        assertNotNull(handshake(global2, region2), "a restarted region's bridge was refused by a restarted global");
+
+        // a stranger still gets nowhere: it presents its certificate now, and the server refuses it
+        ControllerEngine stranger = at(Files.createTempDirectory("rh-x"), "rgx", "x1", false);
+        assertNull(handshake(region2, stranger), "a restarted region admitted an unbound stranger");
     }
 
     @Test
