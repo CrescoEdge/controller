@@ -354,6 +354,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
      * addMessageListener throws it as a {@link SecurityException} so a caller -- wsapi, and through it its client -- can
      * tell a refusal from a transient failure (which still returns null).
      */
+    /**
+     * Tell a listener's owner that the broker refused to restore its subscription after a reconnect. A listener that also
+     * implements JMS's {@link jakarta.jms.ExceptionListener} gets a {@link jakarta.jms.JMSSecurityException} carrying the
+     * broker's reason (wsapi closes the client's stream, which then reconnects and is told by its activation reply).
+     */
+    static void tellRefused(jakarta.jms.MessageListener listener, String reason) {
+        if (listener instanceof jakarta.jms.ExceptionListener) {
+            try {
+                ((jakarta.jms.ExceptionListener) listener).onException(new jakarta.jms.JMSSecurityException(reason, "SUBSCRIPTION_REFUSED"));
+            } catch (Exception ignore) { }
+        }
+    }
+
     static String policyRefusal(Throwable t) {
         for (int i = 0; t != null && i < 12; i++, t = t.getCause()) {
             String m = t.getMessage();
@@ -706,7 +719,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 if (old != null) try { old.close(); } catch (Exception ignore) { }
                 n++;
             } catch (Exception ex) {
-                logger.error("reattach listener " + i.getListenerId() + " on shard " + key + ": " + ex.getMessage());
+                String refusal = policyRefusal(ex);
+                if (refusal != null) {
+                    // refused now (policy or identity changed): drop it and tell its owner, instead of a silent stream
+                    synchronized (lockMessage) {
+                        messageConfigMap.remove(i.getListenerId());
+                        messageConsumerMap.remove(i.getListenerId());
+                    }
+                    logger.warn("Dataplane listener " + i.getListenerId() + " REFUSED on reconnect: " + refusal);
+                    tellRefused(i.getMessageListener(), refusal);
+                } else {
+                    logger.error("reattach listener " + i.getListenerId() + " on shard " + key + ": " + ex.getMessage());
+                }
             }
         }
         if (n > 0) logger.warn("Dataplane shard " + key + " reconnected: re-attached " + n + " listener(s)");
@@ -881,7 +905,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 else
                     id = addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
             } catch (SecurityException refused) {
-                id = null;                                           // refused now (policy changed): logged, not restored
+                id = null;                                           // refused now: logged, not restored, and its owner told
+                tellRefused(dataPlanePersistantInstance.getMessageListener(), refused.getMessage());
             }
             if (id != null) restored++;
         }

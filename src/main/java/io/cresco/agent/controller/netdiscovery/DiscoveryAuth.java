@@ -16,7 +16,6 @@ import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Discovery v2: a mutually authenticated, replay-proof certificate exchange keyed by the discovery secret.
@@ -78,10 +77,17 @@ public final class DiscoveryAuth {
         public String rcert;
     }
 
-    private static final Map<String, byte[]> KEYS = new ConcurrentHashMap<>();
+    /** Derived keys, by (purpose, secret digest): bounded, so secrets that come and go cannot grow it without limit. */
+    static final int KEY_CACHE = 64;
+    private static final Map<String, byte[]> KEYS = java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>(16, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, byte[]> e) { return size() > KEY_CACHE; }
+    });
+
+    static int cachedKeys() { return KEYS.size(); }
 
     /** K for {@code type}, derived from {@code secret} (cached: PBKDF2 is deliberately slow). */
     static byte[] key(String secret, String purpose) {
+        if (secret == null) throw new IllegalArgumentException("no discovery secret");
         String cacheKey;
         try {
             cacheKey = purpose + "|" + Base64.getEncoder().encodeToString(

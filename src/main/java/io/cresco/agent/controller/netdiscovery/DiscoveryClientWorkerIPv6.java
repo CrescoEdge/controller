@@ -246,11 +246,15 @@ public class DiscoveryClientWorkerIPv6 {
 
             String discoverySecret = null;
             if (rme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
             } else if (rme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
+            }
+            if (discoverySecret == null) {
+                logger.debug("no discovery secret configured for " + rme.getParam("discovery_type") + ": not validating");
+                return null;
             }
             if(rme.getParam("validated_authenication") != null) {
                 decryptedString = discoveryCrypto.decrypt(rme.getParam("validated_authenication"), discoverySecret);
@@ -274,13 +278,17 @@ public class DiscoveryClientWorkerIPv6 {
 
             String discoverySecret = null;
             if (sme.getParam("discovery_type").equals(DiscoveryType.AGENT.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
             } else if (sme.getParam("discovery_type").equals(DiscoveryType.REGION.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
             } else if (sme.getParam("discovery_type").equals(DiscoveryType.GLOBAL.name())) {
-                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global", UUID.randomUUID().toString());
+                discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
             }
 
+            if (discoverySecret == null) {
+                logger.debug("no discovery secret configured for " + sme.getParam("discovery_type") + ": nothing to send");
+                return null;
+            }
             String verifyMessage = "DISCOVERY_MESSAGE_VERIFIED";
             encryptedString = discoveryCrypto.encrypt(verifyMessage,discoverySecret);
 

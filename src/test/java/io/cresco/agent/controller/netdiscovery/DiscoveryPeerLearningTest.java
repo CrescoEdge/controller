@@ -193,4 +193,11 @@ class DiscoveryPeerLearningTest {
         assertNull(reg(region).verifiedIdentity(agent.getCertificateManager().getPublicCertificate()),
                 "an agent was bound in a superuser tenant by claiming it");
     }
+
+    @Test
+    void derivedKeysAreBoundedAndNoSecretIsNeverInvented() {
+        for (int i = 0; i < DiscoveryAuth.KEY_CACHE + 5; i++) DiscoveryAuth.key("secret-" + i, "validator");
+        assertTrue(DiscoveryAuth.cachedKeys() <= DiscoveryAuth.KEY_CACHE, "the derived-key cache grew past its bound");
+        assertThrows(IllegalArgumentException.class, () -> DiscoveryAuth.key(null, "validator"));
+    }
 }

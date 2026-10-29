@@ -57,4 +57,21 @@ class DataPlaneRefusalTest {
         assertNotNull(dps.addMessageListener(TopicType.GLOBAL, m -> { }, "cresco_to='rgA_gc'"));
         assertNotNull(dps.addMessageListener(TopicType.GLOBAL, m -> { }, "stream_name='plain'"));
     }
+
+    /** A listener that also implements JMS's ExceptionListener (wsapi's does). */
+    static final class Owner implements jakarta.jms.MessageListener, jakarta.jms.ExceptionListener {
+        volatile jakarta.jms.JMSException told;
+        @Override public void onMessage(jakarta.jms.Message m) { }
+        @Override public void onException(jakarta.jms.JMSException e) { told = e; }
+    }
+
+    @Test
+    void aListenerRefusedOnReconnectIsToldWhy() {
+        Owner owner = new Owner();
+        DataPlaneServiceImpl.tellRefused(owner, "Cresco stream policy: subscription denied (recipient rgA_a1)");
+        assertNotNull(owner.told, "a listener refused on reconnect was dropped silently");
+        assertTrue(owner.told instanceof jakarta.jms.JMSSecurityException);
+        assertEquals("SUBSCRIPTION_REFUSED", owner.told.getErrorCode());
+        DataPlaneServiceImpl.tellRefused(m -> { }, "x");          // a plain listener: nothing to tell, no failure
+    }
 }
