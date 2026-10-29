@@ -192,11 +192,29 @@ public class CertificateManager {
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
         Path file = (f == null || f.isBlank()) ? identityDir().resolve("peer-trust.json") : Paths.get(f);
-        return PeerTrustRegistry.open(file,
-                csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")),
-                csv(plugin.getConfig().getStringParam("peer_bridge_revoke", "")),
-                plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30),
-                m -> logger.error(m));
+        PeerTrustRegistry.Options o = new PeerTrustRegistry.Options();
+        o.rebind = csv(plugin.getConfig().getStringParam("peer_identity_rebind", ""));
+        o.revoke = csv(plugin.getConfig().getStringParam("peer_bridge_revoke", ""));
+        o.bridgePruneDays = plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30);
+        o.bindingPruneDays = plugin.getConfig().getIntegerParam("peer_binding_prune_days", 90);
+        return PeerTrustRegistry.open(file, o, m -> logger.error(m));
+    }
+
+    /**
+     * Reserve this node's own identity in its registry (role self) so no joiner is ever bound to it. Called by a
+     * controller before it answers a discovery exchange, and when its region CA re-issues its identity.
+     */
+    public void bindOwnIdentity() {
+        try {
+            if (chain == null || chain[0] == null) return;
+            CrescoIdentity me = CrescoNames.identityOf(chain[0]);
+            if (me == null) return;
+            PeerTrustRegistry.BindResult r = peerTrust.bind(me.getTenant(), me.getRegion(), me.getAgent(), chain[0].getPublicKey(),
+                    "own", PeerTrustRegistry.ROLE_SELF, true);
+            if (!r.ok) logger.error("Could not reserve this node's own identity " + me.getAgentPath() + ": " + r.reason);
+        } catch (Exception ex) {
+            logger.error("bindOwnIdentity: " + ex.getMessage());
+        }
     }
 
     private boolean persistIdentity() {
@@ -209,11 +227,8 @@ public class CertificateManager {
         if (!Files.exists(pass)) {
             byte[] r = new byte[32];
             new SecureRandom().nextBytes(r);
-            Files.createDirectories(pass.getParent());
-            Path tmp = pass.resolveSibling(pass.getFileName() + ".tmp");
-            Files.writeString(tmp, java.util.HexFormat.of().formatHex(r));
-            try { Files.setPosixFilePermissions(tmp, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")); } catch (Exception ignore) { }
-            Files.move(tmp, pass, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            // owner-only from creation, fsynced, renamed atomically, directory fsynced
+            PeerTrustRegistry.writeAtomically(pass, java.util.HexFormat.of().formatHex(r).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
         }
         return Files.readString(pass).trim().toCharArray();
     }
@@ -223,13 +238,9 @@ public class CertificateManager {
         KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         ks.load(null, null);
         ks.setKeyEntry(alias, key, pw, certs);
-        Path tmp = store.resolveSibling(store.getFileName() + ".tmp");
-        try (FileOutputStream out = new FileOutputStream(tmp.toFile())) {
-            ks.store(out, pw);
-            out.getFD().sync();
-        }
-        try { Files.setPosixFilePermissions(tmp, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")); } catch (Exception ignore) { }
-        Files.move(tmp, store, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        ks.store(out, pw);
+        PeerTrustRegistry.writeAtomically(store, out.toByteArray());
     }
 
     private Object[] readStore(Path store, String alias) throws Exception {
@@ -709,7 +720,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             // self-enroll: replace our self-signed leaf with one signed by our own region CA (same key)
             PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
             if (myKey != null && getPublicCertificate() != null && getPublicCertificate()[0] != null) {
-                PeerTrustRegistry.BindResult own = peerTrust.bind(tenant, region, agent, getPublicCertificate()[0].getPublicKey(), "own");
+                PeerTrustRegistry.BindResult own = peerTrust.bind(tenant, region, agent, getPublicCertificate()[0].getPublicKey(), "own",
+                        PeerTrustRegistry.ROLE_SELF, true);
                 if (!own.ok) logger.error("This controller's own identity " + region + "/" + agent + " is bound to another key: " + own.reason);
                 X509Certificate[] selfChain = regionCA.enroll(getPublicCertificate()[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
                 this.chain = selfChain;
@@ -819,6 +831,11 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("Enrollment REFUSED: a joiner asked for this controller's own identity region=" + region + ", agent=" + agent);
                 return null;
             }
+            String agentRefusal = agentJoinRefusal(tenant, region, agent);
+            if (agentRefusal != null) {
+                logger.error("Enrollment REFUSED: " + region + "/" + agent + ": " + agentRefusal);
+                return null;
+            }
             // one key per name: a second key for a name this CA already issued is refused unless the operator rebinds it
             java.security.PublicKey joinerKey = joinerCerts[0].getPublicKey();
             PeerTrustRegistry.BindResult free = peerTrust.canBind(tenant, region, agent, joinerKey);
@@ -846,6 +863,27 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("issueEnrollment error: " + ex.getMessage(), ex);
             return null;
         }
+    }
+
+    /** Tenants whose network clients get the cross-tenant SUPERUSER role (broker_superuser_tenants). */
+    private java.util.Set<String> superuserTenants() {
+        return new java.util.HashSet<>(csv(plugin.getConfig().getStringParam("broker_superuser_tenants", "cresco-system")));
+    }
+
+    /**
+     * Why an agent may not be bound as {@code tenant/region/agent} at this controller, or null. An agent proves only that it
+     * holds the agent discovery secret -- fabric membership, not a name -- so it is bound only inside this controller's own
+     * region and tenant, never to a controller name (this node's own, or one bound as a controller), and never in a
+     * superuser tenant (those identities are provisioned by an operator, not self-claimed).
+     */
+    public String agentJoinRefusal(String tenant, String region, String agent) {
+        String myRegion = controllerEngine.cstate.getRegion(), myAgent = controllerEngine.cstate.getAgent();
+        String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        if (myRegion == null || !myRegion.equals(region)) return "an agent can only join this controller's region " + myRegion + ", not " + region;
+        if (!myTenant.equals(tenant)) return "an agent can only join in this controller's tenant " + myTenant + ", not " + tenant;
+        if (superuserTenants().contains(tenant)) return "tenant " + tenant + " is a superuser tenant; agents cannot claim it";
+        if (agent.equals(myAgent) || peerTrust.isReserved(region, agent)) return "the name " + region + "/" + agent + " is a controller's";
+        return null;
     }
 
     /**
@@ -903,7 +941,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + ": " + why);
             return null;
         }
-        peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated");
+        peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated", PeerTrustRegistry.ROLE_CONTROLLER, false);
         addCertificatesToTrustStore("peerCA-" + region, joinerCerts.length > 2 && joinerCerts[2] != null
                 ? new X509Certificate[]{joinerCa, joinerCerts[2]} : new X509Certificate[]{joinerCa});
         try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
@@ -929,6 +967,15 @@ System.out.println("Decoded value is " + new String(valueDecoded));
      * the region the leaf names.
      */
     public boolean installEnrollment(String chainJson, String peerRegion) {
+        return installEnrollment(chainJson, peerRegion, null);
+    }
+
+    /**
+     * As {@link #installEnrollment(String, String)} for an exchange of {@code type}: an AGENT exchange must return our own
+     * identity re-issued by the region we joined; only a REGION/GLOBAL exchange may return the peer controller's CA. A
+     * client follows its peer's CA (a re-installed controller has a new one).
+     */
+    public boolean installEnrollment(String chainJson, String peerRegion, io.cresco.agent.controller.netdiscovery.DiscoveryType type) {
         try {
             X509Certificate[] signedChain = getCertsfromJson(chainJson);
             if (signedChain == null || signedChain.length == 0 || signedChain[0] == null) {
@@ -942,6 +989,11 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
             java.security.cert.Certificate ourCert = keyStore.getCertificate(keyStoreAlias);
             if (ourCert != null && !ourCert.getPublicKey().equals(signedChain[0].getPublicKey())) {
+                if (type == io.cresco.agent.controller.netdiscovery.DiscoveryType.AGENT) {
+                    logger.error("installEnrollment REFUSED: an AGENT exchange with " + peerRegion + " returned a CA instead of this node's"
+                            + " re-issued identity (only a controller federation returns a CA)");
+                    return false;
+                }
                 // the peer controller's own CA chain: record it for its region, keep our identity
                 X509Certificate peerCa = signedChain[0];
                 String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
@@ -950,7 +1002,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                             + (scope == null ? "?" : scope[0]) + " (or is not a CA)");
                     return false;
                 }
-                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated");
+                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated", true);
                 if (why != null) {
                     logger.error("installEnrollment REFUSED: " + why);
                     return false;
@@ -981,7 +1033,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                         + (peerRegion != null ? " while joining region " + peerRegion : ""));
                 return false;
             }
-            String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined");
+            String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined", true);
             if (why != null) {
                 logger.error("installEnrollment REFUSED: " + why);
                 return false;

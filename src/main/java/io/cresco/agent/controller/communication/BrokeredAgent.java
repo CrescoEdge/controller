@@ -44,6 +44,24 @@ public class BrokeredAgent {
 		this.brokerNode.discovered_ip = aciveAddress;
 	}
 
+	/**
+	 * Adopt what a newer discovery of the same peer said: its address, its broker port (a restarted peer may bind a new
+	 * dynamic port) and its authenticated identity. The next bridge attempt dials this.
+	 */
+	public void refresh(DiscoveryNode fresh) {
+		if (fresh == null || !brokerNode.getDiscoveredPath().equals(fresh.getDiscoveredPath())) return;
+		if (fresh.discovered_broker_port > 0 && fresh.discovered_broker_port != brokerNode.discovered_broker_port) {
+			logger.info("Broker " + getPath() + " now advertises port " + fresh.discovered_broker_port + " (was " + brokerNode.discovered_broker_port + ")");
+		}
+		this.brokerNode = fresh;
+		this.addressMap.putIfAbsent(fresh.discovered_ip, BrokerStatusType.INIT);
+	}
+
+	/** The broker port the next bridge attempt dials (-1: the configured default). */
+	public int getBrokerPort() {
+		return brokerNode.discovered_broker_port;
+	}
+
 	public String getPath() {
 		return this.brokerNode.getDiscoveredPath();
 	}

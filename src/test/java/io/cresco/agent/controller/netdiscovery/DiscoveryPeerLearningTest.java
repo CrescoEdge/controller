@@ -138,24 +138,27 @@ class DiscoveryPeerLearningTest {
     }
 
     @Test
-    void theLegacySingleMessageCertifyIsRefusedUnlessCompat() throws Exception {
+    void theLegacySingleMessageCertifyIsAgentMembershipOnlyAndOnlyWithCompat() throws Exception {
         for (String mode : new String[]{"v2", "compat"}) {
             ControllerEngine me = responder("rgG", "gc", secrets(SECRET, DiscoveryAuth.MODE_KEY, mode));
             DiscoveryProcessor dp = new DiscoveryProcessor(me);
-            ControllerEngine regionCtl = TlsTestSupport.engine("rgB", "rc", secrets(SECRET, DiscoveryAuth.MODE_KEY, "compat"));
-            DiscoveryCrypto legacyCrypto = new DiscoveryCrypto(regionCtl);           // compat: legacy validators
+            DiscoveryCrypto legacyCrypto = new DiscoveryCrypto(TlsTestSupport.engine("rgX", "x", secrets(SECRET, DiscoveryAuth.MODE_KEY, "compat")));
+            // a legacy region join: never accepted, compat or not (it would make a bridge peer from a replayable token)
+            ControllerEngine regionCtl = TlsTestSupport.engine("rgB", "rc", secrets(SECRET));
             DiscoveryNode join = new DiscoveryNode(DiscoveryType.REGION);
             join.setCertify(legacyCrypto.encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET),
                     regionCtl.getCertificateManager().getJsonFromCerts(regionCtl.getCertificateManager().getPublicCertificate()), "rgB", "rc");
             DiscoveryNode out = dp.processIncomingBroadCastDiscovery(join, "127.0.0.1", 32005, "127.0.0.1", 40001);
-            boolean recorded = reg(me).isBridgePeer(CrescoIdentity.of("t1", "rgB", "rc", null));
-            if (mode.equals("v2")) {
-                assertTrue(out == null || out.nodeType != DiscoveryNode.NodeType.CERTIFIED, "a legacy certify was certified with discovery_auth=v2");
-                assertFalse(recorded, "a legacy certify registered a bridge peer with discovery_auth=v2");
-            } else {
-                assertEquals(DiscoveryNode.NodeType.CERTIFIED, out.nodeType);
-                assertTrue(recorded, "compat must still accept a legacy peer during an upgrade");
-            }
+            assertTrue(out == null || out.nodeType != DiscoveryNode.NodeType.CERTIFIED, "a legacy REGION certify was certified (" + mode + ")");
+            assertFalse(reg(me).isBridgePeer(CrescoIdentity.of("t1", "rgB", "rc", null)), "a legacy certify made a bridge peer (" + mode + ")");
+            // a legacy agent join: membership, only with compat
+            ControllerEngine agent = TlsTestSupport.engine("rgG", "a7", secrets(SECRET));
+            DiscoveryNode aj = new DiscoveryNode(DiscoveryType.AGENT);
+            aj.setCertify(legacyCrypto.encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET),
+                    agent.getCertificateManager().getJsonFromCerts(agent.getCertificateManager().getPublicCertificate()), "rgG", "a7");
+            DiscoveryNode aout = dp.processIncomingBroadCastDiscovery(aj, "127.0.0.1", 32005, "127.0.0.1", 40002);
+            boolean certified = aout != null && aout.nodeType == DiscoveryNode.NodeType.CERTIFIED;
+            assertEquals(mode.equals("compat"), certified, "legacy agent membership with discovery_auth=" + mode);
         }
     }
 
@@ -170,5 +173,24 @@ class DiscoveryPeerLearningTest {
         String legacy = new DiscoveryCrypto(TlsTestSupport.engine("rgA", "x", Map.of(DiscoveryAuth.MODE_KEY, "compat")))
                 .encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET);
         assertNull(v2.decrypt(legacy, SECRET), "a legacy (replayable) validator was accepted with discovery_auth=v2");
+    }
+
+    @Test
+    void theJoiningSideRefusesAResponderOutsideItsRegionOrTenant() throws Exception {
+        ControllerEngine otherRegion = responder("rgB", "rc", secrets(SECRET));
+        ControllerEngine agent = TlsTestSupport.engine("rgA", "a1", secrets(SECRET));        // joined (adopted) region rgA
+        assertNull(exchange(agent, otherRegion, DiscoveryType.AGENT), "an agent accepted a responder answering for another region");
+        assertNull(reg(agent).pinnedKey(new PeerIdentity.Expected("rgB", "rc")));
+        ControllerEngine otherTenant = responder("rgA", "rc", secrets(SECRET, "tenant_id", "t2"));
+        assertNull(exchange(agent, otherTenant, DiscoveryType.AGENT), "an agent accepted a responder of another tenant");
+    }
+
+    @Test
+    void anAgentCannotJoinInASuperuserTenant() throws Exception {
+        ControllerEngine region = responder("rgA", "rc", secrets(SECRET, "tenant_id", "cresco-system"));
+        ControllerEngine agent = TlsTestSupport.engine("rgA", "a1", secrets(SECRET, "tenant_id", "cresco-system"));
+        assertNull(exchange(agent, region, DiscoveryType.AGENT));
+        assertNull(reg(region).verifiedIdentity(agent.getCertificateManager().getPublicCertificate()),
+                "an agent was bound in a superuser tenant by claiming it");
     }
 }

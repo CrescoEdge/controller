@@ -130,4 +130,16 @@ class CertificateIdentityTest {
             for (X509Certificate c : caIssued) c.checkValidity(peerClock);
         }
     }
+
+    @Test
+    void anAgentExchangeMayNotInstallACa() throws Exception {
+        ControllerEngine rogue = TlsTestSupport.engine("rgA", "rc", Map.of("security_regional_ca", "true"));
+        rogue.getCertificateManager().ensureRegionCA();
+        X509Certificate[] own = rogue.getCertificateManager().getPublicCertificate();      // [leaf, regionCA, root]
+        String caBundle = rogue.getCertificateManager().getJsonFromCerts(new X509Certificate[]{own[1], own[2]});
+        ControllerEngine joiner = TlsTestSupport.engine("rgA", "a1", Map.of("security_regional_ca", "true"));
+        assertFalse(joiner.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.AGENT),
+                "an AGENT exchange installed the responder's CA as a federated peer");
+        assertTrue(joiner.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.REGION));
+    }
 }
