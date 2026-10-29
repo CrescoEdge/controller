@@ -271,8 +271,14 @@ class StreamRecipientBindingTest {
             claim.setNetworkConnection(true);
             conn.syncSendPacket(claim);
             Thread.sleep(200);
-            boolean read;
-            try { s.createConsumer(s.createQueue("rgA_a1")); read = true; } catch (JMSException e) { read = false; }
+            // without the migration flag the claim earns nothing: no exemption, no identity (it reads nothing)
+            MessageConsumer inbox = s.createConsumer(s.createQueue("rgA_a1"));
+            ActiveMQConnection local = (ActiveMQConnection) new org.apache.activemq.ActiveMQConnectionFactory("vm://rgA_gc" + allow + "?create=false").createConnection();
+            connections.add(local);
+            local.start();
+            Session ls = local.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            ls.createProducer(ls.createQueue("rgA_a1")).send(ls.createTextMessage("for-a1"));
+            boolean read = inbox.receive(1500) != null;
             assertEquals(allow, read, "a certificate-less bridge claim with broker_allow_unverified_bridges=" + allow);
         }
     }

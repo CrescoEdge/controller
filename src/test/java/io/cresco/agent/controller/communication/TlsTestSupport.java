@@ -114,6 +114,12 @@ public final class TlsTestSupport {
     /** A started non-persistent TLS broker presenting {@code id}, trusting {@code anchors}. */
     public static BrokerService broker(String name, Id id, boolean needClientAuth, BrokerPlugin[] plugins,
                                 org.apache.activemq.security.MessageAuthorizationPolicy map, X509Certificate... anchors) throws Exception {
+        return broker(name, id, needClientAuth ? "?needClientAuth=true" : "", plugins, map, anchors);
+    }
+
+    /** As above with the connector's TLS options ({@code ?wantClientAuth=true}: what ActiveBroker sets when client auth is optional). */
+    public static BrokerService broker(String name, Id id, String tlsOptions, BrokerPlugin[] plugins,
+                                org.apache.activemq.security.MessageAuthorizationPolicy map, X509Certificate... anchors) throws Exception {
         SslBrokerService b = new SslBrokerService();
         b.setBrokerName(name);
         b.setPersistent(false);
@@ -123,7 +129,7 @@ public final class TlsTestSupport {
         b.setSslContext(new SslContext(id.keyManagers(), trustManagers(anchors), new SecureRandom()));
         if (plugins != null && plugins.length > 0) b.setPlugins(plugins);
         if (map != null) b.setMessageAuthorizationPolicy(map);
-        TransportConnector c = b.addConnector("nio+ssl://127.0.0.1:0" + (needClientAuth ? "?needClientAuth=true" : ""));
+        TransportConnector c = b.addConnector("nio+ssl://127.0.0.1:0" + tlsOptions);
         c.setName("tls");
         b.start();
         b.waitUntilStarted();

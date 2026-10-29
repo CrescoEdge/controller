@@ -413,10 +413,12 @@ public class ActiveBroker {
 					boolean securityOn = plugin.getConfig().getBooleanParam("broker_security_enabled", false);
 					boolean clientAuth = requireClientAuth(plugin.getConfig());
 					if (securityOn && !clientAuth) {
-						logger.warn("BROKER SECURITY WITHOUT CLIENT CERTIFICATES (broker_require_client_auth=false): identities are"
-								+ " asserted usernames, so recipient-bound dataplane streams reach no network client and broker bridges are"
-								+ " NOT exempt from tenant authorization (federation will fail) unless broker_allow_unverified_bridges=true."
+						logger.warn("BROKER SECURITY WITHOUT REQUIRED CLIENT CERTIFICATES (broker_require_client_auth=false): the broker"
+								+ " still asks for one (wantClientAuth) and Cresco nodes present theirs, but a network connection without one"
+								+ " has NO identity whatever username it types: its subscriptions receive nothing and its sends are discarded,"
+								+ " and a bridge without one is not exempt unless broker_allow_unverified_bridges=true."
 								+ " Set broker_require_client_auth=true (the default with broker security).");
+						txOpts += "&wantClientAuth=true";
 					}
 					if (clientAuth) {
 						txOpts += "&needClientAuth=true";
