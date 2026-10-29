@@ -352,27 +352,33 @@ public class CertificateManager {
         }
     }
 
-    public void addCertificatesToTrustStore(String alias, Certificate[] certs) {
+    /**
+     * Add {@code certs} to the truststore. Each entry is named by the certificate's own SHA-256 fingerprint (after a
+     * caller-chosen prefix), never by its subject: a subject is whatever the certificate's maker wrote, so naming by it let
+     * a peer's certificate that copied another's subject REPLACE that anchor (e.g. a region CA), cutting off everyone it
+     * vouched for. An existing entry is never overwritten; the same certificate twice is one entry.
+     *
+     * @return the aliases newly added
+     */
+    public java.util.List<String> addCertificatesToTrustStore(String alias, Certificate[] certs) {
+        java.util.List<String> added = new java.util.ArrayList<>();
+        if (certs == null) return added;
         try {
-            for(Certificate cert:certs){
-
-                if (cert instanceof X509Certificate) {
-                    X509Certificate x509cert = (X509Certificate) cert;
-
-                    // Get subject
-                    Principal principal = x509cert.getSubjectDN();
-                    //set alias to subject name to prevent overwriting in the cert chain
-                    alias = principal.getName();
-                }
-
-                logger.debug("addCertificatesToTrustStore: ADDING ALIAS: " + alias + " to truststore");
-                trustStore.setCertificateEntry(alias,cert);
-
+            String prefix = (alias == null || alias.isBlank()) ? "cert" : alias.replaceAll("[^A-Za-z0-9._-]", "_");
+            for (Certificate cert : certs) {
+                if (cert == null) continue;
+                String fp = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
+                String name = (prefix + "#" + fp).toLowerCase(java.util.Locale.ROOT);
+                if (trustStore.containsAlias(name)) continue;
+                logger.debug("addCertificatesToTrustStore: adding " + name);
+                trustStore.setCertificateEntry(name, cert);
+                added.add(name);
             }
-            saveKeyAndTrustStore();
+            if (!added.isEmpty()) saveKeyAndTrustStore();
         } catch (Exception ex) {
             logger.error("addCertificatesToTrustStore() : error " + ex.getMessage());
         }
+        return added;
     }
 
     public X509Certificate[] getPublicCertificate() {
