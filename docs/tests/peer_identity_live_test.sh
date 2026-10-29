@@ -12,9 +12,11 @@
 # Usage: peer_identity_live_test.sh <agent.jar> <workdir> <python-with-pycrescolib> [extra -D flags for every node]
 #   PYCRESCOLIB_PATH, when set, is put first on the probe's PYTHONPATH (to test a pycrescolib checkout).
 #   PORT0 (default 33000) and WS0 (default 8482) move the port block. Set REGIONAL_CA=1 to run under the regional CA.
-#   RESTART_DRILL=1 (default) then restarts the global and then the region (same data directories) and checks that agents
-#   and bridges reconnect under client certificates with no TLS refusal and without rediscovering first, and that the
-#   dataplane works again. RESTART_DRILL=0 skips it.
+#   RESTART_DRILL=1 (default) then restarts the global and then the region (same data directories) and checks, from the
+#   restarted SERVER's log, that agents are readmitted by certificate on failover before any rediscovery; that every
+#   bridge failover handshake that was made was admitted before any rediscovery (a bridge monitor may rebuild its group
+#   first, by design: reported, not judged); that the restarted region builds its own bridge to the global; that no node
+#   logs a TLS refusal; and that the dataplane works again. RESTART_DRILL=0 skips it.
 # Starts only its own JVMs and stops only those (by PID). Secrets are generated per run.
 set -uo pipefail
 JAR="$1"; WORK="$2"; PY="$3"; shift 3; EXTRA="$*"
@@ -113,6 +115,16 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   # the connection came back by failover, not because the client rediscovered (a client-side "verified" line alone
   # only means the client accepted the server; a client that presents no certificate fails silently at the server)
   noredisc() { local a d; a=$(firstts "$1" "$2"); d=$(firstts "$3" 'discovery v2: authenticated'); [ -n "$a" ] && { [ -z "$d" ] || [[ "$a" < "$d" ]]; } && echo 1; }
+  # A bridge's failover reconnect races its own monitor, which rebuilds the whole group (and a region re-attaches)
+  # once a member has been down for one 5 s tick -- by design, whatever TLS does. Judge what TLS decides: if the
+  # client made a failover handshake (it verified the restarted server: $4) before its rediscovery ($5), the server
+  # ($1) must have admitted it ($2) before that rediscovery. "na": no failover handshake before the rediscovery.
+  bridgefo() { # server admit-regex client verified-regex rediscovery-regex -> 1 | na | (empty)
+    local v d a; v=$(firstts "$3" "$4"); d=$(firstts "$3" "$5"); a=$(firstts "$1" "$2")
+    if [ -z "$v" ] || { [ -n "$d" ] && [[ "$d" < "$v" ]]; }; then echo na; return; fi
+    [ -n "$a" ] && { [ -z "$d" ] || [[ "$a" < "$d" ]]; } && echo 1; }
+  fo() { # result label
+    if [ "$1" = na ]; then ck 1 "$2 (no failover handshake was made: the monitor rebuilt the group first, by design)"; else ck "$1" "$2"; fi; }
 
   echo "### restart drill 1: the global restarts (same data directory)"
   restart global
@@ -126,7 +138,8 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   ck "$( [ "$T2" != timeout ] && echo 1)" "global restart: the region's bridge is back and the global admitted it as a verified controller"
   ck "$(nofail)" "global restart: no TLS trust failure or identity refusal on any node"
   ck "$(noredisc global "$A1" a1)" "global restart: a1 came back by failover, without rediscovering first"
-  ck "$(noredisc global "$RC" region)" "global restart: the region's bridge came back without rediscovering first"
+  fo "$(bridgefo global "$RC" region 'Peer identity verified: bridge rgr_rc -> .* is region=glob, agent=gc' 'discovery v2: authenticated GLOBAL exchange with glob/gc')" \
+     "global restart: the region's bridge, reconnecting by failover, was admitted before any rediscovery"
   sleep 15
   PROBE=$(probe); echo "$PROBE"
   ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo "$PROBE" | grep -q '"bound_received": 200' && echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "global restart: the dataplane works again (200/200 plain and recipient-bound, spy 0)"
@@ -142,6 +155,10 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   ck "$( [ "$T6" != timeout ] && echo 1)" "region restart: the region's bridge to the global is back and admitted"
   ck "$(nofail)" "region restart: no TLS trust failure or identity refusal on any node"
   ck "$(noredisc region "$B1" b1)" "region restart: b1 came back by failover, without rediscovering first"
+  GC='Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=glob, agent=gc'
+  fo "$(bridgefo region "$GC" global 'Peer identity verified: bridge glob_gc -> .* is region=rgr, agent=rc' 'discovery v2: authenticated REGION exchange with rgr/rc')" \
+     "region restart: the global's bridge into the region, reconnecting by failover, was admitted before any rediscovery"
+  ck "$(after region 'Starting Bridge: localhost brokerAddress: 127.0.0.1:'"$((P0+10))")" "region restart: the restarted region built its own bridge to the global (not only the global's into it)"
   sleep 15
   PROBE=$(probe); echo "$PROBE"
   ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo "$PROBE" | grep -q '"bound_received": 200' && echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "region restart: the dataplane works again (200/200 plain and recipient-bound, spy 0)"
