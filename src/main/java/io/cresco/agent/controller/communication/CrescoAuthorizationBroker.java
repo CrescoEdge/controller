@@ -13,6 +13,7 @@ import org.apache.activemq.broker.region.Subscription;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.command.ConnectionInfo;
 import org.apache.activemq.command.ConsumerInfo;
+import org.apache.activemq.command.DestinationInfo;
 import org.apache.activemq.command.Message;
 import org.apache.activemq.command.ProducerInfo;
 import org.apache.activemq.security.MessageAuthorizationPolicy;
@@ -68,6 +69,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final PeerTrustRegistry peers;
     private final PeerIdentity.Mode peerMode;
     private final AtomicLong withheld = new AtomicLong();
+    private final AtomicLong discarded = new AtomicLong();
+    private volatile long lastAnonymousLog;
     private volatile long lastWithheldLog;
     private volatile boolean warnedUnverifiableBridge;
     private final Set<String> sharedPrefixes;
@@ -149,13 +152,19 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean verified;           // bound by a certificate (or this controller's own vm://): may receive cresco_to
         final boolean certificate;        // the TLS session presented a client certificate
         final boolean localController;    // this controller's own vm:// connection (LOCAL_CONTROLLER_PREFIX)
+        final boolean anonymous;          // a network connection without a client certificate: no identity, no role
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
         CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
+            this(user, identity, verified, certificate, localController, false);
+        }
+        CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController,
+                              boolean anonymous) {
             super(user == null ? "" : user);
             this.identity = identity;
             this.verified = verified;
             this.certificate = certificate;
             this.localController = localController;
+            this.anonymous = anonymous;
         }
         @Override public Set<Principal> getPrincipals() { return Collections.emptySet(); }
     }
@@ -197,7 +206,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      *       issued by the CA recorded for that name's region ({@link PeerTrustRegistry#verifiedIdentity}); otherwise none.
      *       The username the client asserts is never used;</li>
      *   <li>this controller's own vm:// connection: the controller's identity;</li>
-     *   <li>no certificate (mutual TLS off): the asserted {@code tenant|region|agent} username, as before (unverifiable).</li>
+     *   <li>no certificate (broker_require_client_auth=false): NO identity and no role, whatever username it typed -- not a
+     *       tenant, never SUPERUSER. Such a network connection is quarantined: it may connect, but its subscriptions receive
+     *       nothing (advisories included) and its sends are discarded (logged). Cresco nodes present their certificates even
+     *       then (the broker asks for one: wantClientAuth).</li>
      * </ul>
      * With peer_identity_mode=off a certificate's identity is read as before (by name, without the binding check).
      */
@@ -239,9 +251,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     + ownIdentity + " -- treated as unidentified");
             return new CrescoSecurityContext(u, null, false, false, false);
         }
-        // no certificate: the username is asserted, not proven. It still names the tenant for tenant policy (as before),
-        // but it is never an identity for recipient-bound streams and never earns a bridge exemption.
-        return new CrescoSecurityContext(u, parseAsserted(u), false, false, false);
+        // no certificate: a typed username proves nothing, so it confers nothing -- no tenant, no SUPERUSER. In-JVM (vm://)
+        // connections are this JVM's own code (exempt from tenant policy as before); a network one is quarantined.
+        return new CrescoSecurityContext(u, null, false, false, false, !isVm(context));
     }
 
     /** Trusted infrastructure connections (local controller vm://, or a verified broker bridge) are exempt. */
@@ -281,6 +293,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (isTrustedInfra(ctx)) {
             return;
         }
+        if (quarantined(ctx, stateOf(ctx))) {
+            return;                                     // quarantined: nothing is delivered to it, its sends are discarded
+        }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
         TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks);
@@ -297,6 +312,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
 
     @Override
     public boolean isAllowedToConsume(ConnectionContext context, Message message) {
+        CrescoSecurityContext q = stateOf(context);
+        if (quarantined(context, q)) return withheld(message, null, "a connection without a client certificate receives nothing");
         // an advisory that carries a copy of a message (MessageDiscarded, DLQ'd, ...) is judged as that message: its
         // recipient binding and its destination's tenant, so properties never leak to other recipients or tenants
         Message subject = message;
@@ -304,6 +321,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         try {
             Object ds = message.getDataStructure();
             if (ds instanceof Message) { subject = (Message) ds; advisoryCopy = true; }
+            else if (ds != null && isAdvisory(message)) return advisoryAllowed(context, q, message, ds);
         } catch (Exception ignore) { }
         String to;
         String toTenant;
@@ -331,6 +349,45 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     }
 
     /**
+     * A network connection without a client certificate: no identity and no role. Its subscriptions receive nothing and its
+     * sends are discarded -- except a bridge claim while broker_allow_unverified_bridges=true (migration only).
+     */
+    private boolean quarantined(ConnectionContext ctx, CrescoSecurityContext sc) {
+        if (sc == null || !sc.anonymous) return false;
+        try { return !(allowUnverifiedBridges && ctx.isNetworkConnection()); } catch (Exception e) { return true; }
+    }
+
+    private static boolean isAdvisory(Message m) {
+        ActiveMQDestination d = m.getDestination();
+        return d != null && d.isTopic() && d.getPhysicalName().startsWith("ActiveMQ.Advisory.");
+    }
+
+    /**
+     * An advisory about a consumer, producer or destination (ConsumerInfo carries the destination AND the selector) reaches
+     * a tenant only when that destination is the tenant's to read; advisories about connections and sessions (usernames,
+     * client ids) and removals carry no tenant scope and reach no tenant. Forwarders, this JVM's own connections and
+     * SUPERUSER see every advisory; a temporary destination's create/remove advisory (which ActiveMQ clients rely on, and
+     * which names no tenant data) reaches everyone.
+     */
+    private boolean advisoryAllowed(ConnectionContext ctx, CrescoSecurityContext sc, Message message, Object ds) {
+        if (isForwarder(ctx, sc) || isVm(ctx)) return true;
+        CrescoIdentity who = (sc != null && sc.verified) ? sc.identity : null;
+        if (who != null && roleOf(who) == TenantPolicy.Role.SUPERUSER) return true;
+        ActiveMQDestination about = ds instanceof ConsumerInfo ? ((ConsumerInfo) ds).getDestination()
+                : ds instanceof ProducerInfo ? ((ProducerInfo) ds).getDestination()
+                : ds instanceof DestinationInfo ? ((DestinationInfo) ds).getDestination() : null;
+        if (about == null) return withheld(message, who, "an advisory about another connection carries no tenant scope");
+        if (ds instanceof DestinationInfo && about.isTemporary()) return true;
+        ActiveMQDestination[] each = about.isComposite() ? about.getCompositeDestinations() : new ActiveMQDestination[]{about};
+        for (ActiveMQDestination d : each) {
+            TenantPolicy.Decision t = TenantPolicy.check(who, d.getPhysicalName(), TenantPolicy.Access.READ, sharedPrefixes, roleOf(who),
+                    crossTenantSinks);
+            if (!t.allowed) return withheld(message, who, "an advisory about another tenant's destination (" + t.reason + ")");
+        }
+        return true;
+    }
+
+    /**
      * Connections that forward recipient-bound messages without being their recipient: broker-internal contexts, verified
      * broker bridges, and the local (vm://) side of a bridge (its demand subscriptions are network subscriptions). This
      * controller's own vm:// connection is NOT one: it is the controller's identity. Any other vm:// connection has no identity.
@@ -350,10 +407,19 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         long now = System.currentTimeMillis();
         if (now - lastWithheldLog > 10_000L) {            // one line per 10 s, with the running count
             lastWithheldLog = now;
-            logger.warn("WITHHELD recipient-bound message on '" + (message.getDestination() == null ? "?" : message.getDestination().getPhysicalName())
+            logger.warn("WITHHELD message on '" + (message.getDestination() == null ? "?" : message.getDestination().getPhysicalName())
                     + "' from " + who + " : " + reason + " (" + n + " withheld so far)");
         }
         return false;
+    }
+
+    private static String remoteOf(ConnectionContext ctx) {
+        try { return ctx.getConnection().getRemoteAddress(); } catch (Exception e) { return "?"; }
+    }
+
+    /** Messages sent by connections without a client certificate, discarded so far. */
+    public long discardedCount() {
+        return discarded.get();
     }
 
     /** Recipient-bound messages withheld from non-recipients so far. */
@@ -370,7 +436,17 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             context.setSecurityContext(sc);
             // every connection is judged per message, vm:// included: the in-JVM connector is created lazily and does
             // not inherit the broker's policy, and this controller's own vm:// connection is not exempt (see above)
-            if (recipientBinding) context.setMessageAuthorizationPolicy(CrescoAuthorizationBroker.this);
+            if (recipientBinding || sc.anonymous) context.setMessageAuthorizationPolicy(CrescoAuthorizationBroker.this);
+            if (sc.anonymous) {
+                long now = System.currentTimeMillis();
+                if (now - lastAnonymousLog > 10_000L) {
+                    lastAnonymousLog = now;
+                    logger.warn("A network connection from " + remoteOf(context) + " presented no client certificate (username '"
+                            + info.getUserName() + "' is not proof of anything): it has NO identity on this secured broker, so its"
+                            + " subscriptions receive nothing and its sends are discarded (broker_require_client_auth=false; logged"
+                            + " at most every 10 s)");
+                }
+            }
             if (sc.certificate && sc.identity != null) info.setUserName(sc.identity.toX500Name());
             // Bridge claim (BrokerInfo before ConnectionInfo, as every real bridge does): judge it now so an impostor
             // is refused outright with a clear reason instead of merely losing the exemption.
@@ -401,6 +477,15 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         public Subscription addConsumer(ConnectionContext context, ConsumerInfo info) throws Exception {
             enforce(context, info.getDestination(), TenantPolicy.Access.READ);
             CrescoSecurityContext sc = stateOf(context);
+            if (quarantined(context, sc)) {
+                // a quarantined subscription receives nothing; it must not hold anything either: no durable subscription
+                // (the store would keep every message for it) and no exclusivity (it would take a queue from its consumers)
+                if (info.getSubscriptionName() != null) {
+                    throw new SecurityException("Cresco: a connection without a client certificate cannot hold a durable subscription");
+                }
+                info.setExclusive(false);
+                info.setPriority((byte) 0);
+            }
             if (sc != null && info.isNetworkSubscription() && isVm(context)) sc.bridgeLocal = true;   // a bridge's local side
             // the early refusal (a typed error for the client) is for network clients and this controller's own connection
             // (wsapi clients); any other in-JVM connection is judged per message only
@@ -430,6 +515,14 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         @Override
         public void send(ProducerBrokerExchange producerExchange, Message messageSend) throws Exception {
             ConnectionContext ctx = (producerExchange != null) ? producerExchange.getConnectionContext() : null;
+            if (quarantined(ctx, stateOf(ctx))) {
+                long n = discarded.incrementAndGet();
+                if (n == 1 || n % 1000 == 0) {
+                    logger.warn("DISCARDED a message to '" + (messageSend.getDestination() == null ? "?" : messageSend.getDestination().getPhysicalName())
+                            + "' from a connection without a client certificate (" + n + " discarded so far)");
+                }
+                return;
+            }
             enforce(ctx, messageSend.getDestination(), TenantPolicy.Access.WRITE);
             super.send(producerExchange, messageSend);
         }

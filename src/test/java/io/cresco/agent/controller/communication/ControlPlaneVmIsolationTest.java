@@ -166,14 +166,27 @@ class ControlPlaneVmIsolationTest {
 
     @Test
     void tenantAuthorizationIsLiveForNetworkClients() throws Exception {
-        // control for the exemption above: an anonymous network client may not bind the wildcard inbox
+        // control for the exemption above: an anonymous network client (no certificate: no identity, whatever username it
+        // types) gets nothing from the wildcard inbox and puts nothing into it (third review: it is quarantined)
         ActiveMQConnection c = (ActiveMQConnection) new ActiveMQConnectionFactory(tcpUri).createConnection();
+        ActiveMQConnection vm = (ActiveMQConnection) new ActiveMQConnectionFactory(VM + "?create=false").createConnection();
         try {
             c.start();
+            vm.start();
             Session s = c.createSession(false, Session.AUTO_ACKNOWLEDGE);
-            assertThrows(JMSException.class, () -> s.createConsumer(s.createQueue(TenantNamespace.wildcard(AGENT_PATH))));
+            jakarta.jms.MessageConsumer spy = s.createConsumer(s.createQueue(TenantNamespace.wildcard(AGENT_PATH)));
+            s.createProducer(s.createQueue("T.tenantA." + AGENT_PATH)).send(s.createTextMessage("from-anonymous"));
+            Session vs = vm.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            vs.createProducer(vs.createQueue("T.tenantA." + AGENT_PATH)).send(vs.createTextMessage("for-the-agent"));
+            assertNull(spy.receive(1000), "an anonymous network client received from the wildcard inbox");
+            jakarta.jms.MessageConsumer real = vs.createConsumer(vs.createQueue("T.tenantA." + AGENT_PATH));
+            jakarta.jms.Message m = real.receive(3000);
+            assertNotNull(m, "the quarantined consumer took the inbox's message");
+            assertEquals("for-the-agent", ((jakarta.jms.TextMessage) m).getText());
+            assertNull(real.receive(300), "an anonymous network client's message reached the inbox");
         } finally {
             c.close();
+            vm.close();
         }
     }
 
