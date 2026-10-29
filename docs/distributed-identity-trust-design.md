@@ -194,7 +194,7 @@ allowed, so a bad rule can never lock a controller out of its own broker.
 
 ---
 
-## 7. Peer identity binding and stream recipient binding (OUT-28, 2026-10-28; reviewed twice)
+## 7. Peer identity binding and stream recipient binding (OUT-28, 2026-10-28; reviewed three times)
 
 ### 7.1 What was verified before
 `CertificateManager.getTrustManagers()` is the JDK PKIX `TrustManagerFactory` over the node's truststore, and every
@@ -207,7 +207,9 @@ token, and the discovery port deserialized arbitrary Java classes (fixed separat
 
 ### 7.2 Names
 One grammar for tenant, region, agent and uid (`CrescoNames`): 1-64 of `A-Z a-z 0-9 . -`, starting and ending with a
-letter or digit; no spaces, `#`, DN specials, control characters or `_` (the separator in `<region>_<agent>`).
+letter or digit; no spaces, `#`, DN specials, control characters or `_` (the separator in `<region>_<agent>`). A TENANT
+name has no `.` either: namespaced destinations are `T.<tenant>.<name>`, so `t1` would otherwise prefix `t1.x`'s
+namespace (also enforced in the library: `CrescoIdentity.isValidTenant`, `TenantNamespace.prefix`).
 Certificates are built from attribute values and read strictly; a regional CA re-runs its guards on the identity it
 issued; `cresco_to` is exactly two valid names. Certificates are backdated an hour (peers with slow clocks).
 
@@ -221,7 +223,13 @@ cannot prove which agent is speaking. The rules are therefore scoped:
   vouches only for its own region and tenant (one CA per region).
 - **A client** (the node that joined) binds the controller it joined -- which must be the controller of the region and
   tenant it joined -- and FOLLOWS its key (and CA) through authenticated discovery: a re-installed controller is accepted
-  and logged. A joiner cannot tell a re-install from anything else; refusing would cut every agent off until each was
+  and logged. A follow replaces only a binding (or CA) that was itself learned by following, never one learned strictly
+  (as a responder or issuer) and never the node's own. A federation answer's CA is checked in full before anything is
+  recorded or trusted: a REGION/GLOBAL exchange only, a valid CA now, for the answering controller's region, never this
+  node's own region, never a superuser tenant, within `security_federated_tenants`; a later refusal restores the
+  region's CA. Under per-node trust a peer's key is bound before its chain is trusted for TLS. Discovery candidates are
+  not chosen by their self-reported agent count (unauthenticated): a negative or implausible count is tried last, a
+  controller this node already joined first. A joiner cannot tell a re-install from anything else; refusing would cut every agent off until each was
   reconfigured. An agent can therefore impersonate a controller to OTHER joiners if it can answer their discovery (it
   holds the same secret): only per-name credentials (operator enrolment, or a CA whose key agents do not hold) close
   that, which is what the regional CA with persistent region CAs gives the controllers.
@@ -237,20 +245,36 @@ returned for the address) and inbound (`CrescoAuthorizationBroker`).
 
 **Store.** An append-only log of JSON lines with a chained HMAC-SHA-384 (`<data>/security/peer-trust.json`, key in
 `.key`). Appends are group-committed (one fsync for all waiting binds, outside the lock) and acknowledged once durable;
-reads are lock-free; a known binding's refresh writes nothing; last-seen times persist in the background at most daily;
-the log compacts when it grows. Bindings unseen for `peer_binding_prune_days` (90) and bridge peers unseen for
-`peer_bridge_prune_days` (30) are pruned; bridge peers are revocable (`peer_bridge_revoke`). Files and directory are
-owner-only from creation and written atomically with file and directory fsync (also the node's `node-identity.p12`,
-`region-ca.p12` and their `.pass` files). Measured on macOS/APFS: 10k bindings from 16 concurrent joiners 12 s, one
-sequential new binding ~12 ms, reload 59 ms, bridge check ~230 ns.
+after each group commit a HEAD ANCHOR (`.head`: record count and last MAC, MAC'd, two alternating fixed slots, fsynced)
+moves up to cover it, so a log truncated or rolled back to an earlier state is detected. Reads are lock-free; a known
+binding's refresh writes nothing; every verified broker connection (inbound and outbound) refreshes the binding in
+memory, and a background writer persists refreshes in batches; the log compacts, from the in-memory state AFTER it
+includes the record that triggered the compaction. Bindings unseen for `peer_binding_prune_days` (90) and bridge peers
+unseen for `peer_bridge_prune_days` (30) are pruned; bridge peers are revocable (`peer_bridge_revoke`). A key a name was
+rebound away from stays refused for that name (never pruned): on the regional-CA path after the binding is pruned, and
+for a new strict binding, unless the operator rebinds it. Files and directory are owner-only from creation and written
+atomically with file and directory fsync (also the node's `node-identity.p12`, `region-ca.p12` and their `.pass`
+files); a group/world-writable registry or identity directory is tightened (reported if another user owns it).
+Measured on macOS/APFS: 10k bindings from 16 concurrent joiners 16 s, one sequential new binding ~9 ms, reload 74 ms,
+bridge check ~215 ns.
 
 **Failure.** A torn last line (a crash mid-append, never acknowledged) is dropped. Any other line that does not verify,
-or the log missing while its key says it was initialised, SEALS the registry: what verified is still served
-(established peers keep working), nothing new is bound, and the seal persists across restarts. Recovery is explicit:
-write `accept` (keep every record that parses, re-sign it; use after inspecting) or `reset` (start empty: every name,
-CA scope and bridge peer is learned again, first come -- the cost: any key may claim any name once) into
-`peer-trust.json.recover`; it applies on the next refused bind or restart. The MAC key sits beside the log: it detects
-corruption and edits by anyone who cannot read the data directory, NOT tampering by someone who can.
+a log shorter than its head anchor, the log or head missing while the key says they exist, the log and key missing while
+the head remains, or the whole registry missing while the node's persistent identity exists -- each SEALS the registry:
+what verified is still served (established peers keep working), nothing new is bound, and the seal persists across
+restarts. Recovery is explicit and applies only to a registry that was ALREADY sealed when it was asked for (a
+`.recover` found next to an unsealed registry, or one sealed only on that start, is set aside unapplied): write
+`accept` (keep every record whose MAC verifies, re-signed; when the key itself was lost, every record that parses,
+signed with a new key that is saved) or `reset` (start empty: every name, CA scope and bridge peer is learned again,
+first come -- the cost: any key may claim any name once) into `peer-trust.json.recover`; it applies once, on the next
+refused bind or restart. The MAC key sits beside the log: it detects corruption and edits by anyone who cannot read the
+data directory, NOT tampering by someone who can read and write it.
+
+**Restarts.** The node's TLS trust managers (broker and client, both directions) accept a chain PKIX validates over the
+in-memory truststore OR one whose leaf, valid now, carries the key bound to the identity it names
+(`BoundKeyTrustManager`): a restarted controller trusts its agents and bridges at once, without their rediscovering.
+Truststore entries are named by certificate fingerprint and never overwritten (a peer's certificate that copied an
+anchor's subject used to replace it).
 
 ### 7.4 Discovery v2 (`DiscoveryAuth`)
 ```
@@ -274,10 +298,14 @@ A message with `cresco_to=<region>_<agent>` (optionally `cresco_to_tenant`) is d
 identity (a bound client certificate, or this broker's own controller over vm://), to verified bridges and to bridges'
 local sides; any other subscription receives nothing, and one whose selector asks for another identity's stream is
 refused. An advisory carrying a copy of a message (MessageDiscarded, ...) is judged as that message (its recipient and
-the consumer's right to its destination's tenant). A username typed by a client without a certificate is never an
-identity for `cresco_to` and never earns the bridge exemption; `broker_require_client_auth` therefore defaults to
-`broker_security_enabled` (migration: an existing secured fabric without client certificates logs a loud warning;
-`broker_allow_unverified_bridges=true` keeps the old bridge exemption until client certificates are on). The
+the consumer's right to its destination's tenant); an advisory about a consumer, producer or destination reaches a tenant
+only when that destination is the tenant's to read, and connection/session/removal advisories reach no tenant
+(SUPERUSER, forwarders and in-JVM connections see all; temporary-destination advisories reach everyone).
+`broker_require_client_auth` defaults to `broker_security_enabled`. When it is off the broker still asks for a client
+certificate (Cresco nodes present theirs); a network connection WITHOUT one has no identity and no role whatever username
+it types -- never a tenant, never SUPERUSER: it is quarantined (it may connect; its subscriptions receive nothing, its
+sends are discarded, it cannot hold a durable or exclusive subscription). `broker_allow_unverified_bridges=true` keeps the
+old exemption for a certificate-less bridge claim (migration only). The
 `cresco-local|...` vm:// identity is honoured only for this broker's own controller. Refusals reach clients: the
 dataplane throws `SecurityException`, a listener refused on reconnect is told (JMS `ExceptionListener`), wsapi answers
 status 40 or closes the stream with 1008, and pycrescolib (`DataplaneSubscriptionRefused`, `refused_callback`) and
@@ -292,7 +320,7 @@ upgraded, with client certificates on.
 | Setting | Default | |
 |---|---|---|
 | `peer_identity_mode` | `enforce` | `warn`: log and accept, outbound and inbound (an unbound certificate is accepted by name); `off`: the old connection and broker behaviour exactly. Names, CA uniqueness/scope, discovery v2 and the registry still apply under `off`. |
-| `broker_require_client_auth` | = `broker_security_enabled` | client certificates; without them identities are unverified |
+| `broker_require_client_auth` | = `broker_security_enabled` | client certificates required; when off they are requested, and a connection without one is quarantined (no identity) |
 | `broker_allow_unverified_bridges` | `false` | migration only |
 | `discovery_auth` | `v2` | `compat`: legacy AGENT membership during an upgrade |
 | `peer_identity_rebind` / `<data>/security/peer-trust.json.rebind` | empty | one-shot rebind tokens |
@@ -301,10 +329,16 @@ upgraded, with client certificates on.
 | `peer_trust_persist`, `node_identity_persist`, `node_identity_dir` | true, true, `<data>/security` | |
 | `security_federated_tenants` | any | tenants a regional-CA controller federates with |
 | `broker_stream_recipient_binding` | true | with `broker_security_enabled` |
+| `discovery_max_connections`, `discovery_max_connections_per_address` | 128, 16 | concurrent discovery connections (pre-auth limits, `fix/discovery-dos`) |
+| `discovery_idle_seconds`, `discovery_max_connection_seconds` | 10, 30 | a discovery connection that reads nothing, or stays open longer, is closed |
 
 ### 7.7 Tests
 Unit and real-TLS/real-broker: `PeerIdentityPolicyTest`, `StreamRecipientPolicyTest`, `PeerImpersonationTest`,
 `PeerIdentityBindingTest`, `StreamRecipientBindingTest`, `CertificateIdentityTest`, `PeerTrustPersistenceTest`,
 `PeerTrustStoreTest`, `DiscoveryPeerLearningTest`, `DiscoveryWireTest`, `DataPlaneRefusalTest`, `BrokeredAgentRefreshTest`,
-and the two independent reviews' `AdversarialPeerIdentityReviewTest` and `SecondReview*Test`. Live:
-`docs/tests/peer_identity_live_test.sh` (per-node trust, `REGIONAL_CA=1`, `AGENT_REGIONS=1`).
+`RegistryIntegrityTest`, `FederationAnswerTest`, `RestartTrustTest`, `AnonymousAndAdvisoryTest`, `TenantNameTest`,
+`TrustStoreAliasTest`, `DiscoveryCandidateOrderTest`, `DiscoveryDosTest`, and the three independent reviews'
+`AdversarialPeerIdentityReviewTest`, `SecondReview*Test` and `ThirdReview*Test`. Live:
+`docs/tests/peer_identity_live_test.sh` (per-node trust, `REGIONAL_CA=1`, `AGENT_REGIONS=1`), each with a restart drill
+(global, then region restarted on the same data directory: agents and bridges reconnect under client certificates with
+no TLS refusal and before any rediscovery, and the dataplane works again).
