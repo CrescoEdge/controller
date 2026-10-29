@@ -157,7 +157,9 @@ class PeerIdentityBindingTest {
     @Test
     void aBridgeIsBoundToTheControllerDiscoveryReturned() throws Exception {
         ControllerEngine region = TlsTestSupport.engine("rgB", "rc", null);
-        TlsTestSupport.enroll(region, ca, "t1");
+        // what federating with rgA's controller records at rgB: rgA's CA, scoped to region rgA
+        assertNull(region.getCertificateManager().getPeerTrust().trustCa(ca.caCert(), "rgA", "t1", "test"));
+        region.getCertificateManager().addCertificatesToTrustStore("rgA-ca", new X509Certificate[]{ca.caCert()});
 
         BrokerService fake = broker("impostor", a9);
         bridgeTo(region, fake);
@@ -171,7 +173,7 @@ class PeerIdentityBindingTest {
     @Test
     void clientTrustManagersSeeCertificatesAddedLater() throws Exception {
         // trust learned after the connection's context was built (a later discovery exchange) still counts
-        RegionCA other = RegionCA.generate("t1", "rgC", 2048, 1);
+        RegionCA other = RegionCA.generate("t1", "rgA", 2048, 1);
         TlsTestSupport.Id late = TlsTestSupport.issued(other, "t1", "rgA", "rc");
         BrokerService b = TlsTestSupport.broker("rgA_rc", late, false, null, null, other.caCert());
         brokers.add(b);
@@ -179,7 +181,8 @@ class PeerIdentityBindingTest {
         String uri = TlsTestSupport.agentUri(TlsTestSupport.port(b));
         agent.getActiveClient().expectPeer(uri, "rgA", "rc");
         assertNull(agent.getActiveClient().createDedicatedSession(uri, false, Session.AUTO_ACKNOWLEDGE, true));
-        agent.getCertificateManager().addCertificatesToTrustStore("rgC-ca", new X509Certificate[]{other.caCert()});
+        agent.getCertificateManager().addCertificatesToTrustStore("rgA-ca", new X509Certificate[]{other.caCert()});
+        assertNull(agent.getCertificateManager().getPeerTrust().trustCa(other.caCert(), "rgA", "t1", "test"));
         ActiveMQSession s = agent.getActiveClient().createDedicatedSession(uri, false, Session.AUTO_ACKNOWLEDGE, true);
         assertNotNull(s);
         s.getConnection().close();

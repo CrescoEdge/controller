@@ -18,14 +18,12 @@ import java.util.Objects;
  * regional CA, every node its CA enrolled) holds such a certificate, so any of them could answer a connection
  * meant for the regional controller, the global, or a bridged region, and the connection was accepted.
  *
- * <p><b>What it checks.</b> After PKIX succeeds, the leaf certificate's subject DN must name the expected
- * peer ({@code CN=<agent>, OU=<region>}, see {@link CrescoIdentity}); and when the peer's certificate was
- * learned over the discovery-secret-authenticated exchange (legacy per-node trust), the leaf's public key
- * must also be the one learned for that identity ({@link PeerTrustRegistry}). The second check matters in
- * the legacy trust mode because there every peer generated its own root CA and the node trusts all of
- * them, so a peer that kept its own CA key could mint a certificate naming somebody else. Under the
- * regional CA only region/global controllers hold CA keys and they stamp the identity they issue, so the
- * name check is the binding.
+ * <p><b>What it checks.</b> After PKIX succeeds, the leaf certificate must name the expected peer
+ * ({@code CN=<agent>, OU=<region>}, read strictly by {@link CrescoNames#identityOf}), and that name must be bound
+ * to the certificate ({@link PeerTrustRegistry#verifiedIdentity}): its key is the one recorded for the name (per-node
+ * trust: learned in authenticated discovery; regional CA: enrolled), or it was issued by the CA recorded for that
+ * name's region and tenant. A trusted chain alone is not enough: under per-node trust every peer generated its own
+ * root CA and the node trusts all of them, so a peer that kept its CA key could mint any name.
  *
  * <p>The tenant is not compared: region/agent names are the fabric-wide routing identity (a global federates
  * several tenants), and tenant authorization is the broker's job ({@link TenantPolicy}).
@@ -122,17 +120,15 @@ public final class PeerIdentity {
             return Verdict.refuse(presented, "the certificate names region=" + presented.getRegion()
                     + ", agent=" + presented.getAgent());
         }
-        String pinned = (pins == null) ? null : pins.pinnedKey(expected);
-        if (pinned != null) {
-            String actual = spkiFingerprint(leaf);
-            if (!pinned.equals(actual)) {
-                return Verdict.refuse(presented, "the certificate names the right peer but carries a different key"
-                        + " than the one learned for it in discovery (pinned " + shortFp(pinned) + ", presented "
-                        + shortFp(actual) + ")");
-            }
-            return Verdict.ok(presented, "identity and pinned key match");
+        if (pins == null) {
+            return Verdict.ok(presented, "identity matches (name only: no registry)");
         }
-        return Verdict.ok(presented, "identity matches");
+        String[] why = new String[1];
+        CrescoIdentity bound = pins.verifiedIdentity(chain, why);
+        if (bound == null) {
+            return Verdict.refuse(presented, why[0]);
+        }
+        return Verdict.ok(presented, "identity matches and its key or issuing CA is the one recorded for it");
     }
 
     /** SHA-256 over the leaf's SubjectPublicKeyInfo, hex. */

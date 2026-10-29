@@ -230,7 +230,13 @@ public class DiscoveryProcessor {
 	 * key is pinned to the region/agent it reported; a REGION/GLOBAL responder is a controller allowed to bridge to us.
 	 */
 	public boolean setCertTrust(DiscoveryNode discoveryNode) {
-		boolean isSet = setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
+		boolean isSet;
+		if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
+			// what the responder's CA returned, recorded for the responder's region only
+			isSet = controllerEngine.getCertificateManager().installEnrollment(discoveryNode.discovered_cert, discoveryNode.discovered_region);
+		} else {
+			isSet = setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
+		}
 		if (isSet) {
 			learnPeer(discoveryNode.discovery_type, discoveryNode.discovered_region, discoveryNode.discovered_agent,
 					discoveryNode.discovered_cert, !plugin.getConfig().getBooleanParam("security_regional_ca", false));

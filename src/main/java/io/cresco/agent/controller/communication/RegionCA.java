@@ -47,6 +47,11 @@ public final class RegionCA {
         this.caCert = caCert;
     }
 
+    /** A region CA restored from persisted material (root certificate, issuing key pair and certificate). */
+    public static RegionCA restore(X509Certificate rootCert, KeyPair caKeyPair, X509Certificate caCert) {
+        return new RegionCA(rootCert, caKeyPair, caCert);
+    }
+
     /** Generate a fresh region CA (self-signed root + issuing intermediate) for {@code tenant/region}. */
     public static RegionCA generate(String tenant, String region, int keySize, int validityYears) throws Exception {
         if (!CrescoNames.isValid(region) || !CrescoNames.isValid(safe(tenant))) {

@@ -922,6 +922,11 @@ public class ControllerSMHandler {
 
             //certificate manager for broker connections
             controllerEngine.setCertificateManager(new CertificateManager(controllerEngine));
+            // a regional-CA controller presents its own region CA in every controller discovery exchange (federation is
+            // CA-to-CA, scoped by region), so the CA must exist before the first exchange
+            if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
+                controllerEngine.getCertificateManager().ensureRegionCA();
+            }
             //incoming queue for canidate brokers
             controllerEngine.setIncomingCanidateBrokers(new LinkedBlockingQueue<>());
             //to store brokered agents
