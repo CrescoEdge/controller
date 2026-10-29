@@ -889,6 +889,27 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         }
     }
 
+    /**
+     * Why a CA that a federating controller returned may not be recorded, or null: it must be a valid CA certificate now,
+     * name the region of the controller that answered ({@code peerRegion}), never this node's own region (whose CA is this
+     * node's, or the one it joined), and a tenant that is not a superuser tenant ({@code broker_superuser_tenants}) and is
+     * federated here ({@code security_federated_tenants}, empty = any). The same rules a responder applies to a joining
+     * controller ({@link #federateController}).
+     */
+    public String federatedCaRefusal(X509Certificate peerCa, String peerRegion) {
+        String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
+        if (scope == null) return "it names no valid region (OU) and tenant (O)";
+        if (peerCa.getBasicConstraints() < 0) return "it is not a CA certificate";
+        try { peerCa.checkValidity(); } catch (Exception e) { return "it is not valid now (" + e.getMessage() + ")"; }
+        if (peerRegion == null || !peerRegion.equals(scope[0])) return "it names region " + scope[0] + ", not the answering controller's " + peerRegion;
+        String myRegion = controllerEngine.cstate.getRegion();
+        if (scope[0].equals(myRegion)) return "it claims this node's own region " + myRegion;
+        if (superuserTenants().contains(scope[1])) return "it is for the superuser tenant " + scope[1] + " (every name it signed would be SUPERUSER here)";
+        java.util.List<String> tenants = csv(plugin.getConfig().getStringParam("security_federated_tenants", ""));
+        if (!tenants.isEmpty() && !tenants.contains(scope[1])) return "its tenant " + scope[1] + " is not in security_federated_tenants " + tenants;
+        return null;
+    }
+
     /** Tenants whose network clients get the cross-tenant SUPERUSER role (broker_superuser_tenants). */
     private java.util.Set<String> superuserTenants() {
         return new java.util.HashSet<>(csv(plugin.getConfig().getStringParam("broker_superuser_tenants", "cresco-system")));
@@ -924,6 +945,11 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         String region = claimed.getRegion(), agent = claimed.getAgent(), tenant = claimed.getTenant();
         if (region.equals(myRegion)) {
             logger.error("Enrollment REFUSED: a joining controller (" + region + "/" + agent + ") asked for this controller's region '" + region + "'");
+            return null;
+        }
+        if (superuserTenants().contains(tenant)) {
+            logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + " is in the superuser tenant " + tenant
+                    + " (its CA would make every name it signs SUPERUSER here)");
             return null;
         }
         java.util.List<String> tenants = csv(plugin.getConfig().getStringParam("security_federated_tenants", ""));
@@ -1013,19 +1039,21 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
             java.security.cert.Certificate ourCert = keyStore.getCertificate(keyStoreAlias);
             if (ourCert != null && !ourCert.getPublicKey().equals(signedChain[0].getPublicKey())) {
-                if (type == io.cresco.agent.controller.netdiscovery.DiscoveryType.AGENT) {
-                    logger.error("installEnrollment REFUSED: an AGENT exchange with " + peerRegion + " returned a CA instead of this node's"
-                            + " re-issued identity (only a controller federation returns a CA)");
+                if (type != io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
+                        && type != io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL) {
+                    logger.error("installEnrollment REFUSED: " + (type == null ? "a legacy" : "an " + type) + " exchange with " + peerRegion
+                            + " returned a CA instead of this node's re-issued identity (only a REGION/GLOBAL federation returns a CA)");
                     return false;
                 }
-                // the peer controller's own CA chain: record it for its region, keep our identity
+                // the peer controller's own CA chain: validated in full BEFORE anything is recorded, then recorded for its
+                // region only (never this node's own region, never a superuser or unlisted tenant), keeping our identity
                 X509Certificate peerCa = signedChain[0];
-                String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
-                if (scope == null || peerCa.getBasicConstraints() < 0 || (peerRegion != null && !peerRegion.equals(scope[0]))) {
-                    logger.error("installEnrollment REFUSED: the CA returned by " + peerRegion + " names region "
-                            + (scope == null ? "?" : scope[0]) + " (or is not a CA)");
+                String refusal = federatedCaRefusal(peerCa, peerRegion);
+                if (refusal != null) {
+                    logger.error("installEnrollment REFUSED: the CA returned by " + peerRegion + ": " + refusal);
                     return false;
                 }
+                String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
                 String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated", true);
                 if (why != null) {
                     logger.error("installEnrollment REFUSED: " + why);
@@ -1055,6 +1083,20 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     || (peerRegion != null && !peerRegion.equals(mine.getRegion()))) {
                 logger.error("installEnrollment REFUSED: identity " + mine + " issued by a CA for " + (scope == null ? "?" : scope[1] + "/" + scope[0])
                         + (peerRegion != null ? " while joining region " + peerRegion : ""));
+                return false;
+            }
+            String myAgent = controllerEngine.cstate.getAgent();
+            if (myAgent != null && !myAgent.equals(mine.getAgent())) {
+                logger.error("installEnrollment REFUSED: the region issued this node the identity " + mine + ", which is not its name " + myAgent);
+                return false;
+            }
+            if (superuserTenants().contains(mine.getTenant())) {
+                logger.error("installEnrollment REFUSED: the region issued this node an identity in the superuser tenant " + mine.getTenant()
+                        + " (superuser identities are provisioned by an operator, never issued at a join)");
+                return false;
+            }
+            try { signedChain[0].checkValidity(); issuer.checkValidity(); } catch (Exception e) {
+                logger.error("installEnrollment REFUSED: the returned identity or its CA is not valid now: " + e.getMessage());
                 return false;
             }
             String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined", true);

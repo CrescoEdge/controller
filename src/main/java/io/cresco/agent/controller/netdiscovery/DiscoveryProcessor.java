@@ -232,19 +232,25 @@ public class DiscoveryProcessor {
 	 * key is pinned to the region/agent it reported; a REGION/GLOBAL responder is a controller allowed to bridge to us.
 	 */
 	public boolean setCertTrust(DiscoveryNode discoveryNode) {
-		boolean isSet;
-		if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
-			// what the responder's CA returned, recorded for the responder's region only
-			isSet = controllerEngine.getCertificateManager().installEnrollment(discoveryNode.discovered_cert, discoveryNode.discovered_region,
-					discoveryNode.discovery_type);
-		} else {
-			isSet = setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
+		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
+		DiscoveryType type = discoveryNode.discovery_type;
+		String region = discoveryNode.discovered_region, agent = discoveryNode.discovered_agent;
+		// every check on the peer runs BEFORE anything it sent is recorded or trusted
+		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, !regionalCa, true, false)) return false;
+		if (regionalCa) {
+			io.cresco.agent.controller.communication.PeerTrustRegistry reg = controllerEngine.getCertificateManager().getPeerTrust();
+			Object before = reg.caState(region);
+			// what the responder's CA returned, validated and recorded for the responder's region only
+			if (!controllerEngine.getCertificateManager().installEnrollment(discoveryNode.discovered_cert, region, type)) return false;
+			if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, false, true, true)) {
+				reg.restoreCa(region, before);                      // nothing of a refused peer stays recorded
+				return false;
+			}
+			return true;
 		}
-		if (isSet) {
-			isSet = learnPeer(discoveryNode.discovery_type, discoveryNode.discovered_region, discoveryNode.discovered_agent,
-					discoveryNode.discovered_cert, !plugin.getConfig().getBooleanParam("security_regional_ca", false), true);
-		}
-		return isSet;
+		// per-node trust: bind the responder's key first (it can be refused); only then trust its chain for TLS
+		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, true, true, true)) return false;
+		return setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
 	}
 
 	/**
@@ -260,6 +266,12 @@ public class DiscoveryProcessor {
 	 * anything else and refusing would cut every agent off until each was reconfigured.
 	 */
 	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient) {
+		return learnPeer(type, region, agent, certJson, pinLeaf, asClient, true);
+	}
+
+	/** As above; with {@code record=false} only the checks run (nothing is bound or allowed). */
+	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient,
+							  boolean record) {
 		try {
 			if (!io.cresco.agent.controller.communication.CrescoNames.isValid(region)
 					|| !io.cresco.agent.controller.communication.CrescoNames.isValid(agent)) {
@@ -298,6 +310,7 @@ public class DiscoveryProcessor {
 				logger.error("Discovery REFUSED " + region + "/" + agent + ": a joining controller claims this node's region");
 				return false;
 			}
+			if (!record) return true;
 			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
 				String role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
 						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
@@ -357,9 +370,22 @@ public class DiscoveryProcessor {
 				return null;
 			}
 		}
+		if (!regionalCa) {
+			// bind the joiner's key first (it can still be refused); only then trust its chain for TLS
+			if (!learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
+					discoveryNode.discover_cert, true, false)) {
+				return null;
+			}
+			return configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
+		}
+		// regional CA: issueEnrollment checks and records the joiner itself; the peer is then recorded as a bridge
+		if (!learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
+				discoveryNode.discover_cert, false, false, false)) {
+			return null;
+		}
 		String local = configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
 		if (local != null && !learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
-				discoveryNode.discover_cert, !regionalCa, false)) {
+				discoveryNode.discover_cert, false, false)) {
 			return null;
 		}
 		return local;

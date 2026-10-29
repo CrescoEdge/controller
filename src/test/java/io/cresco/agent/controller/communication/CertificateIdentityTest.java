@@ -111,7 +111,8 @@ class CertificateIdentityTest {
         assertNotNull(peer);
         X509Certificate[] returned = regionCtl.getCertificateManager().getCertsfromJson(peer);
         assertEquals("rgA", PeerTrustRegistry.caScopeOf(returned[0])[0], "the CA returned to a federating controller is ours");
-        assertTrue(peerRegion.getCertificateManager().installEnrollment(peer, "rgA"));
+        assertFalse(peerRegion.getCertificateManager().installEnrollment(peer, "rgA"), "a legacy (untyped) exchange installed a CA");
+        assertTrue(peerRegion.getCertificateManager().installEnrollment(peer, "rgA", DiscoveryType.GLOBAL));
         assertEquals("rgB", leafOf(peerRegion).getRegion(), "the federating controller kept its own identity");
         // a joining controller without its own region CA is refused
         assertNull(issue(regionCtl, TlsTestSupport.engine("rgC", "rc", null), DiscoveryType.GLOBAL));
@@ -140,6 +141,9 @@ class CertificateIdentityTest {
         ControllerEngine joiner = TlsTestSupport.engine("rgA", "a1", Map.of("security_regional_ca", "true"));
         assertFalse(joiner.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.AGENT),
                 "an AGENT exchange installed the responder's CA as a federated peer");
-        assertTrue(joiner.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.REGION));
+        assertFalse(joiner.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.REGION),
+                "a federation answer installed a CA for the joiner's own region");
+        ControllerEngine otherRegion = TlsTestSupport.engine("rgB", "rc", Map.of("security_regional_ca", "true"));
+        assertTrue(otherRegion.getCertificateManager().installEnrollment(caBundle, "rgA", DiscoveryType.REGION));
     }
 }
