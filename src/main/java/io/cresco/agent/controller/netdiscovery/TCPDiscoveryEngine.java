@@ -80,7 +80,7 @@ public class TCPDiscoveryEngine implements Runnable {
                             p.addLast(new IdleStateHandler(30,30,30));
                             p.addLast(
                                     new ObjectEncoder(),
-                                    new ObjectDecoder(ClassResolvers.cacheDisabled(null)),
+                                    new ObjectDecoder(DiscoveryWire.MAX_OBJECT_BYTES, DiscoveryWire.STRINGS_ONLY),
                                     new TCPDiscoveryEngineHandler(controllerEngine));
                         }
                     });

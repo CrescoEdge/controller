@@ -821,6 +821,12 @@ public class ControllerSMHandler {
 
             if(certDiscovery.size() == 1) {
                 discoveryNode = certDiscovery.get(0);
+                // the region was adopted from the (unauthenticated) locator reply; the authenticated exchange decides
+                if (!discoveryNode.discovered_region.equals(cstate.getRegion())) {
+                    logger.error("isAgent(): the authenticated discovery exchange says the controller at " + discoveryNode.discovered_ip
+                            + " is region " + discoveryNode.discovered_region + ", not " + cstate.getRegion() + " as its locator reply said; not joining");
+                    return false;
+                }
 
                 String cbrokerAddress = discoveryNode.discovered_ip;
                 InetAddress remoteAddress = InetAddress.getByName(cbrokerAddress);
