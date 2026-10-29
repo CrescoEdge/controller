@@ -11,9 +11,6 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.serialization.ClassResolvers;
-import io.netty.handler.codec.serialization.ObjectDecoder;
-import io.netty.handler.codec.serialization.ObjectEncoder;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
@@ -83,10 +80,9 @@ public class TCPDiscoveryStatic {
                                 }
 
                                 */
-                                p.addLast(
-                                        new ObjectEncoder(),
-                                        new ObjectDecoder(ClassResolvers.cacheDisabled(getClass().getClassLoader())),
-                                        new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
+                                // String-only decoding: a responder (or anyone answering in its place) is unauthenticated
+                                DiscoveryWire.install(p);
+                                p.addLast(new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert));
                             }
                         });
 
