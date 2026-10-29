@@ -200,4 +200,17 @@ class DiscoveryPeerLearningTest {
         assertTrue(DiscoveryAuth.cachedKeys() <= DiscoveryAuth.KEY_CACHE, "the derived-key cache grew past its bound");
         assertThrows(IllegalArgumentException.class, () -> DiscoveryAuth.key(null, "validator"));
     }
+
+    /** Spoofed UDP sources must not grow the once-per-peer legacy warning set without bound. */
+    @Test
+    void legacyRefusalWarningsAreBoundedPerPeerAddress() throws Exception {
+        DiscoveryProcessor p = new DiscoveryProcessor(TlsTestSupport.engine("rgA", "rc", null));
+        assertTrue(p.firstLegacyWarning("10.0.0.1"));
+        assertFalse(p.firstLegacyWarning("10.0.0.1"), "the same peer was warned about twice");
+        int logged = 0;
+        for (int i = 0; i < 5000; i++) if (p.firstLegacyWarning("10." + (i >> 16) + "." + ((i >> 8) & 255) + "." + (i & 255) + "|x")) logged++;
+        System.out.println("5000 distinct legacy peers: set size " + p.warnedLegacyCount() + ", lines logged " + logged);
+        assertTrue(p.warnedLegacyCount() <= DiscoveryProcessor.MAX_WARNED_LEGACY, "the legacy warning set grew past its bound");
+        assertTrue(logged <= DiscoveryProcessor.MAX_WARNED_LEGACY + 1);
+    }
 }

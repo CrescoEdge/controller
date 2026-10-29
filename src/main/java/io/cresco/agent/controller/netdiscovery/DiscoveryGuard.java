@@ -128,6 +128,17 @@ public final class DiscoveryGuard {
         }
     }
 
+    /** Whether a line of {@code kind} (a fixed string) may be logged now: at most once per 10 s. */
+    public static boolean logAllowed(String kind) {
+        long now = System.currentTimeMillis();
+        long[] st = LAST_LOG.computeIfAbsent(kind, k -> new long[]{0L, 0L});
+        synchronized (st) {
+            if (now - st[0] < LOG_EVERY_MS) return false;
+            st[0] = now;
+            return true;
+        }
+    }
+
     /** The peer address of a channel, or a fixed key when it is not an IP socket (tests). */
     static String addressKey(SocketAddress a) {
         if (a instanceof InetSocketAddress) {
