@@ -342,9 +342,24 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
 
         } catch (Exception ex) {
+            String refusal = policyRefusal(ex);
+            if (refusal != null) throw new SecurityException(refusal);
             logger.error("DataPlaneServiceImpl.getConsumer error", ex);
         }
 	    return  messageConsumer;
+    }
+
+    /**
+     * The broker's refusal of a subscription (tenant or stream-recipient policy), or null when {@code t} is something else.
+     * addMessageListener throws it as a {@link SecurityException} so a caller -- wsapi, and through it its client -- can
+     * tell a refusal from a transient failure (which still returns null).
+     */
+    static String policyRefusal(Throwable t) {
+        for (int i = 0; t != null && i < 12; i++, t = t.getCause()) {
+            String m = t.getMessage();
+            if (m != null && (m.contains("Cresco stream policy") || m.contains("Cresco tenant policy"))) return m;
+        }
+        return null;
     }
 
     public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
@@ -383,6 +398,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     }
                     break;
             }
+            if (consumer == null) {
+                return null;                                        // not subscribed: no id to hand out
+            }
             if(consumer != null) {
                 consumer.setMessageListener(messageListener);
 
@@ -398,8 +416,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
             }
 
+        } catch (SecurityException refused) {
+            logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refused.getMessage());
+            throw refused;
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.addMessageListener error", ex);
+            return null;
         }
         return listenerId;
     }
@@ -637,9 +659,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
             } else {
                 logger.error("addShardListener: no consumer on shard " + key + " (session " + (s == null ? "unavailable" : "open") + ")");
+                return null;
             }
         } catch (Exception ex) {
+            String refusal = policyRefusal(ex);
+            if (refusal != null) {
+                logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refusal);
+                throw new SecurityException(refusal);
+            }
             logger.error("DataPlaneServiceImpl.addMessageListener(shard) error", ex);
+            return null;
         }
         return listenerId;
     }
@@ -845,11 +874,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.info("Restoring listenerId: " + dataPlanePersistantInstance.getListenerId()
                     + (dataPlanePersistantInstance.getShard() >= 0 ? " on shard " + dataPlanePersistantInstance.getShard() : ""));
             String id;
-            if (dataPlanePersistantInstance.getShard() >= 0)      // #22: a sharded listener goes back on its own shard
-                id = addShardListener(dataPlanePersistantInstance.getTopicType(), dataPlanePersistantInstance.getMessageListener(),
-                        dataPlanePersistantInstance.getSelectorString(), dataPlanePersistantInstance.getShard(), dataPlanePersistantInstance.getListenerId());
-            else
-                id = addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
+            try {
+                if (dataPlanePersistantInstance.getShard() >= 0)      // #22: a sharded listener goes back on its own shard
+                    id = addShardListener(dataPlanePersistantInstance.getTopicType(), dataPlanePersistantInstance.getMessageListener(),
+                            dataPlanePersistantInstance.getSelectorString(), dataPlanePersistantInstance.getShard(), dataPlanePersistantInstance.getListenerId());
+                else
+                    id = addMessageListener(dataPlanePersistantInstance.getTopicType(),dataPlanePersistantInstance.getMessageListener(),dataPlanePersistantInstance.getSelectorString(),true,dataPlanePersistantInstance.getListenerId());
+            } catch (SecurityException refused) {
+                id = null;                                           // refused now (policy changed): logged, not restored
+            }
             if (id != null) restored++;
         }
         logger.warn("Dataplane restored " + restored + " of " + saveMessageConfigMap.size() + " listener(s) after reconnecting");
