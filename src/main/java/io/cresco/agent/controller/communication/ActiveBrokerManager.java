@@ -78,7 +78,7 @@ public class ActiveBrokerManager implements Runnable  {
 								}
 								//reset status if needed
 								if ((ba.getBrokerStatus() == BrokerStatusType.FAILED) || (ba.getBrokerStatus() == BrokerStatusType.STOPPED)) {
-									ba.setActiveAddress(discoveryNode.discovered_ip);
+									ba.refresh(discoveryNode);              // address, broker port and identity from this discovery
 									ba.setBrokerStatus(BrokerStatusType.INIT);
 									addBroker = true;
 									logger.info("BA EXIST ADDING agentPath: " + discoveryNode.discovered_ip + " remote_ip: " + discoveryNode.discovered_ip);

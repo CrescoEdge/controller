@@ -47,7 +47,7 @@ public class TCPDiscoveryStatic {
         List<DiscoveryNode> found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, true, legacyPeer);
         if (legacyPeer.get()) {
             DiscoveryAuth.Mode mode = DiscoveryAuth.Mode.parse(plugin.getConfig().getStringParam(DiscoveryAuth.MODE_KEY, "v2"));
-            if (mode == DiscoveryAuth.Mode.COMPAT) {
+            if (mode == DiscoveryAuth.Mode.COMPAT && disType == DiscoveryType.AGENT) {
                 logger.warn("Discovery: " + hostAddress + ":" + discoveryPort + " speaks only the LEGACY certificate exchange;"
                         + " using it because discovery_auth=compat (upgrade that node, then remove compat)");
                 return discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, false, null);

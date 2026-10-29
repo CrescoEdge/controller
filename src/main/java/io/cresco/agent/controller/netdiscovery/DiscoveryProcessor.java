@@ -87,7 +87,7 @@ public class DiscoveryProcessor {
 								if(discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVER) {
 									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret));
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
-								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY && !legacyCertifyAllowed(remoteAddress)) {
+								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY && !legacyCertifyAllowed(remoteAddress, discoveryNode.discovery_type)) {
 									discoveryNode = null;
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY) {
 
@@ -235,18 +235,31 @@ public class DiscoveryProcessor {
 		boolean isSet;
 		if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
 			// what the responder's CA returned, recorded for the responder's region only
-			isSet = controllerEngine.getCertificateManager().installEnrollment(discoveryNode.discovered_cert, discoveryNode.discovered_region);
+			isSet = controllerEngine.getCertificateManager().installEnrollment(discoveryNode.discovered_cert, discoveryNode.discovered_region,
+					discoveryNode.discovery_type);
 		} else {
 			isSet = setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
 		}
 		if (isSet) {
 			isSet = learnPeer(discoveryNode.discovery_type, discoveryNode.discovered_region, discoveryNode.discovered_agent,
-					discoveryNode.discovered_cert, !plugin.getConfig().getBooleanParam("security_regional_ca", false));
+					discoveryNode.discovered_cert, !plugin.getConfig().getBooleanParam("security_regional_ca", false), true);
 		}
 		return isSet;
 	}
 
-	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf) {
+	/**
+	 * Record what an authenticated discovery exchange taught about the peer.
+	 *
+	 * <p>As the RESPONDER (the peer joined us): an AGENT joiner is bound first come, only inside this controller's region and
+	 * tenant, never to a controller name or a superuser tenant ({@code agentJoinRefusal}); a REGION/GLOBAL joiner is bound
+	 * first come as a controller (reserved) and becomes a bridge peer. The discovery secret proves membership, not a name.
+	 *
+	 * <p>As the CLIENT (we joined the peer): the responder is our controller. An AGENT responder must be in the region and
+	 * tenant we joined; a REGION/GLOBAL responder must not claim our region. Its key is bound as a controller and FOLLOWS
+	 * authenticated discovery: a re-installed controller is accepted (logged), because a joiner cannot tell a re-install from
+	 * anything else and refusing would cut every agent off until each was reconfigured.
+	 */
+	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient) {
 		try {
 			if (!io.cresco.agent.controller.communication.CrescoNames.isValid(region)
 					|| !io.cresco.agent.controller.communication.CrescoNames.isValid(agent)) {
@@ -254,17 +267,47 @@ public class DiscoveryProcessor {
 				return false;
 			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry reg = controllerEngine.getCertificateManager().getPeerTrust();
-			if (pinLeaf && certJson != null) {
-				java.security.cert.X509Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(certJson);
-				if (certs != null && certs.length > 0 && certs[0] != null) {
-					String why = reg.pin(region, agent, certs[0]);
-					if (why != null) {
-						logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
-						return false;
-					}
+			boolean controllerExchange = type == DiscoveryType.REGION || type == DiscoveryType.GLOBAL;
+			java.security.cert.X509Certificate[] certs = certJson == null ? null : controllerEngine.getCertificateManager().getCertsfromJson(certJson);
+			io.cresco.library.security.CrescoIdentity named = (certs == null || certs.length == 0) ? null
+					: io.cresco.agent.controller.communication.CrescoNames.identityOf(certs[0]);
+			String myRegion = controllerEngine.cstate.getRegion();
+			String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+			if (asClient) {
+				if (!controllerExchange && !region.equals(myRegion)) {
+					logger.error("Discovery REFUSED " + region + "/" + agent + ": it answered as the controller of region " + region
+							+ " but this node joined region " + myRegion);
+					return false;
+				}
+				if (!controllerExchange && pinLeaf && named != null && !myTenant.equals(named.getTenant())) {
+					logger.error("Discovery REFUSED " + region + "/" + agent + ": its tenant " + named.getTenant() + " is not this node's " + myTenant);
+					return false;
+				}
+				if (controllerExchange && region.equals(myRegion)) {
+					logger.error("Discovery REFUSED " + region + "/" + agent + ": a controller of this node's own region answered a "
+							+ type + " exchange");
+					return false;
+				}
+			} else if (!controllerExchange && pinLeaf) {
+				String refusal = controllerEngine.getCertificateManager().agentJoinRefusal(named == null ? null : named.getTenant(), region, agent);
+				if (refusal != null) {
+					logger.error("Discovery REFUSED agent " + region + "/" + agent + ": " + refusal);
+					return false;
+				}
+			} else if (controllerExchange && region.equals(myRegion)) {
+				logger.error("Discovery REFUSED " + region + "/" + agent + ": a joining controller claims this node's region");
+				return false;
+			}
+			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
+				String role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
+						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
+				String why = reg.pin(region, agent, certs[0], role, asClient);
+				if (why != null) {
+					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
+					return false;
 				}
 			}
-			if (type == DiscoveryType.REGION || type == DiscoveryType.GLOBAL) {
+			if (controllerExchange) {
 				reg.allowBridgePeer(region, agent);
 			}
 			return true;
@@ -296,10 +339,16 @@ public class DiscoveryProcessor {
 	private String configureCertTrust(DiscoveryNode discoveryNode) {
 		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
 		if (!regionalCa) {
-			// per-node trust: refuse before trusting anything when the joiner's name is bound to another key
+			// per-node trust: refuse before trusting anything when the joiner may not have this name
 			java.security.cert.X509Certificate[] c = controllerEngine.getCertificateManager().getCertsfromJson(discoveryNode.discover_cert);
 			io.cresco.library.security.CrescoIdentity id = (c == null || c.length == 0) ? null
 					: io.cresco.agent.controller.communication.CrescoNames.identityOf(c[0]);
+			String scope = (id == null || discoveryNode.discovery_type != DiscoveryType.AGENT) ? null
+					: controllerEngine.getCertificateManager().agentJoinRefusal(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent);
+			if (scope != null) {
+				logger.error("Discovery REFUSED agent " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": " + scope);
+				return null;
+			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult free = (id == null) ? null
 					: controllerEngine.getCertificateManager().getPeerTrust().canBind(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent, c[0].getPublicKey());
 			if (free == null || !free.ok) {
@@ -310,7 +359,7 @@ public class DiscoveryProcessor {
 		}
 		String local = configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
 		if (local != null && !learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
-				discoveryNode.discover_cert, !regionalCa)) {
+				discoveryNode.discover_cert, !regionalCa, false)) {
 			return null;
 		}
 		return local;
@@ -346,7 +395,15 @@ public class DiscoveryProcessor {
 	private final java.util.Set<String> warnedLegacy = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
 	/** The legacy single-message certificate exchange: only with discovery_auth=compat (a rolling upgrade). */
-	private boolean legacyCertifyAllowed(String remoteAddress) {
+	private boolean legacyCertifyAllowed(String remoteAddress, DiscoveryType type) {
+		if (type != DiscoveryType.AGENT) {
+			// the legacy token is the constant DISCOVER token anyone on the LAN may have seen: it never makes a bridge peer
+			if (warnedLegacy.add(remoteAddress + "|" + type)) {
+				logger.error("Discovery: REFUSED a legacy " + type + " certificate exchange from " + remoteAddress
+						+ " (even with discovery_auth=compat, only agent membership may use the legacy exchange; upgrade that controller)");
+			}
+			return false;
+		}
 		if (authMode() == DiscoveryAuth.Mode.COMPAT) {
 			if (warnedLegacy.add(String.valueOf(remoteAddress))) {
 				logger.warn("Discovery: accepting the LEGACY unauthenticated certificate exchange from " + remoteAddress
@@ -473,6 +530,7 @@ public class DiscoveryProcessor {
 			return null;
 		}
 		if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) controllerEngine.getCertificateManager().ensureRegionCA();
+		controllerEngine.getCertificateManager().bindOwnIdentity();      // no joiner is ever bound to this node's own name
 		ch.type = h.type;
 		ch.nc = h.nc;
 		ch.ns = DiscoveryAuth.nonce();
