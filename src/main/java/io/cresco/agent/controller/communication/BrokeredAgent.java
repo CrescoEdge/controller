@@ -30,6 +30,7 @@ public class BrokeredAgent {
 		logger.debug("Initializing: " + brokerNode.getDiscoveredPath() + " address: " + brokerNode.discovered_ip);
 		this.bm = new BrokerMonitor(controllerEngine, brokerNode.getDiscoveredPath());
 		this.bm.setBrokerPort(brokerNode.discovered_broker_port);
+		this.bm.setExpectedPeer(brokerNode.discovered_region, brokerNode.discovered_agent);
 		this.brokerStatus = BrokerStatusType.INIT;
 		this.addressMap = new HashMap<>();
 		this.addressMap.put(brokerNode.discovered_ip, BrokerStatusType.INIT);
@@ -98,6 +99,7 @@ public class BrokeredAgent {
 		}
 		bm = new BrokerMonitor(controllerEngine, brokerNode.getDiscoveredPath());
 		bm.setBrokerPort(brokerNode.discovered_broker_port);
+		bm.setExpectedPeer(brokerNode.discovered_region, brokerNode.discovered_agent);
 		Thread monitorThread = new Thread(bm);
 		monitorThread.start();
 		// BOUNDED: if connectToBroker fails, the monitor thread exits without ever setting

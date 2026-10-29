@@ -32,7 +32,14 @@ public final class BrokerTransport {
 
     /**
      * Query string for a client transport URI inside failover:(...) or static:(...), e.g.
-     * "?verifyHostName=false&socketBufferSize=0". activemq_client_transport_options (default empty)
+     * "?verifyHostName=false&socketBufferSize=0".
+     *
+     * <p>verifyHostName=false: brokers are dialled by the address and (dynamic) port discovery returned, and
+     * their certificates name Cresco identities ({@code CN=<agent>, OU=<region>}), not hosts, so RFC 2818
+     * hostname checks cannot apply. The check that the broker is the peer the connection was meant to reach is
+     * done instead by each connection's trust manager ({@link PeerIdentityTrustManager}, config
+     * {@code peer_identity_mode}): the certificate must name the region/agent discovery returned for that
+     * address, and carry the key learned for it when one was. activemq_client_transport_options (default empty)
      * appends raw ActiveMQ transport options, e.g. "tcpNoDelay=true", except secret-looking ones
      * (see {@link #clientOptions}).
      */

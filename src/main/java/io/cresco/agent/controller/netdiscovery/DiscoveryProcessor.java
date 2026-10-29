@@ -89,7 +89,7 @@ public class DiscoveryProcessor {
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY) {
 
-									String discovered_cert = configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert);
+									String discovered_cert = configureCertTrust(discoveryNode);
 									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret), discovered_cert);
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 
@@ -129,6 +129,7 @@ public class DiscoveryProcessor {
 				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
 				if (discoverySecret != null) {
 					if(sendCert) {
+						ownLeafForDiscovery();
 						//sme.setParam("public_cert", controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()));
 
 						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret), controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
@@ -144,6 +145,7 @@ public class DiscoveryProcessor {
 				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
 				if (discoverySecret != null) {
 					if(sendCert) {
+						ownLeafForDiscovery();
 						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret),controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
 					} else {
 						discoveryNode.setDiscover(discoveryCrypto.encrypt(verifyMessage, discoverySecret));
@@ -156,6 +158,7 @@ public class DiscoveryProcessor {
 				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
 				if (discoverySecret != null) {
 					if(sendCert) {
+						ownLeafForDiscovery();
 						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret),controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
 					} else {
 						discoveryNode.setDiscover(discoveryCrypto.encrypt(verifyMessage, discoverySecret));
@@ -212,6 +215,49 @@ public class DiscoveryProcessor {
 		return isValidated;
 	}
 
+	/** Make our leaf name our current identity before it goes out in a discovery exchange (legacy trust only). */
+	private void ownLeafForDiscovery() {
+		try {
+			controllerEngine.getCertificateManager().ensureLeafIdentity();
+		} catch (Exception ex) {
+			logger.error("ownLeafForDiscovery " + ex.getMessage());
+		}
+	}
+
+	/**
+	 * Client side of a certified discovery exchange: trust the responder (or install the identity its region CA issued
+	 * us), and record what binds later connections to it (PeerIdentity): in legacy per-node trust the responder's leaf
+	 * key is pinned to the region/agent it reported; a REGION/GLOBAL responder is a controller allowed to bridge to us.
+	 */
+	public boolean setCertTrust(DiscoveryNode discoveryNode) {
+		boolean isSet = setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
+		if (isSet) {
+			learnPeer(discoveryNode.discovery_type, discoveryNode.discovered_region, discoveryNode.discovered_agent,
+					discoveryNode.discovered_cert, !plugin.getConfig().getBooleanParam("security_regional_ca", false));
+		}
+		return isSet;
+	}
+
+	private void learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf) {
+		try {
+			io.cresco.agent.controller.communication.PeerTrustRegistry reg = controllerEngine.getCertificateManager().getPeerTrust();
+			if (pinLeaf && certJson != null) {
+				java.security.cert.X509Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(certJson);
+				if (certs != null && certs.length > 0 && certs[0] != null) {
+					String why = reg.pin(region, agent, certs[0]);
+					if (why != null) {
+						logger.warn("Discovery: not pinning a key for " + region + "_" + agent + ": " + why);
+					}
+				}
+			}
+			if (type == DiscoveryType.REGION || type == DiscoveryType.GLOBAL) {
+				reg.allowBridgePeer(region, agent);
+			}
+		} catch (Exception ex) {
+			logger.error("learnPeer " + ex.getMessage());
+		}
+	}
+
 	public boolean setCertTrust(String remoteAgentPath, String remoteCertString) {
 		boolean isSet = false;
 		try {
@@ -230,19 +276,30 @@ public class DiscoveryProcessor {
 		return isSet;
 	}
 
-	private String configureCertTrust(String remoteAgentPath, String remoteCertString) {
+	/** Responder side of a certified discovery exchange (see {@link #setCertTrust(DiscoveryNode)}). */
+	private String configureCertTrust(DiscoveryNode discoveryNode) {
+		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
+		String local = configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
+		if (local != null) {
+			learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
+					discoveryNode.discover_cert, !regionalCa);
+		}
+		return local;
+	}
+
+	private String configureCertTrust(String remoteAgentPath, String remoteCertString, DiscoveryType joinType) {
 		String localCertString = null;
 		try {
 			if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) {
 				// Regional-CA (Option C): act as the issuing authority — sign the joiner a leaf under our
 				// region CA and return the chain for it to install. We trust the joiner via our own CA
 				// (no per-node truststore entry needed), so trust material stays O(regions), not O(nodes^2).
-				localCertString = controllerEngine.getCertificateManager().issueEnrollment(remoteCertString);
-				controllerEngine.getBroker().updateTrustManager();
+				localCertString = controllerEngine.getCertificateManager().issueEnrollment(remoteCertString, joinType);
+				if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
 			} else {
 				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
 				controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath, certs);
-				controllerEngine.getBroker().updateTrustManager();
+				if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
 				localCertString = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 			}
 		} catch(Exception ex) {

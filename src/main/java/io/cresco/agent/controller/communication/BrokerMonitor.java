@@ -18,6 +18,9 @@ class BrokerMonitor implements Runnable {
 	private String monitoredHost;
 	private int brokerPort = -1; // W-GFS-5: the peer's advertised broker port (-1 = default remote port)
 	public void setBrokerPort(int port) { this.brokerPort = port; }
+	// the controller this bridge is meant to reach (discovery's region/agent): the bridge's TLS is bound to it
+	private PeerIdentity.Expected expected;
+	public void setExpectedPeer(String region, String agent) { this.expected = new PeerIdentity.Expected(region, agent); }
 
 	public volatile boolean MonitorActive;
 
@@ -42,7 +45,7 @@ class BrokerMonitor implements Runnable {
 				brokerAddress = "[" + brokerAddress + "]";
 			}
 			this.monitoredHost = controllerEngine.getBroker().bridgeKey(brokerAddress, brokerPort);
-			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerPort);
+			bridge = controllerEngine.getBroker().AddNetworkConnector(brokerAddress, brokerPort, expected);
 			bridge.start();
 
 

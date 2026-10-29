@@ -48,6 +48,9 @@ public class CertificateManager {
     // Regional-CA (distributed-trust Option C): set on a region/global controller acting as an issuing
     // authority. When present this node can sign enrolling nodes' leaf certificates (issueEnrollment).
     private RegionCA regionCA;
+    // What discovery taught us about peers (pinned keys, bridge-capable controllers): binds TLS connections to
+    // the identity they were opened to (PeerIdentity). In memory; re-learned by the next discovery exchange.
+    private final PeerTrustRegistry peerTrust = new PeerTrustRegistry();
 
     private ControllerEngine controllerEngine;
     private PluginBuilder plugin;
@@ -344,6 +347,73 @@ public class CertificateManager {
         return trustManagers;
     }
 
+    /** The node's current PKIX trust manager over its truststore (built per call, so it sees every addition). */
+    public X509TrustManager currentPkixTrustManager() {
+        TrustManager[] tms = getTrustManagers();
+        if (tms != null) {
+            for (TrustManager tm : tms) {
+                if (tm instanceof X509TrustManager) return (X509TrustManager) tm;
+            }
+        }
+        return null;
+    }
+
+    public PeerTrustRegistry getPeerTrust() {
+        return peerTrust;
+    }
+
+    /** {@code peer_identity_mode}: enforce (default) | warn | off. */
+    public PeerIdentity.Mode peerIdentityMode() {
+        return PeerIdentity.Mode.parse(plugin.getConfig().getStringParam(PeerIdentity.MODE_KEY, "enforce"));
+    }
+
+    /**
+     * Trust managers for ONE outbound broker connection meant to reach {@code expected}: PKIX over the current
+     * truststore, then the certificate must name {@code expected} (and carry its pinned key when one was learned).
+     * With {@code peer_identity_mode=off} this is the plain PKIX trust managers, as before.
+     */
+    public TrustManager[] clientTrustManagers(PeerIdentity.Expected expected, String endpoint) {
+        PeerIdentity.Mode mode = peerIdentityMode();
+        if (mode == PeerIdentity.Mode.OFF) {
+            return getTrustManagers();
+        }
+        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint) };
+    }
+
+    /**
+     * Legacy (per-node) trust only: make our own leaf name our CURRENT identity. The leaf is made when the node
+     * starts, before an agent joins a region, so an agent that was not configured with the region it later joins
+     * carries {@code OU=<its start-up region>} while the fabric (and its inbox, and stream recipients) know it by
+     * the region it joined. Called before our certificate goes out in a discovery exchange; re-issues the chain
+     * (new keys: the issuing keys are not kept) only when the names differ. Under the regional CA the issuing
+     * region stamps the identity instead, so this is a no-op there.
+     *
+     * @return true when the leaf was re-issued
+     */
+    public synchronized boolean ensureLeafIdentity() {
+        try {
+            if (regionCA != null || plugin.getConfig().getBooleanParam("security_regional_ca", false)) return false;
+            String region = controllerEngine.cstate.getRegion();
+            String agent = controllerEngine.cstate.getAgent();
+            String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            if (region == null || agent == null || chain == null || chain[0] == null) return false;
+            CrescoIdentity have = CrescoIdentity.fromCertificate(chain[0]);
+            if (have != null && region.equals(have.getRegion()) && agent.equals(have.getAgent()) && tenant.equals(have.getTenant())) {
+                return false;
+            }
+            generateCertChain();
+            addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+            try { if (controllerEngine.getActiveClient() != null) controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
+            logger.info("Re-issued own certificate for the current identity " + CrescoIdentity.fromCertificate(chain[0])
+                    + " (it named " + have + ")");
+            return true;
+        } catch (Exception ex) {
+            logger.error("ensureLeafIdentity error: " + ex.getMessage(), ex);
+            return false;
+        }
+    }
+
     public KeyManager[] getKeyManagers() {
         KeyManager[] keyManagers = null;
         try {
@@ -491,6 +561,21 @@ System.out.println("Decoded value is " + new String(valueDecoded));
      * Returns the region-signed chain [leaf, regionCA, root] as JSON for the joiner to install.
      */
     public String issueEnrollment(String joinerCertJson) {
+        return issueEnrollment(joinerCertJson, null);
+    }
+
+    /**
+     * As {@link #issueEnrollment(String)}, for a joiner that came in over a discovery exchange of {@code joinType}.
+     * The issuing controller decides the identity, so it refuses identities the joiner cannot hold:
+     * <ul>
+     *   <li>an AGENT joins THIS region, so its certificate is stamped with this controller's region whatever its own
+     *       self-signed certificate claimed (an agent belongs to the region it joined);</li>
+     *   <li>nobody is issued this controller's own identity, and a joining region/global controller cannot take this
+     *       controller's region name: either would let the joiner answer for this controller (or its region) on a
+     *       TLS connection that checks the certificate's identity (PeerIdentity).</li>
+     * </ul>
+     */
+    public String issueEnrollment(String joinerCertJson, io.cresco.agent.controller.netdiscovery.DiscoveryType joinType) {
         try {
             ensureRegionCA();
             if (regionCA == null) {
@@ -506,6 +591,24 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     : plugin.getConfig().getStringParam("tenant_id", "default");
             String region = (claimed != null && claimed.getRegion() != null) ? claimed.getRegion() : "unknown";
             String agent  = (claimed != null && claimed.getAgent()  != null) ? claimed.getAgent()  : "unknown";
+            String myRegion = controllerEngine.cstate.getRegion();
+            String myAgent = controllerEngine.cstate.getAgent();
+            if (joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.AGENT && myRegion != null) {
+                if (!myRegion.equals(region)) {
+                    logger.info("Enrollment: agent " + agent + " claimed region '" + region + "'; stamping this region '" + myRegion + "' (it joined here)");
+                }
+                region = myRegion;
+            }
+            if (myRegion != null && myAgent != null && myRegion.equals(region) && myAgent.equals(agent)) {
+                logger.error("Enrollment REFUSED: a joiner asked for this controller's own identity region=" + region + ", agent=" + agent);
+                return null;
+            }
+            if ((joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
+                    || joinType == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL)
+                    && myRegion != null && myRegion.equals(region)) {
+                logger.error("Enrollment REFUSED: a joining " + joinType + " controller (agent=" + agent + ") asked for this controller's region '" + region + "'");
+                return null;
+            }
             // Stricter: a purely-regional CA stamps ITS tenant (an agent cannot cross tenants). A global
             // federates multiple tenants, so it preserves the joining region's tenant.
             boolean isGlobal = controllerEngine.cstate.isGlobalController();
