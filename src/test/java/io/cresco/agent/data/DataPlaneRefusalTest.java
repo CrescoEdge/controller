@@ -38,6 +38,7 @@ class DataPlaneRefusalTest {
         RegionCA ca = RegionCA.generate("t1", "rgA", 2048, 1);
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_id", "t1");                                   // the controller's tenant, as on a real node
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, new PeerTrustRegistry());
         broker = TlsTestSupport.broker("rgA_gc", TlsTestSupport.issued(ca, "t1", "rgA", "gc"), false,
