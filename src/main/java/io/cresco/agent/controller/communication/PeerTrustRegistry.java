@@ -34,7 +34,8 @@ public final class PeerTrustRegistry {
      */
     public String pin(String region, String agent, X509Certificate leaf) {
         if (region == null || agent == null || leaf == null) return "missing identity or certificate";
-        CrescoIdentity id = CrescoIdentity.fromCertificate(leaf);
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return "invalid identity name " + region + "/" + agent;
+        CrescoIdentity id = CrescoNames.identityOf(leaf);
         if (id == null || !region.equals(id.getRegion()) || !agent.equals(id.getAgent())) {
             return "the certificate names " + (id == null ? "no Cresco identity" : ("region=" + id.getRegion() + ", agent=" + id.getAgent()))
                     + ", not region=" + region + ", agent=" + agent;
@@ -50,7 +51,7 @@ public final class PeerTrustRegistry {
 
     /** Record a controller that may bridge into this node's broker. */
     public void allowBridgePeer(String region, String agent) {
-        if (region == null || agent == null || region.isEmpty() || agent.isEmpty()) return;
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return;
         bridgePeers.put(new PeerIdentity.Expected(region, agent), System.currentTimeMillis());
     }
 

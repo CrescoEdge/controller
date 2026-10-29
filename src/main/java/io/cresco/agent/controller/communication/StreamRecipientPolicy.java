@@ -13,7 +13,8 @@ import java.util.regex.Pattern;
  *
  * <p><b>Binding a stream to its recipient.</b> Dataplane streams share the agent/region/global topics and are told
  * apart by message properties and consumer selectors. A sender binds a message to ONE recipient by setting the
- * string property {@value #TO} to the recipient agent's path {@code <region>_<agent>} (and optionally
+ * string property {@value #TO} to the recipient agent's path {@code <region>_<agent>} (both names in the
+ * {@link CrescoNames} grammar, which has no {@code _}, so the path is unambiguous; and optionally
  * {@value #TO_TENANT} to its tenant). The broker then delivers that message only to:
  * <ul>
  *   <li>infrastructure connections: the broker's own controller over {@code vm://}, and broker-to-broker bridges
@@ -47,10 +48,12 @@ public final class StreamRecipientPolicy {
     /** May {@code consumer} receive a message bound to {@code to} (tenant {@code toTenant}, may be null)? */
     public static TenantPolicy.Decision mayReceive(CrescoIdentity consumer, String to, String toTenant) {
         if (to == null) return TenantPolicy.Decision.allow("not recipient-bound");
-        if (consumer == null || consumer.getRegion() == null || consumer.getAgent() == null) {
-            return TenantPolicy.Decision.deny("recipient-bound to " + to + "; the consumer has no identity");
+        String[] rcpt = CrescoNames.splitPath(to);
+        if (rcpt == null) return TenantPolicy.Decision.deny("recipient-bound to '" + to + "', which is not a valid <region>_<agent>");
+        if (consumer == null || !CrescoNames.isValid(consumer.getRegion()) || !CrescoNames.isValid(consumer.getAgent())) {
+            return TenantPolicy.Decision.deny("recipient-bound to " + to + "; the consumer has no valid identity");
         }
-        if (!to.equals(consumer.getAgentPath())) {
+        if (!rcpt[0].equals(consumer.getRegion()) || !rcpt[1].equals(consumer.getAgent())) {
             return TenantPolicy.Decision.deny("recipient-bound to " + to + ", not " + consumer.getAgentPath());
         }
         if (toTenant != null && !toTenant.isEmpty() && !toTenant.equals(consumer.getTenant())) {
@@ -66,9 +69,9 @@ public final class StreamRecipientPolicy {
     public static TenantPolicy.Decision maySubscribe(CrescoIdentity consumer, String selector) {
         List<String> named = recipientsNamedIn(selector);
         if (named.isEmpty()) return TenantPolicy.Decision.allow("selector names no recipient");
-        String own = (consumer == null || consumer.getRegion() == null || consumer.getAgent() == null) ? null : consumer.getAgentPath();
+        String own = (consumer == null) ? null : CrescoNames.path(consumer.getRegion(), consumer.getAgent());
         for (String r : named) {
-            if (own == null || !own.equals(r)) {
+            if (own == null || CrescoNames.splitPath(r) == null || !own.equals(r)) {
                 return TenantPolicy.Decision.deny("selector asks for the stream of recipient " + r
                         + (own == null ? " but the subscriber has no identity" : (", subscriber is " + own)));
             }
