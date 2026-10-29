@@ -393,25 +393,38 @@ public class DiscoveryProcessor {
 	}
 
 	private final java.util.Set<String> warnedLegacy = java.util.concurrent.ConcurrentHashMap.newKeySet();
+	static final int MAX_WARNED_LEGACY = 1024;
+
+	/**
+	 * Whether to log a legacy-exchange line for {@code key} (a peer address, which UDP lets anyone spoof): once per key
+	 * for up to {@link #MAX_WARNED_LEGACY} keys, then at most one line per 10 s, so the set never grows past the cap.
+	 */
+	boolean firstLegacyWarning(String key) {
+		if (warnedLegacy.contains(key)) return false;
+		if (warnedLegacy.size() < MAX_WARNED_LEGACY) return warnedLegacy.add(key);
+		return DiscoveryGuard.logAllowed("discovery-legacy-overflow");
+	}
+
+	int warnedLegacyCount() { return warnedLegacy.size(); }
 
 	/** The legacy single-message certificate exchange: only with discovery_auth=compat (a rolling upgrade). */
 	private boolean legacyCertifyAllowed(String remoteAddress, DiscoveryType type) {
 		if (type != DiscoveryType.AGENT) {
 			// the legacy token is the constant DISCOVER token anyone on the LAN may have seen: it never makes a bridge peer
-			if (warnedLegacy.add(remoteAddress + "|" + type)) {
+			if (firstLegacyWarning(remoteAddress + "|" + type)) {
 				logger.error("Discovery: REFUSED a legacy " + type + " certificate exchange from " + remoteAddress
 						+ " (even with discovery_auth=compat, only agent membership may use the legacy exchange; upgrade that controller)");
 			}
 			return false;
 		}
 		if (authMode() == DiscoveryAuth.Mode.COMPAT) {
-			if (warnedLegacy.add(String.valueOf(remoteAddress))) {
+			if (firstLegacyWarning(String.valueOf(remoteAddress))) {
 				logger.warn("Discovery: accepting the LEGACY unauthenticated certificate exchange from " + remoteAddress
 						+ " (discovery_auth=compat; upgrade that node, then remove compat)");
 			}
 			return true;
 		}
-		if (warnedLegacy.add(String.valueOf(remoteAddress))) {
+		if (firstLegacyWarning(String.valueOf(remoteAddress))) {
 			logger.error("Discovery: REFUSED a legacy (replayable, unauthenticated) certificate exchange from " + remoteAddress
 					+ "; upgrade that node, or set discovery_auth=compat on this one during the upgrade");
 		}
