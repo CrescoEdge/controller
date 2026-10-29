@@ -35,8 +35,11 @@ final class DiscoveryWire {
 
     private DiscoveryWire() { }
 
-    /** Largest discovery frame accepted (a certificate exchange is a few KiB). */
-    static final int MAX_OBJECT_BYTES = 1024 * 1024;
+    /**
+     * Largest discovery frame accepted. A certificate exchange is a few KiB; the cap also bounds what one connection can
+     * make the listener buffer before the frame is complete (see {@link DiscoveryGuard} for the connection limits).
+     */
+    static final int MAX_OBJECT_BYTES = 256 * 1024;
 
     /** Netty's compact stream header: one byte, ObjectStreamConstants.STREAM_VERSION. */
     private static final int STREAM_VERSION = 5;

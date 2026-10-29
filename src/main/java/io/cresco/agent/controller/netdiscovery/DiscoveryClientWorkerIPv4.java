@@ -67,14 +67,20 @@ class DiscoveryClientWorkerIPv4 {
 
     private synchronized void processIncoming(DatagramPacket packet) {
         synchronized (lockPacket) {
-            String json = new String(packet.getData()).trim();
+            String json = DiscoveryGuard.datagramText(packet);
             try {
+                if (discoveredList.size() >= DiscoveryGuard.MAX_DISCOVERED_PER_ROUND) {
+                    DiscoveryGuard.warnLimited(logger, "discovery-udp-answers", "Discovery: more than "
+                            + DiscoveryGuard.MAX_DISCOVERED_PER_ROUND + " answers in one round; ignoring the rest");
+                    return;
+                }
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
                 DiscoveryNode discoveryNode = null;
                 if (me != null) {
 
                     if(me.paramsContains("discovery_node")) {
-                        discoveryNode = gson.fromJson(me.getCompressedParam("discovery_node"), DiscoveryNode.class);
+                        // unauthenticated until validated below: bounded inflate (DiscoveryGuard)
+                        discoveryNode = DiscoveryGuard.discoveryNode(gson, me);
 
 
                         if(discoveryNode != null) {
@@ -105,7 +111,8 @@ class DiscoveryClientWorkerIPv4 {
 
                 }
             } catch (Exception ex) {
-                logger.error("DiscoveryClientWorker in loop {}", ex.getMessage());
+                DiscoveryGuard.warnLimited(logger, "discovery-udp-answer", "Discovery: refused an answer from "
+                        + packet.getAddress() + ": " + ex.getMessage());
             }
         }
     }
