@@ -59,7 +59,6 @@ public class DiscoveryCrypto {
         String decryptedValue = null;
 
         try {
-            logger.debug("enc: [" + encryptedValue + "]");
             final Key key = generateKeyFromString(secretKey);
             final Cipher c = Cipher.getInstance(ALGORITHM);
             c.init(Cipher.DECRYPT_MODE, key);
@@ -77,7 +76,10 @@ public class DiscoveryCrypto {
             //logger.info("bad!");
         }
         catch(Exception ex) {
-            logger.error("DiscoveryCrypto.decrypt", ex);
+            // the value comes from an unauthenticated peer: one rate-limited line, no stack trace per message
+            DiscoveryGuard.warnLimited(logger, "discovery-decrypt", "Discovery: could not decrypt a validator: "
+                    + ex.getClass().getSimpleName());
+            logger.debug("DiscoveryCrypto.decrypt", ex);
         }
 
         return decryptedValue;

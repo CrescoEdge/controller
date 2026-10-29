@@ -398,24 +398,42 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 inputStream.close();
             }
         } catch(Exception ex) {
-            logger.error("getCertsfromString : error " + ex.getMessage(), ex);
+            // peer input, often before authentication: one line, no stack trace
+            logger.warn("getCertfromString: not a certificate: " + ex.getClass().getSimpleName());
+            logger.debug("getCertfromString", ex);
         }
         return cert;
     }
 
+    /** Most certificates a chain from a peer may carry (leaf, issuing CA, root). */
+    public static final int MAX_CHAIN_CERTS = 3;
+
+    /**
+     * A peer's certificate chain from its JSON form (an array of up to {@link #MAX_CHAIN_CERTS} certificates), or
+     * {@code null} if it is malformed or longer. Peer input, often before authentication: a refusal is one line, never a
+     * stack trace.
+     */
     public X509Certificate[] getCertsfromJson(String jsonCerts) {
         X509Certificate[] certs = null;
         try {
 
             Gson gc = new Gson();
             String[] certImportList = gc.fromJson(jsonCerts,String[].class);
-            certs = new X509Certificate[3];
+            if (certImportList == null) return null;
+            if (certImportList.length > MAX_CHAIN_CERTS) {
+                logger.warn("getCertsfromJson: refused a chain of " + certImportList.length + " certificates (at most "
+                        + MAX_CHAIN_CERTS + ")");
+                return null;
+            }
+            certs = new X509Certificate[MAX_CHAIN_CERTS];
             for(int i = 0; i<certImportList.length; i++) {
                 certs[i] = getCertfromString(certImportList[i]);
             }
 
         } catch(Exception ex) {
-            logger.error("getCertsfromJson : error " + ex.getMessage(), ex);
+            logger.warn("getCertsfromJson: refused a malformed certificate chain: " + ex.getClass().getSimpleName());
+            logger.debug("getCertsfromJson", ex);
+            certs = null;
         }
         return certs;
     }
