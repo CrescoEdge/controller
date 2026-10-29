@@ -109,13 +109,11 @@ class PeerTrustStoreTest {
         assertEquals(size, Files.size(f), "refreshing known bindings wrote to the log");
         PeerTrustRegistry.Options o = new PeerTrustRegistry.Options();
         o.bindingPruneDays = 1;
-        String text = Files.readString(f);
-        assertTrue(text.contains("rgA/a0"));
-        // pretend everything was last seen two days ago: rewrite with old times through accept (keeps every record)
-        Files.writeString(f, text.replaceAll("\"t\":\\d+", "\"t\":" + (System.currentTimeMillis() - 2L * 24 * 3600 * 1000)));
-        Files.writeString(f.resolveSibling("peer-trust.json.recover"), "accept");
-        PeerTrustRegistry pruned = PeerTrustRegistry.open(f, o, m -> { });
-        assertEquals(0, pruned.pinCount(), "bindings unseen past peer_binding_prune_days were kept");
+        PeerTrustRegistry reopened = PeerTrustRegistry.open(f, o, m -> { });
+        assertEquals(50, reopened.pinCount());
+        reopened.prune(System.currentTimeMillis() + 2L * 24 * 3600 * 1000);       // two days later, never seen again
+        assertEquals(0, reopened.pinCount(), "bindings unseen past peer_binding_prune_days were kept");
+        assertEquals(0, PeerTrustRegistry.open(f, o, m -> { }).pinCount(), "the prune was not persisted");
     }
 
     @Test
