@@ -25,6 +25,7 @@ class SecurityProfileTest {
         Path d = Files.createTempDirectory("prod-files");
         Map<String, Object> m = new HashMap<>();
         m.put("security_profile", "production");
+        m.put("discovery_secret_agent", "from-a-file");      // SecretSources resolves <name>_file into the config
         for (String k : new String[]{"identity_keystore", "identity_keystore_password_file", "trust_anchors", "plugin_signing_truststore"}) {
             Path f = d.resolve(k);
             Files.writeString(f, "x");
@@ -59,6 +60,13 @@ class SecurityProfileTest {
     }
 
     @Test
+    void productionDiscoveryNeedsItsAdmissionSecret() throws Exception {
+        Map<String, Object> m = production();
+        m.remove("discovery_secret_agent");
+        assertTrue(SecuritySettings.startupRefusals(cfg(m)).stream().anyMatch(w -> w.contains("no discovery secret")));
+    }
+
+    @Test
     void productionNamesEveryDisallowedSetting() throws Exception {
         String[][] bad = {
                 {"broker_security_enabled", "false"}, {"plugin_signing_required", "false"}, {"msg_signing_required", "false"},
@@ -80,5 +88,25 @@ class SecurityProfileTest {
         } finally {
             System.clearProperty("discovery_secret_agent");
         }
+    }
+
+    /** Identity round-3 review P1 (ReviewIdentity3Test, review/identity3-20261104 acdeebb): production forces security on. */
+    @Test
+    void theProductionProfileTurnsBrokerSecurityOn() throws Exception {
+        Map<String, Object> m = new HashMap<>();
+        m.put("security_profile", "production");
+        m.put("identity_keystore", "/nonexistent/node.p12");
+        Config c = cfg(m);
+        assertTrue(SecuritySettings.brokerSecurity(c) && SecuritySettings.requireClientAuth(c) && SecuritySettings.pluginSigningRequired(c),
+                "security_profile=production leaves broker security, client certificates and plugin signing OFF unless set separately");
+        // forced on even when set off explicitly -- and the node refuses to start, naming the setting
+        Map<String, Object> off = production();
+        off.put("broker_security_enabled", "false");
+        off.put("tenant_namespacing", "false");
+        Config o = cfg(off);
+        assertTrue(SecuritySettings.brokerSecurity(o) && SecuritySettings.tenantNamespacing(o));
+        List<String> why = SecuritySettings.startupRefusals(o);
+        assertTrue(why.stream().anyMatch(w -> w.contains("broker_security_enabled=false")), String.valueOf(why));
+        assertTrue(why.stream().anyMatch(w -> w.contains("tenant_namespacing=false")), String.valueOf(why));
     }
 }
