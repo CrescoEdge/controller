@@ -32,11 +32,23 @@ public final class BundleDataPlaneService implements DataPlaneService {
     private final boolean onBehalf;
 
     public BundleDataPlaneService(DataPlaneServiceImpl impl, Supplier<Caller> writer, String bundleName, boolean onBehalf) {
+        this(impl, writer, bundleName, onBehalf, true);
+    }
+
+    /**
+     * {@code trustedName}: this controller installed the bundle itself (agent jar or verified signed jar), so a capability
+     * bound to its symbolic name holds -- the executor's stdin (review F5: a plugin can install a bundle of any name).
+     */
+    public BundleDataPlaneService(DataPlaneServiceImpl impl, Supplier<Caller> writer, String bundleName, boolean onBehalf,
+                                  boolean trustedName) {
         this.impl = impl;
         this.writer = writer;
         this.bundleName = bundleName;
         this.onBehalf = onBehalf;
+        this.trustedName = trustedName;
     }
+
+    private final boolean trustedName;
 
     /** Does this wrap {@code d} (the controller rebuilds its dataplane on a re-init)? */
     public boolean wraps(DataPlaneService d) { return impl == d; }
@@ -51,7 +63,7 @@ public final class BundleDataPlaneService implements DataPlaneService {
 
     /** Only the executor sees a process's stdin ({@link StdinGuard}). */
     private String guard(String selector) throws SubscriptionRefusedException {
-        if (StdinGuard.EXECUTOR_BUNDLE.equals(bundleName)) return selector;
+        if (trustedName && StdinGuard.EXECUTOR_BUNDLE.equals(bundleName)) return selector;
         String why = StdinGuard.refusal(selector);
         if (why != null) throw new SubscriptionRefusedException(why + " (" + bundleName + ")");
         try {
