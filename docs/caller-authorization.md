@@ -126,3 +126,55 @@ These change nothing for a well-behaved node; they close what a misbehaving or b
 | `broker_quarantine_max_{connections,consumers,producers,destinations}` | (none) | 64 / 4 / 4 / 256 |
 | `peer_seen_refresh_ms` | (none) | 3600000 |
 | `peer-trust.json.lock` | (none) | created next to the registry; two processes cannot share a registry |
+
+## 7. Discovery, trust anchors and identity lifecycle (phase 2)
+
+These change code that only this branch runs (discovery v2, the peer trust registry, the regional CA).
+
+- **Discovery v2 binds every certificate of both chains** (round-4 H1). MAC "S1" covers the responder's whole presented
+  chain; the client's PROOF ("C") and the RESULT MAC ("S2") also cover the client's whole chain, exactly as each message
+  carries it. A man in the middle that re-issues either side's leaf (same key, same subject) under a CA of its own fails the
+  exchange before anything is recorded, so it can no longer plant a trust anchor or replace a joining region's CA.
+- **Responders are ordered only by authenticated facts** (round-4 M5): arrival order, except that an address this node
+  already completed an authenticated exchange with is tried first. A self-reported agent count or a claimed name orders
+  nothing (round 3's test that preferred them is rewritten to this rule).
+- **Joiners pin the controller they joined** (item 7). An agent pins its region controller's key (and, under the regional
+  CA, the region CA) at the first join; a region pins its global the same way. A different key or CA for that name later is
+  refused: holding the shared agent secret no longer lets anyone pose as a controller. A re-installed controller is
+  accepted again when its `security/` directory is restored (same key), or after the operator authorises one rebind of it on
+  each joiner (`peer_identity_rebind=<region>/<agent>`, or the line in `peer-trust.json.rebind`, no restart).
+  `controller_trust_anchors` (SHA-256 of a controller's public key or of a certificate in its chain, comma separated)
+  closes the first join as well: only a listed controller is joined.
+- **Public-key directory** (audit D6): `public_key_directory` (default `<agent data dir>/public-keys`, absolute) still
+  receives this node's exported certificate, but a certificate placed there becomes a trust anchor only when its SHA-256
+  fingerprint is listed in `public_key_trusted_fingerprints`, the directory is absolute and neither it nor the file is
+  writable by group or others (or owned by another user), and the file is not a symlink.
+- **Renewal** (round-4 M4): the persisted node chain and region CA are renewed with the SAME keys when a third of their
+  lifetime (and at least `identity_renew_before_days`, 30) is left -- at start and every `identity_renew_check_minutes`
+  (60). Bindings and recorded CA scopes follow keys, so peers notice nothing. Connections that reconnect present the
+  current chain.
+- **Short-lived region-issued leaves**: a region CA issues leaves valid for `identity_leaf_validity_hours` (168 = 7 days).
+  A node re-enrolls with the controller it joined (one authenticated exchange, same key) when a third of the lifetime is
+  left; if that fails into the last tenth, it keeps the key on a self-rooted chain its controller accepts by the bound key.
+- **Revocation**: `peer_identity_revoke` (names `region/agent` or key fingerprints) and the operator file
+  `peer-trust.json.revoke` (re-read every 10 s) revoke a key for every name: the binding is dropped, TLS, the broker and the
+  CA path refuse it, live connections holding it are closed at once, and it stays revoked (persisted, permanent; a revoked
+  node needs a new key). Each controller signs its revocation list with its identity key and it travels on the parent/child
+  pings only when the other side holds another list: a region's list is accepted at the global for the region's own names,
+  and the global's (and a region's) list applies to everything below it. Agents' lists are not accepted.
+- **Expired identities**: the broker refuses an expired certificate at authorization (both the bound-key and the CA path)
+  and closes, within a minute, a connection whose certificate expires or whose key is revoked while it is up.
+- **The broker's identity check is the authoritative gate.** A client that reconnects by resuming a TLS 1.3 session (a
+  stateless session ticket) is not re-checked by the TLS trust manager; the broker re-verifies the presented certificate
+  on every connection, resumed or not, so a revoked or expired key is quarantined there (no identity, no rights). Cached
+  server sessions of a revoked key are invalidated as well.
+
+| Setting | Before | Now |
+|---|---|---|
+| a joiner and a re-keyed controller | followed | refused until restored identity or operator rebind |
+| `controller_trust_anchors` | (none) | optional first-join anchors |
+| `public_key_directory` default | `cresco-data/public-keys` (relative) | `<agent data dir>/public-keys` |
+| `public_key_trusted_fingerprints` | (every `.cer` imported) | required for any import |
+| `identity_leaf_validity_hours` | 3 years | 168 |
+| `identity_renew_before_days`, `identity_renew_check_minutes` | (no renewal) | 30, 60 |
+| `peer_identity_revoke`, `peer-trust.json.revoke` | (none) | revocation |

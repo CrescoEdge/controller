@@ -34,7 +34,12 @@ import java.util.Map;
  * </pre>
  *
  * T is the transcript: protocol label, discovery type, both nonces, both identities (region, agent), the SHA-384
- * fingerprints of both leaf certificates' keys and the responder's broker port, each length-prefixed. K is derived
+ * fingerprints of both leaf certificates' keys, the responder's broker port, and the SHA-384 over the responder's WHOLE
+ * presented chain (every certificate's DER, in order), each length-prefixed. MAC "C" and MAC "S2" also cover the SHA-384
+ * over the client's whole presented chain: the client vouches for exactly the chain it sent, and the responder records a
+ * chain (and any CA in it) only after that MAC verifies; the client records the responder's chain or the RESULT's chain
+ * only after S1/S2 cover them. So a man in the middle cannot re-issue either side's leaf (same key, same subject) under a
+ * CA of its own: the exchange fails before anything is recorded. K is derived
  * from the discovery secret of that type with PBKDF2-HMAC-SHA-384 (210,000 iterations, a per-type salt) and cached;
  * MACs are HMAC-SHA-384 and compared in constant time; nonces are 32 bytes from SecureRandom. All FIPS 140 approved
  * primitives at CNSA-1.0 sizes. A replayed HELLO/PROOF fails (fresh Ns), a man in the middle that changes an identity,
@@ -124,10 +129,36 @@ public final class DiscoveryAuth {
         }
     }
 
+    /**
+     * SHA-384 over a chain exactly as a message carries it (its JSON text, which is what the receiver parses and records),
+     * hex; "" when absent.
+     */
+    static String chainFp(String chainJson) {
+        if (chainJson == null) return "";
+        try {
+            StringBuilder b = new StringBuilder();
+            for (byte x : MessageDigest.getInstance("SHA-384").digest(chainJson.getBytes(StandardCharsets.UTF_8))) b.append(String.format("%02x", x));
+            return b.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** The transcript MAC "C" and MAC "S2" cover: both whole chains as the messages carry them. */
     static byte[] transcript(Msg hello, Msg challenge, X509Certificate cleaf, X509Certificate sleaf) {
+        return transcript(hello, challenge, cleaf, sleaf, true);
+    }
+
+    /**
+     * The transcript. Always the responder's whole chain ({@code challenge.scert}); with {@code clientChain} also the client's
+     * ({@code hello.ccert}), for MAC "C" and "S2". MAC "S1" binds only the client's leaf key, so a client whose chain was
+     * altered on the way still learns that the responder is genuine, then fails at the responder, which records nothing.
+     */
+    static byte[] transcript(Msg hello, Msg challenge, X509Certificate cleaf, X509Certificate sleaf, boolean clientChain) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (String f : new String[]{LABEL, hello.type, hello.nc, challenge.ns, hello.creg, hello.cagt, fp(cleaf),
-                challenge.sreg, challenge.sagt, fp(sleaf), Integer.toString(challenge.sport)}) {
+                challenge.sreg, challenge.sagt, fp(sleaf), Integer.toString(challenge.sport), "schain", chainFp(challenge.scert),
+                "cchain", clientChain ? chainFp(hello.ccert) : "-"}) {
             byte[] b = (f == null ? "" : f).getBytes(StandardCharsets.UTF_8);
             out.writeBytes(ByteBuffer.allocate(4).putInt(b.length).array());
             out.writeBytes(b);

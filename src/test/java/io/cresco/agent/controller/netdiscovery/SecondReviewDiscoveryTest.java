@@ -112,21 +112,55 @@ class SecondReviewDiscoveryTest {
         System.out.println("one uncached PBKDF2-HMAC-SHA-384/210k derivation = " + ms + " ms");
     }
 
-    /** A region controller whose data directory was wiped (new key) is refused by every agent that pinned it. */
+    /**
+     * A region controller whose data directory was wiped (new key) is refused by every agent that pinned it -- until the
+     * operator authorises one rebind of it on the agent; a controller whose persisted identity was restored is accepted.
+     *
+     * <p>Round 2 made agents FOLLOW a re-keyed controller (an availability fix). The round-4 hardening (phase 2, item 7)
+     * reverses that: following meant any holder of the shared agent secret could answer as the controller and be followed.
+     * Joiners now pin the controller they joined; the documented path for a re-installed controller is to restore its
+     * {@code security/} directory (same key, nothing to do) or authorise one rebind per agent ({@code peer_identity_rebind}
+     * or the {@code peer-trust.json.rebind} file, no restart).
+     */
     @Test
     void aWipedRegionControllerIsRefusedByItsAgentsUntilEachIsReconfigured() throws Exception {
         ControllerEngine rc = controller("rgA", "rc");
-        ControllerEngine a1 = TlsTestSupport.engine("rgA", "a1", cfg(false));
+        java.nio.file.Path a1Dir = java.nio.file.Files.createTempDirectory("a1-pin");
+        ControllerEngine a1 = agentAt(a1Dir);
         assertTrue(exchange(a1, rc, DiscoveryType.AGENT).ok);
         ControllerEngine wiped = controller("rgA", "rc");                                    // same name, new data dir
-        DiscoveryProcessor c = new DiscoveryProcessor(a1), s = new DiscoveryProcessor(wiped);
+        DiscoveryNode n = clientSide(a1, wiped);
+        System.out.println("wiped rc: agent accepted=" + (n != null));
+        assertNull(n, "an agent followed a re-keyed controller (anyone holding the agent secret could pose as it)");
+        // the operator authorises one rebind of rgA/rc on the agent (no restart)
+        java.nio.file.Path reg;
+        try (var w = java.nio.file.Files.walk(a1Dir)) { reg = w.filter(p -> p.getFileName().toString().equals("peer-trust.json")).findFirst().orElseThrow(); }
+        java.nio.file.Files.writeString(reg.resolveSibling("peer-trust.json.rebind"), "rgA/rc\n");
+        assertNotNull(clientSide(a1, wiped), "the operator's one-shot rebind did not let the agent join the re-installed controller");
+        ControllerEngine third = controller("rgA", "rc");
+        assertNull(clientSide(a1, third), "a consumed rebind let a third key in");
+    }
+
+    private static ControllerEngine agentAt(java.nio.file.Path dir) throws Exception {
+        io.cresco.agent.controller.communication.TlsTestSupport.provider();
+        Map<String, Object> c = new HashMap<>(cfg(false));
+        c.put("public_key_directory", dir.resolve("public-keys").toString());
+        c.put("tenant_id", "t1");
+        io.cresco.library.plugin.PluginBuilder pb = io.cresco.agent.test.TestAgentService.plugin(dir.toString(), c, m -> { }, "rgA", "a1");
+        ControllerEngine e = new ControllerEngine(null, pb, null, null);
+        e.cstate = io.cresco.agent.controller.communication.TlsTestSupport.state(pb, "rgA", "a1");
+        e.setCertificateManager(new io.cresco.agent.controller.communication.CertificateManager(e));
+        return e;
+    }
+
+    /** One AGENT exchange; the client's verdict (null: refused). */
+    private static DiscoveryNode clientSide(ControllerEngine client, ControllerEngine server) {
+        DiscoveryProcessor c = new DiscoveryProcessor(client), s = new DiscoveryProcessor(server);
         DiscoveryAuth.Msg hello = c.clientHello(DiscoveryType.AGENT);
         DiscoveryAuth.Msg ch = s.serverChallenge(copy(hello), "a1");
-        DiscoveryAuth.Msg r = s.serverResult(copy(hello), ch, copy(c.clientProof(hello, copy(ch), "rc")), "a1");
-        DiscoveryNode n = c.clientResult(hello, copy(ch), copy(r), "127.0.0.1", 32005);
-        System.out.println("wiped rc: responder ok=" + r.ok + ", agent accepted=" + (n != null)
-                + " (the responder has already bound a1 and answered ok; the agent refuses only on its side)");
-        assertNotNull(n, "an agent refuses its re-installed region controller until peer_identity_rebind is set on the agent");
+        DiscoveryAuth.Msg proof = c.clientProof(hello, copy(ch), "rc");
+        DiscoveryAuth.Msg r = s.serverResult(copy(hello), ch, copy(proof), "a1");
+        return c.clientResult(hello, copy(ch), copy(r), "127.0.0.1", 32005);
     }
 
     /** Leaves are (re)issued at discovery time with notBefore = now: a peer whose clock is 2 s behind refuses them. */

@@ -316,6 +316,8 @@ public class RegionalExecutor implements Executor {
         io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
         // the fabric's crypto policy: its id always, the policy itself when the agent holds another one
         io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
+        // revocations: this region's list down when the agent holds another (an agent's own list is not accepted)
+        io.cresco.agent.controller.communication.RevocationSync.onPingAtParent(controllerEngine, msg, false);
         logger.debug("Returning communication details to Cresco agent");
         return msg;
     }

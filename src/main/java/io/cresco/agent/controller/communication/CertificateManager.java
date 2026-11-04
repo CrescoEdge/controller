@@ -151,6 +151,8 @@ public class CertificateManager {
                 trustStore.setCertificateEntry("recordedCA-" + PeerIdentity.spkiFingerprint(ca).substring(0, 16), ca);
             }
 
+            startRenewalCheck();
+
             // Export the public key
             exportPublicKey();
             // Import and public keys from external agents
@@ -190,6 +192,7 @@ public class CertificateManager {
         if (!plugin.getConfig().getBooleanParam("peer_trust_persist", true)) {
             PeerTrustRegistry mem = new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
             mem.setKeyReplacedListener(this::dropReplacedAnchors);
+            mem.setRevokedListener(this::onKeyRevoked);
             return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
@@ -197,6 +200,7 @@ public class CertificateManager {
         PeerTrustRegistry.Options o = new PeerTrustRegistry.Options();
         o.rebind = csv(plugin.getConfig().getStringParam("peer_identity_rebind", ""));
         o.revoke = csv(plugin.getConfig().getStringParam("peer_bridge_revoke", ""));
+        o.revokeIdentities = csv(plugin.getConfig().getStringParam("peer_identity_revoke", ""));
         o.bridgePruneDays = plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30);
         o.bindingPruneDays = plugin.getConfig().getIntegerParam("peer_binding_prune_days", 90);
         // the registry is created on this node's first start, before its persistent identity: when that identity exists, a
@@ -209,7 +213,51 @@ public class CertificateManager {
         // registry the broker already holds instead of opening a second writer on the same files
         PeerTrustRegistry reg = PeerTrustRegistry.shared(file, o, m -> logger.error(m));
         reg.setKeyReplacedListener(this::dropReplacedAnchors);
+        reg.setRevokedListener(this::onKeyRevoked);
         return reg;
+    }
+
+    /**
+     * A key was revoked: remove every truststore anchor carrying it, and have the broker close every connection that holds
+     * it now (TLS and the broker refuse it for new ones already).
+     */
+    void onKeyRevoked(String keyFp) {
+        dropReplacedAnchors("revoked-" + keyFp, keyFp);
+        try {
+            if (controllerEngine.getBroker() != null) controllerEngine.getBroker().closeConnectionsOfKey(keyFp);
+        } catch (Exception ex) {
+            logger.error("closing connections of a revoked key: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * Why a controller presenting {@code chain} may not be joined under {@code controller_trust_anchors} (SHA-256 of a
+     * certificate's DER or of its public key, hex; comma separated), or null. Empty setting: any controller that passes the
+     * authenticated exchange may be joined the first time (and is pinned from then on).
+     */
+    public String controllerAnchorRefusal(X509Certificate[] chain) {
+        java.util.List<String> anchors = csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""));
+        if (anchors.isEmpty()) return null;
+        java.util.Set<String> want = new java.util.HashSet<>();
+        for (String a : anchors) want.add(a.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        if (chain != null) {
+            for (X509Certificate c : chain) {
+                if (c == null) continue;
+                try {
+                    if (want.contains(certFingerprint(c)) || want.contains(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) return null;
+                } catch (Exception ignore) { }
+            }
+        }
+        return "it presents no certificate or key listed in controller_trust_anchors";
+    }
+
+    /** Sign {@code data} with this node's identity key (the key its leaf certificate carries). */
+    public byte[] signWithIdentity(byte[] data) throws Exception {
+        PrivateKey k = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+        Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(k.getAlgorithm()));
+        s.initSign(k);
+        s.update(data);
+        return s.sign();
     }
 
     /**
@@ -322,7 +370,13 @@ public class CertificateManager {
             X509Certificate[] stored = (X509Certificate[]) kc[1];
             CrescoIdentity have = CrescoNames.identityOf(stored[0]);
             String region = controllerEngine.cstate.getRegion(), agent = controllerEngine.cstate.getAgent();
-            if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent)) {
+            if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent)
+                    && chainNeedsRenewal(stored, System.currentTimeMillis(), renewBeforeMs())) {
+                // the key is kept (every binding follows it); only the certificates are re-issued
+                logger.warn("This node's persisted certificate chain " + validityText(stored) + "; renewing it with the same key");
+                generateCertChain(new KeyPair(stored[0].getPublicKey(), key));
+                saveNodeIdentity();
+            } else if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent)) {
                 this.chain = stored;
                 storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, key, stored);
             } else {
@@ -338,53 +392,218 @@ public class CertificateManager {
         }
     }
 
+    // ---------------------------------------------------------------- renewal
+
+    /** At least this long before expiry a certificate is renewed ({@code identity_renew_before_days}, default 30). */
+    private long renewBeforeMs() {
+        return Math.max(1, plugin.getConfig().getIntegerParam("identity_renew_before_days", 30)) * 24L * 3600 * 1000;
+    }
+
+    /**
+     * Does any certificate in {@code chain} need renewal at {@code now}: expired, not yet valid, or with less than a third
+     * of its lifetime -- and at least {@code minBeforeMs} -- left. The third keeps short-lived leaves (re-enrollment) renewing
+     * well ahead; the floor covers long ones.
+     */
+    static boolean chainNeedsRenewal(X509Certificate[] chain, long now, long minBeforeMs) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return true;
+        for (X509Certificate c : chain) {
+            if (c == null) continue;
+            long nb = c.getNotBefore().getTime(), na = c.getNotAfter().getTime();
+            if (now < nb - CertValidity.BACKDATE_MS || now >= na) return true;
+            if (na - now <= Math.max(minBeforeMs, (na - nb) / 3)) return true;
+        }
+        return false;
+    }
+
+    private static String validityText(X509Certificate[] chain) {
+        long first = Long.MAX_VALUE;
+        for (X509Certificate c : chain) if (c != null) first = Math.min(first, c.getNotAfter().getTime());
+        return (first <= System.currentTimeMillis() ? "EXPIRED on " : "expires on ") + new java.util.Date(first);
+    }
+
+    private java.util.concurrent.ScheduledExecutorService renewal;
+
+    /** Check this node's chain and region CA daily ({@code identity_renew_check_hours}, default 24) and renew them when due. */
+    /**
+     * Validity of the leaves a region CA issues ({@code identity_leaf_validity_hours}, default 168 = 7 days). Short-lived:
+     * an identity that is no longer re-enrolled (a node gone, or refused) lapses on its own; a live node re-enrolls when a
+     * third of the lifetime is left.
+     */
+    long leafValidityMs() {
+        return Math.max(1, plugin.getConfig().getIntegerParam("identity_leaf_validity_hours", 168)) * 3600L * 1000;
+    }
+
+    private void startRenewalCheck() {
+        long minutes = Math.max(1, plugin.getConfig().getIntegerParam("identity_renew_check_minutes", 60));
+        renewal = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cresco-identity-renewal");
+            t.setDaemon(true);
+            return t;
+        });
+        renewal.scheduleWithFixedDelay(() -> {
+            try { renewIfDue(); } catch (Throwable t) { logger.error("identity renewal check: " + t.getMessage()); }
+        }, minutes, minutes, java.util.concurrent.TimeUnit.MINUTES);
+    }
+
+    /** Is this chain's leaf issued by a region CA this node does not hold (an enrollment it must renew by re-enrolling)? */
+    private boolean issuedByRemoteRegionCa(X509Certificate[] c) {
+        if (c == null || c.length < 2 || c[1] == null || regionCA != null) return false;
+        return PeerTrustRegistry.caScopeOf(c[1]) != null && c[1].getBasicConstraints() >= 0;
+    }
+
+    /** Stop this manager's background work (the shared peer trust registry stays open: the broker uses it). */
+    public void close() {
+        if (renewal != null) renewal.shutdownNow();
+    }
+
+    /**
+     * Renew what is due, keeping every key: the region CA (a new root re-signs the same CA key), then this node's chain (under
+     * its region CA when it holds one, else a fresh self-rooted chain for the same leaf key; a leaf a remote region CA issued
+     * is replaced at the next enrollment, and is renewed self-rooted here only so it never expires in use). Returns true when
+     * anything was renewed.
+     */
+    public synchronized boolean renewIfDue() throws Exception {
+        long now = System.currentTimeMillis(), before = renewBeforeMs();
+        boolean renewed = false;
+        if (regionCA != null && chainNeedsRenewal(regionCA.caChain(), now, before)) {
+            logger.warn("This node's region CA " + validityText(regionCA.caChain()) + "; renewing it with the same key");
+            regionCA = regionCA.renewed(keySize, YEARS_VALID);
+            saveRegionCA();
+            addCertificatesToTrustStore("localRegionCA-renewed", new X509Certificate[]{ regionCA.caCert() });
+            renewed = true;
+        }
+        if (chain != null && (renewed || chainNeedsRenewal(chain, now, before))) {
+            PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+            if (myKey == null) return renewed;
+            if (regionCA != null) {
+                CrescoIdentity me = CrescoNames.identityOf(chain[0]);
+                if (me != null) {
+                    X509Certificate[] fresh = regionCA.enrollFor(chain[0].getPublicKey(), me.getTenant(), me.getRegion(), me.getAgent(), leafValidityMs());
+                    this.chain = fresh;
+                    storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, fresh);
+                }
+            } else if (issuedByRemoteRegionCa(chain)) {
+                // a leaf our region's CA issued: re-enroll over the authenticated exchange (a fresh short-lived leaf, same key)
+                logger.info("This node's region-issued leaf " + validityText(chain) + "; re-enrolling with its regional controller");
+                boolean reEnrolled = false;
+                try { reEnrolled = controllerEngine.reEnroll(); } catch (Exception ex) { logger.warn("re-enrollment failed: " + ex.getMessage()); }
+                if (reEnrolled) return true;
+                long left = chain[0].getNotAfter().getTime() - now, life = chain[0].getNotAfter().getTime() - chain[0].getNotBefore().getTime();
+                if (left > life / 10) return renewed;          // try again at the next check
+                // the last tenth of its life and no re-enrollment: keep the key on a self-rooted chain (accepted by the
+                // region by its bound key) rather than let it lapse in use; the next re-enrollment replaces it
+                logger.warn("Re-enrollment did not succeed and the leaf " + validityText(chain) + "; renewing it self-rooted with the same key");
+                generateCertChain(new KeyPair(chain[0].getPublicKey(), myKey));
+            } else {
+                logger.warn("This node's certificate chain " + validityText(chain) + "; renewing it with the same key");
+                generateCertChain(new KeyPair(chain[0].getPublicKey(), myKey));
+            }
+            saveNodeIdentity();
+            addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            renewed = true;
+        }
+        if (renewed) {
+            try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) { }
+        }
+        return renewed;
+    }
+
+    /**
+     * The public-key directory ({@code public_key_directory}): where this node exports its own certificate and from which it
+     * imports operator-placed trust anchors. Default {@code <agent data dir>/public-keys} (absolute).
+     */
+    private Path publicKeyDirectory() {
+        String d = plugin.getConfig().getStringParam("public_key_directory");
+        if (d == null || d.isBlank()) return identityDir().getParent() == null ? Paths.get("public-keys").toAbsolutePath()
+                : identityDir().getParent().resolve("public-keys");
+        return Paths.get(d);
+    }
+
     private void exportPublicKey() {
         try {
-            String publicKeyDirectoryPath = plugin.getConfig().getStringParam("public_key_directory", "cresco-data/public-keys");
-            File publicKeyDirectory = new File(publicKeyDirectoryPath);
-            if (!publicKeyDirectory.exists()) {
-                publicKeyDirectory.mkdirs();
-            }
+            Path dir = publicKeyDirectory();
+            if (!dir.isAbsolute()) dir = dir.toAbsolutePath();
+            PeerTrustRegistry.mkdirs(dir);
             String certFileName = controllerEngine.cstate.getAgentPath() + ".cer";
-            File certFile = new File(publicKeyDirectory, certFileName);
-            try (FileOutputStream fos = new FileOutputStream(certFile)) {
-                fos.write(getPublicCertificate()[0].getEncoded());
-            }
+            PeerTrustRegistry.writeAtomically(dir.resolve(certFileName), getPublicCertificate()[0].getEncoded());
         } catch (Exception ex) {
             logger.error("Failed to export public key: " + ex.getMessage());
         }
     }
 
-    private void importPublicKeysFromDirectory() {
-        try {
-            String publicKeyDirectoryPath = plugin.getConfig().getStringParam("public_key_directory", "cresco-data/public-keys");
-            File publicKeyDirectory = new File(publicKeyDirectoryPath);
-            if (publicKeyDirectory.exists() && publicKeyDirectory.isDirectory()) {
-                File[] certFiles = publicKeyDirectory.listFiles();
-                if (certFiles != null) {
-                    for (File certFile : certFiles) {
-                        if (certFile.isFile()) {
-                            try {
-                                String alias = certFile.getName().replace(".cer", "");
-                                if (!trustStore.containsAlias(alias)) {
-                                    try (FileInputStream fis = new FileInputStream(certFile)) {
-                                        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                                        Certificate cert = cf.generateCertificate(fis);
-                                        trustStore.setCertificateEntry(alias, cert);
-                                        logger.info("Imported public key: " + alias);
-                                    }
-                                } else {
-                                    logger.debug("Certificate with alias '" + alias + "' already exists in the truststore. Skipping.");
-                                }
-                            } catch (Exception e) {
-                                logger.error("Failed to import certificate " + certFile.getName() + ": " + e.getMessage());
-                            }
-                        }
+    /** SHA-256 of a certificate's DER encoding, lowercase hex (the form {@code public_key_trusted_fingerprints} lists). */
+    static String certFingerprint(Certificate c) throws Exception {
+        return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(c.getEncoded()));
+    }
+
+    /**
+     * Audit D6: import operator-placed trust anchors from the public-key directory -- only certificates whose SHA-256
+     * fingerprint is listed in {@code public_key_trusted_fingerprints} (comma separated, hex, ':' allowed), only from an
+     * ABSOLUTE directory that neither group nor others may write, and only regular files (no symlinks) that neither group nor
+     * others may write. Before, every {@code .cer} in a relative {@code public-keys} directory became a trust anchor: whoever
+     * could drop a file there (or chose the working directory) chose this node's trust.
+     *
+     * @return the fingerprints imported
+     */
+    java.util.List<String> importPublicKeysFromDirectory() {
+        java.util.List<String> imported = new java.util.ArrayList<>();
+        java.util.Set<String> allow = new java.util.HashSet<>();
+        for (String f : csv(plugin.getConfig().getStringParam("public_key_trusted_fingerprints", ""))) {
+            allow.add(f.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        }
+        if (allow.isEmpty()) return imported;                     // nothing is trusted from the directory unless listed
+        Path dir = publicKeyDirectory();
+        if (!dir.isAbsolute()) {
+            logger.error("public_key_directory '" + dir + "' is not an absolute path: no trust anchor is imported from it");
+            return imported;
+        }
+        if (!Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return imported;
+        String loose = looseWriter(dir);
+        if (loose != null) {
+            logger.error("public_key_directory " + dir + " " + loose + ": no trust anchor is imported from it (make it owner-only, chmod 700)");
+            return imported;
+        }
+        try (java.util.stream.Stream<Path> files = Files.list(dir)) {
+            for (Path f : (Iterable<Path>) files::iterator) {
+                if (!f.getFileName().toString().endsWith(".cer") || !Files.isRegularFile(f, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue;
+                String why = looseWriter(f);
+                if (why != null) { logger.error("Not importing " + f + ": it " + why); continue; }
+                try (InputStream in = Files.newInputStream(f)) {
+                    Certificate cert = CertificateFactory.getInstance("X.509").generateCertificate(in);
+                    String fp = certFingerprint(cert);
+                    if (!allow.contains(fp)) {
+                        logger.debug("public-key directory: " + f.getFileName() + " (" + fp + ") is not in public_key_trusted_fingerprints; not imported");
+                        continue;
                     }
+                    trustStore.setCertificateEntry("imported#" + fp, cert);
+                    imported.add(fp);
+                    logger.info("Imported trust anchor " + f.getFileName() + " (" + fp + ") from " + dir + " (listed in public_key_trusted_fingerprints)");
+                } catch (Exception e) {
+                    logger.error("Failed to import certificate " + f.getFileName() + ": " + e.getMessage());
                 }
             }
         } catch (Exception ex) {
             logger.error("Error importing public keys: " + ex.getMessage());
+        }
+        return imported;
+    }
+
+    /** Why {@code p} is writable by someone other than its owner (or owned by another user), or null. */
+    private static String looseWriter(Path p) {
+        try {
+            java.util.Set<java.nio.file.attribute.PosixFilePermission> perms =
+                    Files.getPosixFilePermissions(p, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            if (perms.contains(java.nio.file.attribute.PosixFilePermission.GROUP_WRITE)
+                    || perms.contains(java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE)) {
+                return "is writable by group or others (" + java.nio.file.attribute.PosixFilePermissions.toString(perms) + ")";
+            }
+            String owner = Files.getOwner(p, java.nio.file.LinkOption.NOFOLLOW_LINKS).getName(), me = System.getProperty("user.name");
+            if (!owner.equals(me) && !owner.equals("root")) return "is owned by " + owner + ", not this node's user " + me;
+            return null;
+        } catch (UnsupportedOperationException notPosix) {
+            return "has no POSIX permissions to check";
+        } catch (IOException e) {
+            return "cannot be checked (" + e.getMessage() + ")";
         }
     }
 
@@ -653,7 +872,10 @@ public class CertificateManager {
             // (a restarted server under per-node trust): see NodeIdentityKeyManager
             for (int i = 0; i < keyManagers.length; i++) {
                 if (keyManagers[i] instanceof X509KeyManager) {
-                    keyManagers[i] = new NodeIdentityKeyManager((X509KeyManager) keyManagers[i], () -> keyStoreAlias);
+                    // the CURRENT chain: a connection factory made before a renewal or re-enrollment presents the new leaf
+                    // when it reconnects (same key), not the snapshot it was made with
+                    keyManagers[i] = new NodeIdentityKeyManager((X509KeyManager) keyManagers[i], () -> keyStoreAlias)
+                            .withCurrentChain(() -> chain);
                 }
             }
         } catch(Exception ex) {
@@ -807,7 +1029,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 PeerTrustRegistry.BindResult own = peerTrust.bind(tenant, region, agent, getPublicCertificate()[0].getPublicKey(), "own",
                         PeerTrustRegistry.ROLE_SELF, true);
                 if (!own.ok) logger.error("This controller's own identity " + region + "/" + agent + " is bound to another key: " + own.reason);
-                X509Certificate[] selfChain = regionCA.enroll(getPublicCertificate()[0].getPublicKey(), tenant, region, agent, YEARS_VALID);
+                X509Certificate[] selfChain = regionCA.enrollFor(getPublicCertificate()[0].getPublicKey(), tenant, region, agent, leafValidityMs());
                 this.chain = selfChain;
                 storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, selfChain);
                 saveNodeIdentity();
@@ -844,7 +1066,14 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 return null;
             }
             logger.info("Loaded the persisted region CA for region " + region);
-            return RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
+            RegionCA ca = RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
+            if (chainNeedsRenewal(c, System.currentTimeMillis(), renewBeforeMs())) {
+                logger.warn("The persisted region CA for region " + region + " " + validityText(c) + "; renewing it with the same key");
+                ca = ca.renewed(keySize, YEARS_VALID);
+                regionCA = ca;
+                saveRegionCA();
+            }
+            return ca;
         } catch (Exception ex) {
             logger.error("Persisted region CA unreadable (" + ex.getMessage() + "); making a new one");
             return null;
@@ -927,7 +1156,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("Enrollment REFUSED: identity " + region + "/" + agent + " is taken: " + free.reason);
                 return null;
             }
-            X509Certificate[] signed = regionCA.enroll(joinerKey, tenant, region, agent, YEARS_VALID);
+            X509Certificate[] signed = regionCA.enrollFor(joinerKey, tenant, region, agent, leafValidityMs());
             // run the guards again on the name AS ISSUED (what every verifier will read), not on the strings we passed in
             CrescoIdentity issued = CrescoNames.identityOf(signed[0]);
             if (issued == null || !tenant.equals(issued.getTenant()) || !region.equals(issued.getRegion()) || !agent.equals(issued.getAgent())
@@ -1083,7 +1312,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     /**
      * As {@link #installEnrollment(String, String)} for an exchange of {@code type}: an AGENT exchange must return our own
      * identity re-issued by the region we joined; only a REGION/GLOBAL exchange may return the peer controller's CA. A
-     * client follows its peer's CA (a re-installed controller has a new one).
+     * client PINS its peer's CA at the first join: another CA for that region later is refused unless the operator
+     * authorises one rebind of the region on this node (holding a discovery secret does not make anyone that region's CA).
      */
     public boolean installEnrollment(String chainJson, String peerRegion, io.cresco.agent.controller.netdiscovery.DiscoveryType type) {
         try {
@@ -1114,7 +1344,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     return false;
                 }
                 String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
-                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated", true);
+                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated", false);
                 if (why != null) {
                     logger.error("installEnrollment REFUSED: " + why);
                     return false;
@@ -1159,7 +1389,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("installEnrollment REFUSED: the returned identity or its CA is not valid now: " + e.getMessage());
                 return false;
             }
-            String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined", true);
+            String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined", false);
             if (why != null) {
                 logger.error("installEnrollment REFUSED: " + why);
                 return false;

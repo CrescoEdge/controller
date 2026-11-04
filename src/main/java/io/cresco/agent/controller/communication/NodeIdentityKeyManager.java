@@ -25,6 +25,15 @@ final class NodeIdentityKeyManager extends X509ExtendedKeyManager {
     private final X509KeyManager d;
     private final Supplier<String> ownAlias;
 
+    /** The node's CURRENT chain (renewed or re-enrolled since the delegate was made), or null to use the delegate's. */
+    private volatile Supplier<X509Certificate[]> currentChain;
+
+    /** Present the chain {@code current} supplies for this node's own alias (the key is unchanged by renewal). */
+    NodeIdentityKeyManager withCurrentChain(Supplier<X509Certificate[]> current) {
+        this.currentChain = current;
+        return this;
+    }
+
     NodeIdentityKeyManager(X509KeyManager delegate, Supplier<String> ownAlias) {
         this.d = delegate;
         this.ownAlias = ownAlias;
@@ -78,7 +87,18 @@ final class NodeIdentityKeyManager extends X509ExtendedKeyManager {
     }
 
     @Override
-    public X509Certificate[] getCertificateChain(String alias) { return d.getCertificateChain(alias); }
+    public X509Certificate[] getCertificateChain(String alias) {
+        Supplier<X509Certificate[]> cur = currentChain;
+        if (cur != null && alias != null && alias.equals(ownAlias.get())) {
+            X509Certificate[] c = cur.get();
+            if (c != null && c.length > 0 && c[0] != null) {
+                int n = 0;
+                while (n < c.length && c[n] != null) n++;
+                return java.util.Arrays.copyOf(c, n);
+            }
+        }
+        return d.getCertificateChain(alias);
+    }
 
     @Override
     public PrivateKey getPrivateKey(String alias) { return d.getPrivateKey(alias); }

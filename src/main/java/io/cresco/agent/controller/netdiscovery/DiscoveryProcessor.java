@@ -286,6 +286,11 @@ public class DiscoveryProcessor {
 			String myRegion = controllerEngine.cstate.getRegion();
 			String myTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
 			if (asClient) {
+				String anchor = controllerEngine.getCertificateManager().controllerAnchorRefusal(certs);
+				if (anchor != null) {
+					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + anchor);
+					return false;
+				}
 				if (!controllerExchange && !region.equals(myRegion)) {
 					logger.error("Discovery REFUSED " + region + "/" + agent + ": it answered as the controller of region " + region
 							+ " but this node joined region " + myRegion);
@@ -314,7 +319,10 @@ public class DiscoveryProcessor {
 			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
 				String role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
 						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
-				String why = reg.pin(region, agent, certs[0], role, asClient);
+				// a joiner PINS the controller it joined (strict, as a responder pins its joiners): a different key for that name
+				// later -- an agent-secret holder answering as the controller -- is refused unless the operator authorises one
+				// rebind of it on this node
+				String why = reg.pin(region, agent, certs[0], role, false);
 				if (why != null) {
 					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
 					return false;
@@ -467,7 +475,7 @@ public class DiscoveryProcessor {
 	}
 
 	private java.security.cert.X509Certificate leafOf(String chainJson) {
-		java.security.cert.X509Certificate[] c = controllerEngine.getCertificateManager().getCertsfromJson(chainJson);
+		java.security.cert.X509Certificate[] c = chainJson == null ? null : controllerEngine.getCertificateManager().getCertsfromJson(chainJson);
 		return (c == null || c.length == 0) ? null : c[0];
 	}
 
@@ -505,7 +513,7 @@ public class DiscoveryProcessor {
 			return null;
 		}
 		byte[] key = DiscoveryAuth.key(secretFor(hello.type), "handshake|" + hello.type);
-		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), sleaf);
+		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), false);
 		if (!DiscoveryAuth.macEquals(ch.mac, DiscoveryAuth.mac(key, "S1", t))) {
 			logger.error("discovery v2: " + remote + " (claiming " + ch.sreg + "/" + ch.sagt + ") failed authentication: it does not hold the "
 					+ hello.type + " discovery secret, or the exchange was altered");
@@ -514,7 +522,7 @@ public class DiscoveryProcessor {
 		DiscoveryAuth.Msg p = new DiscoveryAuth.Msg();
 		p.step = "proof";
 		p.type = hello.type;
-		p.mac = DiscoveryAuth.mac(key, "C", t);
+		p.mac = DiscoveryAuth.mac(key, "C", DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), true));
 		return p;
 	}
 
@@ -528,7 +536,7 @@ public class DiscoveryProcessor {
 			return null;
 		}
 		byte[] key = DiscoveryAuth.key(secretFor(hello.type), "handshake|" + hello.type);
-		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert));
+		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), true);
 		if (!DiscoveryAuth.macEquals(r.mac, DiscoveryAuth.mac(key, "S2", t, DiscoveryAuth.resultDigest(r)))) {
 			logger.error("discovery v2: the result from " + remoteAddress + " failed authentication (altered or replayed)");
 			return null;
@@ -578,7 +586,7 @@ public class DiscoveryProcessor {
 		ch.scert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 		ch.sport = advertisedBrokerPort();
 		byte[] key = DiscoveryAuth.key(secret, "handshake|" + h.type);
-		ch.mac = DiscoveryAuth.mac(key, "S1", DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert)));
+		ch.mac = DiscoveryAuth.mac(key, "S1", DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), false));
 		return ch;
 	}
 
@@ -588,7 +596,8 @@ public class DiscoveryProcessor {
 		r.step = "result";
 		r.type = h.type;
 		byte[] key = DiscoveryAuth.key(secretFor(h.type), "handshake|" + h.type);
-		byte[] t = DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert));
+		// the client's PROOF covers the whole chain it sent: a chain altered on the way fails here, before anything is recorded
+		byte[] t = DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), true);
 		if (p == null || !"proof".equals(p.step) || !DiscoveryAuth.macEquals(p.mac, DiscoveryAuth.mac(key, "C", t))) {
 			logger.warn("discovery v2: " + remote + " (claiming " + h.creg + "/" + h.cagt + ") failed authentication: wrong "
 					+ h.type + " secret, a replay, or an altered exchange; nothing recorded");

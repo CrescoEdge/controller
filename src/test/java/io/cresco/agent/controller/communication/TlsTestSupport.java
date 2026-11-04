@@ -161,6 +161,9 @@ public final class TlsTestSupport {
         @Override public String getAgentPath() { return region + "_" + agent; }
     }
 
+    /** A test node's controller state (agent, not regional). */
+    public static State state(PluginBuilder pb, String region, String agent) { return new State(pb, region, agent); }
+
     /** A controller engine with a real CertificateManager (and its ActiveClient), for region/agent. */
     public static ControllerEngine engine(String region, String agent, Map<String, Object> extra) throws Exception {
         provider();

@@ -76,6 +76,11 @@ public final class RegionCA {
      * that the node installs as its keystore identity.
      */
     public X509Certificate[] issueLeaf(PublicKey subjectPublicKey, CrescoIdentity identity, int validityYears) throws Exception {
+        return issueLeafFor(subjectPublicKey, identity, validityYears * 365L * 24 * 3600 * 1000);
+    }
+
+    /** As {@link #issueLeaf} with a validity in milliseconds (short-lived leaves, renewed by re-enrollment). */
+    public X509Certificate[] issueLeafFor(PublicKey subjectPublicKey, CrescoIdentity identity, long validityMs) throws Exception {
         // built from the attribute values (never a string DN, which other parsers normalise differently); throws for a
         // name outside the Cresco grammar, so nothing that would need escaping is ever issued
         X500Name subject = CrescoNames.x500Partial(identity);
@@ -83,7 +88,7 @@ public final class RegionCA {
         // CA's subject (reconstructing it from a string can change the encoding and break PKIX name-chaining).
         X500Name issuer = new JcaX509CertificateHolder(caCert).getSubject();
         X509Certificate leaf = build(subject, issuer, subjectPublicKey, caKeyPair.getPrivate(),
-                validityYears, false, KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
+                new Date(System.currentTimeMillis() + validityMs), false, KeyUsage.digitalSignature | KeyUsage.keyEncipherment);
         return new X509Certificate[]{leaf, caCert, rootCert};
     }
 
@@ -95,8 +100,31 @@ public final class RegionCA {
      * Returns the region-signed chain [leaf, regionCA, root] the node installs as its identity.
      */
     public X509Certificate[] enroll(PublicKey nodePublicKey, String tenant, String region, String agent, int validityYears) throws Exception {
+        return enrollFor(nodePublicKey, tenant, region, agent, validityYears * 365L * 24 * 3600 * 1000);
+    }
+
+    /** As {@link #enroll} with a validity in milliseconds (short-lived leaves). */
+    public X509Certificate[] enrollFor(PublicKey nodePublicKey, String tenant, String region, String agent, long validityMs) throws Exception {
         CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null));   // throws unless all three names are valid
-        return issueLeaf(nodePublicKey, CrescoIdentity.of(tenant, region, agent, null), validityYears);
+        return issueLeafFor(nodePublicKey, CrescoIdentity.of(tenant, region, agent, null), validityMs);
+    }
+
+    /**
+     * This CA with fresh certificates and the SAME issuing key and subject: a new root (the old root's key is not kept)
+     * re-signs the region CA certificate for {@code validityYears}. Every scope a peer recorded for this region (by the CA's
+     * key and subject) and every leaf this CA issued stay valid, so renewal needs nothing from any peer.
+     */
+    public RegionCA renewed(int keySize, int validityYears) throws Exception {
+        X500Name caName = new JcaX509CertificateHolder(caCert).getSubject();
+        String[] scope = PeerTrustRegistry.caScopeOf(caCert);
+        String region = scope == null ? "region" : scope[0], tenant = scope == null ? "default" : scope[1];
+        KeyPair rootKp = keyPair(keySize);
+        X500Name rootName = new X500Name("CN=rootCA-" + region + ", O=" + safe(tenant));
+        X509Certificate root = build(rootName, rootName, rootKp.getPublic(), rootKp.getPrivate(),
+                validityYears, true, KeyUsage.keyCertSign | KeyUsage.cRLSign);
+        X509Certificate ca = build(caName, rootName, caKeyPair.getPublic(), rootKp.getPrivate(),
+                validityYears, true, KeyUsage.keyCertSign | KeyUsage.cRLSign);
+        return new RegionCA(root, caKeyPair, ca);
     }
 
     /** The region's trust anchors [regionCA, root] — this is what gets distributed to other regions. */
@@ -123,8 +151,12 @@ public final class RegionCA {
 
     private static X509Certificate build(X500Name subject, X500Name issuer, PublicKey subjectKey,
                                          PrivateKey signingKey, int years, boolean isCa, int keyUsage) throws Exception {
+        return build(subject, issuer, subjectKey, signingKey, CertValidity.notAfterYears(years), isCa, keyUsage);
+    }
+
+    private static X509Certificate build(X500Name subject, X500Name issuer, PublicKey subjectKey,
+                                         PrivateKey signingKey, Date notAfter, boolean isCa, int keyUsage) throws Exception {
         Date notBefore = CertValidity.notBefore();       // backdated an hour for peers whose clocks are behind
-        Date notAfter = CertValidity.notAfterYears(years);
         JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
                 issuer, CertValidity.serial(), notBefore, notAfter, subject, subjectKey);
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));

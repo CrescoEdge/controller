@@ -227,6 +227,8 @@ public class AgentHealthWatcher {
                     io.cresco.agent.controller.health.MeshHealthPing.advertiseChild(controllerEngine, pingRequest);
                     // the id of the crypto policy we hold: the pong carries the policy when the region's differs
                     io.cresco.agent.controller.statemachine.CryptoPolicySync.advertise(pingRequest);
+                    // revocations: what we hold of the region's list (the pong brings it when it differs)
+                    io.cresco.agent.controller.communication.RevocationSync.onChildPing(controllerEngine, pingRequest);
 
                     // Send RPC and wait for response with timeout. This synchronous agent->region->agent
                     // round trip is a free, continuous RTT probe on the parent link (measurement subsystem);
