@@ -827,6 +827,7 @@ public class PluginAdmin {
                         InputStream in = conn.getInputStream();
                         String bundlePath = inputURL.getPath();
                         bundle = context.installBundle(bundlePath, in);
+                        installedHere(bundle);
                         if (in != null) {
                             in.close();
                         }
@@ -896,7 +897,7 @@ public class PluginAdmin {
             return null;
         }
         try (InputStream in = Files.newInputStream(copy)) {
-            return context.installBundle(location, in);
+            return installedHere(context.installBundle(location, in));
         } finally {
             try { Files.deleteIfExists(copy); } catch (Exception ignore) { }
         }
@@ -937,6 +938,23 @@ public class PluginAdmin {
             logger.error("stopBundle() ", ex);
         }
         return  isStopped;
+    }
+
+    /** Bundles this controller installed itself: embedded in the agent jar, or from a copy that verified (signed). */
+    private final java.util.Set<Long> installedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private Bundle installedHere(Bundle b) {
+        if (b != null) installedHere.add(b.getBundleId());
+        return b;
+    }
+
+    /**
+     * Did this controller install bundle {@code bundleId} itself (from the agent jar or a verified signed copy)? A bundle a
+     * plugin installed through its own BundleContext did not -- whatever symbolic name it chose (review F5): only such
+     * bundles hold a capability bound to a name (on_behalf_bundles, the executor's stdin).
+     */
+    public boolean installedByController(long bundleId) {
+        return installedHere.contains(bundleId);
     }
 
     public boolean removeBundle(long bundleID) {
@@ -1779,8 +1797,8 @@ public class PluginAdmin {
             if(bundleURL != null) {
 
                 String bundlePath = bundleURL.getPath();
-                installedBundle = context.installBundle(bundlePath,
-                        getClass().getClassLoader().getResourceAsStream(bundleName));
+                installedBundle = installedHere(context.installBundle(bundlePath,
+                        getClass().getClassLoader().getResourceAsStream(bundleName)));
 
             } else {
                 logger.error("installInternalBundleJars() Bundle = null");

@@ -428,6 +428,13 @@
             <version>1.1.1</version>
             <scope>test</scope>
         </dependency>
+        <!-- review/phase3-20261104: a real OSGi framework for the service-factory identity test (test scope only) -->
+        <dependency>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>org.apache.felix.framework</artifactId>
+            <version>7.0.5</version>
+            <scope>test</scope>
+        </dependency>
         <!--
         <dependency>
             <groupId>org.hsqldb</groupId>
