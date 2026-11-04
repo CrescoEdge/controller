@@ -221,8 +221,8 @@ public class ControllerSMHandler {
 
     /**
      * Whether this node's parent link is up now. An agent judges it as link:parent does (pong age against the
-     * same stale threshold; isReachableAgent is always true on an agent); a region under a global by whether the
-     * global has a live route over the bridge.
+     * same stale threshold; isReachableAgent is always true on an agent); a region under a global by the global's pong
+     * age (as link:parent does), or by whether the global has a live route when region pings are not judged.
      */
     private boolean isParentLinkLive(ControllerMode mode) {
         if (mode == ControllerMode.AGENT) {
@@ -234,6 +234,13 @@ public class ControllerSMHandler {
             return age < io.cresco.agent.controller.health.ParentLinkHealthCheck.staleThresholdMs(plugin, w.getPingIntervalMs());
         }
         if (mode == ControllerMode.REGION_GLOBAL) {
+            // judged as link:parent does: by the global's pong age (a route over another region's bridge can outlive the
+            // global itself), or -- with health_link_region_ping=false -- by whether the global has a live route
+            io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher w = controllerEngine.getRegionHealthWatcher();
+            if (w != null && io.cresco.agent.controller.health.ParentLinkHealthCheck.regionPingJudged(plugin)) {
+                long age = System.currentTimeMillis() - w.getLastGlobalPongTs();
+                return age < io.cresco.agent.controller.health.ParentLinkHealthCheck.regionStaleThresholdMs(plugin, w.getPingIntervalMs());
+            }
             String globalPath = cstate.getGlobalControllerPath();
             return globalPath == null || controllerEngine.isReachableAgent(globalPath);
         }
@@ -1263,12 +1270,12 @@ public class ControllerSMHandler {
                         // WILDCARD so it receives every tenant's traffic regardless of the stamped tenant. A
                         // leaf agent (network client, ACL-enforced) consumes only its own T.<tenant>.<agentPath>.
                         String rxQueue = cstate.getAgentPath();
-                        if (plugin.getConfig().getBooleanParam("tenant_namespacing", false)) {
+                        if (io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())) {
                             if (URI.startsWith("vm")) {
                                 rxQueue = io.cresco.library.security.TenantNamespace.wildcard(rxQueue);
                             } else {
                                 rxQueue = io.cresco.library.security.TenantNamespace.qualify(
-                                        plugin.getConfig().getStringParam("tenant_id", "default"), rxQueue);
+                                        io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig()), rxQueue);
                             }
                         }
                         if (!controllerEngine.getActiveClient().initActiveAgentConsumer(rxQueue, URI)) {

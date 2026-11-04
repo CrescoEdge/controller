@@ -14,8 +14,8 @@ import org.apache.felix.hc.api.Result;
  * (now transport-only) health watcher; the only communicated input is the ping/pong itself. A stale
  * link returns {@code TEMPORARILY_UNAVAILABLE} so {@link CrescoHealthExecutor}'s grace window absorbs
  * transient blips and only a sustained loss escalates to {@code CRITICAL} — which the
- * {@link HealthMinaBridge} turns into the corresponding MINA event. Nodes with no parent (GLOBAL,
- * STANDALONE, transient/plain-REGION states) report OK.
+ * {@link HealthMinaBridge} turns into the corresponding MINA event. A region judges its global the same way (by default;
+ * see {@link #regionStaleThresholdMs}). Nodes with no parent (GLOBAL, STANDALONE, transient/plain-REGION states) report OK.
  */
 public class ParentLinkHealthCheck implements HealthCheck {
 
@@ -44,26 +44,21 @@ public class ParentLinkHealthCheck implements HealthCheck {
                 return evaluate("regional", w.getLastParentPongTs(), w.getPingIntervalMs());
             }
 
-            // Region connected to a (remote) global -> global parent.
-            //
-            // A region reaches its global over a network-of-brokers BRIDGE, and BrokeredAgent already
-            // detects bridge loss and fires globalControllerLost fast and reliably (a dropped TCP
-            // bridge is a stronger, lower-latency signal than an application ping). The RPC-ping path
-            // is therefore redundant for regions, and on a same-host federation it is unreliable
-            // (pongs arrive jittery ~1/15s), which would make link:parent flap. So by default the
-            // region's global link is reported healthy here and its loss is driven by BrokeredAgent.
-            // Set health_link_region_ping=true to additionally drive it from the ping (useful only on
-            // multi-host fabrics where the ping is reliable).
+            // Region connected to a (remote) global -> global parent, judged by the age of the global's last pong (audit:
+            // a region with no bridge of its own -- its global reached over another region's route -- never saw a bridge
+            // drop, so judging by the bridge alone meant it NEVER declared its global lost). The ping runs whenever the
+            // region is attached to a global (RegionHealthWatcher), retries within each tick, and the region threshold
+            // tolerates a jittery same-host federation; CrescoHealthExecutor's grace window absorbs a single blip.
+            // health_link_region_ping=false is an explicit opt-out (bridge loss only), not recommended.
             if (mode == ControllerMode.REGION_GLOBAL) {
-                boolean usePing = ce.getPluginBuilder().getConfig().getBooleanParam("health_link_region_ping", false);
-                if (!usePing) {
-                    return new Result(Result.Status.OK, "global link via broker bridge (BrokeredAgent-detected)");
+                if (!regionPingJudged(ce.getPluginBuilder())) {
+                    return new Result(Result.Status.OK, "global link via broker bridge only (health_link_region_ping=false)");
                 }
-                RegionHealthWatcher w = ce.getRegionHealthWatcher();
-                if (w == null) {
+                long[] pong = globalPong();
+                if (pong == null) {
                     return new Result(Result.Status.TEMPORARILY_UNAVAILABLE, "region watcher not ready");
                 }
-                return evaluate("global", w.getLastGlobalPongTs(), w.getPingIntervalMs());
+                return evaluateAgainst("global", pong[0], regionStaleThresholdMs(ce.getPluginBuilder(), pong[1]));
             }
 
             // GLOBAL / STANDALONE / transient states: no parent link to monitor.
@@ -86,8 +81,35 @@ public class ParentLinkHealthCheck implements HealthCheck {
         return staleMs;
     }
 
+    /** Is a region's global link judged by pong age ({@code health_link_region_ping}, default true)? */
+    public static boolean regionPingJudged(io.cresco.library.plugin.PluginBuilder plugin) {
+        return plugin.getConfig().getBooleanParam("health_link_region_ping", true);
+    }
+
+    /**
+     * Pong age at which a region's GLOBAL link counts as stale: {@code health_link_region_stale_ms}, or by default three
+     * ping intervals and at least 30 s (a same-host federation answers jittery). Bounded: a region whose global stopped
+     * answering goes non-OK within this time, and CRITICAL after the health executor's grace window.
+     */
+    public static long regionStaleThresholdMs(io.cresco.library.plugin.PluginBuilder plugin, long pingIntervalMs) {
+        long staleMs = plugin.getConfig().getLongParam("health_link_region_stale_ms", 0L);
+        if (staleMs <= 0) {
+            staleMs = Math.max(pingIntervalMs * 3, 30000L);
+        }
+        return staleMs;
+    }
+
+    /** {lastGlobalPongTs, pingIntervalMs} of this region, or null when its watcher is not up. */
+    protected long[] globalPong() {
+        RegionHealthWatcher w = ce.getRegionHealthWatcher();
+        return w == null ? null : new long[]{w.getLastGlobalPongTs(), w.getPingIntervalMs()};
+    }
+
     private Result evaluate(String label, long lastPongTs, long pingIntervalMs) {
-        long staleMs = staleThresholdMs(ce.getPluginBuilder(), pingIntervalMs);
+        return evaluateAgainst(label, lastPongTs, staleThresholdMs(ce.getPluginBuilder(), pingIntervalMs));
+    }
+
+    private Result evaluateAgainst(String label, long lastPongTs, long staleMs) {
         long age = System.currentTimeMillis() - lastPongTs;
         if (age < staleMs) {
             staleEpisode = false;
