@@ -51,7 +51,7 @@ class PkiToolTest {
         Path pki = Paths.get("target", "pki-tool-test-" + System.nanoTime()).toAbsolutePath();
         run(pki, "init", pki.toString(), "--days", "30");
         run(pki, "region", pki.toString(), "t1", "rgr", "--days", "30");
-        run(pki, "node", pki.toString(), "t1", "glob", "gc", "--controller", "--days", "10");
+        run(pki, "node", pki.toString(), "t1", "glob", "gc", "--global", "--days", "10");
         run(pki, "node", pki.toString(), "t1", "rgr", "rc", "--controller", "--days", "10");
         run(pki, "node", pki.toString(), "t1", "rgr", "b1", "--days", "10");
         run(pki, "api", pki.toString(), "t1", "alice", "admin", "--days", "10");
@@ -61,6 +61,8 @@ class PkiToolTest {
         ProvisionedIdentity gc = load(pki.resolve("nodes/glob_gc"), pki, null), rc = load(pki.resolve("nodes/rgr_rc"), pki, null),
                 b1 = load(pki.resolve("nodes/rgr_b1"), pki, null);
         assertTrue(gc.controller && rc.controller && !b1.controller);
+        assertTrue(gc.global && !rc.global, "only the node issued with --global is the global");
+        assertEquals(1, ProvisionedIdentity.readAnchors(pki.resolve("trust-anchors.pem")).size(), "trust-anchors.pem holds the root only");
         assertEquals("rgr", b1.identity.getRegion());
         assertEquals("b1", b1.identity.getAgent());
         assertEquals(3, b1.chain.length, "an agent's keystore carries leaf, region CA and root");
@@ -81,6 +83,18 @@ class PkiToolTest {
         assertNotNull(rev.refusal(b1.chain), "a revoked node passes the operator's revocations");
         assertNull(rev.refusal(rc.chain));
         assertThrows(ProvisionedIdentity.ProvisioningException.class, () -> load(pki.resolve("nodes/rgr_b1"), pki, rev));
+        // revoking the REGION CA (the root's CRL lists it, its key is denied) stops rc, a leaf it issued, even presented alone
+        run(pki, "revoke", pki.toString(), pki.resolve("regions/t1_rgr/ca.pem").toString());
+        run(pki, "crl", pki.toString());
+        ProvisionedIdentity.Revocations rev2 = ProvisionedIdentity.Revocations.read(pki.resolve("revocations.pem"),
+                ProvisionedIdentity.readAnchors(pki.resolve("trust-anchors.pem")));
+        PeerTrustRegistry reg = new PeerTrustRegistry();
+        reg.setPki(ProvisionedIdentity.readAnchors(pki.resolve("trust-anchors.pem")), rev2);
+        assertNull(reg.verifiedIdentity(rc.chain), "a leaf of the revoked region CA is accepted");
+        assertNotNull(reg.revokedReason(rc.chain), "the live sweep keeps a leaf of the revoked region CA");
+        assertThrows(ProvisionedIdentity.ProvisioningException.class, () -> load(pki.resolve("nodes/rgr_rc"), pki, rev2));
+        assertNull(ProvisionedIdentity.validate(gc.chain, ProvisionedIdentity.readAnchors(pki.resolve("trust-anchors.pem")), new Date(), rev2),
+                "the global, issued by the root, is unaffected");
         // only the CRL (without the deny list) still refuses it
         String crlOnly = Files.readString(pki.resolve("revocations.pem")).replaceAll("(?m)^key:.*$", "");
         Path crls = pki.resolve("crl-only.pem");

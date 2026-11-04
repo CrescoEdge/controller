@@ -11,13 +11,17 @@ whenever `identity_keystore` is set.
 |---|---|
 | `identity_keystore` | PKCS12 keystore with ONE private key entry: the node's key and its chain (leaf first, then its issuing CAs) |
 | `identity_keystore_password_file` | the keystore's password (first line); owner-only |
-| `trust_anchors` | PEM bundle of the fabric's CA certificates (the root, and the region CAs) |
+| `trust_anchors` | PEM bundle of the fabric's ROOT certificate(s) only (region CAs are intermediates each node presents in its chain) |
 | `revocation_file` | optional: the operator's revocations -- PEM CRLs issued by the PKI and/or a deny list (below) |
 | `identity_keystore_reload_seconds` | 30: how often the files are checked for replacement |
 | `regionname`, `agentname`, `tenant_id` | must match the certificate (unset names are taken from it) |
 
-The keystore and its password file must be regular files (not symbolic links), writable and readable by the owner only;
-the anchors and revocation files must not be writable by group or others. Anything else and the node **refuses to start**.
+Every one of these files must be a regular file (not a symbolic link) owned by the node's user (or root), not writable by
+group or others (the keystore and its password file not readable by them either), in a directory -- the parent and every
+directory above it -- owned by the node's user or root and not writable by group or others (a root-owned sticky directory
+such as `/tmp` is allowed above the parent): otherwise another user could rename a file of their own into its place. Anything
+else and the node **refuses to start**; a replacement that fails these checks is refused; and the checks run again at every
+reload tick (a directory opened to others later raises a CRITICAL `identity` alarm, and no replacement is loaded).
 
 ## Identity names
 
@@ -28,15 +32,27 @@ What the broker and the peer trust registry use is the leaf's subject, read stri
 - **controller** (a region or global controller: it answers discovery, bridges, sends revocation lists): also the SAN URI
   `cresco:role:controller`; a node configured as `is_region`/`is_global` refuses to start without it, and a joiner refuses a
   responder without it;
+- **the global** controller: also the SAN URI `cresco:role:global` (issued by the root, or a CA whose roles include
+  `global`). A node configured `is_global` refuses to start without it; ONLY a node holding it answers GLOBAL discovery, and a
+  region accepts as its global (its parent) only a responder whose certificate carries it. Every region holds
+  `discovery_secret_global` (it needs it to join), so the secret alone never says which controller is the global;
 - **API user** (wsapi): SAN URIs `cresco:api:<tenant>/<user>` and `cresco:role:<admin|user>`, subject `CN=<user>, O=<tenant>`
   (no `OU`, so it can never name a node);
-- **CA scope**: a CA whose subject names a region and tenant (`OU`, `O`) may issue only that region's and tenant's names; the
-  root (no `OU`) may issue any.
+- **CA scope (fail closed)**: every CA on a path -- the anchor included -- must allow the leaf's tenant, region and roles.
+  A CA's scope is EXPLICIT: exactly one SAN URI `cresco:ca:<tenant>/<region>` (`<tenant>/*`: every region of the tenant;
+  `*`: any) and exactly one `cresco:ca-roles:<roles>` (a comma list of `node`, `controller`, `global`). Only a self-signed
+  anchor without scope URIs (the fabric root) may issue anything. Any other CA without an explicit, well-formed scope -- a
+  tenant CA naming only `O=`, an enterprise CA, a region CA of the earlier tool -- issues nothing a node accepts. A region CA
+  made by the tool carries `cresco:ca:<tenant>/<region>` and `cresco:ca-roles:node,controller` (never `global`).
 
 ## At start
 
 The chain is validated (PKIX: signatures, validity, CA basic constraints and path length) from the leaf to an anchor, the
-CA scope is checked, the key must match the certificate, and the operator's revocations must not list it. The node refuses
+CA scopes are checked, the key must match the certificate, and then EVERY certificate on the path, the anchor included, must
+be within its validity (PKIX never checks an anchor's own dates) and not listed by the operator's revocations (a revoked
+region CA stops every leaf it issued, whether the leaf presents it or not). Peers are judged the same way at every
+handshake, and the broker's sweep of live connections (every minute and at every revocation change) re-judges the whole
+path each connection presented: a revoked or expired issuer or anchor closes it. The node refuses
 to start -- the controller does not come up, the log says `REFUSING TO START: ...` -- when any check fails, the
 certificate names another identity than the node is configured as, or `security_profile=production` is set without a
 keystore. There is no fallback.
@@ -70,21 +86,24 @@ owner-only (`umask 077`, files `600`, directories `700`).
 ```
 tools/cresco-pki.sh init   <pki> [--name "Cresco Fabric Root"] [--days 3650] [--key rsa|ec]
 tools/cresco-pki.sh region <pki> <tenant> <region> [--days 1825]
-tools/cresco-pki.sh node   <pki> <tenant> <region> <agent> [--controller] [--issuer root|region] [--days 365]
+tools/cresco-pki.sh node   <pki> <tenant> <region> <agent> [--controller|--global] [--issuer root|region] [--days 365]
 tools/cresco-pki.sh api    <pki> <tenant> <user> <admin|user> [--days 365]
 tools/cresco-pki.sh revoke <pki> <certificate.pem>
 tools/cresco-pki.sh crl    <pki> [--days 30]
 ```
 
 - `init` makes the fabric root (RSA 3072 by default, `--key ec` for P-384).
-- `region` makes a region CA (its scope is that region and tenant) and refreshes `<pki>/trust-anchors.pem`.
-- `node` issues a node certificate (by its region's CA when one exists, else the root) and writes
+- `region` makes a region CA, scoped explicitly (`cresco:ca:<tenant>/<region>`, `cresco:ca-roles:node,controller`).
+  `<pki>/trust-anchors.pem` holds the ROOT only; a region CA reaches nodes as an intermediate in each node's keystore chain.
+- `node` issues a node certificate (by its region's CA when one exists, else the root; `--global`: THE global controller,
+  always by the root, carrying `cresco:role:controller` and `cresco:role:global`) and writes
   `<pki>/nodes/<region>_<agent>/{node.p12, node.p12.pass, trust-anchors.pem, node.pem}`; the key exists only inside the
   keystore. Issuing the same node again makes a NEW key and replaces `node.p12` atomically, keeping its password file: that
   is a renewal.
 - `api` issues an API user's client certificate (`<pki>/api/<tenant>_<user>/api.p12`).
-- `revoke` records a certificate in its issuer's CRL database and its key in `<pki>/revocations.txt`; `crl` writes
-  `<pki>/revocations.pem` (every CA's CRL, then the deny list) -- the file to give every node as `revocation_file`.
+- `revoke` records a certificate (a node's, or a region CA's) in its issuer's CRL database and its key in
+  `<pki>/revocations.txt`; `crl` writes `<pki>/revocations.pem` (the region CA certificates, every CA's CRL, then the deny
+  list) -- the file to give every node as `revocation_file`. Revoking a region CA stops all of its leaves.
 
 A node is then started with
 
@@ -95,10 +114,23 @@ A node is then started with
 
 Deny-list format (`revocation_file`, alongside or instead of CRLs): one entry per line, `#` comments:
 `key:<SHA-256 of a SubjectPublicKeyInfo, hex>`, `cert:<SHA-256 of a certificate, hex>`, `name:<region>/<agent>`. A CRL in
-the file must be signed by a CA of the trust anchors.
+the file must be signed by a trust anchor or by a CA certificate the file also carries (PEM) that chains to one.
+
+## Migration (PKIs made by `cresco-pki.sh` before 2026-11-04)
+
+The earlier tool put every region CA into `trust-anchors.pem` and gave region CAs no explicit scope. Such a PKI is refused
+(fail closed): `trust_anchors` with a non-root CA that has no explicit scope stops the node (`REFUSING TO START ...
+trust_anchors ... is neither a root ... nor a CA with an explicit Cresco scope`), and a leaf issued by an unscoped region CA
+is not accepted. Re-make the PKI with the current tool (`init`, `region`, `node` -- the global with `--global`, `crl`) and
+give every node its new `node.p12`, `node.p12.pass`, `trust-anchors.pem` (the root only) and the new `revocations.pem`.
+An operator PKI made by other means must scope every intermediate explicitly (the SAN URIs above) and list only roots (or
+explicitly scoped CAs) in `trust_anchors`.
 
 ## Tests
 
 `ProvisionedIdentityTest` (start, refusals, verification by the PKI, discovery without enrollment or pins, keystore
-replacement, expiry alarm, revocation-file reload), `PkiToolTest` (the tool's output loads; its CRL and deny list refuse a
-revoked node; skipped without OpenSSL 3), and the live proof `docs/tests/provisioned_live_test.sh`.
+replacement, expiry alarm, revocation-file reload), `PkiToolTest` (the tool's output loads; anchors are the root only; its
+CRL and deny list refuse a revoked node, and a revoked region CA all of its leaves; skipped without OpenSSL 3),
+`IdentityRound3FixTest` / `IdentityRound3DiscoveryTest` and `ReviewIdentity3Test` / `ReviewIdentity3DiscoveryTest` (whole-path
+validity and revocation, explicit CA scopes, the global role, the directory checks), and the live proof
+`docs/tests/provisioned_live_test.sh`.

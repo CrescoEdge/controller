@@ -41,8 +41,8 @@ import java.util.Set;
  * <ul>
  *   <li>{@code identity_keystore}: a PKCS12 keystore holding ONE private key entry: the node's key and its chain (leaf first;
  *       intermediates may follow). {@code identity_keystore_password_file}: a file holding its password (first line).</li>
- *   <li>{@code trust_anchors}: a PEM bundle of the fabric's CA certificates (its root, and region intermediates when a
- *       verifier should accept them as anchors).</li>
+ *   <li>{@code trust_anchors}: a PEM bundle of the fabric's ROOT certificate(s) (region CAs are intermediates presented in
+ *       each node's chain; an anchor that is not a self-signed root must carry an explicit scope).</li>
  *   <li>{@code revocation_file} (optional): the operator's revocations -- X.509 CRLs (PEM) issued by the PKI, and/or a deny
  *       list: {@code key:<SHA-256 of a SubjectPublicKeyInfo>}, {@code cert:<SHA-256 of a certificate>},
  *       {@code name:<region>/<agent>}, {@code #} comments.</li>
@@ -51,26 +51,34 @@ import java.util.Set;
  * <p><b>Identity names</b> (what the broker and the registry use): the leaf's subject {@code CN=<agent>, OU=<region>,
  * O=<tenant>} (read strictly, {@link CrescoNames#identityOf}); a SAN URI {@code cresco:node:<tenant>/<region>/<agent>}, when
  * present, must name the same identity. A SAN URI {@code cresco:role:controller} marks a CONTROLLER (a region or global
- * controller: it may bridge, answer discovery, and send revocation lists); without it the node is an agent. A CA whose
- * subject names a region and tenant ({@code OU}, {@code O}) may issue only names of that region and tenant; a CA naming
- * neither (the fabric root) may issue any.
+ * controller: it may bridge, answer discovery, and send revocation lists); without it the node is an agent. A SAN URI
+ * {@code cresco:role:global} (with the controller role) marks THE global controller. Every CA on a path must allow the leaf's
+ * tenant, region and roles by its EXPLICIT scope ({@link #scopeOf}); only an unscoped self-signed anchor (the root) issues any.
  *
- * <p>The chain must validate (PKIX: signatures, validity, CA basic constraints and path length) to a trust anchor, now.
+ * <p>The chain must validate (PKIX: signatures, CA basic constraints and path length) to a trust anchor, and every
+ * certificate on the path, the anchor included, must be valid now and not revoked by the operator.
  */
 public final class ProvisionedIdentity {
 
     public static final String URI_NODE = "cresco:node:", URI_ROLE = "cresco:role:", ROLE_CONTROLLER = "controller";
+    /** The fabric's GLOBAL controller (also a controller): only it answers GLOBAL discovery and is a region's parent. */
+    public static final String ROLE_GLOBAL = "global", ROLE_NODE = "node";
+    /** A CA's explicit scope: {@code cresco:ca:<tenant>/<region>} ({@code <tenant>/*}: every region; {@code *}: any). */
+    public static final String URI_CA = "cresco:ca:";
+    /** The roles a CA may issue: {@code cresco:ca-roles:<node,controller,global>}. */
+    public static final String URI_CA_ROLES = "cresco:ca-roles:";
 
     final PrivateKey key;
     final X509Certificate[] chain;
     final CrescoIdentity identity;
-    final boolean controller;
+    final boolean controller, global;
     final List<X509Certificate> anchors;
     final long keystoreMtime, passwordMtime, anchorsMtime;
 
     private ProvisionedIdentity(PrivateKey key, X509Certificate[] chain, CrescoIdentity identity, boolean controller,
                                 List<X509Certificate> anchors, long keystoreMtime, long passwordMtime, long anchorsMtime) {
         this.key = key; this.chain = chain; this.identity = identity; this.controller = controller; this.anchors = anchors;
+        this.global = controller && isGlobal(chain[0]);
         this.keystoreMtime = keystoreMtime; this.passwordMtime = passwordMtime; this.anchorsMtime = anchorsMtime;
     }
 
@@ -136,11 +144,11 @@ public final class ProvisionedIdentity {
         if (!matches(chain[0], key)) {
             throw new ProvisioningException("identity_keystore " + ks + ": the private key does not match its certificate");
         }
-        String why = validate(chain, anchors, now);
-        if (why != null) throw new ProvisioningException("this node's certificate " + describe(chain[0]) + " " + why);
-        CrescoIdentity id = CrescoNames.identityOf(chain[0]);
         String rev = revocations == null ? null : revocations.refusal(chain);
         if (rev != null) throw new ProvisioningException("this node's certificate " + describe(chain[0]) + " is REVOKED by the operator (" + rev + ")");
+        String why = validate(chain, anchors, now, revocations);
+        if (why != null) throw new ProvisioningException("this node's certificate " + describe(chain[0]) + " " + why);
+        CrescoIdentity id = CrescoNames.identityOf(chain[0]);
         try {
             return new ProvisionedIdentity(key, chain, id, isController(chain[0]), anchors, mtime(ks), mtime(pw), mtime(ta));
         } catch (IOException e) {
@@ -168,26 +176,60 @@ public final class ProvisionedIdentity {
 
     static long mtime(Path p) throws IOException { return Files.getLastModifiedTime(p).toMillis(); }
 
-    /** Refuse a missing file, a symlink, one others can write, or (for a secret) one others can read. */
+    /**
+     * Refuse (the D6 rules) a missing file, a symbolic link, a file owned by another user than this node's (or root), one
+     * others can write or (for a secret) read, and one in a directory -- the parent or any directory above it -- that another
+     * user owns or that group or others can write (they could rename another file in its place). A world-writable directory
+     * with the sticky bit owned by root (/tmp) is allowed above the parent. Fails closed where POSIX owner and mode cannot be
+     * read. Checked at start and at every reload tick.
+     */
     static void checkFile(Path p, boolean secret, String what) throws ProvisioningException {
         if (!Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
             throw new ProvisioningException(what + " " + p + " is not a regular file (missing, or a symbolic link)");
         }
+        String me = System.getProperty("user.name");
         try {
-            Set<PosixFilePermission> perms = Files.getPosixFilePermissions(p, LinkOption.NOFOLLOW_LINKS);
+            java.nio.file.attribute.PosixFileAttributes a = Files.readAttributes(p, java.nio.file.attribute.PosixFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            String owner = a.owner().getName();
+            if (!owner.equals(me) && !owner.equals("root")) {
+                throw new ProvisioningException(what + " " + p + " is owned by " + owner + ", not by this node's user " + me + " (or root)");
+            }
+            Set<PosixFilePermission> perms = a.permissions();
             if (perms.contains(PosixFilePermission.GROUP_WRITE) || perms.contains(PosixFilePermission.OTHERS_WRITE)) {
                 throw new ProvisioningException(what + " " + p + " is writable by group or others; make it owner-only (chmod 600)");
             }
             if (secret && (perms.contains(PosixFilePermission.GROUP_READ) || perms.contains(PosixFilePermission.OTHERS_READ))) {
                 throw new ProvisioningException(what + " " + p + " is readable by group or others; make it owner-only (chmod 600)");
             }
-        } catch (UnsupportedOperationException | IOException ignore) {
-            // not a POSIX file system: nothing more to check
+            Path parent = p.toAbsolutePath().getParent();
+            boolean first = true;
+            for (Path d = parent == null ? null : parent.toRealPath(); d != null; d = d.getParent(), first = false) {
+                java.nio.file.attribute.PosixFileAttributes da = Files.readAttributes(d, java.nio.file.attribute.PosixFileAttributes.class);
+                String dOwner = da.owner().getName();
+                if (!dOwner.equals(me) && !dOwner.equals("root")) {
+                    throw new ProvisioningException(what + " " + p + ": its directory " + d + " is owned by " + dOwner + ", not by " + me + " or root");
+                }
+                Set<PosixFilePermission> dp = da.permissions();
+                if (dp.contains(PosixFilePermission.GROUP_WRITE) || dp.contains(PosixFilePermission.OTHERS_WRITE)) {
+                    if (!first && "root".equals(dOwner) && sticky(d)) continue;     // /tmp: no one renames another's entry
+                    throw new ProvisioningException(what + " " + p + ": its directory " + d + " is writable by group or others"
+                            + " (the file could be replaced); make it writable by its owner only");
+                }
+            }
+        } catch (UnsupportedOperationException e) {
+            throw new ProvisioningException(what + " " + p + ": this file system has no POSIX owner and mode, so the file cannot be checked");
+        } catch (IOException e) {
+            throw new ProvisioningException(what + " " + p + " cannot be checked (" + e.getMessage() + ")");
         }
+    }
+
+    private static boolean sticky(Path d) {
+        try { return (((Integer) Files.getAttribute(d, "unix:mode")) & 01000) != 0; } catch (Exception e) { return false; }
     }
 
     /** Every certificate in the PEM (or DER) bundle {@code ta}: CA certificates only. */
     static List<X509Certificate> readAnchors(Path ta) throws ProvisioningException {
+        checkFile(ta, false, "trust_anchors");
         List<X509Certificate> out = new ArrayList<>();
         try (InputStream in = Files.newInputStream(ta)) {
             for (Certificate c : CertificateFactory.getInstance("X.509").generateCertificates(in)) out.add((X509Certificate) c);
@@ -197,56 +239,179 @@ public final class ProvisionedIdentity {
         if (out.isEmpty()) throw new ProvisioningException("trust_anchors " + ta + " holds no certificate");
         for (X509Certificate c : out) {
             if (c.getBasicConstraints() < 0) throw new ProvisioningException("trust_anchors " + ta + ": " + describe(c) + " is not a CA certificate");
+            if (scopeOf(c, true) == null) throw new ProvisioningException("trust_anchors " + ta + ": " + describe(c) + " is neither a root (self-signed,"
+                    + " unscoped) nor a CA with an explicit Cresco scope (SAN " + URI_CA + "<tenant>/<region> and " + URI_CA_ROLES + "<roles>): give"
+                    + " trust_anchors the fabric's ROOT only; region CAs are presented in each node's chain (a PKI made by cresco-pki.sh before"
+                    + " 2026-11-04 must be re-made: see pre-provisioned-identity.md, Migration)");
         }
         return out;
     }
 
-    /**
-     * Why {@code chain} (leaf first, as presented) does not validate to {@code anchors} now, or null: a PKIX path (signatures,
-     * validity, CA basic constraints, path length, key usage) from the leaf to an anchor, through the presented intermediates;
-     * the leaf names a valid Cresco identity (subject, and the SAN node URI when present); and every CA on the path that names
-     * a region and tenant names the leaf's.
-     */
+    /** A chain judged against the anchors: the validated path (leaf first, the ANCHOR last), or why there is none. */
+    public static final class Validated {
+        public final String refusal;
+        public final List<X509Certificate> path;
+        Validated(String refusal, List<X509Certificate> path) { this.refusal = refusal; this.path = path; }
+    }
+
+    /** Why {@code chain} (leaf first, as presented) does not validate to {@code anchors} now, or null (no revocations). */
     public static String validate(X509Certificate[] chain, Collection<X509Certificate> anchors, Date now) {
-        if (chain == null || chain.length == 0 || chain[0] == null) return "is missing";
-        if (anchors == null || anchors.isEmpty()) return "cannot be checked: no trust anchors";
+        return validate(chain, anchors, now, null);
+    }
+
+    /**
+     * Why {@code chain} (leaf first, as presented) does not validate to {@code anchors} now, or null: {@link #validatePath},
+     * then {@link #pathRefusal} over the whole path -- every certificate, the anchor included, valid now and not revoked by
+     * {@code rev}.
+     */
+    public static String validate(X509Certificate[] chain, Collection<X509Certificate> anchors, Date now, Revocations rev) {
+        Validated v = validatePath(chain, anchors, now);
+        return v.refusal != null ? v.refusal : pathRefusal(v.path, now, rev);
+    }
+
+    /**
+     * The path of {@code chain} (leaf first, as presented) to one of {@code anchors}: PKIX (signatures, CA basic constraints,
+     * path length, key usage) from the leaf to an anchor through the presented intermediates; the leaf names a valid Cresco
+     * identity (subject, and the SAN node URI when present); and EVERY CA on the path, the anchor included, may issue that
+     * identity and its roles ({@link #scopeOf}: fail closed -- only an unscoped self-signed anchor, the fabric root, issues
+     * anything; any other CA issues only what its explicit scope names, and nothing without one). Validity and revocation
+     * are {@link #pathRefusal}'s (they change with time and the operator's file; this does not).
+     */
+    public static Validated validatePath(X509Certificate[] chain, Collection<X509Certificate> anchors, Date now) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return new Validated("is missing", null);
+        if (anchors == null || anchors.isEmpty()) return new Validated("cannot be checked: no trust anchors", null);
         X509Certificate leaf = chain[0];
         CrescoIdentity id = CrescoNames.identityOf(leaf);
-        if (id == null) return "names no valid Cresco identity (subject CN=<agent>, OU=<region>, O=<tenant>)";
+        if (id == null) return new Validated("names no valid Cresco identity (subject CN=<agent>, OU=<region>, O=<tenant>)", null);
         String san = nodeUri(leaf);
         if (san != null && !san.equals(id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent())) {
-            return "names " + id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent() + " in its subject but " + san + " in its SAN";
+            return new Validated("names " + id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent() + " in its subject but " + san + " in its SAN", null);
+        }
+        Set<String> roles = rolesOf(leaf);
+        if (roles.contains(ROLE_GLOBAL) && !roles.contains(ROLE_CONTROLLER)) {
+            return new Validated("carries " + URI_ROLE + ROLE_GLOBAL + " without " + URI_ROLE + ROLE_CONTROLLER, null);
         }
         List<X509Certificate> path = new ArrayList<>();
         for (X509Certificate c : chain) {
             if (c == null) break;
-            if (anchors.contains(c)) break;                 // the presented anchor itself is not part of the path
+            if (anchors.contains(c)) break;                 // the presented anchor itself is not part of the PKIX path
             path.add(c);
         }
         try {
             Set<TrustAnchor> tas = new HashSet<>();
             for (X509Certificate a : anchors) tas.add(new TrustAnchor(a, null));
             PKIXParameters params = new PKIXParameters(tas);
-            params.setRevocationEnabled(false);              // revocation: the operator's file and the signed lists
+            params.setRevocationEnabled(false);              // revocation: the operator's file and the signed lists (pathRefusal)
             params.setDate(now);
             CertPath cp = CertificateFactory.getInstance("X.509").generateCertPath(path);
             java.security.cert.PKIXCertPathValidatorResult r =
                     (java.security.cert.PKIXCertPathValidatorResult) CertPathValidator.getInstance("PKIX").validate(cp, params);
-            // scope: a CA naming a region and tenant issues only that region's and tenant's names
-            List<X509Certificate> cas = new ArrayList<>(path.subList(1, path.size()));
-            if (r.getTrustAnchor().getTrustedCert() != null) cas.add(r.getTrustAnchor().getTrustedCert());
-            for (X509Certificate ca : cas) {
-                String[] scope = PeerTrustRegistry.caScopeOf(ca);
-                if (scope != null && (!scope[0].equals(id.getRegion()) || !scope[1].equals(id.getTenant()))) {
-                    return "was issued under " + describe(ca) + ", a CA for " + scope[1] + "/" + scope[0] + ", not for " + id.getTenant() + "/" + id.getRegion();
+            X509Certificate anchor = r.getTrustAnchor().getTrustedCert();
+            if (anchor == null) return new Validated("validates to an anchor without a certificate", null);
+            List<X509Certificate> full = new ArrayList<>(path);
+            full.add(anchor);
+            for (int i = 1; i < full.size(); i++) {
+                X509Certificate ca = full.get(i);
+                CaScope scope = scopeOf(ca, i == full.size() - 1);
+                if (scope == null) {
+                    return new Validated("was issued under " + describe(ca) + ", a CA without an explicit Cresco scope (SAN " + URI_CA
+                            + "<tenant>/<region> and " + URI_CA_ROLES + "<roles>): such a CA issues nothing this fabric accepts", null);
                 }
+                String no = scope.refusal(id, roles);
+                if (no != null) return new Validated("was issued under " + describe(ca) + ", " + no, null);
             }
-            return null;
+            return new Validated(null, java.util.Collections.unmodifiableList(full));
         } catch (java.security.cert.CertPathValidatorException e) {
-            return "does not validate to the fabric's trust anchors (" + e.getMessage() + ")";
+            return new Validated("does not validate to the fabric's trust anchors (" + e.getMessage() + ")", null);
         } catch (Exception e) {
-            return "cannot be validated (" + e.getMessage() + ")";
+            return new Validated("cannot be validated (" + e.getMessage() + ")", null);
         }
+    }
+
+    /**
+     * Why the validated {@code path} (leaf first, anchor last) is refused now, or null: a certificate on it -- the anchor
+     * included (PKIX never checks an anchor's own validity) -- is outside its validity, or the operator's {@code rev} lists
+     * one of them (a revoked region CA stops every leaf it issued, whether it was presented or reached as an anchor).
+     */
+    public static String pathRefusal(List<X509Certificate> path, Date now, Revocations rev) {
+        if (path == null || path.isEmpty()) return "has no validated path";
+        for (int i = 0; i < path.size(); i++) {
+            X509Certificate c = path.get(i);
+            try { c.checkValidity(now); } catch (Exception e) {
+                return i == 0 ? "is not valid now (" + e.getMessage() + ")"
+                        : "was issued under " + describe(c) + (i == path.size() - 1 ? ", a trust anchor" : "") + " that is not valid now (" + e.getMessage() + ")";
+            }
+        }
+        String r = rev == null ? null : rev.refusal(path.toArray(new X509Certificate[0]));
+        return r == null ? null : "is REVOKED by the operator (" + r + ")";
+    }
+
+    /** What a CA may issue: a tenant (null: any), a region (null: any) and roles. */
+    static final class CaScope {
+        static final Set<String> ALL_ROLES = Set.of(ROLE_NODE, ROLE_CONTROLLER, ROLE_GLOBAL);
+        static final CaScope ROOT = new CaScope(null, null, ALL_ROLES);
+        final String tenant, region;
+        final Set<String> roles;
+        CaScope(String tenant, String region, Set<String> roles) { this.tenant = tenant; this.region = region; this.roles = roles; }
+
+        String refusal(CrescoIdentity id, Set<String> leafRoles) {
+            if ((tenant != null && !tenant.equals(id.getTenant())) || (region != null && !region.equals(id.getRegion()))) {
+                return "a CA for " + this + ", not for " + id.getTenant() + "/" + id.getRegion();
+            }
+            for (String r : leafRoles) if (!roles.contains(r)) return "a CA for " + this + ", which may not issue the role " + r;
+            return null;
+        }
+
+        @Override public String toString() {
+            return (tenant == null ? "*" : tenant + "/" + (region == null ? "*" : region)) + " (roles " + String.join(",", new java.util.TreeSet<>(roles)) + ")";
+        }
+    }
+
+    /**
+     * What CA certificate {@code ca} may issue, or null (nothing). FAIL CLOSED: a CA carrying explicit Cresco scope SAN URIs
+     * -- exactly one {@code cresco:ca:<tenant>/<region>} ({@code <tenant>/*} every region of a tenant, {@code *} any) and
+     * exactly one {@code cresco:ca-roles:<node,controller,global>} -- may issue that; an ANCHOR ({@code anchor}) that is
+     * self-signed and carries no scope URI is a fabric root and may issue anything; every other CA (an intermediate that
+     * names only a tenant, an enterprise CA, a region CA that is not scoped explicitly, a malformed scope) issues nothing.
+     */
+    static CaScope scopeOf(X509Certificate ca, boolean anchor) {
+        if (ca == null || ca.getBasicConstraints() < 0) return null;
+        String scope = null, roles = null;
+        int scopes = 0, roleLists = 0;
+        for (String u : sanUris(ca)) {
+            if (u.startsWith(URI_CA)) { scopes++; scope = u.substring(URI_CA.length()); }
+            else if (u.startsWith(URI_CA_ROLES)) { roleLists++; roles = u.substring(URI_CA_ROLES.length()); }
+        }
+        if (scopes == 0 && roleLists == 0) return anchor && selfSigned(ca) ? CaScope.ROOT : null;
+        if (scopes != 1 || roleLists != 1 || roles.isEmpty()) return null;
+        Set<String> rs = new HashSet<>();
+        for (String r : roles.split(",", -1)) {
+            if (!CaScope.ALL_ROLES.contains(r)) return null;
+            rs.add(r);
+        }
+        if ("*".equals(scope)) return new CaScope(null, null, Set.copyOf(rs));
+        int sl = scope.indexOf('/');
+        if (sl <= 0) return null;
+        String t = scope.substring(0, sl), r = scope.substring(sl + 1);
+        if (!CrescoNames.isValidTenant(t)) return null;
+        if ("*".equals(r)) return new CaScope(t, null, Set.copyOf(rs));
+        return CrescoNames.isValid(r) ? new CaScope(t, r, Set.copyOf(rs)) : null;
+    }
+
+    /** Is {@code c} self-issued and self-signed (a root)? */
+    static boolean selfSigned(X509Certificate c) {
+        if (!c.getSubjectX500Principal().equals(c.getIssuerX500Principal())) return false;
+        try { c.verify(c.getPublicKey()); return true; } catch (Exception e) { return false; }
+    }
+
+    /** The roles a node certificate claims: node, and controller / global by its SAN role URIs. */
+    static Set<String> rolesOf(X509Certificate leaf) {
+        Set<String> out = new HashSet<>();
+        out.add(ROLE_NODE);
+        Set<String> u = sanUris(leaf);
+        if (u.contains(URI_ROLE + ROLE_CONTROLLER)) out.add(ROLE_CONTROLLER);
+        if (u.contains(URI_ROLE + ROLE_GLOBAL)) out.add(ROLE_GLOBAL);
+        return out;
     }
 
     /** The SAN {@code cresco:node:} identity ({@code tenant/region/agent}) of {@code c}, or null. */
@@ -258,6 +423,12 @@ public final class ProvisionedIdentity {
     /** Does {@code c} carry the SAN URI {@code cresco:role:controller}? */
     public static boolean isController(X509Certificate c) {
         return sanUris(c).contains(URI_ROLE + ROLE_CONTROLLER);
+    }
+
+    /** Is {@code c} the fabric's GLOBAL controller (SAN URIs {@code cresco:role:global} and {@code cresco:role:controller})? */
+    public static boolean isGlobal(X509Certificate c) {
+        Set<String> u = sanUris(c);
+        return u.contains(URI_ROLE + ROLE_GLOBAL) && u.contains(URI_ROLE + ROLE_CONTROLLER);
     }
 
     static Set<String> sanUris(X509Certificate c) {
@@ -300,6 +471,37 @@ public final class ProvisionedIdentity {
             } catch (IOException e) {
                 throw new ProvisioningException("revocation_file " + file + " is unreadable: " + e.getMessage());
             }
+            // issuing CAs carried in the file (PEM certificates: the region CAs, which are not anchors) sign their own CRLs; one
+            // is taken only when it chains (signature, CA) to the anchors
+            List<X509Certificate> issuers = new ArrayList<>(cas);
+            List<X509Certificate> carried = new ArrayList<>();
+            StringBuilder rest = new StringBuilder();
+            for (int i0 = 0; ; ) {
+                int b = text.indexOf("-----BEGIN CERTIFICATE-----", i0);
+                if (b < 0) { rest.append(text.substring(i0)); break; }
+                rest.append(text, i0, b);
+                int e = text.indexOf("-----END CERTIFICATE-----", b);
+                if (e < 0) throw new ProvisioningException("revocation_file " + file + ": an unterminated certificate");
+                e += "-----END CERTIFICATE-----".length();
+                try {
+                    carried.add((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(
+                            new ByteArrayInputStream(text.substring(b, e).getBytes(StandardCharsets.US_ASCII))));
+                } catch (Exception ex) {
+                    throw new ProvisioningException("revocation_file " + file + ": an unreadable certificate (" + ex.getMessage() + ")");
+                }
+                i0 = e;
+            }
+            text = rest.toString();
+            for (boolean grew = true; grew; ) {
+                grew = false;
+                for (X509Certificate c : carried) {
+                    if (issuers.contains(c) || c.getBasicConstraints() < 0) continue;
+                    for (X509Certificate up : issuers) {
+                        if (!up.getSubjectX500Principal().equals(c.getIssuerX500Principal())) continue;
+                        try { c.verify(up.getPublicKey()); issuers.add(c); grew = true; break; } catch (Exception ignore) { }
+                    }
+                }
+            }
             int crlCount = 0;
             Revocations r;
             try { r = new Revocations(mtime(file), 0); } catch (IOException e) { throw new ProvisioningException(e.getMessage()); }
@@ -319,12 +521,12 @@ public final class ProvisionedIdentity {
                     throw new ProvisioningException("revocation_file " + file + ": an unreadable CRL (" + ex.getMessage() + ")");
                 }
                 boolean signed = false;
-                for (X509Certificate ca : cas) {
+                for (X509Certificate ca : issuers) {
                     if (!ca.getSubjectX500Principal().equals(crl.getIssuerX500Principal())) continue;
                     try { crl.verify(ca.getPublicKey()); signed = true; break; } catch (Exception ignore) { }
                 }
                 if (!signed) throw new ProvisioningException("revocation_file " + file + ": a CRL from '" + crl.getIssuerX500Principal().getName()
-                        + "' is not signed by a CA of the fabric's trust anchors");
+                        + "' is not signed by a trust anchor, nor by a CA certificate in the file that chains to one");
                 if (crl.getRevokedCertificates() != null) {
                     for (X509CRLEntry entry : crl.getRevokedCertificates()) {
                         r.serials.add(crl.getIssuerX500Principal().getName() + "|" + entry.getSerialNumber().toString(16));
