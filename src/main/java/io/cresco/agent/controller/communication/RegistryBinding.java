@@ -64,6 +64,17 @@ public final class RegistryBinding {
      */
     public static String refusal(MsgEvent m, Caller caller, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
                                  java.util.function.Predicate<Caller> regionController) {
+        return refusal(m, caller, atGlobal, regionOfAgent, regionController, false);
+    }
+
+    /**
+     * As above. {@code legacyAgents}: the upgrade window is open (M6a), so a node without stamping, admitted with minimal
+     * rights as {@code agent:<tenant>/<region>/<agent>}, registers, unregisters and keeps alive its OWN records at its
+     * region exactly as its controller would (never at the global, never anyone else's).
+     */
+    public static String refusal(MsgEvent m, Caller caller, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
+                                 java.util.function.Predicate<Caller> regionController, boolean legacyAgents) {
+        Caller asController = legacyAsController(caller, atGlobal, legacyAgents);
         String[] configs = new String[3];
         String[] names = {"regionconfigs", "agentconfigs", "pluginconfigs"};
         for (int i = 0; i < 3; i++) {
@@ -73,7 +84,7 @@ public final class RegistryBinding {
                 return "unreadable " + names[i];
             }
         }
-        return refusal(caller, atGlobal, regionOfAgent, regionController, m.getParam("region_watchdog_update"), m.getParam("agent_watchdog_update"),
+        return refusal(asController, atGlobal, regionOfAgent, regionController, m.getParam("region_watchdog_update"), m.getParam("agent_watchdog_update"),
                 m.getParam("plugin_watchdog_update"), m.getParam("unregister_region_id"), m.getParam("unregister_agent_id"),
                 m.getParam("unregister_plugin_id"), configs[0], configs[1], configs[2]);
     }
@@ -85,6 +96,24 @@ public final class RegistryBinding {
     public static String dataplaneRefusal(Caller writer, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
                                           String regionId, String agentId, String regionconfigs, String agentconfigs, String pluginconfigs) {
         return dataplaneRefusal(writer, atGlobal, regionOfAgent, null, regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
+    }
+
+    /** A legacy node's {@code agent:} stamp stands for its own controller inside the upgrade window, at its region only. */
+    static Caller legacyAsController(Caller caller, boolean atGlobal, boolean legacyAgents) {
+        if (!legacyAgents || atGlobal || caller == null || caller.getKind() != Caller.Kind.AGENT) return caller;
+        try {
+            return Caller.controller(caller.getTenant(), caller.getRegion(), caller.getAgent());
+        } catch (RuntimeException invalid) {
+            return caller;
+        }
+    }
+
+    /** As above, inside the upgrade window when {@code legacyAgents} (see {@link #legacyAsController}). */
+    public static String dataplaneRefusal(Caller writer, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
+                                          java.util.function.Predicate<Caller> regionController, boolean legacyAgents,
+                                          String regionId, String agentId, String regionconfigs, String agentconfigs, String pluginconfigs) {
+        return dataplaneRefusal(legacyAsController(writer, atGlobal, legacyAgents), atGlobal, regionOfAgent, regionController,
+                regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
     }
 
     /** As above, with the global's {@code regionController} check (see {@link #refusal(MsgEvent, Caller, boolean, java.util.function.Function, java.util.function.Predicate)}). */

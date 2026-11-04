@@ -131,9 +131,24 @@ public class ControllerEngine {
 
     }
 
+    /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
+    private volatile boolean refusedByConfiguration;
+
+    public boolean isRefusedByConfiguration() { return refusedByConfiguration; }
+
     public boolean start() {
         boolean isStarted = false;
         try {
+            // secure by default: inconsistent security settings stop the node here, before anything listens
+            java.util.List<String> refusals = io.cresco.agent.controller.communication.SecuritySettings.startupRefusals(plugin.getConfig());
+            if (!refusals.isEmpty()) {
+                for (String r : refusals) logger.error("REFUSING TO START: " + r);
+                refusedByConfiguration = true;
+                return false;
+            }
+            for (String w : io.cresco.agent.controller.communication.SecuritySettings.bootWarnings(plugin.getConfig(), System.currentTimeMillis())) {
+                logger.warn("WARNING: " + w);
+            }
 
             controllerSMHandler = new ControllerSMHandler(this);
             StateMachine sm = StateMachineFactory.getInstance(Transition.class).create(ControllerSMHandler.EMPTY, controllerSMHandler);
@@ -738,7 +753,7 @@ public class ControllerEngine {
      * operator's upgrade window (see UpgradeWindow); outside it, never.
      */
     public boolean legacyNodesAdmitted() {
-        return false;
+        return io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), System.currentTimeMillis());
     }
 
     /**

@@ -41,6 +41,7 @@ class ControlPlaneRecoveryTest {
     private static PluginBuilder plugin(Map<String, Object> extra) {
         Map<String, Object> m = new HashMap<>(extra);
         m.put("agentconsumer_dedicated_connection", "true");
+        m.putIfAbsent("broker_security_enabled", "false");   // phase 4: secure by default; this tests recovery, not callers
         return TestAgentService.plugin(System.getProperty("java.io.tmpdir"), m);
     }
 

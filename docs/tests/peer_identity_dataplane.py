@@ -6,15 +6,17 @@ Live dataplane probe for peer identity + stream recipient binding (OUT-28), run 
                        | broker bridge, mutual TLS, bound to the region controller's identity
                        v
     receiver --ws--> agent rgr/b1 wsapi (its connection to the region broker, bound to the region's identity)
-    spy      --ws--> agent glob/a1 wsapi (its connection to the global broker)
+    spy      --ws--> agent glob/a1 wsapi
     spy2     --ws--> the global's own wsapi (the controller's vm:// connection)
 
 1. an ordinary stream (stream_name=<random>) must arrive in full at the receiver;
-2. a recipient-bound stream (cresco_to=<receiver agent path>, set through the wsapi stream config's ident_key) must
-   arrive in full at the receiver and NOT at all at either spy; both spies' subscriptions are refused, and a client
-   with a typed refusal (pycrescolib DataplaneSubscriptionRefused) gets it. The sender (no callback) stays open.
+2. a recipient-bound stream is written by PeerIdentityRecipientProbe.java (on a node's own broker connection, the way a
+   plugin's dataplane writes one: wsapi refuses cresco_to from API clients by design); while it runs, spy2 -- a client of
+   the global's own wsapi, i.e. the global controller's vm:// connection -- subscribes to that stream by name and must get
+   none of it (--bound-stream, --ready-file, --done-file);
+3. an API client that asks wsapi for a stream by its recipient (ident_key cresco_to) is refused by wsapi.
 
-Prints one JSON line; exit 0 when both hold.
+Prints one JSON line; exit 0 when all hold.
 """
 import argparse
 import json
@@ -90,6 +92,10 @@ def main():
     ap.add_argument("--messages", type=int, default=200)
     ap.add_argument("--settle", type=float, default=30.0)
     ap.add_argument("--pin", action="append", default=[], help="<port>=<wsapi certificate fingerprint> (repeatable)")
+    ap.add_argument("--bound-stream", default="", help="the recipient-bound stream PeerIdentityRecipientProbe writes")
+    ap.add_argument("--ready-file", default="", help="created once spy2 listens and the plain stream is done")
+    ap.add_argument("--done-file", default="", help="waited for (at most --listen s) before spy2 stops listening")
+    ap.add_argument("--listen", type=float, default=90.0)
     a = ap.parse_args()
     pins = dict(p.split("=", 1) for p in a.pin if "=" in p and p.split("=", 1)[1])
 
@@ -106,21 +112,45 @@ def main():
         print(json.dumps({"error": "wsapi connect failed"}))
         return 2
 
+    # spy2 listens to the recipient-bound stream by name for the whole run (the global controller's vm:// identity)
+    spy2_counter, spy2_dp, spy2_refused = Counter(), None, None
+    if spy2 and a.bound_stream:
+        spy2_dp = spy2.get_dataplane(cfg("stream_name", a.bound_stream), spy2_counter.text, spy2_counter.binary)
+        try:
+            spy2_dp.connect()
+        except DataplaneSubscriptionRefused as e:
+            spy2_refused = str(e)
+    # an API client may not name a recipient: wsapi refuses ident_key cresco_to (only infrastructure binds recipients)
+    named_ok = None
+    try:
+        named = spy.get_dataplane(cfg("cresco_to", a.rx_path), Counter().text, Counter().binary)
+        named_ok = bool(named.connect())
+    except DataplaneSubscriptionRefused:
+        named_ok = False
+    except Exception:
+        named_ok = False
+
     plain = stream(tx, [rx], cfg("stream_name", "pid-" + uuid.uuid4().hex[:8]), a.messages, a.settle)
-    bound = stream(tx, [rx, spy] + ([spy2] if spy2 else []), cfg("cresco_to", a.rx_path), a.messages, a.settle)
+    if a.ready_file:
+        open(a.ready_file, "w").close()
+    if a.done_file:
+        deadline = time.time() + a.listen
+        while time.time() < deadline:
+            try:
+                open(a.done_file).close()
+                break
+            except OSError:
+                time.sleep(0.5)
+        time.sleep(1.5)
     out = {
         "messages": a.messages,
         "plain_received": plain[0][0] if plain else None,
-        "bound_received": bound[0][0] if bound else None,
-        "bound_spy_received": bound[1][0] if bound else None,
-        "bound_spy_dataplane_connect": bound[1][1] if bound else None,
-        "bound_spy_refused": bound[1][2] if bound else None,
-        "bound_spy2_received": bound[2][0] if (bound and spy2) else None,
-        "bound_spy2_refused": bound[2][2] if (bound and spy2) else None,
+        "bound_spy2_received": spy2_counter.n if spy2_dp is not None else None,
+        "bound_spy2_refused": spy2_refused,
+        "wsapi_recipient_key_accepted": named_ok,
     }
-    ok = (plain and plain[0][0] == a.messages and bound and bound[0][0] == a.messages
-          and all(b[0] == 0 for b in bound[1:]))
-    out["ok"] = bool(ok)
+    ok = bool(plain and plain[0][0] == a.messages and (spy2_dp is None or spy2_counter.n == 0) and named_ok is False)
+    out["ok"] = ok
     print(json.dumps(out))
     for c in (tx, rx, spy) + ((spy2,) if spy2 else ()):
         try:

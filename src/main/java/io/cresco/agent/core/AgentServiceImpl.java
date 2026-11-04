@@ -307,6 +307,11 @@ public class AgentServiceImpl implements AgentService {
                 //core init needs to go here
                 if(controllerEngine.start()) {
                     logger.info("Controller Completed Startup");
+                } else if (controllerEngine.isRefusedByConfiguration()) {
+                    // refuse to start: exit non-zero (78, EX_CONFIG) so a supervisor sees a configuration error, not a hang
+                    logger.error("Controller REFUSED to start: its security configuration is inconsistent (see above). Exiting.");
+                    System.exit(78);
+                    return;
                 } else {
                     logger.error("Controlled Failed Startup : Exiting");
                 }
