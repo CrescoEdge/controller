@@ -65,6 +65,14 @@ public class CertificateManager {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
         this.logger = plugin.getLogger(CertificateManager.class.getName(), CLogger.Level.Info);
+        if (ProvisionedIdentity.enabled(plugin.getConfig())) {
+            // a PRE-PROVISIONED node: its identity and the fabric's anchors come from the operator's PKI; nothing is generated,
+            // enrolled or learned on first use. A provisioning that cannot be used stops the controller (never a fallback).
+            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+            initProvisioned();
+            logger.info("CertificateManager Init (pre-provisioned): " + (System.currentTimeMillis() - startTime) + " ms");
+            return;
+        }
         try {
 
             Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
@@ -171,6 +179,262 @@ public class CertificateManager {
             logger.error("CertificateManager.<init> CertificateChainGeneration() Error: " + ex.getMessage(), ex);
         }
 
+    }
+
+    // ---------------------------------------------------------------- pre-provisioned identity (security_profile=production)
+
+    /** Non-null: this node's identity is pre-provisioned by the operator's PKI (nothing is generated or enrolled). */
+    private volatile ProvisionedIdentity provisioned;
+    private volatile ProvisionedIdentity.Revocations operatorRevocations = ProvisionedIdentity.Revocations.NONE;
+    /** The node's private key as last loaded (a provisioned keystore can be replaced at run time). */
+    private volatile PrivateKey currentIdentityKey;
+    private volatile String provisionedAlarm;
+    private volatile boolean provisionedAlarmCritical;
+    private java.util.concurrent.ScheduledExecutorService provisionedWatcher;
+
+    /** Is this node's identity pre-provisioned by the operator's PKI? */
+    public boolean isProvisioned() { return provisioned != null; }
+
+    /**
+     * Why this node, configured for a pre-provisioned identity, must NOT start, or null (also null when it is not
+     * provisioned): its keystore, password file, trust anchors or revocation file cannot be used, its chain does not validate
+     * to the anchors now, it is revoked by the operator, or it names another identity than this node is configured as.
+     */
+    public static String provisioningRefusal(io.cresco.library.plugin.Config config) {
+        if (!ProvisionedIdentity.enabled(config)) return null;
+        try {
+            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+            Path ta = ProvisionedIdentity.path(config, "trust_anchors");
+            ProvisionedIdentity.Revocations rev = readOperatorRevocations(config, ProvisionedIdentity.readAnchors(ta));
+            ProvisionedIdentity p = ProvisionedIdentity.load(config, rev);
+            return identityMismatch(config, p);
+        } catch (ProvisionedIdentity.ProvisioningException e) {
+            return e.getMessage();
+        }
+    }
+
+    /** The identity {@code tenant/region/agent} the provisioned certificate names (to name the node after it), or null. */
+    public static String[] provisionedNames(io.cresco.library.plugin.Config config) {
+        if (!ProvisionedIdentity.enabled(config)) return null;
+        try {
+            Path ta = ProvisionedIdentity.path(config, "trust_anchors");
+            ProvisionedIdentity p = ProvisionedIdentity.load(config, readOperatorRevocations(config, ProvisionedIdentity.readAnchors(ta)));
+            return new String[]{p.identity.getTenant(), p.identity.getRegion(), p.identity.getAgent()};
+        } catch (ProvisionedIdentity.ProvisioningException e) {
+            return null;
+        }
+    }
+
+    private static String identityMismatch(io.cresco.library.plugin.Config config, ProvisionedIdentity p) {
+        String tenant = SecuritySettings.tenant(config), region = config.getStringParam("regionname"), agent = config.getStringParam("agentname");
+        CrescoIdentity id = p.identity;
+        if (!id.getTenant().equals(tenant)) return "the certificate names tenant " + id.getTenant() + " but this node is configured for tenant " + tenant
+                + " (tenant_id)";
+        if (region != null && !region.equals(id.getRegion())) return "the certificate names region " + id.getRegion() + " but regionname is " + region;
+        if (agent != null && !agent.equals(id.getAgent())) return "the certificate names agent " + id.getAgent() + " but agentname is " + agent;
+        if (config.getBooleanParam("is_global", false) || config.getBooleanParam("is_region", false)) {
+            if (!p.controller) return "this node is configured as a controller but its certificate does not carry the SAN URI "
+                    + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_CONTROLLER;
+        }
+        return null;
+    }
+
+    private static ProvisionedIdentity.Revocations readOperatorRevocations(io.cresco.library.plugin.Config config,
+                                                                          java.util.Collection<X509Certificate> cas)
+            throws ProvisionedIdentity.ProvisioningException {
+        String f = config.getStringParam("revocation_file");
+        return (f == null || f.isBlank()) ? ProvisionedIdentity.Revocations.NONE : ProvisionedIdentity.Revocations.read(Paths.get(f.trim()), cas);
+    }
+
+    /**
+     * Pre-provisioned, as the responder of a discovery exchange: why a joiner presenting {@code chain} is refused, or null.
+     * Its chain must validate to the PKI and name the identity it claims; an AGENT joiner must be of this controller's region
+     * and tenant; a REGION/GLOBAL joiner must be a controller (SAN cresco:role:controller) of another region.
+     */
+    public String provisionedJoinerRefusal(X509Certificate[] chain, io.cresco.agent.controller.netdiscovery.DiscoveryType type,
+                                           String region, String agent) {
+        String[] why = new String[1];
+        CrescoIdentity id = peerTrust.verifiedIdentity(chain, why);
+        if (id == null) return why[0];
+        if (!id.getRegion().equals(region) || !id.getAgent().equals(agent)) return "its certificate names " + id + ", not " + region + "/" + agent;
+        boolean controllerJoin = type == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
+                || type == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL;
+        String myRegion = controllerEngine.cstate.getRegion(), myTenant = SecuritySettings.tenant(plugin.getConfig());
+        if (controllerJoin) {
+            if (!ProvisionedIdentity.isController(chain[0])) return "a " + type + " joiner must be a controller (SAN "
+                    + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_CONTROLLER + ")";
+            if (id.getRegion().equals(myRegion)) return "a joining controller claims this node's own region";
+            return null;
+        }
+        if (!id.getRegion().equals(myRegion) || !id.getTenant().equals(myTenant)) {
+            return "an agent of " + id.getTenant() + "/" + id.getRegion() + " cannot join region " + myRegion + " (tenant " + myTenant + ")";
+        }
+        if (superuserTenants().contains(id.getTenant())) return "tenant " + id.getTenant() + " is a superuser tenant";
+        return null;
+    }
+
+    /**
+     * Pre-provisioned, as the client of a discovery exchange: why the responder presenting {@code chain} (answering as
+     * {@code region/agent}) is refused, or null. It must be a controller of the PKI that names itself as it answered, and
+     * (under {@code controller_trust_anchors}) chain to one of those too.
+     */
+    public String provisionedResponderRefusal(X509Certificate[] chain, io.cresco.agent.controller.netdiscovery.DiscoveryType type,
+                                              String region, String agent) {
+        String[] why = new String[1];
+        CrescoIdentity id = peerTrust.verifiedIdentity(chain, why);
+        if (id == null) return why[0];
+        if (!id.getRegion().equals(region) || !id.getAgent().equals(agent)) return "its certificate names " + id + ", not " + region + "/" + agent;
+        if (!ProvisionedIdentity.isController(chain[0])) return "it is not a controller of the operator's PKI (SAN "
+                + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_CONTROLLER + ")";
+        String myRegion = controllerEngine.cstate.getRegion();
+        boolean controllerExchange = type == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
+                || type == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL;
+        if (controllerExchange && region.equals(myRegion)) return "a controller of this node's own region answered a " + type + " exchange";
+        if (!controllerExchange && myRegion != null && !region.equals(myRegion)) return "it answered as region " + region + " but this node is of region " + myRegion;
+        if (!controllerExchange && !id.getTenant().equals(SecuritySettings.tenant(plugin.getConfig()))) return "its tenant " + id.getTenant() + " is not this node's";
+        return controllerAnchorRefusal(chain, null);
+    }
+
+    /** Load the provisioned identity, or throw (the controller does not start). */
+    private void initProvisioned() {
+        try {
+            CertValidity.setBackdateHours(plugin.getConfig().getIntegerParam("identity_cert_backdate_hours", 24));
+            java.util.List<X509Certificate> anchors = ProvisionedIdentity.readAnchors(ProvisionedIdentity.path(plugin.getConfig(), "trust_anchors"));
+            ProvisionedIdentity.Revocations rev = readOperatorRevocations(plugin.getConfig(), anchors);
+            ProvisionedIdentity p = ProvisionedIdentity.load(plugin.getConfig(), rev);
+            String mismatch = identityMismatch(plugin.getConfig(), p);
+            String region = controllerEngine.cstate.getRegion(), agent = controllerEngine.cstate.getAgent();
+            if (mismatch == null && region != null && !region.equals(p.identity.getRegion())) mismatch = "the certificate names region "
+                    + p.identity.getRegion() + " but this node is " + region;
+            if (mismatch == null && agent != null && !agent.equals(p.identity.getAgent())) mismatch = "the certificate names agent "
+                    + p.identity.getAgent() + " but this node is " + agent;
+            if (mismatch != null) throw new ProvisionedIdentity.ProvisioningException(mismatch);
+            keyStoreAlias = controllerEngine.cstate.getAgentPath();
+            if (keyStoreAlias == null) keyStoreAlias = p.identity.getRegion() + "_" + p.identity.getAgent();
+            keyStorePassword = UUID.randomUUID().toString().toCharArray();
+            keyStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+            keyStore.load(null, null);
+            trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+            trustStore.load(null, null);
+            installProvisioned(p, anchors);
+            operatorRevocations = rev;
+            peerTrust = openPeerTrust();
+            peerTrust.setPki(anchors, rev);
+            bindOwnIdentity();
+            provisioned = p;
+            logger.info("PRE-PROVISIONED identity " + p.identity + (p.controller ? " (controller)" : "") + " from " + plugin.getConfig().getStringParam("identity_keystore")
+                    + ": " + ProvisionedIdentity.describe(p.chain[0]) + "; " + anchors.size() + " trust anchor(s); operator revocations: " + rev.summary()
+                    + ". Enrollment, discovery-secret binding and self-made certificates are OFF.");
+            logger.info("This node's identity key: " + PeerIdentity.spkiFingerprint(chain[0]));
+            startProvisionedWatcher();
+        } catch (ProvisionedIdentity.ProvisioningException e) {
+            logger.error("REFUSING TO START: the pre-provisioned identity cannot be used: " + e.getMessage());
+            throw new IllegalStateException("pre-provisioned identity: " + e.getMessage(), e);
+        } catch (Exception e) {
+            logger.error("REFUSING TO START: the pre-provisioned identity cannot be installed: " + e.getMessage(), e);
+            throw new IllegalStateException("pre-provisioned identity: " + e.getMessage(), e);
+        }
+    }
+
+    /** Put {@code p}'s key and chain in the key store and {@code anchors} (only) in the trust store. */
+    private synchronized void installProvisioned(ProvisionedIdentity p, java.util.List<X509Certificate> anchors) throws Exception {
+        storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, p.key, p.chain);
+        this.chain = p.chain;
+        this.currentIdentityKey = p.key;
+        synchronized (trustStore) {
+            for (String alias : java.util.Collections.list(trustStore.aliases())) trustStore.deleteEntry(alias);
+            for (X509Certificate a : anchors) trustStore.setCertificateEntry("anchor#" + certFingerprint(a), a);
+        }
+    }
+
+    /**
+     * Watch the provisioned files (every {@code identity_keystore_reload_seconds}, 30): a replaced keystore (the operator's
+     * renewal), trust anchors or revocation file is loaded, validated and put in force WITHOUT dropping a valid connection
+     * (the key managers present the new chain and key at the next handshake); one that does not validate is refused and the
+     * current identity kept (CRITICAL). The certificate's expiry is alarmed (WARN within its renewal window, CRITICAL in its
+     * last tenth or last week).
+     */
+    private void startProvisionedWatcher() {
+        long secs = Math.max(1, plugin.getConfig().getIntegerParam("identity_keystore_reload_seconds", 30));
+        provisionedWatcher = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cresco-provisioned-identity");
+            t.setDaemon(true);
+            return t;
+        });
+        provisionedWatcher.scheduleWithFixedDelay(() -> {
+            try { reloadProvisionedIfChanged(); } catch (Throwable t) { logger.error("provisioned identity check: " + t.getMessage()); }
+        }, secs, secs, java.util.concurrent.TimeUnit.SECONDS);
+        checkProvisionedExpiry();
+    }
+
+    /**
+     * Re-read the provisioned files when any changed. Returns true when a new identity, anchors or revocations were put in
+     * force.
+     */
+    public synchronized boolean reloadProvisionedIfChanged() {
+        ProvisionedIdentity cur = provisioned;
+        if (cur == null) return false;
+        io.cresco.library.plugin.Config cfg = plugin.getConfig();
+        boolean changed = false;
+        try {
+            Path ks = ProvisionedIdentity.path(cfg, "identity_keystore"), pw = ProvisionedIdentity.path(cfg, "identity_keystore_password_file"),
+                    ta = ProvisionedIdentity.path(cfg, "trust_anchors");
+            String rf = cfg.getStringParam("revocation_file");
+            Path rp = rf == null || rf.isBlank() ? null : Paths.get(rf.trim());
+            boolean idChanged = ProvisionedIdentity.mtime(ks) != cur.keystoreMtime || ProvisionedIdentity.mtime(pw) != cur.passwordMtime
+                    || ProvisionedIdentity.mtime(ta) != cur.anchorsMtime;
+            boolean revChanged = rp != null ? (!Files.exists(rp) || ProvisionedIdentity.mtime(rp) != operatorRevocations.mtime)
+                    : operatorRevocations != ProvisionedIdentity.Revocations.NONE;
+            if (!idChanged && !revChanged) { checkProvisionedExpiry(); return false; }
+            java.util.List<X509Certificate> anchors = ProvisionedIdentity.readAnchors(ta);
+            ProvisionedIdentity.Revocations rev = readOperatorRevocations(cfg, anchors);
+            ProvisionedIdentity p = ProvisionedIdentity.load(cfg, rev);
+            if (!p.identity.equals(cur.identity)) {
+                throw new ProvisionedIdentity.ProvisioningException("the new keystore names " + p.identity + ", not this node's " + cur.identity);
+            }
+            boolean newKey = !p.chain[0].getPublicKey().equals(cur.chain[0].getPublicKey());
+            installProvisioned(p, anchors);
+            operatorRevocations = rev;
+            peerTrust.setPki(anchors, rev);
+            if (newKey) bindOwnIdentity();
+            provisioned = p;
+            changed = true;
+            setProvisionedAlarm(null, false);
+            logger.info("Pre-provisioned identity RELOADED: " + ProvisionedIdentity.describe(p.chain[0]) + (newKey ? " with a NEW key" : " (same key)")
+                    + "; " + anchors.size() + " trust anchor(s); operator revocations: " + rev.summary() + "; live connections kept (the next"
+                    + " handshake presents it)");
+            try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) { }
+            // revocations the operator just listed close what holds them now
+            onKeysRevoked(java.util.List.of());
+        } catch (Exception e) {
+            setProvisionedAlarm("the replaced pre-provisioned identity files were REFUSED (" + e.getMessage() + "); this node keeps its current"
+                    + " identity " + ProvisionedIdentity.describe(cur.chain[0]), true);
+        }
+        checkProvisionedExpiry();
+        return changed;
+    }
+
+    private void checkProvisionedExpiry() {
+        ProvisionedIdentity p = provisioned;
+        if (p == null) return;
+        if (provisionedAlarm != null && provisionedAlarm.startsWith("the replaced")) return;   // a refusal stands until the files change
+        long now = System.currentTimeMillis(), na = p.chain[0].getNotAfter().getTime();
+        long life = intendedLife(p.chain[0].getNotBefore().getTime(), na), left = na - now;
+        if (left <= 0) setProvisionedAlarm("this node's pre-provisioned certificate EXPIRED on " + p.chain[0].getNotAfter() + "; replace "
+                + plugin.getConfig().getStringParam("identity_keystore"), true);
+        else if (left <= Math.min(7 * 24 * 3600_000L, Math.max(life / 10, 3600_000L))) setProvisionedAlarm("this node's pre-provisioned certificate"
+                + " expires on " + p.chain[0].getNotAfter() + "; replace " + plugin.getConfig().getStringParam("identity_keystore") + " (it is reloaded"
+                + " without a restart)", true);
+        else if (chainNeedsRenewal(p.chain, now, renewBeforeMs())) setProvisionedAlarm("this node's pre-provisioned certificate expires on "
+                + p.chain[0].getNotAfter() + "; replace " + plugin.getConfig().getStringParam("identity_keystore") + " before then", false);
+        else setProvisionedAlarm(null, false);
+    }
+
+    private void setProvisionedAlarm(String text, boolean critical) {
+        String old = provisionedAlarm;
+        provisionedAlarm = text;
+        provisionedAlarmCritical = critical;
+        if (text != null && !text.equals(old)) { if (critical) logger.error("IDENTITY: " + text); else logger.warn("IDENTITY: " + text); }
     }
 
     // ---------------------------------------------------------------- persistent identity material
@@ -628,6 +892,7 @@ public class CertificateManager {
     /** Stop this manager's background work (the shared peer trust registry stays open: the broker uses it). */
     public void close() {
         if (renewal != null) renewal.shutdownNow();
+        if (provisionedWatcher != null) provisionedWatcher.shutdownNow();
     }
 
     /**
@@ -645,6 +910,7 @@ public class CertificateManager {
      * extended past what the region vouched for.
      */
     public boolean renewIfDue() throws Exception {
+        if (provisioned != null) { checkProvisionedExpiry(); return false; }   // the operator renews: a replaced keystore is reloaded
         Object local = renewLocally();
         if (local != RE_ENROLL) return (Boolean) local;
         // Re-enrollment runs an authenticated discovery exchange, and the exchange's own handler takes this manager's lock
@@ -805,6 +1071,8 @@ public class CertificateManager {
         }
         String ia = identityAlarm;
         if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
+        String pa = provisionedAlarm;
+        if (pa != null) (provisionedAlarmCritical ? crit : warn).add(pa);
         String rcf = regionCaFailure;
         if (rcf != null) crit.add("REGION CA UNAVAILABLE: " + rcf + " (no identity is issued; restore region-ca.p12 or set region_ca_allow_new)");
         if (chain != null && chain[0] != null) {
@@ -1183,6 +1451,7 @@ public class CertificateManager {
      * @return true when the leaf was re-issued
      */
     public synchronized boolean ensureLeafIdentity() {
+        if (provisioned != null) return false;                         // a provisioned identity is never re-issued here
         try {
             if (regionCA != null) return false;                        // a CA holder's identity is its own CA's to stamp
             String region = controllerEngine.cstate.getRegion();
@@ -1224,7 +1493,7 @@ public class CertificateManager {
                     // the CURRENT chain: a connection factory made before a renewal or re-enrollment presents the new leaf
                     // when it reconnects (same key), not the snapshot it was made with
                     keyManagers[i] = new NodeIdentityKeyManager((X509KeyManager) keyManagers[i], () -> keyStoreAlias)
-                            .withCurrentChain(() -> chain);
+                            .withCurrentChain(() -> chain).withCurrentKey(() -> currentIdentityKey);
                 }
             }
         } catch(Exception ex) {
@@ -1358,6 +1627,13 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         if (regionCA != null) {
             return;
         }
+        if (provisioned != null) {
+            if (!regionCaOffLogged) {
+                regionCaOffLogged = true;
+                logger.info("security_regional_ca is ignored: this node's identity is pre-provisioned (the operator's PKI issues every identity)");
+            }
+            return;
+        }
         // a region CA that existed but cannot be loaded is retried at most once a minute (an operator may restore it)
         if (regionCaFailure != null && System.currentTimeMillis() - regionCaFailureAt < 60_000L) return;
         try {
@@ -1419,6 +1695,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("Could not save the region CA (a restart will make a new one, which peers that recorded this CA refuse): " + ex.getMessage());
         }
     }
+
+    private volatile boolean regionCaOffLogged;
 
     /** Why the region CA that existed cannot be loaded (none is generated in its place; CRITICAL), or null. */
     private volatile String regionCaFailure;
@@ -1499,6 +1777,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
      * </ul>
      */
     public String issueEnrollment(String joinerCertJson, io.cresco.agent.controller.netdiscovery.DiscoveryType joinType) {
+        if (provisioned != null) {
+            logger.error("Enrollment REFUSED: this node is pre-provisioned; identities are issued by the operator's PKI, never at a join");
+            return null;
+        }
         try {
             ensureRegionCA();
             if (regionCA == null) {
@@ -1722,6 +2004,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
      * authorises one rebind of the region on this node (holding a discovery secret does not make anyone that region's CA).
      */
     public boolean installEnrollment(String chainJson, String peerRegion, io.cresco.agent.controller.netdiscovery.DiscoveryType type) {
+        if (provisioned != null) {
+            logger.error("installEnrollment REFUSED: this node is pre-provisioned; it installs no identity or CA from a peer");
+            return false;
+        }
         try {
             X509Certificate[] signedChain = getCertsfromJson(chainJson);
             if (signedChain == null || signedChain.length == 0 || signedChain[0] == null) {

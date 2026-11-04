@@ -778,6 +778,12 @@ public class ControllerSMHandler {
 
         String tmpAgent = plugin.getConfig().getStringParam("agentname");
         String tmpRegion = plugin.getConfig().getStringParam("regionname");
+        // a pre-provisioned node is named by its certificate
+        String[] provisioned = io.cresco.agent.controller.communication.CertificateManager.provisionedNames(plugin.getConfig());
+        if (provisioned != null) {
+            if (tmpRegion == null) tmpRegion = provisioned[1];
+            if (tmpAgent == null) tmpAgent = provisioned[2];
+        }
 
         if(tmpAgent == null) {
             tmpAgent = cstate.getAgent();

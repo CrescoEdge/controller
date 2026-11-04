@@ -309,6 +309,7 @@ public class AgentServiceImpl implements AgentService {
                     logger.info("Controller Completed Startup");
                 } else {
                     logger.error("Controlled Failed Startup : Exiting");
+                    return;                                   // a refused start (e.g. an unusable pre-provisioned identity) stays down
                 }
 
                 while(!controllerEngine.cstate.isActive()) {
