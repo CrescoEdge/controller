@@ -498,7 +498,7 @@ public class DiscoveryProcessor {
 	// ------------------------------------------------------------------ discovery v2 (DiscoveryAuth)
 
 	public DiscoveryAuth.Mode authMode() {
-		return DiscoveryAuth.Mode.parse(plugin.getConfig().getStringParam(DiscoveryAuth.MODE_KEY, "v2"));
+		return DiscoveryAuth.Mode.of(plugin.getConfig());
 	}
 
 	private final java.util.Set<String> warnedLegacy = java.util.concurrent.ConcurrentHashMap.newKeySet();

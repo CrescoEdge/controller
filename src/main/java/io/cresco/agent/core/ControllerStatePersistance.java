@@ -386,7 +386,9 @@ public class ControllerStatePersistance {
         if (!io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) return null;
         io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg);
         return io.cresco.agent.controller.communication.RegistryBinding.dataplaneRefusal(writer, atGlobal,
-                dbe::regionOfAgentQuiet, regionController, regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
+                dbe::regionOfAgentQuiet, regionController,
+                io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), System.currentTimeMillis()),
+                regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
     }
 
     private volatile long lastRefusedUpdateLog;

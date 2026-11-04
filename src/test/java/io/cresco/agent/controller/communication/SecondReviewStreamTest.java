@@ -42,6 +42,7 @@ class SecondReviewStreamTest {
     private BrokerService broker(RegionCA ca, TlsTestSupport.Id id, boolean needClientAuth) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");                     // nothing else: defaults
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz2").toString(), cfg);
         PeerTrustRegistry peers = new PeerTrustRegistry();
         assertNull(peers.trustCa(ca.caCert(), "rgA", "t1", "test"));
@@ -123,6 +124,7 @@ class SecondReviewStreamTest {
                 s1 = TlsTestSupport.issued(ca, "t1", "rgA", "s1"), other = TlsTestSupport.issued(caOther, "t2", "rgC", "x9");
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz3").toString(), cfg);
         PeerTrustRegistry peers = new PeerTrustRegistry();
         assertNull(peers.trustCa(ca.caCert(), "rgA", "t1", "test"));
@@ -192,6 +194,7 @@ class SecondReviewStreamTest {
         for (String mode : new String[]{"off", "warn"}) {
             Map<String, Object> cfg = new HashMap<>();
             cfg.put("broker_security_enabled", "true");
+            cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
             cfg.put(PeerIdentity.MODE_KEY, mode);
             PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz4").toString(), cfg);
             PeerTrustRegistry peers = new PeerTrustRegistry();

@@ -68,7 +68,9 @@ class RegionalRebuildWindowPingTest {
         final MsgRouter router;
 
         Fixture(ControllerMode mode, Map<String, Object> cfg) {
-            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), new HashMap<>(cfg), sent::add);
+            Map<String, Object> c = new HashMap<>(cfg);
+            c.putIfAbsent("broker_security_enabled", "false");   // phase 4: secure by default; this tests the watcher, not callers
+            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), c, sent::add);
             state = new StubState(plugin, mode);
             db = new StubDb(plugin);
             engine = new ControllerEngine(null, plugin, null, db);

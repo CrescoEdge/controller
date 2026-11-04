@@ -62,6 +62,14 @@ public final class DiscoveryAuth {
     public enum Mode {
         V2, COMPAT;
 
+        /**
+         * This node's mode: {@code compat} only while its upgrade window is open ({@code discovery_compat_until}, see
+         * SecuritySettings.compatOpen); otherwise {@code v2}, whatever {@code discovery_auth} says.
+         */
+        public static Mode of(io.cresco.library.plugin.Config config) {
+            return io.cresco.agent.controller.communication.SecuritySettings.compatOpen(config, System.currentTimeMillis()) ? COMPAT : V2;
+        }
+
         public static Mode parse(String v) {
             return v != null && v.trim().toLowerCase(Locale.ROOT).equals("compat") ? COMPAT : V2;
         }

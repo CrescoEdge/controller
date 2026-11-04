@@ -307,6 +307,11 @@ public class AgentServiceImpl implements AgentService {
                 //core init needs to go here
                 if(controllerEngine.start()) {
                     logger.info("Controller Completed Startup");
+                } else if (controllerEngine.isRefusedByConfiguration()) {
+                    // refuse to start: exit non-zero (78, EX_CONFIG) so a supervisor sees a configuration error, not a hang
+                    logger.error("Controller REFUSED to start: its security configuration is inconsistent (see above). Exiting.");
+                    System.exit(78);
+                    return;
                 } else {
                     logger.error("Controlled Failed Startup : Exiting");
                     return;                                   // a refused start (e.g. an unusable pre-provisioned identity) stays down
@@ -606,6 +611,11 @@ public class AgentServiceImpl implements AgentService {
     boolean isCurrentDataPlane(io.cresco.library.data.DataPlaneService wrapper, io.cresco.library.data.DataPlaneService impl) {
         return wrapper instanceof io.cresco.agent.data.BundleDataPlaneService
                 && ((io.cresco.agent.data.BundleDataPlaneService) wrapper).wraps(impl);
+    }
+
+    @Override
+    public io.cresco.library.security.SecurityProfile getSecurityProfile() {
+        return io.cresco.agent.controller.communication.SecuritySettings.profile(plugin == null ? null : plugin.getConfig());
     }
 
     @Override
