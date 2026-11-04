@@ -46,7 +46,7 @@ public class PollRemovePlugin implements Runnable {
                     if (re != null) {
                         int statusCode = Integer.parseInt(re.getParam("status_code"));
                         if (statusCode == 7) {
-                            logger.debug("REMOVING inode: " + inode_id + " RPC:" + re.getParams().toString());
+                            logger.debug("REMOVING inode: " + inode_id + " RPC:" + io.cresco.agent.controller.communication.ParamLog.describe(re));
                             boolean isRemovedPlugin = controllerEngine.getGDB().removeNode(region,agent,pluginId);
 
                             if(isRemovedPlugin) {

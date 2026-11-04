@@ -267,7 +267,7 @@ public class DiscoveryClientWorkerIPv6 {
             }
             else {
                 logger.error("[validated_authenication] record not found!");
-                logger.error(rme.getParams().toString());
+                logger.error(io.cresco.agent.controller.communication.ParamLog.describe(rme));
             }
 
         }

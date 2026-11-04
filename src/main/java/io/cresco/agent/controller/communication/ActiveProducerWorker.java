@@ -178,7 +178,7 @@ public class ActiveProducerWorker {
 		}
 
 		try {
-			logger.trace("Worker [{}] sending message: Type={}, Params={}", producerWorkerName, type, se.getParams());
+			logger.trace("Worker [{}] sending message: Type={}, Params={}", producerWorkerName, type, io.cresco.agent.controller.communication.ParamLog.describe(se));
 			TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
 			CallerStamps.toJms(se, textMessage);       // the verified caller travels as properties the broker checks
 
