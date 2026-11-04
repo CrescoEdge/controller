@@ -971,7 +971,11 @@ public class PluginAdmin {
                 }
                 if (configured || pendingOwners.containsKey(id) || gdb.nodeExist(plugin.getRegion(), plugin.getAgent(), id)) continue;
                 if (newestChange(d.toPath()) > cutoff) continue;
-                FileUtils.deleteDirectory(d);
+                String refused = PluginIds.purge(base.toPath(), id);
+                if (refused != null) {
+                    logger.error("plugin-data sweep: NOT deleting " + d + ": " + refused);
+                    continue;
+                }
                 deleted.add(id);
                 logger.warn("Deleted the plugin-data of " + id + ": no longer configured here and unchanged for "
                         + retentionDays + " days (plugin_data_retention_days)");
@@ -1144,11 +1148,16 @@ public class PluginAdmin {
                             // a plugin's data is never deleted on a stop (a graceful agent shutdown stops every plugin)
                             // nor on a remove without an explicit purge: it may be the only copy of what the plugin held
                             File folder = pluginDataDirectory(pluginId);
-                            if (folder.isDirectory()) {
-                                if (isRemove && purgeData) {
-                                    FileUtils.deleteDirectory(folder);
-                                    logger.warn("PURGED the plugin-data of removed plugin " + pluginId + ": " + folder);
-                                } else if (isRemove) {
+                            if (isRemove && purgeData) {
+                                // only a valid id, only a real directory strictly inside plugin-data, never through a link
+                                String refused = PluginIds.purge(new File(agentService.getAgentDataDirectory(), "plugin-data").toPath(), pluginId);
+                                if (refused == null) {
+                                    logger.warn("PURGED the plugin-data of removed plugin " + pluginId);
+                                } else {
+                                    logger.error("NOT purging plugin-data: " + refused);
+                                }
+                            } else if (folder.isDirectory()) {
+                                if (isRemove) {
                                     logger.info("Plugin " + pluginId + " removed; its plugin-data is kept at " + folder.getAbsolutePath()
                                             + " (pluginremove with purge_data=true from an admin deletes it)");
                                 }
@@ -1303,6 +1312,12 @@ public class PluginAdmin {
                 if(pluginID == null) {
                     pluginID = "plugin-" + UUID.randomUUID().toString();
                 }
+                // the id names a directory (plugin-data/<id>) and a registry row: one plain segment only (review F6)
+                String badId = PluginIds.refusal(pluginID);
+                if (badId != null) {
+                    logger.error("addPlugin REFUSED: " + badId);
+                    return null;
+                }
 
                 String pluginName = (String)incomingMap.get("pluginname");
 
@@ -1377,7 +1392,7 @@ public class PluginAdmin {
                     }
                 } else {
                     logger.error("Can't add " + pluginName + " could not find suitable jar for bundle loading!");
-                    logger.error(pluginName + " : " + incomingMap);
+                    logger.error(pluginName + " : " + io.cresco.agent.controller.communication.ParamLog.names(incomingMap));
                 }
 
             } catch (Exception ex) {
