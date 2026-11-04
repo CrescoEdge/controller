@@ -292,11 +292,88 @@ public final class PeerTrustRegistry {
     private void ensureEpoch() {
         if (revEpoch != null) return;
         revEpoch = newEpochId();
+        recordEpoch();
+    }
+
+    /** With the write lock: record the current epoch in the log (and the high-water mark). */
+    private void recordEpoch() {
         if (file == null || sealed || fenced != null) return;
         Rec r = rec("epoch", null);
         r.token = revEpoch;
         r.t = System.currentTimeMillis();
         if (!append(r)) log.accept("peer trust registry: its revocation epoch could not be recorded (peers resend their lists after a restart)");
+        writeHighWater();
+    }
+
+    // ---------------------------------------------------------------- revocation positions vs. a restored registry
+
+    /**
+     * The revocation high-water mark ({@code <epoch> <position>}): the furthest position of the current epoch ever made
+     * durable. Kept OUTSIDE the registry's directory ({@code security/}, which is what an operator restores from a backup),
+     * next to it, so a registry restored to an older state -- the same epoch with fewer entries -- is recognised at open and
+     * starts a NEW epoch: its next revocations would otherwise take positions its children already hold, and never reach them.
+     */
+    private Path highWaterPath() {
+        if (file == null) return null;
+        Path dir = file.toAbsolutePath().getParent();
+        Path up = dir == null ? null : dir.getParent();
+        return up == null ? null : up.resolve(file.getFileName() + ".hwm");
+    }
+
+    private void writeHighWater() {
+        Path p = highWaterPath();
+        if (p == null || revEpoch == null) return;
+        try {
+            writeAtomically(p, (revEpoch + " " + durableRevSeq + "\n").getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            log.accept("peer trust registry: could not record its revocation high-water mark " + p + " (" + e.getMessage()
+                    + "); a registry restored from a backup may not be recognised");
+        }
+    }
+
+    /** At open: compare the registry with its high-water mark; a registry behind it (or of another epoch) starts a new epoch. */
+    private void checkHighWater() {
+        Path p = highWaterPath();
+        if (p == null || sealed || fenced != null) return;
+        try {
+            if (!Files.exists(p)) { writeHighWater(); return; }
+            String[] hw = Files.readString(p, StandardCharsets.UTF_8).trim().split("\\s+");
+            String epoch = hw.length > 0 ? hw[0] : "";
+            long seq = hw.length > 1 ? Long.parseLong(hw[1]) : 0;
+            if (epoch.equals(revEpoch) && seq <= durableRevSeq) {
+                if (seq < durableRevSeq) writeHighWater();
+                return;
+            }
+            newEpoch(epoch.equals(revEpoch)
+                    ? "the registry holds revocations up to position " + durableRevSeq + " but already recorded " + seq + " (restored from an older copy?)"
+                    : "the registry's revocation epoch " + revEpoch + " is not the last one recorded, " + epoch + " (restored from an older copy?)");
+        } catch (Exception e) {
+            log.accept("peer trust registry: its revocation high-water mark " + p + " is unreadable (" + e.getMessage() + "); starting a new epoch");
+            newEpoch("unreadable high-water mark");
+        }
+    }
+
+    /** With the write lock: a new revocation epoch (every peer fetches this node's list again, and resends its own). */
+    private void newEpoch(String why) {
+        String old = revEpoch;
+        revEpoch = newEpochId();
+        revVersion++;
+        log.accept("peer trust registry: NEW revocation epoch " + revEpoch + " (was " + old + "): " + why + "; its parent and children"
+                + " exchange their revocation lists again from the start");
+        recordEpoch();
+    }
+
+    private volatile long lastReactiveEpoch;
+
+    /**
+     * A peer reports that this node's list (or its own list as acknowledged) went further, in this epoch, than this node
+     * holds: the registry went back in time (a whole data directory restored). Starts a new epoch, at most once an hour.
+     */
+    public void rollbackSuspected(String why) {
+        long now = System.currentTimeMillis();
+        if (now - lastReactiveEpoch < 3_600_000L) return;
+        lastReactiveEpoch = now;
+        synchronized (writeLock) { newEpoch(why); }
     }
 
     private PeerTrustRegistry(Path file) {
@@ -370,6 +447,7 @@ public final class PeerTrustRegistry {
             }
             r.reloadRebindFile();
             r.ensureEpoch();
+            r.checkHighWater();
             // revocations are put in force even on a sealed or fenced registry (fail closed): recorded when it can be
             for (String t : o.revokeIdentities) {
                 String why = r.revokeLocked(t, "peer_identity_revoke");
@@ -677,6 +755,11 @@ public final class PeerTrustRegistry {
     /** Why the registry could not take its file lock (it is fenced: nothing is recorded), or null. Reported as CRITICAL. */
     public String lockFailure() { return lockFailure; }
 
+    private static boolean validName(String n) {
+        int sl = n == null ? -1 : n.indexOf('/');
+        return sl > 0 && CrescoNames.isValid(n.substring(0, sl)) && CrescoNames.isValid(n.substring(sl + 1));
+    }
+
     /** Is {@code region/agent} free, or bound to this key? (Checks only.) */
     public BindResult canBind(String tenant, String region, String agent, java.security.PublicKey leafKey) {
         if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
@@ -738,6 +821,12 @@ public final class PeerTrustRegistry {
         if (key == null) return null;
         Binding b = identities.get(name(region, agent));
         return b != null && b.key.equals(fingerprint(key.getEncoded())) ? b.role : null;
+    }
+
+    /** The role {@code region/agent} is bound with here (when its tenant is {@code tenant}), or null. Lock-free. */
+    public String roleOf(String tenant, String region, String agent) {
+        Binding b = identities.get(name(region, agent));
+        return b == null || (tenant != null && !tenant.equals(b.tenant)) ? null : b.role;
     }
 
     /** The tenant bound to {@code region/agent}, or null. Lock-free. */
@@ -1238,16 +1327,24 @@ public final class PeerTrustRegistry {
     }
 
     /**
+     * The longest validity any Cresco region CA has given a leaf: three years (YEARS_VALID) before short-lived leaves (and a
+     * day for a leap year). A revocation of a key a region CA enrolled is kept at least this long.
+     */
+    static final long LONGEST_LEAF_MS = (3 * 365L + 1) * DAY;
+
+    /**
      * When a revocation of the key bound to {@code n} can no longer matter: never (0), unless this node's region CA ENROLLED
-     * that key -- its leaves then live at most {@link #issuedLeafLifetimeMs}, the CA issues none after the revocation, and
-     * every verifier requires a CA-issued leaf within its validity for that region's names; the name stays tombstoned.
+     * that key. Then it expires only after the latest notAfter ANY certificate for that key could carry: a leaf this CA
+     * issued before short-lived leaves lived three years, and the operator may change {@code identity_leaf_validity_hours};
+     * so the longest of those ({@link #LONGEST_LEAF_MS}, or the current leaf lifetime if longer) plus twice the backdate and
+     * a day. The CA issues nothing for a revoked key, every verifier requires a CA-issued leaf within its validity for that
+     * region's names, and the name stays tombstoned everywhere the revocation went.
      */
     private long expiryFor(String n) {
-        long life = issuedLeafLifetimeMs;
-        if (life <= 0 || n == null) return 0;
+        if (issuedLeafLifetimeMs <= 0 || n == null) return 0;
         Binding b = identities.get(n);
         if (b == null || !"enrolled".equals(b.source)) return 0;
-        return System.currentTimeMillis() + life + 2 * CertValidity.backdateMs() + DAY;
+        return System.currentTimeMillis() + Math.max(issuedLeafLifetimeMs, LONGEST_LEAF_MS) + 2 * CertValidity.backdateMs() + DAY;
     }
 
     /** The lifetime of the leaves this node's region CA issues (enables expiry of revocations of keys it enrolled). */
@@ -1317,6 +1414,18 @@ public final class PeerTrustRegistry {
                     if (bridges.remove(n) != null) recs.add(rec("unbridge", n));
                 }
             }
+            // the name the revocation names is reserved here too, where the revocation applies (not only at the node that bound
+            // it): once the entry expires, a leaf that key could still present (a CA-issued one, verified here by the CA path)
+            // is still refused -- unless this node binds that name to ANOTHER key (rebound before the entry arrived)
+            if (r.name != null && !tombs.containsKey(r.name) && (r.scope == null || r.name.startsWith(r.scope + "/")) && validName(r.name)) {
+                Binding b = identities.get(r.name);
+                if (b == null) {
+                    tombs.put(r.name, new Tomb(r.fp, r.source, r.t));
+                    Rec tr = rec("tomb", r.name);
+                    tr.key = r.fp; tr.source = r.source; tr.t = r.t;
+                    recs.add(tr);
+                }
+            }
             revokedToFire.add(r.fp);
         }
         revUndurable.addAll(recs);
@@ -1355,7 +1464,7 @@ public final class PeerTrustRegistry {
         for (Rec r : revUndurable) if (r.seq != null) maxSeq = Math.max(maxSeq, r.seq);
         if (append(revUndurable.toArray(new Rec[0]))) {
             revUndurable.clear();
-            if (maxSeq > durableRevSeq) durableRevSeq = maxSeq;
+            if (maxSeq > durableRevSeq) { durableRevSeq = maxSeq; writeHighWater(); }
             if (revDurability != null) log.accept("peer trust registry: the revocations in force are recorded durably again");
             revDurability = null;
             revRetryMs = 1000;
@@ -1434,6 +1543,18 @@ public final class PeerTrustRegistry {
 
     /** Is the key with this fingerprint revoked (for every name, or for some region's names)? Lock-free. */
     public boolean isRevokedKey(String fp) { return fp != null && revokedAnyScope.containsKey(fp); }
+
+    /** Does this node record its OWN CA for {@code region} (it held a region CA)? Lock-free. */
+    public boolean ownCaRecorded(String region) {
+        Binding ca = region == null ? null : cas.get(region);
+        return ca != null && "own".equals(ca.source);
+    }
+
+    /** Is the CA recorded for {@code region} revoked (nothing of that region is accepted until an operator rebind)? Lock-free. */
+    public boolean isRegionCaRevoked(String region) {
+        Binding ca = region == null ? null : cas.get(region);
+        return ca != null && revoked.containsKey(ca.key);
+    }
 
     /** Is {@code region/agent} tombstoned (its key was revoked; reserved until an operator rebind)? Lock-free. */
     public boolean isTombstoned(String region, String agent) { return tombs.containsKey(name(region, agent)); }
@@ -2183,6 +2304,7 @@ public final class PeerTrustRegistry {
         generation++;
         writeHead(new Head(generation, lines, lastMac));
         writeKey(macKey, true);
+        writeHighWater();
     }
 
     private void closeChannels() {
