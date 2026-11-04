@@ -82,7 +82,7 @@ probe_cp() {
     mkdir -p "$d/x"
     ( cd "$d/x" && unzip -qo "$JAR" controller.jar library.jar logger.jar \
       && unzip -qo -j controller.jar 'activemq-client-*.jar' 'hawtbuf-*.jar' -d .. \
-      && unzip -qo -j library.jar 'jakarta.jms-api-*.jar' -d .. \
+      && unzip -qo -j library.jar 'jakarta.jms-api-*.jar' 'osgi.core-*.jar' -d .. \
       && unzip -qo -j logger.jar 'pax-logging-api-*.jar' -d .. ) && rm -rf "$d/x" && touch "$d/.ok"
   fi
   echo "$d/*"
@@ -130,7 +130,7 @@ ck "$(echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "the spy glo
 ck "$(echo "$PROBE" | grep -q '"bound_spy2_received": 0' && echo 1)" "a client of the global's own wsapi (the global controller's identity) received none of rgr_b1's stream"
 ck "$(echo "$PROBE" | grep -q '"wsapi_recipient_key_accepted": false' && echo 1)" "wsapi refuses an API client's stream by recipient (ident_key cresco_to): only infrastructure binds recipients"
 ck "$(echo "$PROBE" | grep -q '"bound_named_refused": "' && echo 1)" "a1's broker connection asking for rgr_b1's stream by its recipient got a JMS refusal (typed, at subscribe)"
-ck "$(has global "DataPlaneWsHandler: handshake refused .*ident_key cresco_to")" "the global's wsapi logged the refusal of a recipient key from an API client"
+ck "$(has a1 "DataPlaneWsHandler: handshake refused .*ident_key cresco_to")" "a1's wsapi logged the refusal of a recipient key from an API client"
 for n in global region; do ck "$(has $n 'Broker mutual-TLS ENABLED')" "$n: client certificates required by default with broker security"; done
 ck "$(has global 'discovery v2: authenticated GLOBAL exchange with rgr/rc')" "the region and the global authenticated each other with discovery v2"
 ck "$(has b1 'discovery v2: authenticated AGENT exchange with rgr/rc')" "b1 and the region authenticated each other with discovery v2"

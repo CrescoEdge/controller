@@ -59,7 +59,111 @@ public final class SecuritySettings {
         }
         String tenant = tenantRefusal(c);
         if (tenant != null) out.add(tenant);
+        out.addAll(profileRefusals(c, System.currentTimeMillis()));
         return out;
+    }
+
+    // ------------------------------------------------------------------ the security profile
+
+    /** {@code security_profile}: {@code production} or {@code standard} (default). */
+    public static final String PROFILE = io.cresco.library.security.SecurityProfile.KEY;
+    /** Provisioned identity (production): the node's key and chain, its password file, the fabric's trust anchors. */
+    public static final String IDENTITY_KEYSTORE = "identity_keystore", IDENTITY_KEYSTORE_PASSWORD_FILE = "identity_keystore_password_file",
+            TRUST_ANCHORS = "trust_anchors", REVOCATION_FILE = "revocation_file";
+
+    /**
+     * This node's profile: {@code INSECURE} in explicit insecure debug mode ({@code broker_security_enabled=false}), else
+     * {@code security_profile} ({@code STANDARD} when unset; an unknown value reads as {@code STANDARD} here and refuses
+     * the node's start in {@link #startupRefusals}).
+     */
+    public static io.cresco.library.security.SecurityProfile profile(Config c) {
+        if (!brokerSecurity(c)) return io.cresco.library.security.SecurityProfile.INSECURE;
+        io.cresco.library.security.SecurityProfile p = io.cresco.library.security.SecurityProfile.parse(
+                c == null ? null : c.getStringParam(PROFILE));
+        return p == null ? io.cresco.library.security.SecurityProfile.STANDARD : p;
+    }
+
+    /** {@code security_profile=production} (and not refused for an unknown value). */
+    public static boolean production(Config c) {
+        return c != null && io.cresco.library.security.SecurityProfile.parse(c.getStringParam(PROFILE))
+                == io.cresco.library.security.SecurityProfile.PRODUCTION;
+    }
+
+    /** Credentials that are passwords (debug and testing only): never configured in production. */
+    static final java.util.List<String> PASSWORD_PARAMS = java.util.Arrays.asList(
+            "cresco_service_key", "broker_security_secret", "keystorepwd", "truststorepwd", "plugin_signing_truststore_password");
+    /** Secrets that must come from a {@code _file} (or {@code CRESCO_} environment) source in production, never inline. */
+    static final java.util.List<String> FILE_ONLY_SECRETS = java.util.Arrays.asList(
+            "discovery_secret_agent", "discovery_secret_region", "discovery_secret_global", "db_password");
+
+    /**
+     * Why the profile forbids this node's start, one line per problem (empty: it may start). An unknown
+     * {@code security_profile} is refused in any mode. {@code production}: every node identity is pre-provisioned by the
+     * operator's PKI and nothing that would mint, enroll, pin on first use or accept a password is allowed.
+     */
+    public static java.util.List<String> profileRefusals(Config c, long now) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        String raw = c == null ? null : c.getStringParam(PROFILE);
+        if (raw != null && !raw.isBlank() && io.cresco.library.security.SecurityProfile.parse(raw) == null) {
+            out.add(PROFILE + "=" + raw + " is not a profile: use production or standard (insecure debug mode is"
+                    + " broker_security_enabled=false, under the standard profile only)");
+            return out;
+        }
+        if (!production(c)) return out;
+        String pre = "security_profile=production: ";
+        if (!brokerSecurity(c)) out.add(pre + "broker_security_enabled=false is not allowed (insecure debug mode is never production)");
+        if (!requireClientAuth(c)) out.add(pre + "broker_require_client_auth=false is not allowed");
+        if (!tenantNamespacing(c)) out.add(pre + "tenant_namespacing=false is not allowed");
+        if (!c.getBooleanParam("plugin_signing_required", true)) out.add(pre + "plugin_signing_required=false is not allowed");
+        if (!c.getBooleanParam("msg_signing_required", true)) out.add(pre + "msg_signing_required=false is not allowed");
+        String pim = c.getStringParam(PeerIdentity.MODE_KEY);
+        if (pim != null && !pim.trim().equalsIgnoreCase("enforce")) out.add(pre + PeerIdentity.MODE_KEY + "=" + pim + " is not allowed (enforce only)");
+        if (compatConfigured(c) || c.getStringParam(DISCOVERY_COMPAT_UNTIL) != null) {
+            out.add(pre + "the upgrade window (discovery_auth=compat, " + DISCOVERY_COMPAT_UNTIL + ") is not allowed");
+        }
+        if (c.getBooleanParam("security_regional_ca", false)) {
+            out.add(pre + "security_regional_ca=true (a region issuing certificates to agents that join with the discovery secret)"
+                    + " is not allowed: every node's certificate is issued by the operator's PKI");
+        }
+        if (c.getBooleanParam("broker_allow_unverified_bridges", false)) out.add(pre + "broker_allow_unverified_bridges=true is not allowed");
+        for (String k : new String[]{"peer_identity_rebind", "public_key_trusted_fingerprints"}) {
+            String v = c.getStringParam(k);
+            if (v != null && !v.isBlank()) {
+                out.add(pre + k + " is not allowed (trust comes from " + TRUST_ANCHORS + " only; re-provision a node instead of"
+                        + " rebinding it)");
+            }
+        }
+        requiredFile(out, pre, c, IDENTITY_KEYSTORE, "the node's operator-issued key and certificate chain (PKCS12)");
+        requiredFile(out, pre, c, IDENTITY_KEYSTORE_PASSWORD_FILE, "the password of " + IDENTITY_KEYSTORE + " (an owner-only file)");
+        requiredFile(out, pre, c, TRUST_ANCHORS, "the fabric's root and region CA certificates (PEM)");
+        requiredFile(out, pre, c, "plugin_signing_truststore", "the anchors plugin jars are signed to (plugin signing is mandatory)");
+        String rev = c.getStringParam(REVOCATION_FILE);
+        if (rev != null && !rev.isBlank() && !java.nio.file.Files.isReadable(java.nio.file.Paths.get(rev.trim()))) {
+            out.add(pre + REVOCATION_FILE + "=" + rev + " is not a readable file");
+        }
+        for (String k : PASSWORD_PARAMS) {
+            String v = c.getStringParam(k);
+            String f = c.getStringParam(k + "_file");
+            if ((v != null && !v.isEmpty()) || (f != null && !f.isBlank())) {
+                out.add(pre + k + " is a password, which production does not allow (debug and testing only)");
+            }
+        }
+        for (String k : FILE_ONLY_SECRETS) {
+            if (System.getProperty(k) != null) {
+                out.add(pre + k + " is given inline (-D" + k + "): give it as " + k + "_file (an owner-only file) or CRESCO_"
+                        + k.toUpperCase(java.util.Locale.ROOT));
+            }
+        }
+        return out;
+    }
+
+    private static void requiredFile(java.util.List<String> out, String pre, Config c, String key, String what) {
+        String v = c.getStringParam(key);
+        if (v == null || v.isBlank()) {
+            out.add(pre + key + " is required: " + what);
+        } else if (!java.nio.file.Files.isRegularFile(java.nio.file.Paths.get(v.trim())) || !java.nio.file.Files.isReadable(java.nio.file.Paths.get(v.trim()))) {
+            out.add(pre + key + "=" + v + " is not a readable file (" + what + ")");
+        }
     }
 
     /** WARNINGs (and ERRORs) a node logs on EVERY boot: temporary settings in effect. */

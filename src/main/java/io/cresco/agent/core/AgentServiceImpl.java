@@ -613,6 +613,11 @@ public class AgentServiceImpl implements AgentService {
     }
 
     @Override
+    public io.cresco.library.security.SecurityProfile getSecurityProfile() {
+        return io.cresco.agent.controller.communication.SecuritySettings.profile(plugin == null ? null : plugin.getConfig());
+    }
+
+    @Override
     public boolean isSecurityEnabled() {
         return plugin == null || io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig());
     }

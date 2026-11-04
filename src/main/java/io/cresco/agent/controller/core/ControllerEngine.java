@@ -350,7 +350,12 @@ public class ControllerEngine {
             return true; //send all messages to regional controller if not broker
         }
         try {
-            return this.broker != null && this.broker.hasLiveQueueRoute(remoteAgentPath);
+            if (this.broker == null) return false;
+            // the queue this node's messages for that agent go to: with tenant namespacing, T.<this node's tenant>.<path>
+            // (AgentProducer qualifies by the message's tenant); without it the bare path
+            String queue = io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())
+                    ? io.cresco.library.security.TenantNamespace.qualify(tenant(), remoteAgentPath) : remoteAgentPath;
+            return this.broker.hasLiveQueueRoute(queue);
         } catch (Exception ex) {
             logger.error("isReachableAgent Error: {}", ex.getMessage());
             return false;
