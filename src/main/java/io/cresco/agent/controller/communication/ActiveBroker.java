@@ -595,6 +595,22 @@ public class ActiveBroker {
 					return true;
 				}
 			}
+			// a consumer on a WILDCARD queue matching the name (an infrastructure inbox T.*.<region>_<agent> with tenant
+			// namespacing, and its demand subscription across a bridge): the concrete queue does not exist until the
+			// first message goes to it, so it is judged by its subscriptions
+			org.apache.activemq.command.ActiveMQQueue target = new org.apache.activemq.command.ActiveMQQueue(physicalName);
+			if (b instanceof org.apache.activemq.broker.region.RegionBroker) {
+				org.apache.activemq.broker.region.Region q = ((org.apache.activemq.broker.region.RegionBroker) b).getQueueRegion();
+				if (q instanceof org.apache.activemq.broker.region.AbstractRegion) {
+					for (org.apache.activemq.broker.region.Subscription sub
+							: ((org.apache.activemq.broker.region.AbstractRegion) q).getSubscriptions().values()) {
+						ActiveMQDestination d = sub.getConsumerInfo() == null ? null : sub.getConsumerInfo().getDestination();
+						if (d == null || !d.isQueue()) continue;
+						if (physicalName.equals(d.getPhysicalName())) return true;
+						if (d.isPattern() && org.apache.activemq.filter.DestinationFilter.parseFilter(d).matches(target)) return true;
+					}
+				}
+			}
 		} catch (Exception ex) {
 			return false;
 		}

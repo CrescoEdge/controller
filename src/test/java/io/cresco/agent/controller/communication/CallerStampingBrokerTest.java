@@ -56,6 +56,7 @@ class CallerStampingBrokerTest {
         assertNull(peers.trustCa(ca.caCert(), "rgA", "t1", "test"));
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put("tenant_id", "t1");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("stamp").toString(), cfg);
         authz = new CrescoAuthorizationBroker(pb, peers);

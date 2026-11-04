@@ -10,6 +10,9 @@
 # region they join instead (the only way a pre-fix controller forms this secured fabric).
 #
 # Usage: peer_identity_live_test.sh <agent.jar> <workdir> <python-with-pycrescolib> [extra -D flags for every node]
+#   DEFAULTS=1 runs every node with NO security setting (secure by default; tenant "default").
+#   The recipient-bound stream is written by PeerIdentityRecipientProbe.java on a node's own broker connection (needs a
+#   JDK 21 java on PATH; its classpath is taken from the agent jar under test).
 #   PYCRESCOLIB_PATH, when set, is put first on the probe's PYTHONPATH (to test a pycrescolib checkout).
 #   PORT0 (default 33000) and WS0 (default 8482) move the port block. Set REGIONAL_CA=1 to run under the regional CA.
 #   RESTART_DRILL=1 (default) then restarts the global and then the region (same data directories) and checks, from the
@@ -26,8 +29,14 @@ rm -rf "$WORK"; mkdir -p "$WORK/logs"
 rnd() { "$PY" -c 'import secrets; print(secrets.token_hex(16))'; }
 KEY="$(rnd)"
 SEC="-Ddiscovery_secret_global=$(rnd) -Ddiscovery_secret_region=$(rnd) -Ddiscovery_secret_agent=$(rnd) -Dcresco_service_key=$KEY"
+# DEFAULTS=1: no security setting at all (security is on by default: broker authorization, client certificates, tenant
+# namespacing, peer identity, message signatures), tenant "default". Otherwise the explicit flags below (tenant t1).
 # broker_require_client_auth is left to its default (on, because broker security is on)
-SECURITY="-Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce"
+if [ "${DEFAULTS:-0}" = "1" ]; then
+  TENANT=default; SECURITY=""
+else
+  TENANT=t1; SECURITY="-Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce"
+fi
 [ "${REGIONAL_CA:-0}" = "1" ] && SECURITY="$SECURITY -Dsecurity_regional_ca=true"
 COMMON="-Djava.net.preferIPv4Stack=true -Xmx1024M -Droot_log_level=INFO -Denable_console=false -Denable_dashboard=false"
 PIDS="$WORK/pids"; : > "$PIDS"
@@ -64,10 +73,37 @@ pin() { # the wsapi certificate fingerprint of node $1 (clients verify the wsapi
   local f; f=$(find "$WORK/nodes/$1/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1)
   [ -n "$f" ] && head -1 "$f" | tr -d '[:space:]'
 }
+# The recipient-bound stream is written the supported way: on a node's own broker connection, as a plugin's dataplane
+# writes one (wsapi refuses cresco_to from API clients by design). PeerIdentityRecipientProbe.java opens the brokers with
+# the harness nodes' own identities; its classpath comes from the agent jar under test.
+probe_cp() {
+  local d="$WORK/probe-cp"
+  if [ ! -f "$d/.ok" ]; then
+    mkdir -p "$d/x"
+    ( cd "$d/x" && unzip -qo "$JAR" controller.jar library.jar logger.jar \
+      && unzip -qo -j controller.jar 'activemq-client-*.jar' 'hawtbuf-*.jar' -d .. \
+      && unzip -qo -j library.jar 'jakarta.jms-api-*.jar' 'osgi.core-*.jar' -d .. \
+      && unzip -qo -j logger.jar 'pax-logging-api-*.jar' -d .. ) && rm -rf "$d/x" && touch "$d/.ok"
+  fi
+  echo "$d/*"
+}
 probe() {
+  local s; s="rb-$(rnd | cut -c1-12)"; rm -f "$WORK/probe.ready" "$WORK/probe.done"
   PYTHONPATH="${PYCRESCOLIB_PATH:-}${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$HERE/peer_identity_dataplane.py" --tx-port "$WS0" --rx-port $((WS0+2)) \
     --spy-port $((WS0+1)) --spy2-port "$WS0" --rx-path rgr_b1 --key "$KEY" --messages 200 \
-    --pin "$WS0=$(pin global)" --pin "$((WS0+1))=$(pin a1)" --pin "$((WS0+2))=$(pin b1)"
+    --pin "$WS0=$(pin global)" --pin "$((WS0+1))=$(pin a1)" --pin "$((WS0+2))=$(pin b1)" \
+    --bound-stream "$s" --ready-file "$WORK/probe.ready" --done-file "$WORK/probe.done" > "$WORK/probe.py.json" 2> "$WORK/probe.py.err" &
+  local pp=$!
+  for _ in $(seq 1 150); do [ -f "$WORK/probe.ready" ] && break; kill -0 "$pp" 2>/dev/null || break; sleep 1; done
+  java -cp "$(probe_cp)" "$HERE/PeerIdentityRecipientProbe.java" $((P0+10)) "$WORK/nodes/a1" $((P0+20)) "$WORK/nodes/b1" \
+    "T.$TENANT.global.event" rgr_b1 "$TENANT" 200 "$s" > "$WORK/probe.java.json" 2> "$WORK/probe.java.err"
+  touch "$WORK/probe.done"; wait "$pp"
+  "$PY" -c 'import json,sys
+d={}
+for f in sys.argv[1:]:
+    try: d.update(json.loads(open(f).read().strip().splitlines()[-1]))
+    except Exception as e: d.setdefault("probe_errors", []).append(f + ": " + str(e))
+print(json.dumps(d))' "$WORK/probe.py.json" "$WORK/probe.java.json"
 }
 echo "### dataplane probe (plain stream, recipient-bound stream, spy)"
 PROBE=$(probe)
@@ -82,24 +118,23 @@ L="$WORK/logs"
 ck "$(has a1 'Peer identity verified: broker connection .* is region=glob, agent=gc')" "a1's broker connections are bound to the global glob/gc"
 ck "$(has b1 'Peer identity verified: broker connection .* is region=rgr, agent=rc')" "b1's broker connections are bound to the region rgr/rc"
 ck "$(has region 'Peer identity verified: bridge .* is region=glob, agent=gc')" "the region's bridge is bound to the global glob/gc"
-ck "$(has global 'Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc')" "the global admitted the bridge from the discovered region controller"
-ck "$(has global 'mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=glob, agent=a1')" "a1 is identified at the global by a certificate naming its joined region"
-ck "$(has region 'mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b1')" "b1 is identified at the region by a certificate naming its joined region"
+ck "$(has global "Broker bridge from verified controller CrescoIdentity\{tenant=$TENANT, region=rgr, agent=rc")" "the global admitted the bridge from the discovered region controller"
+ck "$(has global "mTLS identity bound from certificate: CrescoIdentity\{tenant=$TENANT, region=glob, agent=a1")" "a1 is identified at the global by a certificate naming its joined region"
+ck "$(has region "mTLS identity bound from certificate: CrescoIdentity\{tenant=$TENANT, region=rgr, agent=b1")" "b1 is identified at the region by a certificate naming its joined region"
 for n in global region a1 b1; do
   ck "$(none $n 'PEER IDENTITY MISMATCH|BRIDGE REFUSED')" "$n: no identity refusal in a normal fabric"
 done
 ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo 1)" "an ordinary stream crossed global -> bridge -> region -> b1 in full (200/200)"
-ck "$(echo "$PROBE" | grep -q '"bound_received": 200' && echo 1)" "the recipient-bound stream reached its recipient rgr_b1 in full (200/200)"
-ck "$(echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "the spy agent glob/a1 received none of rgr_b1's stream"
-ck "$(echo "$PROBE" | grep -q '"bound_spy2_received": 0' && echo 1)" "a client of the global's own wsapi received none of rgr_b1's stream"
-ck "$(has global "DENY READ 'global.event.*glob, agent=gc.*stream of recipient rgr_b1")" "the global broker refused its own controller's (wsapi client's) subscription to rgr_b1's stream"
-typed() { echo "$PROBE" | "$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); v=d.get(sys.argv[1]) or ""; sys.exit(0 if "Subscription refused" in v else 1)' "$1" && echo 1; }
-ck "$(typed bound_spy_refused)" "the spy's client got a typed refusal (DataplaneSubscriptionRefused)"
-ck "$(typed bound_spy2_refused)" "the global's wsapi client got a typed refusal (DataplaneSubscriptionRefused)"
+ck "$(echo "$PROBE" | grep -q '"bound_received": 200' && echo 1)" "the recipient-bound stream (written on a1's node connection) reached its recipient rgr_b1 in full (200/200)"
+ck "$(echo "$PROBE" | grep -q '"bound_spy_received": 0' && echo 1)" "the spy glob/a1 (its own broker connection, subscribed to the stream) received none of rgr_b1's stream"
+ck "$(echo "$PROBE" | grep -q '"bound_spy2_received": 0' && echo 1)" "a client of the global's own wsapi (the global controller's identity) received none of rgr_b1's stream"
+ck "$(echo "$PROBE" | grep -q '"wsapi_recipient_key_accepted": false' && echo 1)" "wsapi refuses an API client's stream by recipient (ident_key cresco_to): only infrastructure binds recipients"
+ck "$(echo "$PROBE" | grep -q '"bound_named_refused": "' && echo 1)" "a1's broker connection asking for rgr_b1's stream by its recipient got a JMS refusal (typed, at subscribe)"
+ck "$(has a1 "DataPlaneWsHandler: handshake refused .*ident_key cresco_to")" "a1's wsapi logged the refusal of a recipient key from an API client"
 for n in global region; do ck "$(has $n 'Broker mutual-TLS ENABLED')" "$n: client certificates required by default with broker security"; done
 ck "$(has global 'discovery v2: authenticated GLOBAL exchange with rgr/rc')" "the region and the global authenticated each other with discovery v2"
 ck "$(has b1 'discovery v2: authenticated AGENT exchange with rgr/rc')" "b1 and the region authenticated each other with discovery v2"
-ck "$(has global "DENY READ 'global.event.*a1.*stream of recipient rgr_b1")" "the global broker refused a1's subscription to rgr_b1's stream"
+ck "$(has global "DENY READ '[^']*global.event[^']*' for .*agent=a1.*stream of recipient rgr_b1")" "the global broker refused a1's subscription to rgr_b1's stream by its recipient"
 if [ "${RESTART_DRILL:-1}" = "1" ]; then
   # lines after a mark (taken just before a restart) only
   markall() { for n in global region a1 b1; do wc -l < "$L/$n.log" | tr -d ' ' > "$WORK/mark.$n"; done; }
@@ -134,8 +169,8 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   echo "### restart drill 1: the global restarts (same data directory)"
   restart global
   waitport $((P0+10)) && waitport "$WS0" || echo "global did not come back"
-  A1='mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=glob, agent=a1'
-  RC='Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc'
+  A1="mTLS identity bound from certificate: CrescoIdentity\{tenant=$TENANT, region=glob, agent=a1"
+  RC="Broker bridge from verified controller CrescoIdentity\{tenant=$TENANT, region=rgr, agent=rc"
   T1=$(waitlog 180 global "$A1")
   T2=$(waitlog 180 global "$RC")
   echo "  the restarted global admitted a1 after ${T1}s and the region's bridge after ${T2}s of its ports being up"
@@ -152,7 +187,7 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   echo "### restart drill 2: the region restarts (same data directory)"
   restart region
   waitport $((P0+20)) || echo "region did not come back"
-  B1='mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b1'
+  B1="mTLS identity bound from certificate: CrescoIdentity\{tenant=$TENANT, region=rgr, agent=b1"
   T4=$(waitlog 180 region "$B1")
   T6=$(waitlog 180 global "$RC")
   echo "  the restarted region admitted b1 after ${T4}s; the global admitted the region's bridge after ${T6}s"
@@ -160,7 +195,7 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   ck "$( [ "$T6" != timeout ] && echo 1)" "region restart: the region's bridge to the global is back and admitted"
   ck "$(nofail)" "region restart: no TLS trust failure or identity refusal on any node"
   ck "$(noredisc region "$B1" b1)" "region restart: b1 came back by failover, without rediscovering first"
-  GC='Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=glob, agent=gc'
+  GC="Broker bridge from verified controller CrescoIdentity\{tenant=$TENANT, region=glob, agent=gc"
   fo "$(bridgefo region "$GC" global 'Peer identity verified: bridge glob_gc -> .* is region=rgr, agent=rc' 'discovery v2: authenticated REGION exchange with rgr/rc')" \
      "region restart: the global's bridge into the region, reconnecting by failover, was admitted before any rediscovery"
   ck "$(after region 'Starting Bridge: localhost brokerAddress: 127.0.0.1:'"$((P0+10))")" "region restart: the restarted region built its own bridge to the global (not only the global's into it)"

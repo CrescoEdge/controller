@@ -28,13 +28,15 @@ public class DiscoveryCrypto {
     private CLogger logger;
     private static final String ALGORITHM = "AES";
     private static final String V2 = "v2:";
-    private final boolean legacy;
+    private final io.cresco.library.plugin.Config config;
+
+    /** The legacy validator only while the upgrade window is open (re-read: the window closes while the node runs). */
+    private boolean legacy() { return DiscoveryAuth.Mode.of(config) == DiscoveryAuth.Mode.COMPAT; }
 
     public DiscoveryCrypto(ControllerEngine controllerEngine) {
 
         this.logger = controllerEngine.getPluginBuilder().getLogger(DiscoveryCrypto.class.getName(),CLogger.Level.Info);
-        this.legacy = DiscoveryAuth.Mode.parse(controllerEngine.getPluginBuilder().getConfig()
-                .getStringParam(DiscoveryAuth.MODE_KEY, "v2")) == DiscoveryAuth.Mode.COMPAT;
+        this.config = controllerEngine.getPluginBuilder().getConfig();
     }
 
     private static Key gcmKey(final String secKey) {
@@ -54,7 +56,7 @@ public class DiscoveryCrypto {
 
     public String encrypt(final String valueEnc, final String secKey) {
         try {
-            if (legacy) {
+            if (legacy()) {
                 final Cipher c = Cipher.getInstance(ALGORITHM);
                 c.init(Cipher.ENCRYPT_MODE, generateKeyFromString(secKey));
                 return Base64.getEncoder().encodeToString(c.doFinal(valueEnc.getBytes(StandardCharsets.UTF_8)));
@@ -84,7 +86,7 @@ public class DiscoveryCrypto {
                 c.init(Cipher.DECRYPT_MODE, gcmKey(secretKey), new GCMParameterSpec(128, in, 0, 12));
                 return new String(c.doFinal(in, 12, in.length - 12), StandardCharsets.UTF_8);
             }
-            if (!legacy) {
+            if (!legacy()) {
                 logger.debug("legacy discovery validator refused (discovery_auth=v2)");
                 return null;
             }

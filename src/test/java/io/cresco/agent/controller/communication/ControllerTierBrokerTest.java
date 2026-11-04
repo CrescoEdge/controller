@@ -94,7 +94,8 @@ class ControllerTierBrokerTest {
         Node(String region, String agent, ControllerMode mode) throws Exception {
             this.region = region;
             this.agent = agent;
-            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), new HashMap<>(Map.of("route_ready_wait_ms", "2000")),
+            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), new HashMap<>(Map.of("route_ready_wait_ms", "2000",
+                    "broker_security_enabled", "false"))   /* phase 4: secure by default; this tests tier routing, not callers */,
                     m -> router().route(m), region, agent);
             state = new State(plugin, region, agent, mode);
             db = new Db(plugin, region + "_" + agent);

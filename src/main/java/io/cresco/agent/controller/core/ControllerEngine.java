@@ -131,15 +131,29 @@ public class ControllerEngine {
 
     }
 
+    /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
+    private volatile boolean refusedByConfiguration;
+
+    public boolean isRefusedByConfiguration() { return refusedByConfiguration; }
+
     public boolean start() {
         boolean isStarted = false;
-        // a pre-provisioned node whose identity cannot be used does not start at all (never a generated or enrolled fallback)
-        String provisioning = io.cresco.agent.controller.communication.CertificateManager.provisioningRefusal(plugin.getConfig());
-        if (provisioning != null) {
-            logger.error("REFUSING TO START: the pre-provisioned identity cannot be used: " + provisioning);
-            return false;
-        }
         try {
+            // secure by default: inconsistent security settings stop the node here, before anything listens, every
+            // problem named; a pre-provisioned node whose identity cannot be used does not start at all (never a
+            // generated or enrolled fallback)
+            java.util.List<String> refusals = new java.util.ArrayList<>();
+            String provisioning = io.cresco.agent.controller.communication.CertificateManager.provisioningRefusal(plugin.getConfig());
+            if (provisioning != null) refusals.add("the pre-provisioned identity cannot be used: " + provisioning);
+            refusals.addAll(io.cresco.agent.controller.communication.SecuritySettings.startupRefusals(plugin.getConfig()));
+            if (!refusals.isEmpty()) {
+                for (String r : refusals) logger.error("REFUSING TO START: " + r);
+                refusedByConfiguration = true;
+                return false;
+            }
+            for (String w : io.cresco.agent.controller.communication.SecuritySettings.bootWarnings(plugin.getConfig(), System.currentTimeMillis())) {
+                logger.warn("WARNING: " + w);
+            }
 
             controllerSMHandler = new ControllerSMHandler(this);
             StateMachine sm = StateMachineFactory.getInstance(Transition.class).create(ControllerSMHandler.EMPTY, controllerSMHandler);
@@ -341,7 +355,12 @@ public class ControllerEngine {
             return true; //send all messages to regional controller if not broker
         }
         try {
-            return this.broker != null && this.broker.hasLiveQueueRoute(remoteAgentPath);
+            if (this.broker == null) return false;
+            // the queue this node's messages for that agent go to: with tenant namespacing, T.<this node's tenant>.<path>
+            // (AgentProducer qualifies by the message's tenant); without it the bare path
+            String queue = io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())
+                    ? io.cresco.library.security.TenantNamespace.qualify(tenant(), remoteAgentPath) : remoteAgentPath;
+            return this.broker.hasLiveQueueRoute(queue);
         } catch (Exception ex) {
             logger.error("isReachableAgent Error: {}", ex.getMessage());
             return false;
@@ -744,7 +763,7 @@ public class ControllerEngine {
      * operator's upgrade window (see UpgradeWindow); outside it, never.
      */
     public boolean legacyNodesAdmitted() {
-        return false;
+        return io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), System.currentTimeMillis());
     }
 
     /**

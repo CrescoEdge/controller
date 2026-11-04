@@ -133,6 +133,7 @@ class AdversarialPeerIdentityReviewTest {
     private BrokerService securedBroker(String name, TlsTestSupport.Id id, PeerTrustRegistry peers, X509Certificate... anchors) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
         BrokerService b = TlsTestSupport.broker(name, id, true, new BrokerPlugin[]{authz}, authz, anchors);

@@ -29,8 +29,12 @@ class DiscoveryPeerLearningTest {
         m.put("discovery_secret_region", secret);
         m.put("discovery_secret_global", secret);
         for (int i = 0; i + 1 < extra.length; i += 2) m.put(extra[i], extra[i + 1]);
+        // phase 4 (M6a): compat is in effect only inside an explicit, time-bounded upgrade window
+        if ("compat".equals(m.get(DiscoveryAuth.MODE_KEY))) m.putIfAbsent("discovery_compat_until", WINDOW_END);
         return m;
     }
+
+    private static final String WINDOW_END = java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(7).toString();
 
     private static ControllerEngine responder(String region, String agent, Map<String, Object> cfg) throws Exception {
         ControllerEngine e = TlsTestSupport.engine(region, agent, cfg);
@@ -170,7 +174,8 @@ class DiscoveryPeerLearningTest {
         assertNotEquals(a, b);
         assertEquals("DISCOVERY_MESSAGE_VERIFIED", v2.decrypt(a, SECRET));
         assertNull(v2.decrypt(a, "another"));
-        String legacy = new DiscoveryCrypto(TlsTestSupport.engine("rgA", "x", Map.of(DiscoveryAuth.MODE_KEY, "compat")))
+        String legacy = new DiscoveryCrypto(TlsTestSupport.engine("rgA", "x", Map.of(DiscoveryAuth.MODE_KEY, "compat",
+                "discovery_compat_until", WINDOW_END)))
                 .encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET);
         assertNull(v2.decrypt(legacy, SECRET), "a legacy (replayable) validator was accepted with discovery_auth=v2");
     }
