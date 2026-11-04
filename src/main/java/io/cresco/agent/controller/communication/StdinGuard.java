@@ -23,8 +23,9 @@ import java.util.Set;
  *
  * <ul>
  *   <li><b>The guarantee</b>: every selector is narrowed, unconditionally, to {@code (<selector>) AND }{@link #NO_STDIN}
- *       ({@link #narrow}). The selector is parsed on its own first and the narrowed form is parsed again and checked to be
- *       exactly that conjunction, so no {@code OR}, parenthesis or quoting in the selector reaches past the exclusion.
+ *       ({@link #narrow}). The selector must parse on its own (ActiveMQ's SelectorParser), so its parentheses are balanced
+ *       outside its literals and no {@code OR}, parenthesis or quote in it reaches past the exclusion; a comment in it is
+ *       closed by a newline before the closing parenthesis. Any well-formed AND/OR/NOT composition is accepted.
  *       What a selector contains never decides whether it is narrowed (round-4 review F1: a selector that merely
  *       contained the text of {@link #NO_STDIN} used to be passed through unchanged).</li>
  *   <li><b>A clear error</b>: a selector that asks for stdin is refused ({@link #refusal}). Judged on the parsed
@@ -92,36 +93,39 @@ public final class StdinGuard {
      */
     public static String narrow(String selector) {
         if (selector == null || selector.trim().isEmpty()) return NO_STDIN;
-        BooleanExpression own;
         try {
-            own = SelectorParser.parse(selector);
+            SelectorParser.parse(selector);                   // any well-formed selector, whatever its AND/OR/NOT structure
         } catch (Exception e) {
             throw new IllegalArgumentException("the selector does not parse: " + e.getMessage());
         }
-        String narrowed = "(" + selector + ") AND " + NO_STDIN;
+        // a selector that parses on its own has balanced parentheses outside its literals; a line comment in it ends at
+        // the newline, so the closing parenthesis and the exclusion are never commented out
+        String inner = (selector.contains("--") || selector.contains("/*")) ? selector + "\n" : selector;
+        String narrowed = "(" + inner + ") AND " + NO_STDIN;
         BooleanExpression whole;
         try {
             whole = SelectorParser.parse(narrowed);
         } catch (Exception e) {
             throw new IllegalArgumentException("the narrowed selector does not parse: " + e.getMessage());
         }
-        if (!isConjunctionOf(whole, own)) {
-            throw new IllegalArgumentException("the selector does not stay inside its parentheses");
+        // defence in depth, never a refusal of a valid composition: the narrowed form excludes every stdin type
+        for (String t : STDIN_PROBES) {
+            if (matchesAnything(whole, t)) throw new IllegalArgumentException("the narrowed selector still matches stdin");
         }
         return narrowed;
     }
 
-    /** Is {@code whole} exactly {@code own AND NO_STDIN}? */
-    private static boolean isConjunctionOf(BooleanExpression whole, BooleanExpression own) {
-        if (!(whole instanceof LogicExpression)) return false;
-        LogicExpression and = (LogicExpression) whole;
-        if (!"AND".equals(and.getExpressionSymbol())) return false;
-        List<BooleanExpression> ops = operands(and);
-        if (ops == null || ops.size() != 2) return false;
+    /** Could {@code e} match a message of type {@code type} (whatever its other properties)? Probed with none and some set. */
+    private static boolean matchesAnything(BooleanExpression e, String type) {
+        if (matches(e, type)) return true;
         try {
-            return ops.get(0).toString().equals(own.toString())
-                    && ops.get(1).toString().equals(SelectorParser.parse(NO_STDIN).toString());
-        } catch (Exception e) {
+            ActiveMQMessage m = new ActiveMQMessage();
+            m.setStringProperty("type", type);
+            for (String lit : new String[]{"x", "1", "true"}) m.setStringProperty("p_" + lit, lit);
+            MessageEvaluationContext ctx = new NonCachedMessageEvaluationContext();
+            ctx.setMessageReference(m);
+            return e.matches(ctx);
+        } catch (Exception ex) {
             return false;
         }
     }
