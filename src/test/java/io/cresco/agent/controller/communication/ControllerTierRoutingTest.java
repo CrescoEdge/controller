@@ -51,7 +51,9 @@ class ControllerTierRoutingTest {
         final MsgRouter router;
 
         Node(ControllerMode mode, Map<String, Object> cfg) {
-            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), new HashMap<>(cfg), sent::add);
+            Map<String, Object> c = new HashMap<>(cfg);
+            c.putIfAbsent("broker_security_enabled", "false");   // phase 4: secure by default; this tests routing, not callers
+            plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), c, sent::add);
             state = new StubState(plugin, mode);
             db = new TierDb(plugin);
             engine = new ControllerEngine(null, plugin, null, db);

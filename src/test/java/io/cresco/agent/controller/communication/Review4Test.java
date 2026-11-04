@@ -160,6 +160,7 @@ class Review4Test {
         cfg.put("tenant_id", "t1");
         cfg.put("discovery_secret_agent", "agent-secret");
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         if (extra != null) cfg.putAll(extra);
         PluginBuilder pb = TestAgentService.plugin(dir.toString(), cfg, m -> { }, region, agent);
         ControllerEngine e = new ControllerEngine(null, pb, null, null);
@@ -228,6 +229,7 @@ class Review4Test {
         TlsTestSupport.Id spyId = TlsTestSupport.selfRooted("a9", "t1", "rgA", "a9");      // the old K1 of rgA/a9
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("r4b").toString(), cfg);
         PeerTrustRegistry peers = new PeerTrustRegistry().withRebind(List.of("rgA/a9"));
         assertNull(peers.trustCa(caA.caCert(), "rgA", "t1", "test"));
@@ -283,6 +285,7 @@ class Review4Test {
         brokers.add(peer);
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put("broker_require_client_auth", "false");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("r4q").toString(), cfg);
         PeerTrustRegistry peers = new PeerTrustRegistry();
@@ -340,6 +343,7 @@ class Review4Test {
         RegionCA caA = RegionCA.generate("t1", "rgA", 2048, 1);
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put("broker_require_client_auth", "false");
         cfg.put("tenant_namespacing", "true");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("r4d").toString(), cfg);
@@ -374,6 +378,7 @@ class Review4Test {
         RegionCA caB = RegionCA.generate("t2", "rgB", 2048, 1);
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put("tenant_namespacing", "true");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("r4e").toString(), cfg);
         PeerTrustRegistry peers = new PeerTrustRegistry();

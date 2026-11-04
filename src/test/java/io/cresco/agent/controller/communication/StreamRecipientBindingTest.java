@@ -88,6 +88,7 @@ class StreamRecipientBindingTest {
     private BrokerService securedBroker(String name, TlsTestSupport.Id id) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put("tenant_id", "t1");                                   // the controller's tenant, as on a real node
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
@@ -237,6 +238,7 @@ class StreamRecipientBindingTest {
     void peerIdentityModeOffIsTheOldNameOnlyBehaviour() throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
         cfg.put(PeerIdentity.MODE_KEY, "off");
         PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, new PeerTrustRegistry());
@@ -254,6 +256,7 @@ class StreamRecipientBindingTest {
         for (boolean allow : new boolean[]{false, true}) {
             Map<String, Object> cfg = new HashMap<>();
             cfg.put("broker_security_enabled", "true");
+            cfg.put("tenant_namespacing", "false");      // phase 4: this broker-policy test uses the un-namespaced dataplane topic
             cfg.put("broker_allow_unverified_bridges", String.valueOf(allow));
             PluginBuilder pb = TestAgentService.plugin(Files.createTempDirectory("authz").toString(), cfg);
             CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
@@ -287,7 +290,8 @@ class StreamRecipientBindingTest {
     void clientCertificatesAreRequiredByDefaultWhenBrokerSecurityIsOn() throws Exception {
         java.util.function.Function<Map<String, Object>, Boolean> req = m -> ActiveBroker.requireClientAuth(
                 TestAgentService.plugin(System.getProperty("java.io.tmpdir"), m).getConfig());
-        assertFalse(req.apply(Map.of()));
+        assertTrue(req.apply(Map.of()), "phase 4: secure by default -- client certificates are required with no setting at all");
+        assertFalse(req.apply(Map.of("broker_security_enabled", "false")), "explicit insecure development mode");
         assertTrue(req.apply(Map.of("broker_security_enabled", "true")));
         assertFalse(req.apply(Map.of("broker_security_enabled", "true", "broker_require_client_auth", "false")));
     }

@@ -430,12 +430,13 @@ public class RegionalExecutor implements Executor {
      * io.cresco.agent.controller.communication.RegistryBinding}).
      */
     boolean admitted(MsgEvent incoming, boolean global) {
-        if (!plugin.admit(incoming, global ? globalTable : regionalTable)) return false;
+        boolean legacy = !global && controllerEngine.securityOn() && controllerEngine.legacyNodesAdmitted() && legacyMembership(incoming);
+        if (!legacy && !plugin.admit(incoming, global ? globalTable : regionalTable)) return false;
         if (controllerEngine.securityOn() && io.cresco.agent.controller.communication.RegistryBinding.applies(incoming)) {
             io.cresco.library.security.Caller caller = io.cresco.library.security.Caller.fromMsgEvent(incoming);
             io.cresco.agent.db.DBInterfaceImpl gdb = controllerEngine.getGDB();
             String why = io.cresco.agent.controller.communication.RegistryBinding.refusal(incoming, caller, global,
-                    gdb == null ? null : gdb::regionOfAgent, controllerEngine::speaksForRegion);
+                    gdb == null ? null : gdb::regionOfAgent, controllerEngine::speaksForRegion, controllerEngine.legacyNodesAdmitted());
             if (why != null) {
                 logger.warn("REFUSED registry update {} {} from {}: {}", incoming.getMsgType(), incoming.getParam("action"), caller, why);
                 if (MsgRouter.isRpcRequest(incoming)) {
@@ -447,7 +448,8 @@ public class RegionalExecutor implements Executor {
                 return false;
             }
             // an agent's row names the tenant its controller was verified in (listagents shows it)
-            if (!global && caller != null && caller.getKind() == io.cresco.library.security.Caller.Kind.CONTROLLER
+            if (!global && caller != null && (caller.getKind() == io.cresco.library.security.Caller.Kind.CONTROLLER
+                    || (legacy && caller.getKind() == io.cresco.library.security.Caller.Kind.AGENT))
                     && incoming.paramsContains("agentconfigs")) {
                 try {
                     incoming.setCompressedParam("agentconfigs", io.cresco.agent.controller.communication.RegistryBinding
@@ -458,6 +460,24 @@ public class RegionalExecutor implements Executor {
             }
         }
         return true;
+    }
+
+    /**
+     * Inside the upgrade window (M6a) a node without stamping -- its broker stamps it {@code agent:<tenant>/<region>/<agent>},
+     * role {@code user} -- keeps its membership: it registers, unregisters and keeps alive its own node and pings its region
+     * (RegistryBinding confines it to its own records). Nothing else: its other requests meet the action tables like any
+     * {@code user}'s.
+     */
+    static boolean legacyMembership(MsgEvent m) {
+        io.cresco.library.security.Caller c = io.cresco.library.security.Caller.fromMsgEvent(m);
+        if (c == null || c.getKind() != io.cresco.library.security.Caller.Kind.AGENT) return false;
+        String a = m.getParam("action");
+        switch (m.getMsgType()) {
+            case WATCHDOG: case KPI: return true;
+            case CONFIG: return "agent_enable".equals(a) || "agent_disable".equals(a);
+            case EXEC: return "ping".equals(a);
+            default: return false;
+        }
     }
 
     /** The regional and global action tables (tests). */
