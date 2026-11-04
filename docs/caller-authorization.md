@@ -86,7 +86,8 @@ of an action is (MsgEvent type, `action`).
 
 - **Secure by default.** `broker_security_enabled`, `broker_require_client_auth` and `tenant_namespacing`
   all default to true.
-- **Refuse to start** with security on but client auth or namespacing off.
+- **Refuse to start** (exit 78, every problem named) with security on but client auth or namespacing off, with a tenant
+  name that cannot be an identity, or with a setting the `security_profile` forbids (section 11).
 - **Insecure development mode** exists only when `broker_security_enabled=false` is set explicitly. Then
   every boot logs a WARNING that security is disabled, and the caller is `anonymous` with every role.
 - **Remote file reads** (`getfiledata` and `getfileinfo`) are denied unless `file_access_roots` is set.
@@ -522,4 +523,33 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signature_max_age_ms` | 300000 | the signing time's tolerance either way (clock skew included) |
 | `msg_signing_attestation_hours` | 24 | an agent attestation's lifetime |
 | `msg_signing_bundle_grace_ms` | 900000 | how long a controller dropped from the global's bundle is still trusted |
+
+## 11. Secure by default, security profiles and the upgrade (phase 4)
+
+- **Defaults.** `broker_security_enabled`, `broker_require_client_auth` and `tenant_namespacing` default to true: a node
+  with no security setting runs secured. Insecure debug mode is only `broker_security_enabled=false`, set explicitly.
+- **Profiles** (`security_profile`): `standard` (default) keeps the enrollment conveniences (discovery-secret joins,
+  self-made and region-issued certificates, pins on first join, the upgrade window); `production` requires
+  pre-provisioned identities (`identity_keystore`, `identity_keystore_password_file`, `trust_anchors`) and plugin signing
+  anchors, makes every security setting mandatory, and refuses enrollment, trust on first use, the upgrade window and
+  passwords -- see `production-deployment.md`. Plugins read the profile through `AgentService.getSecurityProfile()`.
+- **The upgrade window (M6a)**: `discovery_auth=compat` takes effect only with `discovery_compat_until` (at most 90 days
+  ahead). Inside it, a node without stamping (`agent:<tenant>/<region>/<agent>`, role `user`, unsigned) keeps its own
+  membership at its region (register, unregister, keep alive, ping) and nothing more; after it, it is refused. Never in
+  production.
+- **Dotted tenants (M6b)**: a `tenant_id` with a `.` runs only with `tenant_id_dot_replacement`.
+- **Order (M6c)**: global, then regions, then agents, with the window open on every upgraded node until the last agent is
+  upgraded -- `upgrade-1.3-secure-defaults.md`.
+- **Namespaced fabric.** A region judges its global reachable by the queue its messages go to (`T.<tenant>.<path>`) and
+  counts the global's wildcard inbox (`T.*.<path>`) and its bridge demand.
+
+| Setting | Before | Now |
+|---|---|---|
+| `broker_security_enabled` | false | true |
+| `tenant_namespacing` | false | follows `broker_security_enabled` (true) |
+| `security_profile` | (none) | `standard`; `production` available |
+| `discovery_auth=compat` | open-ended | only inside `discovery_compat_until` |
+| `tenant_id` with `.` | accepted | `tenant_id_dot_replacement` required |
+| `identity_keystore`, `identity_keystore_password_file`, `trust_anchors`, `revocation_file` | (none) | production identity settings |
+| `plugin_signing_truststore` | PKCS12/JKS with a password | also a PEM bundle (no password) |
 
