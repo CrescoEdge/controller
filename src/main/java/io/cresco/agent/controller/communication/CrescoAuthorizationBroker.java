@@ -16,6 +16,8 @@ import org.apache.activemq.command.ConsumerInfo;
 import org.apache.activemq.command.DestinationInfo;
 import org.apache.activemq.command.Message;
 import org.apache.activemq.command.ProducerInfo;
+import org.apache.activemq.command.RemoveSubscriptionInfo;
+import org.apache.activemq.command.ActiveMQTempDestination;
 import org.apache.activemq.security.MessageAuthorizationPolicy;
 import org.apache.activemq.security.SecurityContext;
 
@@ -65,6 +67,14 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      */
     public static final String LOCAL_CONTROLLER_PREFIX = "cresco-local|";
 
+    /**
+     * {@code broker_shared_destinations} default: the fabric-shared topics. {@code global.event} only while tenant
+     * namespacing is off (audit D2a; see the constructor).
+     */
+    public static String defaultSharedDestinations(io.cresco.library.plugin.Config config) {
+        return SecuritySettings.tenantNamespacing(config) ? "agent.event,region.event" : "agent.event,region.event,global.event";
+    }
+
     private final CLogger logger;
     private final PeerTrustRegistry peers;
     private final PeerIdentity.Mode peerMode;
@@ -81,6 +91,14 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final boolean allowUnverifiedBridges;
     private final String ownTenant;
     private volatile CrescoIdentity ownIdentity;
+    /** Bounds on what a quarantined connection may hold (it receives nothing and its sends are discarded). */
+    private final int quarantineMaxConnections, quarantineMaxConsumers, quarantineMaxProducers, quarantineMaxDestinations;
+    private final java.util.concurrent.atomic.AtomicInteger quarantinedConnections = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger quarantineCreatedDestinations = new java.util.concurrent.atomic.AtomicInteger();
+    /** Verified identities of the network connections that are up now (connection id -> identity): kept fresh in the registry. */
+    private final java.util.Map<String, CrescoIdentity> liveVerified = new java.util.concurrent.ConcurrentHashMap<>();
+    private final long seenRefreshMs;
+    private volatile java.util.concurrent.ScheduledExecutorService seenRefresher;
 
     public CrescoAuthorizationBroker(PluginBuilder plugin) {
         this(plugin, new PeerTrustRegistry());
@@ -91,8 +109,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         this.logger = plugin.getLogger(CrescoAuthorizationBroker.class.getName(), CLogger.Level.Info);
         this.peers = (peers != null) ? peers : new PeerTrustRegistry();
         this.peerMode = PeerIdentity.Mode.parse(plugin.getConfig().getStringParam(PeerIdentity.MODE_KEY, "enforce"));
-        String shared = plugin.getConfig().getStringParam("broker_shared_destinations",
-                "agent.event,region.event,global.event");
+        // global.event is NOT shared when tenants are namespaced (audit D2a): a tenant's dataplane is then its own
+        // T.<tenant>.global.event, and the un-namespaced fabric-wide topic would carry data across tenants. Without
+        // namespacing the dataplane IS global.event (there is no tenant boundary on it to keep), so it stays shared there.
+        // An operator lists it explicitly to share it anyway.
+        String shared = plugin.getConfig().getStringParam("broker_shared_destinations", defaultSharedDestinations(plugin.getConfig()));
         this.sharedPrefixes = new HashSet<>();
         for (String s : shared.split(",")) {
             String t = s.trim();
@@ -109,7 +130,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
         this.logAllow = plugin.getConfig().getBooleanParam("broker_security_log_allow", false);
         this.recipientBinding = plugin.getConfig().getBooleanParam("broker_stream_recipient_binding", true);
-        this.ownTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        this.ownTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
         // migration escape only: a bridge without a client certificate cannot be verified; keep its old exemption
         this.allowUnverifiedBridges = plugin.getConfig().getBooleanParam("broker_allow_unverified_bridges", false);
         if (allowUnverifiedBridges) {
@@ -120,6 +141,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         // strict own-subtree rule, exactly as before.
         this.crossTenantSinks = TenantPolicy.CrossTenantSink.parse(
                 plugin.getConfig().getStringParam("broker_cross_tenant_sinks", ""));
+        this.quarantineMaxConnections = Math.max(0, plugin.getConfig().getIntegerParam("broker_quarantine_max_connections", 64));
+        this.quarantineMaxConsumers = Math.max(0, plugin.getConfig().getIntegerParam("broker_quarantine_max_consumers", 4));
+        this.quarantineMaxProducers = Math.max(0, plugin.getConfig().getIntegerParam("broker_quarantine_max_producers", 4));
+        this.quarantineMaxDestinations = Math.max(0, plugin.getConfig().getIntegerParam("broker_quarantine_max_destinations", 256));
+        this.seenRefreshMs = Math.max(60_000L, plugin.getConfig().getLongParam("peer_seen_refresh_ms", 3_600_000L));
         logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes
                 + " superuser tenants=" + this.superuserTenants + " cross-tenant sinks=" + this.crossTenantSinks
                 + " stream recipient binding=" + this.recipientBinding + " " + PeerIdentity.MODE_KEY + "=" + this.peerMode);
@@ -139,6 +165,13 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         // only this identity with LOCAL_CONTROLLER_PREFIX
         String[] path = CrescoNames.splitPath(next.getBrokerName());
         if (path != null) ownIdentity = CrescoIdentity.of(ownTenant, path[0], path[1], null);
+        java.util.concurrent.ScheduledExecutorService ex = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cresco-peer-seen-refresh");
+            t.setDaemon(true);
+            return t;
+        });
+        ex.scheduleWithFixedDelay(this::refreshLiveIdentities, seenRefreshMs, seenRefreshMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        seenRefresher = ex;
         return new AuthFilter(next);
     }
 
@@ -154,6 +187,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean localController;    // this controller's own vm:// connection (LOCAL_CONTROLLER_PREFIX)
         final boolean anonymous;          // a network connection without a client certificate: no identity, no role
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
+        final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger producers = new java.util.concurrent.atomic.AtomicInteger();
         CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
             this(user, identity, verified, certificate, localController, false);
         }
@@ -238,7 +273,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             if (id != null) {
                 logger.info("mTLS identity bound from certificate: " + id + " (authoritative; overrides any asserted username)");
             }
-            return new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false);
+            // a certificate that passed TLS but carries no identity here (unbound, rebound away, foreign CA) gets no more than
+            // a connection without a certificate: quarantined
+            return new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false, id == null && !isVm(context));
         }
         String u = info.getUserName();
         if (isVm(context) && u != null && u.startsWith(LOCAL_CONTROLLER_PREFIX)) {
@@ -293,12 +330,16 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (isTrustedInfra(ctx)) {
             return;
         }
-        if (quarantined(ctx, stateOf(ctx))) {
-            return;                                     // quarantined: nothing is delivered to it, its sends are discarded
+        CrescoSecurityContext q = stateOf(ctx);
+        if (quarantined(ctx, q) && !q.certificate) {
+            // quarantined without a certificate: it may subscribe (nothing is delivered to it) and send (discarded). A
+            // connection whose certificate does not verify is quarantined the same way AND still refused outright below,
+            // with no identity, on everything but advisory and fabric-shared destinations
+            return;
         }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
-        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks);
+        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
             logger.warn("DENY " + access + " '" + name + "' for " + who + " : " + d.reason);
@@ -349,13 +390,105 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     }
 
     /**
-     * A network connection without a client certificate: no identity and no role. Its subscriptions receive nothing and its
-     * sends are discarded -- except a bridge claim while broker_allow_unverified_bridges=true (migration only).
+     * A network connection without a verified identity (no client certificate, or one that does not verify): no identity
+     * and no role. Its subscriptions receive nothing and its sends are discarded -- except a certificate-less bridge claim
+     * while broker_allow_unverified_bridges=true (migration only).
      */
     private boolean quarantined(ConnectionContext ctx, CrescoSecurityContext sc) {
         if (sc == null || !sc.anonymous) return false;
-        try { return !(allowUnverifiedBridges && ctx.isNetworkConnection()); } catch (Exception e) { return true; }
+        try { return !(allowUnverifiedBridges && !sc.certificate && ctx.isNetworkConnection()); } catch (Exception e) { return true; }
     }
+
+    /**
+     * May {@code ctx} remove or create {@code dest} (an administrative operation)? Trusted infrastructure may; a quarantined
+     * connection may not; a temporary destination may be removed only by the connection that owns it; otherwise the identity
+     * must be able to both read and write it, and it must not be a fabric-shared or advisory destination (those belong to
+     * the fabric, not to any one tenant).
+     */
+    private String administerRefusal(ConnectionContext ctx, ActiveMQDestination dest) {
+        if (dest == null) return null;
+        if (isTrustedInfra(ctx)) return null;
+        CrescoSecurityContext sc = stateOf(ctx);
+        if (quarantined(ctx, sc)) return "a connection without a verified identity administers no destination";
+        ActiveMQDestination[] each = dest.isComposite() ? dest.getCompositeDestinations() : new ActiveMQDestination[]{dest};
+        for (ActiveMQDestination d : each) {
+            if (d.isTemporary()) {
+                String owner = d instanceof ActiveMQTempDestination ? ((ActiveMQTempDestination) d).getConnectionId() : null;
+                String mine = (ctx != null && ctx.getConnectionId() != null) ? ctx.getConnectionId().getValue() : null;
+                if (owner == null || !owner.equals(mine)) return "temporary destination " + d.getPhysicalName() + " belongs to another connection";
+                continue;
+            }
+            String name = d.getPhysicalName();
+            if (name.startsWith("ActiveMQ.Advisory")) return "advisory destinations belong to the broker";
+            for (String p : sharedPrefixes) {
+                if (p != null && !p.isEmpty() && (name.equals(p) || name.startsWith(p + "."))) return "fabric-shared destination " + name + " belongs to the fabric";
+            }
+            CrescoIdentity id = identityOf(ctx);
+            TenantPolicy.Decision r = TenantPolicy.check(id, name, TenantPolicy.Access.READ, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+            TenantPolicy.Decision w = TenantPolicy.check(id, name, TenantPolicy.Access.WRITE, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+            if (!r.allowed || !w.allowed) return "'" + name + "' is not this identity's to administer (" + (r.allowed ? w.reason : r.reason) + ")";
+        }
+        return null;
+    }
+
+    private void refuseAdmin(ConnectionContext ctx, String op, ActiveMQDestination dest, String why) {
+        CrescoIdentity id = identityOf(ctx);
+        String who = id != null ? id.toString() : ("an unidentified connection from " + remoteOf(ctx));
+        logger.warn("DENY " + op + " '" + (dest == null ? "?" : dest.getPhysicalName()) + "' for " + who + " : " + why);
+        throw new SecurityException("Cresco tenant policy: " + op + " denied on '" + (dest == null ? "?" : dest.getPhysicalName()) + "' (" + why + ")");
+    }
+
+    /**
+     * A quarantined connection holds little: a bounded number of consumers and producers, no composite destination, and
+     * the destinations all quarantined connections may create (by consuming or producing on a name that does not exist)
+     * are bounded for the broker's lifetime.
+     */
+    private void boundQuarantined(ConnectionContext ctx, CrescoSecurityContext sc, ActiveMQDestination dest, boolean consumer) {
+        if (!quarantined(ctx, sc)) return;
+        int n = consumer ? sc.consumers.incrementAndGet() : sc.producers.incrementAndGet();
+        int max = consumer ? quarantineMaxConsumers : quarantineMaxProducers;
+        if (n > max) {
+            throw new SecurityException("Cresco: a connection without a verified identity may hold at most " + max
+                    + (consumer ? " consumers" : " producers"));
+        }
+        if (dest != null && dest.isComposite() && !allAdvisory(dest)) {
+            throw new SecurityException("Cresco: a connection without a verified identity cannot use a composite destination");
+        }
+    }
+
+    /** A composite made only of advisory topics (every ActiveMQ client's own temp-destination advisory consumer is one). */
+    private static boolean allAdvisory(ActiveMQDestination dest) {
+        for (ActiveMQDestination d : dest.getCompositeDestinations()) {
+            if (!d.isTopic() || !d.getPhysicalName().startsWith("ActiveMQ.Advisory.")) return false;
+        }
+        return true;
+    }
+
+    /** Refresh last-seen for every verified network connection that is up (a peer connected for months is never pruned). */
+    void refreshLiveIdentities() {
+        for (CrescoIdentity id : liveVerified.values()) {
+            try { peers.touchIdentity(id); } catch (Exception ignore) { }
+        }
+    }
+
+    /**
+     * The tenant an un-namespaced inbox {@code <region>_<agent>} belongs to: the tenant bound to that name in the peer trust
+     * registry, or this broker's own tenant for its own controller; null when unknown (a same-region write to it is then
+     * refused).
+     */
+    String boundTenantOf(String agentPath) {
+        String[] p = CrescoNames.splitPath(agentPath);
+        if (p == null) return null;
+        CrescoIdentity own = ownIdentity;
+        if (own != null && p[0].equals(own.getRegion()) && p[1].equals(own.getAgent())) return own.getTenant();
+        return peers.boundTenant(p[0], p[1]);
+    }
+
+    /** Verified network connections up now (tests). */
+    int liveVerifiedCount() { return liveVerified.size(); }
+
+    /** Quarantined connections up now. */
+    public int quarantinedConnectionCount() { return quarantinedConnections.get(); }
 
     private static boolean isAdvisory(Message m) {
         ActiveMQDestination d = m.getDestination();
@@ -433,6 +566,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         @Override
         public void addConnection(ConnectionContext context, ConnectionInfo info) throws Exception {
             CrescoSecurityContext sc = resolve(context, info);
+            if (quarantined(context, sc) && quarantinedConnections.incrementAndGet() > quarantineMaxConnections) {
+                quarantinedConnections.decrementAndGet();
+                throw new SecurityException("Cresco: too many connections without a verified identity (at most "
+                        + quarantineMaxConnections + ")");
+            }
             context.setSecurityContext(sc);
             // every connection is judged per message, vm:// included: the in-JVM connector is created lazily and does
             // not inherit the broker's policy, and this controller's own vm:// connection is not exempt (see above)
@@ -441,11 +579,15 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 long now = System.currentTimeMillis();
                 if (now - lastAnonymousLog > 10_000L) {
                     lastAnonymousLog = now;
-                    logger.warn("A network connection from " + remoteOf(context) + " presented no client certificate (username '"
-                            + info.getUserName() + "' is not proof of anything): it has NO identity on this secured broker, so its"
-                            + " subscriptions receive nothing and its sends are discarded (broker_require_client_auth=false; logged"
-                            + " at most every 10 s)");
+                    logger.warn("A network connection from " + remoteOf(context) + (sc.certificate
+                            ? " presented a certificate that carries no verified identity here"
+                            : " presented no client certificate (username '" + info.getUserName() + "' is not proof of anything)")
+                            + ": it has NO identity on this secured broker, so its subscriptions receive nothing and its sends are"
+                            + " discarded (logged at most every 10 s)");
                 }
+            }
+            if (sc.verified && sc.certificate && sc.identity != null && context.getConnectionId() != null) {
+                liveVerified.put(context.getConnectionId().getValue(), sc.identity);
             }
             if (sc.certificate && sc.identity != null) info.setUserName(sc.identity.toX500Name());
             // Bridge claim (BrokerInfo before ConnectionInfo, as every real bridge does): judge it now so an impostor
@@ -477,6 +619,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         public Subscription addConsumer(ConnectionContext context, ConsumerInfo info) throws Exception {
             enforce(context, info.getDestination(), TenantPolicy.Access.READ);
             CrescoSecurityContext sc = stateOf(context);
+            boundQuarantined(context, sc, info.getDestination(), true);
+            if (sc != null && sc.verified && sc.identity != null) peers.touchIdentity(sc.identity);
             if (quarantined(context, sc)) {
                 // a quarantined subscription receives nothing; it must not hold anything either: no durable subscription
                 // (the store would keep every message for it) and no exclusivity (it would take a queue from its consumers)
@@ -509,7 +653,102 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             if (info.getDestination() != null) {
                 enforce(context, info.getDestination(), TenantPolicy.Access.WRITE);
             }
+            boundQuarantined(context, stateOf(context), info.getDestination(), false);
             super.addProducer(context, info);
+        }
+
+        @Override
+        public void removeConnection(ConnectionContext context, ConnectionInfo info, Throwable error) throws Exception {
+            try {
+                super.removeConnection(context, info, error);
+            } finally {
+                CrescoSecurityContext sc = stateOf(context);
+                if (sc != null && quarantined(context, sc)) quarantinedConnections.decrementAndGet();
+                if (context != null && context.getConnectionId() != null) liveVerified.remove(context.getConnectionId().getValue());
+            }
+        }
+
+        @Override
+        public org.apache.activemq.broker.region.Destination addDestination(ConnectionContext context, ActiveMQDestination destination,
+                                                                             boolean createIfTemporary) throws Exception {
+            if (destination != null && !isTrustedInfra(context)) {
+                CrescoSecurityContext sc = stateOf(context);
+                if (quarantined(context, sc)) {
+                    if (destination.isComposite() && !allAdvisory(destination)) refuseAdmin(context, "create", destination, "composite destination");
+                    boolean advisory = destination.isComposite() ? allAdvisory(destination)
+                            : destination.getPhysicalName().startsWith("ActiveMQ.Advisory.");
+                    boolean exists = advisory || !getDestinations(destination).isEmpty();   // advisory topics are the broker's
+                    if (!exists && quarantineCreatedDestinations.incrementAndGet() > quarantineMaxDestinations) {
+                        quarantineCreatedDestinations.decrementAndGet();
+                        refuseAdmin(context, "create", destination, "connections without a verified identity have created "
+                                + quarantineMaxDestinations + " destinations, the most they may");
+                    }
+                } else if (!destination.isTemporary()) {
+                    // creating a destination is using it: the identity must be able to read or write it
+                    CrescoIdentity id = identityOf(context);
+                    ActiveMQDestination[] each = destination.isComposite() ? destination.getCompositeDestinations() : new ActiveMQDestination[]{destination};
+                    for (ActiveMQDestination d : each) {
+                        if (d.isTemporary()) continue;
+                        String name = d.getPhysicalName();
+                        TenantPolicy.Decision r = TenantPolicy.check(id, name, TenantPolicy.Access.READ, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+                        TenantPolicy.Decision w = r.allowed ? r
+                                : TenantPolicy.check(id, name, TenantPolicy.Access.WRITE, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+                        if (!w.allowed) refuseAdmin(context, "create", d, w.reason);
+                    }
+                }
+            }
+            return super.addDestination(context, destination, createIfTemporary);
+        }
+
+        @Override
+        public void addDestinationInfo(ConnectionContext context, DestinationInfo info) throws Exception {
+            ActiveMQDestination d = info == null ? null : info.getDestination();
+            if (d != null && !d.isTemporary() && !isTrustedInfra(context)) {
+                String why = administerRefusal(context, d);
+                if (why != null) refuseAdmin(context, "create", d, why);
+            } else if (d != null && d.isTemporary() && quarantined(context, stateOf(context))) {
+                refuseAdmin(context, "create", d, "a connection without a verified identity creates no temporary destination");
+            }
+            super.addDestinationInfo(context, info);
+        }
+
+        @Override
+        public void removeDestinationInfo(ConnectionContext context, DestinationInfo info) throws Exception {
+            ActiveMQDestination d = info == null ? null : info.getDestination();
+            String why = administerRefusal(context, d);
+            if (why != null) refuseAdmin(context, "remove", d, why);
+            super.removeDestinationInfo(context, info);
+        }
+
+        @Override
+        public void removeDestination(ConnectionContext context, ActiveMQDestination destination, long timeout) throws Exception {
+            String why = administerRefusal(context, destination);
+            if (why != null) refuseAdmin(context, "remove", destination, why);
+            super.removeDestination(context, destination, timeout);
+        }
+
+        @Override
+        public void removeSubscription(ConnectionContext context, RemoveSubscriptionInfo info) throws Exception {
+            // a durable subscription is named by (client id, name): only the connection with that client id removes it
+            if (!isTrustedInfra(context)) {
+                CrescoSecurityContext sc = stateOf(context);
+                String mine = context == null ? null : context.getClientId();
+                if (quarantined(context, sc) || info == null || mine == null || !mine.equals(info.getClientId())) {
+                    String who = identityOf(context) != null ? identityOf(context).toString() : "an unidentified connection";
+                    logger.warn("DENY remove durable subscription " + (info == null ? "?" : info.getClientId() + "/" + info.getSubscriptionName())
+                            + " for " + who + " : it is not that connection's");
+                    throw new SecurityException("Cresco: a durable subscription can be removed only by its own connection");
+                }
+            }
+            super.removeSubscription(context, info);
+        }
+
+        @Override
+        public void stop() throws Exception {
+            java.util.concurrent.ScheduledExecutorService ex = seenRefresher;
+            seenRefresher = null;
+            if (ex != null) ex.shutdownNow();
+            super.stop();
         }
 
         @Override
@@ -524,6 +763,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 return;
             }
             enforce(ctx, messageSend.getDestination(), TenantPolicy.Access.WRITE);
+            CrescoSecurityContext sc = stateOf(ctx);
+            if (sc != null && sc.verified && sc.certificate && sc.identity != null) peers.touchIdentity(sc.identity);
             super.send(producerExchange, messageSend);
         }
     }

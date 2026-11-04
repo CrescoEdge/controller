@@ -33,8 +33,8 @@ import java.util.Set;
  *       {@code T.*.} wildcard) is denied. This is the strong, prefix-clean isolation boundary and it closes
  *       the flat-name same-region write hole.</li>
  *   <li>(Legacy, un-namespaced) the principal's tenant namespace ({@code <tenant>}/{@code <tenant>.*}),
- *       own inbox ({@code <region>_<agent>}), same-region peer write — as before, for back-compat when
- *       namespacing is off.</li>
+ *       own inbox ({@code <region>_<agent>}), same-region peer write into its OWN tenant's inboxes only (the inbox's
+ *       tenant is the one bound to that name) -- for back-compat when namespacing is off.</li>
  *   <li>Anything else — DENY (outside the tenant).</li>
  * </ol>
  * An {@code null}/identity-less principal on a secured, non-local connection is always denied.
@@ -157,6 +157,17 @@ public final class TenantPolicy {
 
     public static Decision check(CrescoIdentity principal, String destination, Access access,
                                  Set<String> sharedPrefixes, Role role, List<CrossTenantSink> sinks) {
+        return check(principal, destination, access, sharedPrefixes, role, sinks, null);
+    }
+
+    /**
+     * As above. {@code tenantOfInbox} names the tenant an un-namespaced inbox {@code <region>_<agent>} belongs to (null when
+     * unknown): a same-region write is allowed only into the writer's OWN tenant (audit D2b), so without it -- or for an inbox
+     * of unknown or another tenant -- the write is refused.
+     */
+    public static Decision check(CrescoIdentity principal, String destination, Access access,
+                                 Set<String> sharedPrefixes, Role role, List<CrossTenantSink> sinks,
+                                 java.util.function.Function<String, String> tenantOfInbox) {
         if (destination == null || destination.isEmpty()) {
             return Decision.deny("null/empty destination");
         }
@@ -204,11 +215,15 @@ public final class TenantPolicy {
             return Decision.allow("own-queue");
         }
 
-        // Same-region peer queue: may send to it, may not read from it.
+        // Same-region peer queue: may send to it -- only when it belongs to the writer's own tenant (D2b) -- never read it.
         if (principal.getRegion() != null && destination.startsWith(principal.getRegion() + "_")) {
-            return (access == Access.WRITE)
-                    ? Decision.allow("same-region-write")
-                    : Decision.deny("read of peer inbox in region denied");
+            if (access != Access.WRITE) return Decision.deny("read of peer inbox in region denied");
+            String owner = tenantOfInbox == null ? null : tenantOfInbox.apply(destination);
+            if (owner != null && owner.equals(tenant)) return Decision.allow("same-region-write (own tenant)");
+            Decision sink = sinkDecision(tenant, destination, access, sinks);
+            if (sink != null) return sink;
+            return Decision.deny(owner == null ? "same-region inbox " + destination + " of unknown tenant"
+                    : "same-region inbox " + destination + " belongs to tenant '" + owner + "', not '" + tenant + "'");
         }
 
         Decision sink = sinkDecision(tenant, destination, access, sinks);

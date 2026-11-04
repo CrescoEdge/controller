@@ -91,11 +91,13 @@ class PeerTrustStoreTest {
         Files.writeString(f.resolveSibling("peer-trust.json.rebind"), "rgA/a1\n");   // the operator, no restart
         assertTrue(r.bind("t1", "rgA", "a1", k2, "test").ok);
         assertFalse(r.bind("t1", "rgA", "a1", k3, "test").ok, "a rebind stayed open after it was used");
-        assertFalse(open(f).bind("t1", "rgA", "a1", k3, "test").ok, "a consumed rebind came back after a restart");
+        // one writer per store (round-4 L1): the restarted instance fences r, so the node goes on with the restarted one
+        PeerTrustRegistry restarted = open(f);
+        assertFalse(restarted.bind("t1", "rgA", "a1", k3, "test").ok, "a consumed rebind came back after a restart");
         Files.writeString(f.resolveSibling("peer-trust.json.rebind"), "rgA/a1\nrgA/a1#again\n");
         Thread.sleep(1100);                                                     // a new mtime
         Files.setLastModifiedTime(f.resolveSibling("peer-trust.json.rebind"), java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis()));
-        assertTrue(r.bind("t1", "rgA", "a1", k3, "test").ok, "a new tag did not authorise a second rebind");
+        assertTrue(restarted.bind("t1", "rgA", "a1", k3, "test").ok, "a new tag did not authorise a second rebind");
     }
 
     @Test

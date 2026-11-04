@@ -365,8 +365,8 @@ public class ActiveBroker {
 				if (plugin.getConfig().getBooleanParam("net_trace_hops", true)) {
 					brokerPlugins.add(new CrescoTraceBroker(plugin, controllerEngine.cstate.getAgentPath()));
 				}
-				// Tenant isolation authorization plugin (OFF by default).
-				if (plugin.getConfig().getBooleanParam("broker_security_enabled", false)) {
+				// Tenant isolation authorization plugin (ON by default; off only with broker_security_enabled=false explicitly).
+				if (SecuritySettings.brokerSecurity(plugin.getConfig())) {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
 					brokerPlugins.add(authz);
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
@@ -410,7 +410,7 @@ public class ActiveBroker {
 					// Gated separately from broker_security_enabled so authz can run without mTLS if wanted.
 					// Default: client certificates are required whenever broker security is on -- without them an identity is a
 					// typed username, which can neither receive recipient-bound streams nor earn a bridge exemption.
-					boolean securityOn = plugin.getConfig().getBooleanParam("broker_security_enabled", false);
+					boolean securityOn = SecuritySettings.brokerSecurity(plugin.getConfig());
 					boolean clientAuth = requireClientAuth(plugin.getConfig());
 					if (securityOn && !clientAuth) {
 						logger.warn("BROKER SECURITY WITHOUT REQUIRED CLIENT CERTIFICATES (broker_require_client_auth=false): the broker"
@@ -598,9 +598,9 @@ public class ActiveBroker {
 		return destinations;
 	}
 
-	/** broker_require_client_auth, defaulting to broker_security_enabled (identities must be proven when security is on). */
+	/** broker_require_client_auth, defaulting to broker_security_enabled (both default true): see SecuritySettings. */
 	static boolean requireClientAuth(io.cresco.library.plugin.Config config) {
-		return config.getBooleanParam("broker_require_client_auth", config.getBooleanParam("broker_security_enabled", false));
+		return SecuritySettings.requireClientAuth(config);
 	}
 
 	public void updateTrustManager() {

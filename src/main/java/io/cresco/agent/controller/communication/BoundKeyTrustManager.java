@@ -41,7 +41,16 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
     private void check(X509Certificate[] chain, String direction, Check pkixCheck) throws CertificateException {
         try {
             pkixCheck.run();
+            // PKIX accepted it, but the registry still decides for a Cresco identity: a key that is not (or no longer) the
+            // one bound to the name the certificate carries is refused at once -- its chain may still be an anchor until the
+            // truststore is rebuilt, and that must not keep a rebound-away key in
+            String refused = registry == null ? null : registry.refusedKey(chain);
+            if (refused != null) {
+                if (logger != null) logger.warn("TLS " + direction + " certificate REFUSED: " + refused);
+                throw new CertificateException(refused);
+            }
         } catch (CertificateException e) {
+            if (registry != null && registry.refusedKey(chain) != null) throw e;
             CrescoIdentity bound = registry == null ? null : registry.boundByKey(chain);
             if (bound == null) throw e;
             String fp = PeerTrustRegistry.fingerprint(chain[0].getPublicKey().getEncoded());
@@ -94,8 +103,20 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
         });
     }
 
+    /**
+     * No CA hints. A server's CertificateRequest names the issuers it accepts; a JDK key manager then presents a certificate
+     * only if its issuer is among them. After a restart a bound peer's self-rooted chain is no longer in the truststore (it is
+     * trusted by its bound key instead), so a node still running an older release -- with the JDK key manager, not
+     * {@link NodeIdentityKeyManager} -- presented NO certificate and was refused. An empty list means "any issuer": every
+     * client presents its certificate and is judged here. The hints carry no security; they only steer the client's choice.
+     */
     @Override
     public X509Certificate[] getAcceptedIssuers() {
+        return new X509Certificate[0];
+    }
+
+    /** The CA certificates the underlying PKIX trust accepts (the hints the server no longer sends). */
+    X509Certificate[] trustedIssuers() {
         return pkix.getAcceptedIssuers();
     }
 }

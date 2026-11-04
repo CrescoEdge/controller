@@ -92,8 +92,8 @@ public class AgentProducer {
         this.WORKER_CLEANUP_INTERVAL_MS = plugin.getConfig().getLongParam("agentproducer_worker_cleanup_interval", 30000L);
         this.WORKER_CLEANUP_DELAY_MS = plugin.getConfig().getLongParam("agentproducer_worker_cleanup_delay", 15000L);
 
-        this.tenantNamespacing = plugin.getConfig().getBooleanParam("tenant_namespacing", false);
-        this.localTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        this.tenantNamespacing = SecuritySettings.tenantNamespacing(plugin.getConfig());
+        this.localTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
 
 
         try {

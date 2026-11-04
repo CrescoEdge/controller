@@ -284,7 +284,7 @@ public class DiscoveryProcessor {
 			io.cresco.library.security.CrescoIdentity named = (certs == null || certs.length == 0) ? null
 					: io.cresco.agent.controller.communication.CrescoNames.identityOf(certs[0]);
 			String myRegion = controllerEngine.cstate.getRegion();
-			String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+			String myTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
 			if (asClient) {
 				if (!controllerExchange && !region.equals(myRegion)) {
 					logger.error("Discovery REFUSED " + region + "/" + agent + ": it answered as the controller of region " + region
