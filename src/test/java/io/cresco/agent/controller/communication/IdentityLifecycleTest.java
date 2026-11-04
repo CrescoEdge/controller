@@ -175,13 +175,20 @@ class IdentityLifecycleTest {
         // the merge is recorded off the ping path; only what is durable is served down
         atGlobal.awaitRevocations();
         // the pong carries the global's list down only when the region holds less of it
+        // (the global serves its list only to a verified child controller: the broker stamps the region's ping as its caller)
+        MsgEvent unstamped = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "rc", null, "rgB", "rc", null, true, true);
+        RevocationSync.onChildPing(region, unstamped);
+        RevocationSync.onPingAtParent(global, unstamped, true);
+        assertNull(unstamped.getParam(RevocationSync.PARENT_LIST), "the global served its list to an unverified pinger");
         MsgEvent ping2 = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "rc", null, "rgB", "rc", null, true, true);
+        ping2.setParam("cresco_caller", "controller:t1/rgB/rc");
         RevocationSync.onChildPing(region, ping2);
         assertNull(ping2.getParam(RevocationSync.CHILD_LIST), "an acknowledged list was sent again");
         RevocationSync.onPingAtParent(global, ping2, true);
         assertNotNull(ping2.getParam(RevocationSync.PARENT_LIST), "the global's list did not come down");
         RevocationSync.onParentPong(region, ping2, "rgG", "gc");
         MsgEvent ping3 = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "rc", null, "rgB", "rc", null, true, true);
+        ping3.setParam("cresco_caller", "controller:t1/rgB/rc");
         RevocationSync.onChildPing(region, ping3);
         RevocationSync.onPingAtParent(global, ping3, true);
         assertNull(ping3.getParam(RevocationSync.PARENT_LIST), "a list the region holds was sent again");

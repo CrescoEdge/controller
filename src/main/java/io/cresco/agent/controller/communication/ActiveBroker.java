@@ -690,7 +690,7 @@ public class ActiveBroker {
 		synchronized (bridgeGroups) {
 			for (Map.Entry<String, PeerIdentity.Expected> e : groupExpected.entrySet()) {
 				PeerIdentity.Expected x = e.getValue();
-				if (x != null && peers.isTombstoned(x.region, x.agent)) {
+				if (x != null && (peers.isTombstoned(x.region, x.agent) || peers.isRegionCaRevoked(x.region))) {
 					List<NetworkConnector> g = bridgeGroups.get(e.getKey());
 					if (g != null && !g.isEmpty()) doomed.add(g.get(0));
 				}
@@ -886,7 +886,15 @@ public class ActiveBroker {
 	 */
 	static SslContext bridgeSslContext(CertificateManager cm, PeerIdentity.Expected expected, String endpoint) {
 		if (cm.peerIdentityMode() == PeerIdentity.Mode.OFF) return null;
-		return new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
+		SslContext ctx = new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
+		try {
+			// every completed handshake of the bridge -- resumed ones too, which skip the trust manager -- is recorded, so a
+			// revocation of its peer (key, name, or a CA in its chain) closes it (round-2 review N5)
+			ctx.setSSLContext(RecordingSslContext.wrap(ctx.getSSLContext(), cm.outboundConnections(), endpoint));
+		} catch (Exception e) {
+			throw new IllegalStateException("the bridge's TLS context could not be made: " + e.getMessage(), e);
+		}
+		return ctx;
 	}
 
 	private NetworkConnector buildConnector(String hostname, int port, int index, PeerIdentity.Expected expected) throws Exception {

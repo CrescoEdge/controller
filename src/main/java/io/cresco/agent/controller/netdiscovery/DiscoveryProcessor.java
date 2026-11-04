@@ -235,6 +235,17 @@ public class DiscoveryProcessor {
 		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
 		DiscoveryType type = discoveryNode.discovery_type;
 		String region = discoveryNode.discovered_region, agent = discoveryNode.discovered_agent;
+		// controller_trust_anchors: the RESPONDER's chain must have a validated path from its leaf to a listed anchor; under the
+		// regional CA the identity it issued us must come from a CA on that path (a copied chain cannot hand out identities)
+		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+		String serverJson = discoveryNode.discovered_server_cert != null ? discoveryNode.discovered_server_cert : discoveryNode.discovered_cert;
+		String anchor = cm.controllerAnchorRefusal(serverJson == null ? null : cm.getCertsfromJson(serverJson),
+				regionalCa && discoveryNode.discovered_server_cert != null && discoveryNode.discovered_cert != null
+						? cm.getCertsfromJson(discoveryNode.discovered_cert) : null);
+		if (anchor != null) {
+			logger.error("Discovery REFUSED " + region + "/" + agent + ": " + anchor);
+			return false;
+		}
 		// every check on the peer runs BEFORE anything it sent is recorded or trusted
 		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, !regionalCa, true, false)) return false;
 		if (regionalCa) {
@@ -292,11 +303,7 @@ public class DiscoveryProcessor {
 			String myRegion = controllerEngine.cstate.getRegion();
 			String myTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
 			if (asClient) {
-				String anchor = controllerEngine.getCertificateManager().controllerAnchorRefusal(certs);
-				if (anchor != null) {
-					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + anchor);
-					return false;
-				}
+				// (controller_trust_anchors are checked on the responder's chain by setCertTrust before this)
 				if (!controllerExchange && !region.equals(myRegion)) {
 					logger.error("Discovery REFUSED " + region + "/" + agent + ": it answered as the controller of region " + region
 							+ " but this node joined region " + myRegion);
@@ -588,6 +595,7 @@ public class DiscoveryProcessor {
 		n.discovered_broker_port = ch.sport;
 		n.discovered_cert = plugin.getConfig().getBooleanParam("security_regional_ca", false) ? r.rcert : ch.scert;
 		n.discovered_rebind = ch.rebind;
+		n.discovered_server_cert = ch.scert;
 		n.discover_region = hello.creg;
 		n.discover_agent = hello.cagt;
 		if (!setCertTrust(n)) {

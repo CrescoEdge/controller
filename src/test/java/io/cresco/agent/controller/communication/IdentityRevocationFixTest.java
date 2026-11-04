@@ -225,7 +225,10 @@ class IdentityRevocationFixTest {
         assertNotNull(sealed.revocationDurability(), "an unrecorded revocation was not reported");
     }
 
-    /** A revocation of a key this region's CA enrolled expires once every leaf for it has; its name stays reserved. */
+    /**
+     * A revocation of a key this region's CA enrolled expires only once every leaf that key could present has (at least the
+     * three years leaves lived before short-lived ones, round-2 review N2); its name stays reserved.
+     */
     @Test
     void aRevocationOfAnEnrolledKeyExpiresButItsNameStaysReserved() throws Exception {
         Path f = newFile();
@@ -237,6 +240,8 @@ class IdentityRevocationFixTest {
         String k = fp(kp.getPublic());
         assertTrue(r.isRevokedKey(k));
         r.prune(System.currentTimeMillis() + 30 * DAY);
+        assertTrue(r.isRevokedKey(k), "a revocation expired while a three-year leaf for the key could still be valid");
+        r.prune(System.currentTimeMillis() + (3 * 365 + 5) * DAY);
         assertFalse(r.isRevokedKey(k), "an expired revocation was kept");
         assertTrue(r.isTombstoned("rgA", "a1"), "the name was released with the revocation");
         assertFalse(r.bind("t1", "rgA", "a1", TlsTestSupport.rsa().getPublic(), "enrolled").ok);
@@ -375,11 +380,28 @@ class IdentityRevocationFixTest {
         assertEquals("OK", cm.identityHealth()[0], "a fixed clock did not clear the alarm");
         // on the ping/pong path
         ControllerEngine region = node("rgA", "rc", true), agent = node("rgA", "a2", false);
+        assertTrue(region.getCertificateManager().getPeerTrust().bind("t1", "rgA", "a2",
+                agent.getCertificateManager().getPublicCertificate()[0].getPublicKey(), "discovery").ok);
         MsgEvent p = new MsgEvent(MsgEvent.Type.EXEC, "rgA", "a2", null, "rgA", "rc", null, true, false);
         RevocationSync.onChildPing(agent, p);
         p.setParam(RevocationSync.CLOCK, Long.toString(System.currentTimeMillis() - 30 * 3600_000L));   // the agent's clock lags 30 h
         RevocationSync.onPingAtParent(region, p, false);
+        assertEquals("OK", region.getCertificateManager().identityHealth()[0], "an unverified ping's clock raised an alarm");
+        p = new MsgEvent(MsgEvent.Type.EXEC, "rgA", "a2", null, "rgA", "rc", null, true, false);
+        RevocationSync.onChildPing(agent, p);
+        p.setParam(RevocationSync.CLOCK, Long.toString(System.currentTimeMillis() - 30 * 3600_000L));
+        p.setParam("cresco_caller", "agent:t1/rgA/a2");                         // what the broker stamps for a verified agent
+        RevocationSync.onPingAtParent(region, p, false);
         assertEquals("CRITICAL", region.getCertificateManager().identityHealth()[0], region.getCertificateManager().identityHealth()[1]);
+        // a skew report ages out when that peer is not heard from again
+        java.lang.reflect.Field f = CertificateManager.class.getDeclaredField("skewedPeers");
+        f.setAccessible(true);
+        @SuppressWarnings("unchecked") Map<String, String> skewed = (Map<String, String>) f.get(region.getCertificateManager());
+        for (Map.Entry<String, String> se : skewed.entrySet()) {
+            String[] v = se.getValue().split("\\|", 3);
+            se.setValue(v[0] + "|" + (System.currentTimeMillis() - CertificateManager.SKEW_REPORT_TTL_MS - 1000) + "|" + v[2]);
+        }
+        assertEquals("OK", region.getCertificateManager().identityHealth()[0], "a stale skew report kept the identity health CRITICAL");
     }
 
     // ------------------------------------------------------------------ renewal fallback
@@ -403,7 +425,9 @@ class IdentityRevocationFixTest {
         agent.cstate = TlsTestSupport.state(pb, "rgA", "a1");
         agent.setCertificateManager(new CertificateManager(agent));
         CertificateManager cm = agent.getCertificateManager();
-        X509Certificate[] hour = ca.enrollFor(cm.getPublicCertificate()[0].getPublicKey(), "t1", "rgA", "a1", 3600_000L);   // its last tenth
+        long now0 = System.currentTimeMillis();
+        X509Certificate[] hour = leafFrom(ca, cm.getPublicCertificate()[0].getPublicKey(), "t1", "rgA", "a1", now0 - 20 * 3600_000L,
+                now0 + 3600_000L);                                               // issued 20 h ago, an hour left: its last tenth
         assertTrue(cm.installEnrollment(cm.getJsonFromCerts(hour)));
         assertFalse(cm.renewIfDue());
         X509Certificate now = cm.getPublicCertificate()[0];
@@ -443,10 +467,25 @@ class IdentityRevocationFixTest {
         agent.cstate = TlsTestSupport.state(pb, "rgA", "a1");
         agent.setCertificateManager(new CertificateManager(agent));
         CertificateManager cm = agent.getCertificateManager();
-        assertTrue(cm.installEnrollment(cm.getJsonFromCerts(ca.enrollFor(cm.getPublicCertificate()[0].getPublicKey(), "t1", "rgA", "a1", 3600_000L))));
+        long now0 = System.currentTimeMillis();
+        assertTrue(cm.installEnrollment(cm.getJsonFromCerts(leafFrom(ca, cm.getPublicCertificate()[0].getPublicKey(), "t1", "rgA", "a1",
+                now0 - 20 * 3600_000L, now0 + 3600_000L))));                     // due for renewal
         long t0 = System.currentTimeMillis();
         assertTrue(cm.renewIfDue(), "the re-enrollment's discovery handler could not take the certificate manager's lock (deadlock)");
         assertTrue(System.currentTimeMillis() - t0 < 4000, "the re-enrollment waited on the certificate manager's lock");
+    }
+
+    /** A leaf {@code ca} issued at {@code notBefore}, valid until {@code notAfter} (no backdate): [leaf, ca, root]. */
+    static X509Certificate[] leafFrom(RegionCA ca, java.security.PublicKey key, String tenant, String region, String agent,
+                                      long notBefore, long notAfter) throws Exception {
+        org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder b = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                org.bouncycastle.asn1.x500.X500Name.getInstance(ca.caCert().getSubjectX500Principal().getEncoded()), java.math.BigInteger.valueOf(System.nanoTime()),
+                new Date(notBefore), new Date(notAfter), CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null)), key);
+        b.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, new org.bouncycastle.asn1.x509.BasicConstraints(false));
+        X509Certificate leaf = new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(
+                b.build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(ca.caPrivateKey())));
+        X509Certificate[] caChain = ca.caChain();
+        return new X509Certificate[]{leaf, caChain[0], caChain[1]};
     }
 
     /** Re-enrolling with the same key and CA leaves the truststore as it was. */
