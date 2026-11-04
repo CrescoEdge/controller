@@ -461,7 +461,10 @@ public class AgentServiceImpl implements AgentService {
                 new org.osgi.framework.ServiceFactory<AgentService>() {
                     @Override
                     public AgentService getService(org.osgi.framework.Bundle bundle, org.osgi.framework.ServiceRegistration<AgentService> r) {
-                        return bundle.getBundleId() == controllerBundleId ? core : new BundleAgentService(core, bundle);
+                        // review F5: never the controller's own instance, not even for the controller bundle (any bundle can
+                        // borrow its BundleContext): the controller uses its own reference, never the registry. The
+                        // controller bundle runs no plugin, so whatever is sent through this instance is dropped.
+                        return new BundleAgentService(core, bundle);
                     }
 
                     @Override
@@ -478,7 +481,7 @@ public class AgentServiceImpl implements AgentService {
         Long last = refusalLog.get(kind);
         if (last == null || now - last > 60_000L) {
             refusalLog.put(kind, now);
-            logger.warn("REFUSED " + kind + ": " + detail);
+            if (logger != null) logger.warn("REFUSED " + kind + ": " + detail);
         }
     }
 
@@ -495,7 +498,7 @@ public class AgentServiceImpl implements AgentService {
             return;
         }
         try {
-            io.cresco.agent.controller.communication.CallerStamps.stamp(msg, controllerEngine.pluginCaller(id));
+            io.cresco.agent.controller.communication.CallerStamps.stamp(msg, controllerEngine.pluginCaller(id), controllerEngine.regionAlias());
             controllerEngine.msgIn(msg);
         } catch (Exception ex) {
             logger.error("msgOut() from " + bundle.getSymbolicName() + ": " + ex.getMessage(), ex);
@@ -520,10 +523,25 @@ public class AgentServiceImpl implements AgentService {
     }
 
     String onBehalfRefusal(org.osgi.framework.Bundle bundle, String id, io.cresco.library.security.Caller caller) {
+        // review F5: the capability is the bundle's own -- installed by this controller, used by its own code -- not its name's
+        if (!trustedNamedBundle(bundle)) {
+            return "bundle " + bundle.getSymbolicName() + "#" + bundle.getBundleId() + " was not installed by this controller"
+                    + " (from the agent jar or a verified signed jar): a symbolic name alone holds no capability";
+        }
+        String asker = CallerFrames.refusal(bundle);
+        if (asker != null) return asker;
         return onBehalfRefusal(bundle.getSymbolicName(),
                 io.cresco.agent.controller.communication.SecuritySettings.onBehalfBundles(plugin.getConfig()),
                 pluginAdmin != null && pluginAdmin.bundleRunsPlugin(bundle.getBundleId(), id), id, caller, getTenant(),
                 getSuperuserTenants());
+    }
+
+    /**
+     * Does a capability bound to a bundle's symbolic name (on_behalf_bundles, the executor's stdin) hold for {@code bundle}:
+     * did this controller install it itself? (review F5: a plugin can install a bundle of any name through its own context.)
+     */
+    boolean trustedNamedBundle(org.osgi.framework.Bundle bundle) {
+        return bundle != null && pluginAdmin != null && pluginAdmin.installedByController(bundle.getBundleId());
     }
 
     /**
@@ -576,7 +594,8 @@ public class AgentServiceImpl implements AgentService {
                     // a bundle running several plugin instances writes as the first of them (instances of one bundle
                     // are one code base); a bundle running none writes as nobody
                     return ids.isEmpty() ? null : controllerEngine.pluginCaller(ids.first());
-                }, name, io.cresco.agent.controller.communication.SecuritySettings.onBehalfBundles(plugin.getConfig()).contains(name));
+                }, name, io.cresco.agent.controller.communication.SecuritySettings.onBehalfBundles(plugin.getConfig()).contains(name)
+                        && trustedNamedBundle(bundle), trustedNamedBundle(bundle));
         bundleDataPlanes.put(bundle, d);
         return d;
     }

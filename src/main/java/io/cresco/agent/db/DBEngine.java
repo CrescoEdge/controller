@@ -2874,12 +2874,41 @@ public class DBEngine {
                     removeNode(null, id, null);
                     purged.add(id);
                 } else {
-                    removeNode(null, null, id);
-                    purged.add(id);
+                    if (removeLostPlugin(id)) purged.add(id);
                 }
             }
         }
         return purged;
+    }
+
+    /**
+     * The registry sweep's removal of a LOST plugin record (this controller's own decision, never a caller's): scoped to the
+     * agent and region that own it; a row no agent owns any more is removed by its own key.
+     */
+    private boolean removeLostPlugin(String pluginId) {
+        String agentId = null;
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT agent_id FROM pluginof WHERE plugin_id = ?")) {
+            stmt.setString(1, pluginId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) agentId = rs.getString(1);
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.removeLostPlugin() owner of " + pluginId, ex);
+            return false;
+        }
+        if (agentId != null) {
+            String regionId = getRNodeFromAnode(agentId);
+            return regionId != null && removeNode(regionId, agentId, pluginId);
+        }
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("DELETE FROM pnode WHERE plugin_id = ? AND plugin_id NOT IN (SELECT plugin_id FROM pluginof)")) {
+            stmt.setString(1, pluginId);
+            return stmt.executeUpdate() <= 1;
+        } catch (Exception ex) {
+            logger.error("DBEngine.removeLostPlugin() orphan " + pluginId, ex);
+            return false;
+        }
     }
 
     public boolean removeNode(String regionId, String agentId, String pluginId) {
@@ -2907,11 +2936,16 @@ public class DBEngine {
                 queryParams.add(agentId);
                 queryParams.add(pluginId);
 
-            } else if ((regionId == null) && (agentId == null) && (pluginId != null)) {
-                //plugin
-                queryString = "DELETE FROM pnode " +
-                        "WHERE plugin_id = ?";
-                queryParams.add(pluginId);
+            } else if (agentId == null && pluginId != null) {
+                // review F3: a plugin record is removed only together with its agent's name -- never a bare plugin id,
+                // which deleted that plugin's row whatever agent (and tenant) it belonged to
+                logger.error("DBEngine.removeNode(): REFUSED removing plugin record " + pluginId + " without its agent");
+                return false;
+
+            } else if ((regionId == null) && (agentId != null) && (pluginId != null)) {
+                // plugin of a named agent, region not given: resolve the agent's region, then the scoped delete
+                String agentRegion = getRNodeFromAnode(agentId);
+                return agentRegion != null && removeNode(agentRegion, agentId, pluginId);
 
             } else if ((regionId == null) && (agentId != null) && (pluginId == null)) {
                 //agent, region not given: anode has no region_id column (this query used to fail), so resolve the

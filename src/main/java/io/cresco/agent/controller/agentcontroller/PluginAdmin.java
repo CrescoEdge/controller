@@ -827,6 +827,7 @@ public class PluginAdmin {
                         InputStream in = conn.getInputStream();
                         String bundlePath = inputURL.getPath();
                         bundle = context.installBundle(bundlePath, in);
+                        installedHere(bundle);
                         if (in != null) {
                             in.close();
                         }
@@ -896,7 +897,7 @@ public class PluginAdmin {
             return null;
         }
         try (InputStream in = Files.newInputStream(copy)) {
-            return context.installBundle(location, in);
+            return installedHere(context.installBundle(location, in));
         } finally {
             try { Files.deleteIfExists(copy); } catch (Exception ignore) { }
         }
@@ -939,6 +940,23 @@ public class PluginAdmin {
         return  isStopped;
     }
 
+    /** Bundles this controller installed itself: embedded in the agent jar, or from a copy that verified (signed). */
+    private final java.util.Set<Long> installedHere = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private Bundle installedHere(Bundle b) {
+        if (b != null) installedHere.add(b.getBundleId());
+        return b;
+    }
+
+    /**
+     * Did this controller install bundle {@code bundleId} itself (from the agent jar or a verified signed copy)? A bundle a
+     * plugin installed through its own BundleContext did not -- whatever symbolic name it chose (review F5): only such
+     * bundles hold a capability bound to a name (on_behalf_bundles, the executor's stdin).
+     */
+    public boolean installedByController(long bundleId) {
+        return installedHere.contains(bundleId);
+    }
+
     public boolean removeBundle(long bundleID) {
         boolean isRemoved = false;
         try {
@@ -971,7 +989,11 @@ public class PluginAdmin {
                 }
                 if (configured || pendingOwners.containsKey(id) || gdb.nodeExist(plugin.getRegion(), plugin.getAgent(), id)) continue;
                 if (newestChange(d.toPath()) > cutoff) continue;
-                FileUtils.deleteDirectory(d);
+                String refused = PluginIds.purge(base.toPath(), id);
+                if (refused != null) {
+                    logger.error("plugin-data sweep: NOT deleting " + d + ": " + refused);
+                    continue;
+                }
                 deleted.add(id);
                 logger.warn("Deleted the plugin-data of " + id + ": no longer configured here and unchanged for "
                         + retentionDays + " days (plugin_data_retention_days)");
@@ -1144,11 +1166,16 @@ public class PluginAdmin {
                             // a plugin's data is never deleted on a stop (a graceful agent shutdown stops every plugin)
                             // nor on a remove without an explicit purge: it may be the only copy of what the plugin held
                             File folder = pluginDataDirectory(pluginId);
-                            if (folder.isDirectory()) {
-                                if (isRemove && purgeData) {
-                                    FileUtils.deleteDirectory(folder);
-                                    logger.warn("PURGED the plugin-data of removed plugin " + pluginId + ": " + folder);
-                                } else if (isRemove) {
+                            if (isRemove && purgeData) {
+                                // only a valid id, only a real directory strictly inside plugin-data, never through a link
+                                String refused = PluginIds.purge(new File(agentService.getAgentDataDirectory(), "plugin-data").toPath(), pluginId);
+                                if (refused == null) {
+                                    logger.warn("PURGED the plugin-data of removed plugin " + pluginId);
+                                } else {
+                                    logger.error("NOT purging plugin-data: " + refused);
+                                }
+                            } else if (folder.isDirectory()) {
+                                if (isRemove) {
                                     logger.info("Plugin " + pluginId + " removed; its plugin-data is kept at " + folder.getAbsolutePath()
                                             + " (pluginremove with purge_data=true from an admin deletes it)");
                                 }
@@ -1303,6 +1330,12 @@ public class PluginAdmin {
                 if(pluginID == null) {
                     pluginID = "plugin-" + UUID.randomUUID().toString();
                 }
+                // the id names a directory (plugin-data/<id>) and a registry row: one plain segment only (review F6)
+                String badId = PluginIds.refusal(pluginID);
+                if (badId != null) {
+                    logger.error("addPlugin REFUSED: " + badId);
+                    return null;
+                }
 
                 String pluginName = (String)incomingMap.get("pluginname");
 
@@ -1377,7 +1410,7 @@ public class PluginAdmin {
                     }
                 } else {
                     logger.error("Can't add " + pluginName + " could not find suitable jar for bundle loading!");
-                    logger.error(pluginName + " : " + incomingMap);
+                    logger.error(pluginName + " : " + io.cresco.agent.controller.communication.ParamLog.names(incomingMap));
                 }
 
             } catch (Exception ex) {
@@ -1764,8 +1797,8 @@ public class PluginAdmin {
             if(bundleURL != null) {
 
                 String bundlePath = bundleURL.getPath();
-                installedBundle = context.installBundle(bundlePath,
-                        getClass().getClassLoader().getResourceAsStream(bundleName));
+                installedBundle = installedHere(context.installBundle(bundlePath,
+                        getClass().getClassLoader().getResourceAsStream(bundleName)));
 
             } else {
                 logger.error("installInternalBundleJars() Bundle = null");
