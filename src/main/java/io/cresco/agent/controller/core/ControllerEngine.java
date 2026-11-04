@@ -557,6 +557,9 @@ public class ControllerEngine {
         } catch (Exception ignore) { }
         // revocations: the parent's signed list, verified as the controller this node joined
         boolean region = cstate.isRegionalController();
+        // message signatures: this node's attestation (an agent) and the parent's trust bundle
+        msgSigning().onParentPong(pong, region ? cstate.getGlobalRegion() : cstate.getRegionalRegion(),
+                region ? cstate.getGlobalAgent() : cstate.getRegionalAgent());
         io.cresco.agent.controller.communication.RevocationSync.onParentPong(this, pong,
                 region ? cstate.getGlobalRegion() : cstate.getRegionalRegion(), region ? cstate.getGlobalAgent() : cstate.getRegionalAgent());
         StateResync resync = stateResync;
@@ -708,6 +711,34 @@ public class ControllerEngine {
     /** Strip whatever {@code msg} says about its caller and stamp this controller (with this node's region alias, if any). */
     public void stampSelf(MsgEvent msg) {
         io.cresco.agent.controller.communication.CallerStamps.stamp(msg, selfCaller(), regionAlias());
+        markForSigning(msg);
+    }
+
+    private volatile io.cresco.agent.controller.communication.MsgSigning msgSigning;
+
+    /** End-to-end MsgEvent signatures (D4): this node signs what it originates and checks what it dispatches. */
+    public io.cresco.agent.controller.communication.MsgSigning msgSigning() {
+        io.cresco.agent.controller.communication.MsgSigning s = msgSigning;
+        if (s == null) {
+            synchronized (this) {
+                if (msgSigning == null) msgSigning = new io.cresco.agent.controller.communication.MsgSigning(this);
+                s = msgSigning;
+            }
+        }
+        return s;
+    }
+
+    /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
+    public void markForSigning(MsgEvent msg) {
+        msgSigning().markForSigning(msg, tenant());
+    }
+
+    /**
+     * Unsigned messages from nodes without signing (stamped {@code agent:} by their broker) are admitted only during an
+     * operator's upgrade window (see UpgradeWindow); outside it, never.
+     */
+    public boolean legacyNodesAdmitted() {
+        return false;
     }
 
     /**

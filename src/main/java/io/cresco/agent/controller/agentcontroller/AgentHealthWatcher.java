@@ -229,6 +229,8 @@ public class AgentHealthWatcher {
                     io.cresco.agent.controller.statemachine.CryptoPolicySync.advertise(pingRequest);
                     // revocations: what we hold of the region's list (the pong brings it when it differs)
                     io.cresco.agent.controller.communication.RevocationSync.onChildPing(controllerEngine, pingRequest);
+                    // message signatures: our certificate up, our attestation and the trust bundle down (D4)
+                    controllerEngine.msgSigning().onChildPing(pingRequest);
 
                     // Send RPC and wait for response with timeout. This synchronous agent->region->agent
                     // round trip is a free, continuous RTT probe on the parent link (measurement subsystem);

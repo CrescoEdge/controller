@@ -323,6 +323,8 @@ public class RegionalExecutor implements Executor {
         io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
         // revocations: this region's list down when the agent holds another (an agent's own list is not accepted)
         io.cresco.agent.controller.communication.RevocationSync.onPingAtParent(controllerEngine, msg, false);
+        // message signatures: attest the agent's key, send the trust bundle down when it holds another (D4)
+        controllerEngine.msgSigning().onPingAtParent(msg, false);
         logger.debug("Returning communication details to Cresco agent");
         return msg;
     }

@@ -293,6 +293,8 @@ public class GlobalExecutor implements Executor {
         io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
         // revocations: the region's own list (its names only) in, the global's list down when the region holds another
         io.cresco.agent.controller.communication.RevocationSync.onPingAtParent(controllerEngine, msg, true);
+        // message signatures: list the region controller's key in the trust bundle, send it down when it differs (D4)
+        controllerEngine.msgSigning().onPingAtParent(msg, true);
         return msg;
     }
     @Override

@@ -175,6 +175,21 @@ public class AgentConsumer {
 							RegionAlias.normalize(me, aliasRegion, plugin.getRegion(), plugin.getAgent());
 							// the verified caller comes from the properties the broker checked, never from the body
 							io.cresco.library.security.Caller caller = CallerStamps.fromJms(me, msg, controllerEngine.securityOn());
+							// D4: what is dispatched here (to this node's controller or plugins, or an RPC reply for it) must carry
+							// a valid origin signature; relays carry the message on unchecked (its destination checks it)
+							if (forThisNode(me) && controllerEngine.msgSigning().required()) {
+								MsgSigning.Verdict v = controllerEngine.msgSigning().verify(me, caller, controllerEngine.legacyNodesAdmitted());
+								if (!v.ok()) {
+									refuseUnauthenticated(me, v.refusal);
+									return;
+								}
+								if (caller == null || !caller.equals(v.caller)) {
+									// a stamp a bridge could not vouch for was stripped on the way: the origin's signed word stands
+									String alias = msg.getStringProperty(CallerStamps.P_ALIAS);
+									CallerStamps.stamp(me, v.caller, alias == null || alias.isEmpty() ? null : alias);
+									caller = v.caller;
+								}
+							}
 
 							//logger.info("TEST PLUG 0");
 							//logger.info("Q: " + RXQueueName);
@@ -500,6 +515,30 @@ public class AgentConsumer {
 		if (owner.equals(sender)) return true;
 		logger.warn("IGNORED a file part for group {} from {}: the group was registered by {}", filegroup, sender, owner);
 		return false;
+	}
+
+	/** Is {@code me} for this node (its controller or one of its plugins), or an RPC reply to a call this node made? */
+	private boolean forThisNode(MsgEvent me) {
+		return (plugin.getRegion().equals(me.getDstRegion()) && plugin.getAgent().equals(me.getDstAgent()))
+				|| (me.getParams() != null && me.getParam(callIdKey) != null);
+	}
+
+	private final java.util.concurrent.atomic.AtomicLong unauthenticated = new java.util.concurrent.atomic.AtomicLong();
+
+	/** A message that failed its signature check: an RPC request is answered 401, anything else dropped (logged by MsgSigning). */
+	private void refuseUnauthenticated(MsgEvent me, String why) {
+		unauthenticated.incrementAndGet();
+		try {
+			if (MsgRouter.isRpcRequest(me) && me.getParam(MsgRouter.ROUTE_UNAVAILABLE) == null && me.getParam(MsgRouter.ROUTE_REFUSED) == null) {
+				MsgSigning.clear(me);
+				me.setParam("status_code", "401");
+				me.setParam("status_desc", "unauthenticated: " + why);
+				me.setReturn();
+				plugin.msgOut(me);
+			}
+		} catch (Exception e) {
+			logger.error("refuseUnauthenticated: " + e.getMessage());
+		}
 	}
 
 	private boolean registerIncomingFiles(MsgEvent me, String fileobjectString, String fileGroup,

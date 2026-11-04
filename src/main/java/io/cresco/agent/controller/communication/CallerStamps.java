@@ -160,6 +160,7 @@ public final class CallerStamps {
             }
         }
         stamp(msg, c, alias == null || alias.isEmpty() ? null : alias);
+        MsgSigning.notPending(msg);                                     // only this node's own stamping points ask it to sign
         return c;
     }
 
