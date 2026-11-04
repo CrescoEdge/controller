@@ -141,27 +141,28 @@ These change code that only this branch runs (discovery v2, the peer trust regis
 - **Joiners pin the controller they joined** (item 7). An agent pins its region controller's key (and, under the regional
   CA, the region CA) at the first join; a region pins its global the same way. A different key or CA for that name later is
   refused: holding the shared agent secret no longer lets anyone pose as a controller. A re-installed controller is
-  accepted again when its `security/` directory is restored (same key), or after the operator authorises one rebind of it on
-  each joiner (`peer_identity_rebind=<region>/<agent>`, or the line in `peer-trust.json.rebind`, no restart).
+  accepted again when its `security/` directory is restored (same key), when its new leaf is vouched for (§8), or after the
+  operator authorises one rebind of it on each joiner (`peer_identity_rebind=<region>/<agent>=<key fingerprint>`, or the line
+  in `peer-trust.json.rebind`, no restart). Controller pins never lapse (§8).
   `controller_trust_anchors` (SHA-256 of a controller's public key or of a certificate in its chain, comma separated)
   closes the first join as well: only a listed controller is joined.
 - **Public-key directory** (audit D6): `public_key_directory` (default `<agent data dir>/public-keys`, absolute) still
   receives this node's exported certificate, but a certificate placed there becomes a trust anchor only when its SHA-256
   fingerprint is listed in `public_key_trusted_fingerprints`, the directory is absolute and neither it nor the file is
   writable by group or others (or owned by another user), and the file is not a symlink.
-- **Renewal** (round-4 M4): the persisted node chain and region CA are renewed with the SAME keys when a third of their
-  lifetime (and at least `identity_renew_before_days`, 30) is left -- at start and every `identity_renew_check_minutes`
-  (60). Bindings and recorded CA scopes follow keys, so peers notice nothing. Connections that reconnect present the
-  current chain.
+- **Renewal** (round-4 M4, corrected in §8): the persisted node chain and region CA are renewed with the SAME keys when a
+  third of their own lifetime is left (or `identity_renew_before_days`, 30, if that is more -- but never more than half the
+  lifetime) -- at start and every `identity_renew_check_minutes` (60). Bindings and recorded CA scopes follow keys, so peers
+  notice nothing. Connections that reconnect present the current chain.
 - **Short-lived region-issued leaves**: a region CA issues leaves valid for `identity_leaf_validity_hours` (168 = 7 days).
-  A node re-enrolls with the controller it joined (one authenticated exchange, same key) when a third of the lifetime is
-  left; if that fails into the last tenth, it keeps the key on a self-rooted chain its controller accepts by the bound key.
+  A node re-enrolls with the controller it joined (one authenticated exchange, same key) at half-life; see §8 for what
+  happens when that keeps failing (no self-made fallback).
 - **Revocation**: `peer_identity_revoke` (names `region/agent` or key fingerprints) and the operator file
   `peer-trust.json.revoke` (re-read every 10 s) revoke a key for every name: the binding is dropped, TLS, the broker and the
   CA path refuse it, live connections holding it are closed at once, and it stays revoked (persisted, permanent; a revoked
   node needs a new key). Each controller signs its revocation list with its identity key and it travels on the parent/child
-  pings only when the other side holds another list: a region's list is accepted at the global for the region's own names,
-  and the global's (and a region's) list applies to everything below it. Agents' lists are not accepted.
+  pings as deltas (§8): a region's list is accepted at the global only from a controller bound there, for the region's own
+  names, and the global's (and a region's) list applies to everything below it. Agents' lists are not accepted.
 - **Expired identities**: the broker refuses an expired certificate at authorization (both the bound-key and the CA path)
   and closes, within a minute, a connection whose certificate expires or whose key is revoked while it is up.
 - **The broker's identity check is the authoritative gate.** A client that reconnects by resuming a TLS 1.3 session (a
@@ -178,3 +179,91 @@ These change code that only this branch runs (discovery v2, the peer trust regis
 | `identity_leaf_validity_hours` | 3 years | 168 |
 | `identity_renew_before_days`, `identity_renew_check_minutes` | (no renewal) | 30, 60 |
 | `peer_identity_revoke`, `peer-trust.json.revoke` | (none) | revocation |
+
+## 8. Revocation, renewal and controller pins (identity review, 2026-11-04)
+
+An independent adversarial review of phases 0-2 found that revocation could be submitted by any agent, reached across
+regions, could be undone by re-claiming a name, did not cover CA keys or the bridges a node opened itself, failed open on a
+write failure and did not scale; that renewal churned (a 7-day leaf was "due" at birth: hourly re-issue, truststore growth,
+re-enrollment dropping every connection, a silent 3-year self-rooted fallback); and that a joiner's controller pin lapsed
+after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `IdentityRevocationFixTest` covers the rest.
+
+- **Who may send a revocation list.** A list is accepted only when signed with the key BOUND at the receiver as a
+  CONTROLLER to the signer's name at the global, from a region controller that joined it (never the global's own region,
+  never its own parent); at a child, only from the controller it joined (whose name comes from the child's own state),
+  verified by its bound key or, under the regional CA, by its region's recorded CA (which issues a controller's name to that
+  controller only), never by a key bound there as an agent's. The issuer
+  is the identity the signing certificate verifies as, never `src_region`/`src_agent`; a broker-stamped `cresco_caller`, when
+  present, must be that same controller. An agent's list is refused everywhere, whatever the ping says.
+- **Positive scope.** A region's entry is accepted at the global only when its key is bound there to a name of that region
+  (and no other), or is bound to no name there and the entry names an identity of that region; it is then recorded as
+  `fingerprint@region` and applies to that region's names ONLY -- at the global and, carried down in the global's list, at
+  every region. A CA key, a key bound outside the region, or an entry naming no identity of the region is refused.
+- **A revoked name is tombstoned.** Revoking a key drops the bindings that hold it and reserves their names: no key (old or
+  new) is accepted for the name -- at TLS, at the broker, on the CA path, or by first-come binding -- until the operator
+  rebinds it. A revoked controller name also loses its bridge-peer record. The revoked key itself stays revoked after a rebind.
+- **CA keys can be revoked.** Revoking a region CA's key fingerprint stops it vouching: no leaf it issued verifies, it is
+  never re-added as a trust anchor at start (`recordedCas`), no other CA is recorded for that region (even by a client
+  following its region) until the operator rebinds the region, and a chain carrying a revoked CA key anywhere is refused. A
+  federating controller whose binding is refused leaves nothing recorded (its CA is restored).
+- **Region-CA names need CA-issued leaves.** Where a region CA is recorded, a name of that region verifies only with a leaf
+  issued by that CA and within its validity -- also when its key is bound (the bound-key path no longer accepts a chain the
+  key holder made itself). An identity its region stops re-enrolling (a node gone, refused, or a stolen key) lapses with its
+  last leaf. Under per-node trust (no region CA) leaves are self-rooted by design: a bound key stays valid until revoked.
+- **Revocation tears down what this node opened.** The trust manager of every outbound connection records it; a
+  revocation closes each one whose peer is now refused (bridges and client connections, after invalidating the TLS session
+  so a reconnect cannot resume it unchecked), removes the bridge groups to tombstoned peers, and the broker closes inbound
+  connections refused for any revocation reason (key, name, region CA), not only by key.
+- **Fail closed.** A revocation is in force in memory before it is recorded. When it cannot be recorded (full disk, a sealed
+  or fenced registry) it stays in force, the write is retried (1 s, doubling to 30 s) and the `identity` health check is
+  CRITICAL until it is recorded. The operator file counts as applied only once its entries are recorded (else it is read
+  again in 10 s). A node never revokes its own key or own region CA, by name or by fingerprint.
+- **Versioned lists, O(1) pings.** Each registry has an epoch (random, made with it, kept across restarts and compaction;
+  new after a `reset`). Entries have positions; a ping says `<epoch>.<position>` held of the parent's list and the pong
+  carries only what follows (at most `revocation_sync_max_entries`, 4096, per pong) -- nothing when unchanged. A region
+  sends its own entries after what its parent acknowledged; the pong always names the parent's epoch, and a child that sees
+  it change (the parent re-created or reset its registry) sends its list again. Signed deltas are cached; only durable
+  entries are served (a position is never reused). Merging is in force at once and recorded off the ping path in ONE
+  durable write (1,000 entries: ~30 ms instead of 8-17 s), so a bulk merge never delays a pong.
+- **Expiry.** A revocation of a key this region's CA enrolled expires once every leaf it could have issued for it has
+  (`identity_leaf_validity_hours` + twice the backdate + a day); the name stays tombstoned. Other revocations are permanent.
+- **Controller pins never lapse.** `peer_binding_prune_days` prunes AGENT bindings only; a controller this node joined (its
+  pin), one that joined it, and this node's own identity are kept until an operator rebinds or revokes them.
+- **Renewal without churn.** Renewal is at a fraction of the certificate's own lifetime (above). This node's own chain,
+  region CA, issuing CA and a peer's rediscovered chain REPLACE their truststore entries. A re-enrollment with the same key
+  and CA keeps every live connection (the key managers present the new leaf at the next handshake); an agent enrollment no
+  longer rewrites the region broker's TLS context. Every join path re-enrolls -- multicast and static
+  `regional_controller_host` / `global_controller_host` alike.
+- **No silent fallback.** A region-issued leaf is never replaced by a self-made chain (at renewal or at start). When
+  re-enrollment keeps failing the node keeps serving its last valid leaf: WARN, then CRITICAL in its last tenth (retrying
+  every `identity_reenroll_retry_minutes`, 5). At expiry the leaf lapses -- every verifier refuses it and the region's broker
+  closes the connection -- and the node keeps trying; the region re-enrolls a bound, unrevoked key whatever its last leaf's
+  validity, so it returns by itself as soon as its region's discovery port answers. Trade-off: connectivity is kept as long
+  as the identity is valid and never extended past what the region vouched for; a node that cannot reach its region's
+  discovery port for half a leaf's lifetime (3.5 days by default) loses its broker connection until it can (raise
+  `identity_leaf_validity_hours` where links are that unreliable).
+- **Re-installed controllers (one action).** A rebind token may name the key it allows: `<region>/<agent>=<fingerprint>`
+  (`#tag` as before); a token without one rebinds to the first key presented and is logged as such. A joiner follows its
+  pinned controller to a new key WITHOUT a token when the new leaf is vouched for: issued by the CA it pinned for that
+  region (a region controller re-installed with its `region-ca.p12` restored), or carrying a certificate or key listed in
+  `controller_trust_anchors` -- never for a revoked (tombstoned) name or key.
+- **Clocks.** Certificates are backdated `identity_cert_backdate_hours` (24; was a fixed hour), so a clock lagging less than
+  that accepts a certificate issued "now". Pongs (`remote_ts`) and pings (the child's clock) are compared: a skew of half the
+  backdate is WARN, the full backdate CRITICAL (`identity` health); an enrollment refused as not yet valid says the clock is
+  behind.
+- **A registry that cannot lock its store** (another process, or a file system without locks such as some NFS mounts) is
+  fenced LOUDLY: an ERROR naming the cause, the `identity` health check CRITICAL, and every refused binding says
+  `FENCED: <why>`; revocations are still enforced in memory.
+
+| Setting / signal | Before | Now |
+|---|---|---|
+| renewal point | when max(30 d, life/3) is left (a 7-day leaf: at birth) | max(life/3, `identity_renew_before_days`), at most life/2 (7-day leaf: half-life) |
+| region-issued leaf, re-enrollment failing | self-rooted 3-year chain in the last tenth | last valid leaf kept; WARN, CRITICAL in the last tenth; lapses at expiry |
+| `identity_reenroll_retry_minutes` | (none) | 5 (in a leaf's last tenth) |
+| `identity_cert_backdate_hours` | fixed 1 h | 24 |
+| `revocation_sync_max_entries` | (whole list on every changed ping) | 4096 entries per pong, deltas |
+| revocation list wire | `rev_have`/`rev_ack` = digest of the whole list; v1 lists | `<epoch>.<position>`; `rev_epoch`, `rev_ts`; v2 signed deltas (only this branch spoke v1) |
+| `peer_binding_prune_days` | every binding but this node's own | AGENT bindings only |
+| rebind token | `<region>/<agent>[#tag]` | also `<region>/<agent>[#tag]=<key fingerprint>` (recommended) |
+| a revoked name | free again at once | tombstoned until an operator rebind |
+| health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate |

@@ -323,6 +323,24 @@ public class DiscoveryProcessor {
 				// later -- an agent-secret holder answering as the controller -- is refused unless the operator authorises one
 				// rebind of it on this node
 				String why = reg.pin(region, agent, certs[0], role, false);
+				if (why != null && asClient && named != null && region.equals(named.getRegion()) && agent.equals(named.getAgent())) {
+					// the controller this node joined re-keyed (re-installed): accepted without an operator action at each joiner
+					// only when the new identity is VOUCHED for -- issued by the CA this node pinned for its region, or matching an
+					// operator-configured controller trust anchor (controller_trust_anchors) -- never for a revoked name or key
+					String voucher = reg.issuedByRecordedCa(certs) ? "vouched for by region " + region + "'s pinned CA"
+							: controllerEngine.getCertificateManager().controllerAnchorVouches(certs) ? "vouched for by controller_trust_anchors" : null;
+					if (voucher != null) {
+						io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult r =
+								reg.rebindVouched(named.getTenant(), region, agent, certs[0].getPublicKey(), voucher);
+						if (r.ok) {
+							logger.warn("Discovery: the controller " + region + "/" + agent + " this node joined has a NEW key ("
+									+ voucher + "); bound to it, the old key stays refused");
+							why = null;
+						} else {
+							why = why + "; and the vouched re-key was refused: " + r.reason;
+						}
+					}
+				}
 				if (why != null) {
 					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
 					return false;
@@ -347,7 +365,7 @@ public class DiscoveryProcessor {
 				isSet = controllerEngine.getCertificateManager().installEnrollment(remoteCertString);
 			} else {
 				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
-				controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath, certs);
+				controllerEngine.getCertificateManager().replaceTrustStoreEntries(remoteAgentPath, certs);
 				isSet = true;
 			}
 		} catch(Exception ex) {
@@ -406,12 +424,15 @@ public class DiscoveryProcessor {
 				// Regional-CA (Option C): act as the issuing authority — sign the joiner a leaf under our
 				// region CA and return the chain for it to install. We trust the joiner via our own CA
 				// (no per-node truststore entry needed), so trust material stays O(regions), not O(nodes^2).
+				// (an agent's enrollment adds no trust anchor -- its key is bound in the registry, which TLS consults live -- so the
+				// broker's TLS context is not rewritten at every (re-)enrollment; a federating controller's CA is added, and the
+				// context refreshed, by federateController)
 				localCertString = controllerEngine.getCertificateManager().issueEnrollment(remoteCertString, joinType);
-				if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
 			} else {
 				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
-				controllerEngine.getCertificateManager().addCertificatesToTrustStore(remoteAgentPath, certs);
-				if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+				// the peer's current chain REPLACES its previous one (a renewed chain is not one more anchor)
+				if (controllerEngine.getCertificateManager().replaceTrustStoreEntries(remoteAgentPath, certs)
+						&& controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
 				localCertString = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 			}
 		} catch(Exception ex) {

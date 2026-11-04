@@ -171,14 +171,20 @@ class IdentityLifecycleTest {
         assertNull(atGlobal.verifiedIdentity(b1.chain), "the region's revocation of its own agent was not applied at the global");
         assertNotNull(atGlobal.verifiedIdentity(g1.chain), "a region revoked a name of another region at the global");
         assertNotNull(ping.getParam(RevocationSync.ACK), "the global did not acknowledge the region's list");
-        // the pong carries the global's list down only when the region holds another one
-        assertNotNull(ping.getParam(RevocationSync.PARENT_LIST));
         RevocationSync.onParentPong(region, ping, "rgG", "gc");
+        // the merge is recorded off the ping path; only what is durable is served down
+        atGlobal.awaitRevocations();
+        // the pong carries the global's list down only when the region holds less of it
         MsgEvent ping2 = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "rc", null, "rgB", "rc", null, true, true);
         RevocationSync.onChildPing(region, ping2);
         assertNull(ping2.getParam(RevocationSync.CHILD_LIST), "an acknowledged list was sent again");
         RevocationSync.onPingAtParent(global, ping2, true);
-        assertNull(ping2.getParam(RevocationSync.PARENT_LIST), "a list the region holds was sent again");
+        assertNotNull(ping2.getParam(RevocationSync.PARENT_LIST), "the global's list did not come down");
+        RevocationSync.onParentPong(region, ping2, "rgG", "gc");
+        MsgEvent ping3 = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "rc", null, "rgB", "rc", null, true, true);
+        RevocationSync.onChildPing(region, ping3);
+        RevocationSync.onPingAtParent(global, ping3, true);
+        assertNull(ping3.getParam(RevocationSync.PARENT_LIST), "a list the region holds was sent again");
     }
 
     @Test
@@ -234,13 +240,19 @@ class IdentityLifecycleTest {
         assertEquals(CrescoIdentity.of("t1", "rgA", "a2", null), peers.verifiedIdentity(fresh.chain));
     }
 
-    /** M4: renewal is due when a third of the lifetime (or the floor) is left, or the certificate expired. */
+    /**
+     * M4: renewal is due when a third of the lifetime (or the floor, but never more than half the lifetime) is left, or the
+     * certificate expired. (Before the review of 2026-11-04 the 30-day floor applied to any lifetime, so a short-lived leaf
+     * was due at birth; an 11-day certificate is now due at half-life, not with 10 days left.)
+     */
     @Test
     void renewalIsDueAtAThirdOfTheLifetime() {
         long now = System.currentTimeMillis(), day = 24L * 3600 * 1000;
         assertFalse(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - day, now + 900 * day)}, now, 30 * day));
         assertTrue(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - 800 * day, now + 300 * day)}, now, 30 * day));
-        assertTrue(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - day, now + 10 * day)}, now, 30 * day));
+        assertFalse(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - day, now + 10 * day)}, now, 30 * day),
+                "an 11-day certificate with 10 days left is not due (the floor is capped at half the lifetime)");
+        assertTrue(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - 6 * day, now + 5 * day)}, now, 30 * day));
         assertTrue(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - 900 * day, now - day)}, now, 30 * day));
         assertTrue(CertificateManager.chainNeedsRenewal(new X509Certificate[]{fake(now - 3 * day, now + day)}, now, 0), "a short-lived leaf");
     }

@@ -156,7 +156,7 @@ public final class RegionCA {
 
     private static X509Certificate build(X500Name subject, X500Name issuer, PublicKey subjectKey,
                                          PrivateKey signingKey, Date notAfter, boolean isCa, int keyUsage) throws Exception {
-        Date notBefore = CertValidity.notBefore();       // backdated an hour for peers whose clocks are behind
+        Date notBefore = CertValidity.notBefore();       // backdated (identity_cert_backdate_hours) for peers whose clocks are behind
         JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
                 issuer, CertValidity.serial(), notBefore, notAfter, subject, subjectKey);
         builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(isCa));

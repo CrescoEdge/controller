@@ -631,6 +631,48 @@ public class ActiveBroker {
 		return a == null ? 0 : a.closeConnectionsOfKey(keyFp);
 	}
 
+	/**
+	 * Revocations changed: invalidate every cached server TLS session whose peer is refused now (a resumed session would not
+	 * have its certificate checked again), close every live connection to this broker whose peer is refused now (key revoked
+	 * for its name, name tombstoned, region CA revoked), and remove the bridges this broker opened to a peer whose name is now
+	 * tombstoned (their sockets are closed by the trust managers' record, OutboundTlsConnections; this stops the reconnects).
+	 */
+	public void closeRevokedConnections() {
+		PeerTrustRegistry peers = controllerEngine.getCertificateManager().getPeerTrust();
+		try {
+			javax.net.ssl.SSLSessionContext sessions = broker.getSslContext().getSSLContext().getServerSessionContext();
+			for (byte[] id : java.util.Collections.list(sessions.getIds())) {
+				javax.net.ssl.SSLSession ss = sessions.getSession(id);
+				if (ss == null) continue;
+				try {
+					java.security.cert.Certificate[] peer = ss.getPeerCertificates();
+					if (peer.length > 0 && peer[0] instanceof java.security.cert.X509Certificate
+							&& peers.revokedReason((java.security.cert.X509Certificate) peer[0]) != null) ss.invalidate();
+				} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
+					// no client certificate in this session
+				}
+			}
+		} catch (Exception ex) {
+			logger.error("invalidating the TLS sessions of revoked peers: " + ex.getMessage());
+		}
+		CrescoAuthorizationBroker a = authorization;
+		if (a != null) a.closeInvalidConnections();
+		List<NetworkConnector> doomed = new ArrayList<>();
+		synchronized (bridgeGroups) {
+			for (Map.Entry<String, PeerIdentity.Expected> e : groupExpected.entrySet()) {
+				PeerIdentity.Expected x = e.getValue();
+				if (x != null && peers.isTombstoned(x.region, x.agent)) {
+					List<NetworkConnector> g = bridgeGroups.get(e.getKey());
+					if (g != null && !g.isEmpty()) doomed.add(g.get(0));
+				}
+			}
+		}
+		for (NetworkConnector nc : doomed) {
+			logger.warn("Removing the bridge " + nc.getName() + ": its peer was revoked");
+			removeNetworkConnector(nc);
+		}
+	}
+
 	public void updateTrustManager() {
 		try {
 			broker.getSslContext().getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());

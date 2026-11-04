@@ -249,8 +249,8 @@ after each group commit a HEAD ANCHOR (`.head`: record count and last MAC, MAC'd
 moves up to cover it, so a log truncated or rolled back to an earlier state is detected. Reads are lock-free; a known
 binding's refresh writes nothing; every verified broker connection (inbound and outbound) refreshes the binding in
 memory, and a background writer persists refreshes in batches; the log compacts, from the in-memory state AFTER it
-includes the record that triggered the compaction. Bindings unseen for `peer_binding_prune_days` (90) and bridge peers
-unseen for `peer_bridge_prune_days` (30) are pruned; bridge peers are revocable (`peer_bridge_revoke`). A key a name was
+includes the record that triggered the compaction. AGENT bindings unseen for `peer_binding_prune_days` (90) and bridge peers
+unseen for `peer_bridge_prune_days` (30) are pruned (controller pins and this node's own identity never lapse); bridge peers are revocable (`peer_bridge_revoke`). A key a name was
 rebound away from stays refused for that name (never pruned): on the regional-CA path after the binding is pruned, and
 for a new strict binding, unless the operator rebinds it. Files and directory are owner-only from creation and written
 atomically with file and directory fsync (also the node's `node-identity.p12`, `region-ca.p12` and their `.pass`
@@ -335,7 +335,11 @@ upgraded, with client certificates on.
 | `discovery_auth` | `v2` | `compat`: legacy AGENT membership during an upgrade |
 | `peer_identity_rebind` / `<data>/security/peer-trust.json.rebind` | empty | one-shot rebind tokens |
 | `<data>/security/peer-trust.json.recover` | -- | `accept` or `reset` a sealed registry |
-| `peer_bridge_revoke`, `peer_bridge_prune_days`, `peer_binding_prune_days` | empty, 30, 90 | |
+| `peer_bridge_revoke`, `peer_bridge_prune_days`, `peer_binding_prune_days` | empty, 30, 90 | the binding prune applies to agent bindings only |
+| `peer_identity_revoke` / `<data>/security/peer-trust.json.revoke` | empty | revocation (see `caller-authorization.md` §7-8: tombstoned names, positive scope, fail-closed, versioned lists) |
+| `identity_leaf_validity_hours`, `identity_renew_before_days`, `identity_renew_check_minutes`, `identity_reenroll_retry_minutes` | 168, 30, 60, 5 | renewal at max(life/3, floor) but at most life/2; no self-made fallback |
+| `identity_cert_backdate_hours` | 24 | certificate backdate = tolerated clock lag; skew is reported by the `identity` health check |
+| `revocation_sync_max_entries` | 4096 | entries per pong of a revocation-list delta |
 | `peer_trust_persist`, `node_identity_persist`, `node_identity_dir` | true, true, `<data>/security` | |
 | `security_federated_tenants` | any | tenants a regional-CA controller federates with |
 | `broker_stream_recipient_binding` | true | with `broker_security_enabled` |
@@ -347,7 +351,8 @@ Unit and real-TLS/real-broker: `PeerIdentityPolicyTest`, `StreamRecipientPolicyT
 `PeerIdentityBindingTest`, `StreamRecipientBindingTest`, `CertificateIdentityTest`, `PeerTrustPersistenceTest`,
 `PeerTrustStoreTest`, `DiscoveryPeerLearningTest`, `DiscoveryWireTest`, `DataPlaneRefusalTest`, `BrokeredAgentRefreshTest`,
 `RegistryIntegrityTest`, `FederationAnswerTest`, `RestartTrustTest`, `AnonymousAndAdvisoryTest`, `TenantNameTest`,
-`TrustStoreAliasTest`, `DiscoveryCandidateOrderTest`, `DiscoveryDosTest`, and the three independent reviews'
+`TrustStoreAliasTest`, `DiscoveryCandidateOrderTest`, `DiscoveryDosTest`, `IdentityLifecycleTest`, `IdentityRevocationFixTest`,
+`ReviewIdentityRevocationTest` (the identity review of 2026-11-04), and the three independent reviews'
 `AdversarialPeerIdentityReviewTest`, `SecondReview*Test` and `ThirdReview*Test`. Live:
 `docs/tests/peer_identity_live_test.sh` (per-node trust, `REGIONAL_CA=1`, `AGENT_REGIONS=1`), each with a restart drill
 (global, then region restarted on the same data directory: agents and bridges reconnect under client certificates with

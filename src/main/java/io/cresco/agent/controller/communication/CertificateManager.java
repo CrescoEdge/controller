@@ -68,6 +68,8 @@ public class CertificateManager {
         try {
 
             Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
+            // how far certificates are backdated: the clock lag every certificate tolerates (P4)
+            CertValidity.setBackdateHours(plugin.getConfig().getIntegerParam("identity_cert_backdate_hours", 24));
             peerTrust = openPeerTrust();
 
             int minKeySize = io.cresco.library.crypto.CrescoCrypto.MIN_RSA_KEY_BITS;
@@ -124,7 +126,7 @@ public class CertificateManager {
                     generateCertChain();
 
                     //trust self
-                    addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+                    replaceTrustStoreEntries(keyStoreAlias, getPublicCertificate());
                 }
             } else {
                 //keyStoreAlias = UUID.randomUUID().toString();
@@ -144,7 +146,7 @@ public class CertificateManager {
                 }
 
                 //trust self
-                addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+                replaceTrustStoreEntries(keyStoreAlias, getPublicCertificate());
             }
             // CAs recorded for regions before a restart stay trusted for TLS (their scope is in the registry)
             for (X509Certificate ca : peerTrust.recordedCas()) {
@@ -192,7 +194,7 @@ public class CertificateManager {
         if (!plugin.getConfig().getBooleanParam("peer_trust_persist", true)) {
             PeerTrustRegistry mem = new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
             mem.setKeyReplacedListener(this::dropReplacedAnchors);
-            mem.setRevokedListener(this::onKeyRevoked);
+            mem.setRevokedBatchListener(this::onKeysRevoked);
             return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
@@ -213,20 +215,60 @@ public class CertificateManager {
         // registry the broker already holds instead of opening a second writer on the same files
         PeerTrustRegistry reg = PeerTrustRegistry.shared(file, o, m -> logger.error(m));
         reg.setKeyReplacedListener(this::dropReplacedAnchors);
-        reg.setRevokedListener(this::onKeyRevoked);
+        reg.setRevokedBatchListener(this::onKeysRevoked);
         return reg;
     }
 
-    /**
-     * A key was revoked: remove every truststore anchor carrying it, and have the broker close every connection that holds
-     * it now (TLS and the broker refuse it for new ones already).
-     */
+    /** The TLS connections this node opened (bridges, client connections), closed when their peer is revoked. */
+    private final OutboundTlsConnections outbound = new OutboundTlsConnections();
+
+    /** The outbound connections this node opened, as recorded by their trust managers. */
+    public OutboundTlsConnections outboundConnections() { return outbound; }
+
+    /** A key was revoked (see {@link #onKeysRevoked}). */
     void onKeyRevoked(String keyFp) {
-        dropReplacedAnchors("revoked-" + keyFp, keyFp);
+        onKeysRevoked(java.util.List.of(keyFp));
+    }
+
+    /**
+     * Keys were revoked (one batch): remove every truststore anchor carrying them; have the broker close every connection to
+     * it whose peer is refused now (TLS and the broker refuse new ones already); and close every connection THIS node
+     * opened -- bridges included -- whose peer is refused now.
+     */
+    void onKeysRevoked(java.util.Collection<String> keyFps) {
+        dropAnchorsOfKeys(new java.util.HashSet<>(keyFps));
         try {
-            if (controllerEngine.getBroker() != null) controllerEngine.getBroker().closeConnectionsOfKey(keyFp);
+            if (controllerEngine.getBroker() != null) controllerEngine.getBroker().closeRevokedConnections();
         } catch (Exception ex) {
-            logger.error("closing connections of a revoked key: " + ex.getMessage());
+            logger.error("closing connections of revoked keys: " + ex.getMessage());
+        }
+        try {
+            java.util.List<String> closed = outbound.closeRefused(peerTrust::revocationRefusal);
+            for (String c : closed) logger.warn("CLOSED the connection this node opened to " + c);
+        } catch (Exception ex) {
+            logger.error("closing outbound connections of revoked keys: " + ex.getMessage());
+        }
+    }
+
+    /** Remove every truststore entry carrying one of {@code keyFps}; refresh the broker's trust when any was removed. */
+    private void dropAnchorsOfKeys(java.util.Set<String> keyFps) {
+        try {
+            if (trustStore == null || keyFps.isEmpty()) return;
+            java.util.List<String> drop = new java.util.ArrayList<>();
+            synchronized (trustStore) {
+                for (String alias : java.util.Collections.list(trustStore.aliases())) {
+                    Certificate c = trustStore.getCertificate(alias);
+                    if (c != null && keyFps.contains(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) drop.add(alias);
+                }
+                for (String alias : drop) trustStore.deleteEntry(alias);
+            }
+            if (!drop.isEmpty()) {
+                logger.warn("Removed " + drop.size() + " truststore anchor(s) carrying revoked keys: " + drop);
+                saveKeyAndTrustStore();
+                if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+            }
+        } catch (Exception ex) {
+            logger.error("dropAnchorsOfKeys: " + ex.getMessage());
         }
     }
 
@@ -249,6 +291,14 @@ public class CertificateManager {
             }
         }
         return "it presents no certificate or key listed in controller_trust_anchors";
+    }
+
+    /**
+     * Does {@code chain} carry a certificate or key listed in {@code controller_trust_anchors} (a non-empty setting)? Then
+     * the operator vouched for it: a joined controller that re-keyed under such an anchor is followed without a rebind.
+     */
+    public boolean controllerAnchorVouches(X509Certificate[] chain) {
+        return !csv(plugin.getConfig().getStringParam("controller_trust_anchors", "")).isEmpty() && controllerAnchorRefusal(chain) == null;
     }
 
     /** Sign {@code data} with this node's identity key (the key its leaf certificate carries). */
@@ -370,7 +420,10 @@ public class CertificateManager {
             X509Certificate[] stored = (X509Certificate[]) kc[1];
             CrescoIdentity have = CrescoNames.identityOf(stored[0]);
             String region = controllerEngine.cstate.getRegion(), agent = controllerEngine.cstate.getAgent();
-            if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent)
+            // a leaf a region CA issued is renewed by that CA (re-enrollment, or this node's own CA), never by a self-made chain
+            boolean regionIssued = stored.length > 1 && stored[1] != null && stored[1].getBasicConstraints() >= 0
+                    && PeerTrustRegistry.caScopeOf(stored[1]) != null;
+            if (have != null && have.getRegion().equals(region) && have.getAgent().equals(agent) && !regionIssued
                     && chainNeedsRenewal(stored, System.currentTimeMillis(), renewBeforeMs())) {
                 // the key is kept (every binding follows it); only the certificates are re-issued
                 logger.warn("This node's persisted certificate chain " + validityText(stored) + "; renewing it with the same key");
@@ -400,19 +453,25 @@ public class CertificateManager {
     }
 
     /**
-     * Does any certificate in {@code chain} need renewal at {@code now}: expired, not yet valid, or with less than a third
-     * of its lifetime -- and at least {@code minBeforeMs} -- left. The third keeps short-lived leaves (re-enrollment) renewing
-     * well ahead; the floor covers long ones.
+     * Does any certificate in {@code chain} need renewal at {@code now}: expired, not yet valid, or with less than
+     * {@link #renewalWindow} of its lifetime left -- a FRACTION of its own lifetime: a third, or {@code minBeforeMs} if that
+     * is more, but never more than half. A 3-year chain renews a year ahead; a 7-day region-issued leaf at half-life (so it
+     * is never "due" at birth, and a failed re-enrollment has half the lifetime to be retried).
      */
     static boolean chainNeedsRenewal(X509Certificate[] chain, long now, long minBeforeMs) {
         if (chain == null || chain.length == 0 || chain[0] == null) return true;
         for (X509Certificate c : chain) {
             if (c == null) continue;
             long nb = c.getNotBefore().getTime(), na = c.getNotAfter().getTime();
-            if (now < nb - CertValidity.BACKDATE_MS || now >= na) return true;
-            if (na - now <= Math.max(minBeforeMs, (na - nb) / 3)) return true;
+            if (now < nb || now >= na) return true;
+            if (na - now <= renewalWindow(na - nb, minBeforeMs)) return true;
         }
         return false;
+    }
+
+    /** How long before its expiry a certificate living {@code lifeMs} is renewed: max(life/3, floor), at most life/2. */
+    static long renewalWindow(long lifeMs, long minBeforeMs) {
+        return Math.min(Math.max(lifeMs / 3, minBeforeMs), lifeMs / 2);
     }
 
     private static String validityText(X509Certificate[] chain) {
@@ -457,10 +516,18 @@ public class CertificateManager {
     }
 
     /**
-     * Renew what is due, keeping every key: the region CA (a new root re-signs the same CA key), then this node's chain (under
-     * its region CA when it holds one, else a fresh self-rooted chain for the same leaf key; a leaf a remote region CA issued
-     * is replaced at the next enrollment, and is renewed self-rooted here only so it never expires in use). Returns true when
-     * anything was renewed.
+     * Renew what is due, keeping every key: the region CA (a new root re-signs the same CA key), then this node's chain: under
+     * its region CA when it holds one; by RE-ENROLLING with the controller it joined when a remote region CA issued it; else
+     * (per-node trust) a fresh self-rooted chain for the same key. Truststore entries of this node's own identity and CA are
+     * REPLACED, never accumulated. Returns true when anything was renewed.
+     *
+     * <p>A region-issued leaf is never replaced by a self-made chain (its region refuses one, and it would keep a key alive
+     * that its region stopped vouching for). When re-enrollment keeps failing the node keeps serving its last valid leaf and
+     * says so: WARN, CRITICAL in the last tenth of the leaf's life, retrying every {@code identity_reenroll_retry_minutes}
+     * (5); at expiry the leaf lapses -- every verifier refuses it, and the region's broker closes the connection -- and the
+     * node keeps trying, coming back by itself at the first re-enrollment that succeeds (the region re-enrolls a bound,
+     * unrevoked key whatever its last leaf's validity). Connectivity is kept as long as the identity is valid; it is never
+     * extended past what the region vouched for.
      */
     public synchronized boolean renewIfDue() throws Exception {
         long now = System.currentTimeMillis(), before = renewBeforeMs();
@@ -469,7 +536,7 @@ public class CertificateManager {
             logger.warn("This node's region CA " + validityText(regionCA.caChain()) + "; renewing it with the same key");
             regionCA = regionCA.renewed(keySize, YEARS_VALID);
             saveRegionCA();
-            addCertificatesToTrustStore("localRegionCA-renewed", new X509Certificate[]{ regionCA.caCert() });
+            replaceTrustStoreEntries("localRegionCA-" + controllerEngine.cstate.getRegion(), new X509Certificate[]{ regionCA.caCert() });
             renewed = true;
         }
         if (chain != null && (renewed || chainNeedsRenewal(chain, now, before))) {
@@ -486,26 +553,158 @@ public class CertificateManager {
                 // a leaf our region's CA issued: re-enroll over the authenticated exchange (a fresh short-lived leaf, same key)
                 logger.info("This node's region-issued leaf " + validityText(chain) + "; re-enrolling with its regional controller");
                 boolean reEnrolled = false;
-                try { reEnrolled = controllerEngine.reEnroll(); } catch (Exception ex) { logger.warn("re-enrollment failed: " + ex.getMessage()); }
-                if (reEnrolled) return true;
+                String failure = null;
+                try { reEnrolled = controllerEngine.reEnroll(); } catch (Exception ex) { failure = ex.getMessage(); }
+                if (reEnrolled) {
+                    reEnrollFailures = 0;
+                    setIdentityAlarm(null, false);
+                    return true;
+                }
+                reEnrollFailures++;
                 long left = chain[0].getNotAfter().getTime() - now, life = chain[0].getNotAfter().getTime() - chain[0].getNotBefore().getTime();
-                if (left > life / 10) return renewed;          // try again at the next check
-                // the last tenth of its life and no re-enrollment: keep the key on a self-rooted chain (accepted by the
-                // region by its bound key) rather than let it lapse in use; the next re-enrollment replaces it
-                logger.warn("Re-enrollment did not succeed and the leaf " + validityText(chain) + "; renewing it self-rooted with the same key");
-                generateCertChain(new KeyPair(chain[0].getPublicKey(), myKey));
+                boolean critical = left <= life / 10;
+                String text = (left <= 0 ? "this node's region-issued identity EXPIRED on " + chain[0].getNotAfter() + ": its region refuses it until"
+                        + " a re-enrollment succeeds" : "this node's region-issued identity " + validityText(chain) + " and re-enrollment with its"
+                        + " regional controller failed " + reEnrollFailures + " time(s)" + (failure == null ? "" : " (" + failure + ")")
+                        + "; the last valid leaf is kept in use") + "; retrying" + (critical ? " every " + reEnrollRetryMinutes() + " min" : " at every renewal check");
+                setIdentityAlarm(text, critical);
+                if (critical) scheduleRenewalRetry();
+                return renewed;
             } else {
                 logger.warn("This node's certificate chain " + validityText(chain) + "; renewing it with the same key");
                 generateCertChain(new KeyPair(chain[0].getPublicKey(), myKey));
             }
             saveNodeIdentity();
-            addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            replaceTrustStoreEntries(keyStoreAlias, getPublicCertificate());
             renewed = true;
         }
         if (renewed) {
             try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) { }
+            logger.info("Renewed this node's identity (same key): " + validityText(chain) + "; truststore " + trustStoreSize() + " entries");
         }
         return renewed;
+    }
+
+    /** How many entries the truststore holds (logged at renewal: it must not grow). */
+    int trustStoreSize() {
+        try { return trustStore == null ? 0 : trustStore.size(); } catch (Exception e) { return -1; }
+    }
+
+    private volatile int reEnrollFailures;
+    private final java.util.concurrent.atomic.AtomicBoolean retryScheduled = new java.util.concurrent.atomic.AtomicBoolean();
+
+    private int reEnrollRetryMinutes() {
+        return Math.max(1, plugin.getConfig().getIntegerParam("identity_reenroll_retry_minutes", 5));
+    }
+
+    /** One extra renewal check soon (the last tenth of a region-issued leaf's life, re-enrollment failing). */
+    private void scheduleRenewalRetry() {
+        if (renewal == null || !retryScheduled.compareAndSet(false, true)) return;
+        try {
+            renewal.schedule(() -> {
+                retryScheduled.set(false);
+                try { renewIfDue(); } catch (Throwable t) { logger.error("identity renewal retry: " + t.getMessage()); }
+            }, reEnrollRetryMinutes(), java.util.concurrent.TimeUnit.MINUTES);
+        } catch (Exception e) {
+            retryScheduled.set(false);
+        }
+    }
+
+    // ---------------------------------------------------------------- identity health (reported by IdentityHealthCheck)
+
+    private volatile String identityAlarm;
+    private volatile boolean identityAlarmCritical;
+    private volatile String clockAlarm;
+    private volatile boolean clockAlarmCritical;
+    private final java.util.Map<String, String> skewedPeers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private void setIdentityAlarm(String text, boolean critical) {
+        String old = identityAlarm;
+        identityAlarm = text;
+        identityAlarmCritical = critical;
+        if (text == null) {
+            if (old != null) logger.info("Identity renewal OK again (" + validityText(chain) + ")");
+        } else if (!text.equals(old)) {
+            if (critical) logger.error("IDENTITY: " + text); else logger.warn("IDENTITY: " + text);
+        }
+    }
+
+    /**
+     * A peer's clock reading {@code peerTs} (its currentTimeMillis, e.g. a pong's remote_ts) arrived now: record the skew.
+     * Beyond half the certificate backdate it is reported (WARN), beyond the backdate CRITICAL (certificates one side issues
+     * are not yet valid for the other).
+     */
+    public void noteClock(long peerTs, String peer) {
+        if (peerTs <= 0 || peer == null) return;
+        long skew = peerTs - System.currentTimeMillis();
+        String text = CertValidity.skewText(skew, peer);
+        if (text == null) {
+            if (skewedPeers.remove(peer) != null) logger.info("Clock of " + peer + " agrees with this node's again");
+        } else {
+            boolean critical = Math.abs(skew) >= CertValidity.backdateMs();
+            String level = (critical ? "CRITICAL|" : "WARN|") + text;
+            String old = skewedPeers.size() < 1024 || skewedPeers.containsKey(peer) ? skewedPeers.put(peer, level) : null;
+            if (old == null || !old.startsWith(critical ? "CRITICAL" : "WARN")) {
+                if (critical) logger.error("CLOCK SKEW: " + text); else logger.warn("CLOCK SKEW: " + text);
+            }
+        }
+    }
+
+    /**
+     * This node's identity health: {status, text} with status OK, WARN or CRITICAL. CRITICAL: the peer trust registry cannot
+     * lock its store (fenced), is sealed, or holds revocations in force that are not recorded; this node's region-issued
+     * identity is in its last tenth (or expired) and re-enrollment fails; a clock is skewed past the certificate backdate.
+     */
+    public String[] identityHealth() {
+        java.util.List<String> crit = new java.util.ArrayList<>(), warn = new java.util.ArrayList<>();
+        PeerTrustRegistry r = peerTrust;
+        if (r != null) {
+            if (r.lockFailure() != null) crit.add("peer trust registry FENCED: " + r.lockFailure() + " (nothing new is bound)");
+            if (r.isSealed()) crit.add("peer trust registry SEALED: " + r.sealReason());
+            if (r.revocationDurability() != null) crit.add(r.revocationDurability());
+        }
+        String ia = identityAlarm;
+        if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
+        if (chain != null && chain[0] != null) {
+            long now = System.currentTimeMillis();
+            if (now >= chain[0].getNotAfter().getTime()) crit.add("this node's certificate EXPIRED on " + chain[0].getNotAfter());
+            else if (now < chain[0].getNotBefore().getTime()) crit.add("this node's certificate is NOT YET VALID (" + chain[0].getNotBefore()
+                    + "): this node's clock is behind its issuer's by more than the certificate backdate");
+        }
+        for (String v : skewedPeers.values()) (v.startsWith("CRITICAL|") ? crit : warn).add(v.substring(v.indexOf('|') + 1));
+        if (!crit.isEmpty()) { crit.addAll(warn); return new String[]{"CRITICAL", String.join("; ", crit)}; }
+        if (!warn.isEmpty()) return new String[]{"WARN", String.join("; ", warn)};
+        return new String[]{"OK", chain == null || chain[0] == null ? "no identity yet" : "identity " + validityText(chain)};
+    }
+
+    /**
+     * Replace the truststore entries named {@code <prefix>#...} by {@code certs} (entries are named by fingerprint): this
+     * node's own chain or CA after a renewal or re-enrollment REPLACES the previous one instead of piling up. Returns true
+     * when the set of entries changed.
+     */
+    public boolean replaceTrustStoreEntries(String prefix, Certificate[] certs) {
+        if (trustStore == null || certs == null) return false;
+        try {
+            String p = ((prefix == null || prefix.isBlank()) ? "cert" : prefix.replaceAll("[^A-Za-z0-9._-]", "_")).toLowerCase(java.util.Locale.ROOT) + "#";
+            java.util.Set<String> keep = new java.util.HashSet<>();
+            for (Certificate c : certs) {
+                if (c == null) continue;
+                keep.add(p + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(c.getEncoded())));
+            }
+            java.util.List<String> stale = new java.util.ArrayList<>();
+            synchronized (trustStore) {
+                for (String alias : java.util.Collections.list(trustStore.aliases())) {
+                    if (alias.toLowerCase(java.util.Locale.ROOT).startsWith(p) && !keep.contains(alias.toLowerCase(java.util.Locale.ROOT))) stale.add(alias);
+                }
+                for (String alias : stale) trustStore.deleteEntry(alias);
+            }
+            java.util.List<String> added = addCertificatesToTrustStore(prefix, certs);
+            if (!stale.isEmpty() && added.isEmpty()) saveKeyAndTrustStore();
+            return !stale.isEmpty() || !added.isEmpty();
+        } catch (Exception ex) {
+            logger.error("replaceTrustStoreEntries(" + prefix + "): " + ex.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -819,7 +1018,7 @@ public class CertificateManager {
         if (mode == PeerIdentity.Mode.OFF) {
             return getTrustManagers();
         }
-        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint) };
+        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint, outbound) };
     }
 
     /**
@@ -850,7 +1049,7 @@ public class CertificateManager {
             PrivateKey myKey = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
             generateCertChain(myKey != null ? new KeyPair(chain[0].getPublicKey(), myKey) : null);   // same key, new name
             saveNodeIdentity();
-            addCertificatesToTrustStore(keyStoreAlias, getPublicCertificate());
+            replaceTrustStoreEntries(keyStoreAlias, getPublicCertificate());
             try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             try { if (controllerEngine.getActiveClient() != null) controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
             logger.info("Re-issued own certificate for the current identity " + CrescoIdentity.fromCertificate(chain[0])
@@ -1018,7 +1217,9 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 regionCA = RegionCA.generate(tenant, region, keySize, YEARS_VALID);
                 saveRegionCA();
             }
-            addCertificatesToTrustStore("localRegionCA-" + region, new X509Certificate[]{ regionCA.caCert() });
+            replaceTrustStoreEntries("localRegionCA-" + region, new X509Certificate[]{ regionCA.caCert() });
+            // revocations of keys this CA enrolled can expire once every leaf it issued for them has
+            peerTrust.setIssuedLeafLifetime(leafValidityMs());
             String scope = peerTrust.trustCa(regionCA.caCert(), region, tenant, "own");
             if (scope != null) {
                 logger.error("This node's region CA is not the one recorded for region " + region + ": " + scope);
@@ -1275,13 +1476,21 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             logger.error("Enrollment REFUSED: controller identity " + region + "/" + agent + " is taken: " + free.reason);
             return null;
         }
+        Object caBefore = peerTrust.caState(region);
         String why = peerTrust.trustCa(joinerCa, region, tenant, "federated");
         if (why != null) {
             logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + ": " + why);
             return null;
         }
-        peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated", PeerTrustRegistry.ROLE_CONTROLLER, false);
-        addCertificatesToTrustStore("peerCA-" + region, joinerCerts.length > 2 && joinerCerts[2] != null
+        PeerTrustRegistry.BindResult bound = peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated",
+                PeerTrustRegistry.ROLE_CONTROLLER, false);
+        if (!bound.ok) {
+            // the controller's identity is refused (revoked, tombstoned, bound to another key): nothing of this exchange stays
+            if (peerTrust.caState(region) != caBefore) peerTrust.restoreCa(region, caBefore);
+            logger.error("Enrollment REFUSED: controller identity " + region + "/" + agent + ": " + bound.reason);
+            return null;
+        }
+        replaceTrustStoreEntries("peerCA-" + region, joinerCerts.length > 2 && joinerCerts[2] != null
                 ? new X509Certificate[]{joinerCa, joinerCerts[2]} : new X509Certificate[]{joinerCa});
         try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
         logger.info("Federated with controller " + region + "/" + agent + " (tenant=" + tenant + "): recorded its region CA, scoped to "
@@ -1349,7 +1558,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     logger.error("installEnrollment REFUSED: " + why);
                     return false;
                 }
-                addCertificatesToTrustStore("peerCA-" + scope[0], signedChain);
+                replaceTrustStoreEntries("peerCA-" + scope[0], signedChain);
                 try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
                 try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
                 logger.info("Federated with region " + scope[0] + " (tenant=" + scope[1] + "): recorded its CA, kept our own identity");
@@ -1386,7 +1595,12 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 return false;
             }
             try { signedChain[0].checkValidity(); issuer.checkValidity(); } catch (Exception e) {
-                logger.error("installEnrollment REFUSED: the returned identity or its CA is not valid now: " + e.getMessage());
+                long now = System.currentTimeMillis();
+                boolean early = now < signedChain[0].getNotBefore().getTime();
+                if (early) noteClock(signedChain[0].getNotBefore().getTime() + CertValidity.backdateMs(), "the controller of region " + mine.getRegion());
+                logger.error("installEnrollment REFUSED: the returned identity or its CA is not valid now: " + e.getMessage()
+                        + (early ? " -- this node's clock is BEHIND its region's by more than the certificate backdate"
+                        + " (identity_cert_backdate_hours); fix the clocks (NTP)" : ""));
                 return false;
             }
             String why = peerTrust.trustCa(issuer, scope[0], scope[1], "joined", false);
@@ -1394,14 +1608,30 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.error("installEnrollment REFUSED: " + why);
                 return false;
             }
+            // a RE-enrollment (same key, same issuing CA key) changes nothing a live connection depends on: the key managers
+            // present the current chain at the next handshake and the trust managers read the truststore per handshake, so
+            // nothing is torn down. Only a new key or a new issuer re-initialises the connections.
+            X509Certificate[] prev = this.chain;
+            boolean sameKeyAndIssuer = prev != null && prev.length > 1 && prev[0] != null && prev[1] != null
+                    && prev[0].getPublicKey().equals(signedChain[0].getPublicKey())
+                    && prev[1].getPublicKey().equals(issuer.getPublicKey());
             this.chain = signedChain;
             storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, signedChain);
             saveNodeIdentity();
-            addCertificatesToTrustStore("issuingCA-" + scope[0], signedChain.length > 2 && signedChain[2] != null
+            boolean anchorsChanged = replaceTrustStoreEntries("issuingCA-" + scope[0], signedChain.length > 2 && signedChain[2] != null
                     ? new X509Certificate[]{ issuer, signedChain[2] } : new X509Certificate[]{ issuer });
-            try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
-            try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
-            logger.info("Installed region-CA-signed identity: " + mine);
+            if (anchorsChanged || !sameKeyAndIssuer) {
+                try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+            }
+            if (!sameKeyAndIssuer) {
+                try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
+                logger.info("Installed region-CA-signed identity: " + mine);
+            } else {
+                logger.info("Re-enrolled: " + mine + " " + validityText(signedChain) + " (same key and CA; live connections kept; truststore "
+                        + trustStoreSize() + " entries)");
+            }
+            reEnrollFailures = 0;
+            setIdentityAlarm(null, false);
             return true;
         } catch (Exception ex) {
             logger.error("installEnrollment error: " + ex.getMessage(), ex);

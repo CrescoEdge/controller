@@ -522,6 +522,13 @@ public class ControllerEngine {
         // a policy change at the global reaches this node on its parent's pong (CryptoPolicySync)
         io.cresco.agent.controller.statemachine.CryptoPolicySync.adopt(pong, cstate,
                 "parent " + pong.getSrcRegion() + "/" + pong.getSrcAgent(), logger);
+        // the parent's clock: a skew past the certificate backdate locks one side out of the other's certificates (P4)
+        try {
+            String ts = pong.getParam("remote_ts");
+            if (ts != null && getCertificateManager() != null) {
+                getCertificateManager().noteClock(Long.parseLong(ts), "parent " + pong.getSrcRegion() + "/" + pong.getSrcAgent());
+            }
+        } catch (Exception ignore) { }
         // revocations: the parent's signed list, verified as the controller this node joined
         boolean region = cstate.isRegionalController();
         io.cresco.agent.controller.communication.RevocationSync.onParentPong(this, pong,

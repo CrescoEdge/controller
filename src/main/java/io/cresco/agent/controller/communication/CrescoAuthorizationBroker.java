@@ -508,7 +508,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             if (sc == null || sc.leaf == null) continue;
             String why = null;
             if (now >= sc.leaf.getNotAfter().getTime()) why = "its certificate expired at " + sc.leaf.getNotAfter();
-            else if (peers.isRevokedKey(PeerTrustRegistry.fingerprint(sc.leaf.getPublicKey().getEncoded()))) why = "its key was revoked";
+            else why = peers.revokedReason(sc.leaf);    // key revoked for its name, name tombstoned, or its region's CA revoked
             if (why != null) { close(ctx, why); n++; }
         }
         return n;
