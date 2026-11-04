@@ -2718,7 +2718,7 @@ public final class PeerTrustRegistry {
 
     // ---------------------------------------------------------------- helpers
 
-    static String fingerprint(byte[] spki) {
+    public static String fingerprint(byte[] spki) {
         try {
             return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(spki));
         } catch (Exception e) {

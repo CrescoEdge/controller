@@ -481,3 +481,45 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   (fingerprints and names) only to a pinger verified as a child controller (a verified signed list, or a broker-stamped
   controller caller bound there as a controller), and in the explicit insecure mode; a region serves its own list to its
   agents.
+
+## 10. End-to-end message signatures (D4)
+
+A broker vouches for one hop. Across several brokers -- relays, source routes, the bridges of other regions -- the
+receiver also needs the origin's word, so every MsgEvent a node originates is signed with that node's identity key, and a
+receiver checks it before it dispatches the message locally or completes an RPC with it. Nothing changes while
+`broker_security_enabled=false` is set explicitly.
+
+- **What is signed.** The type, the source header and every parameter except what infrastructure rewrites in transit:
+  `routepath-*`, `linkcost-*`, `srcroute*`, `ttl`, the broker's caller stamp (`cresco_caller*`, including the alias) and
+  the signature itself. The destination header is not signed (`region_alias` and the controller tiers rewrite it). The
+  origin's caller is signed as a copy (`cresco_sig_caller`, `cresco_sig_caller_tenant`, `cresco_sig_caller_roles`) next
+  to the signer (`cresco_sig_by`, `<tenant>/<region>/<agent>`), its credential (`cresco_sig_cred`) and the signing time
+  (`cresco_sig_ts`); `cresco_tenant` is set when the message is stamped, so it is signed too. A message is signed as it
+  leaves its origin node; an in-JVM delivery is never signed, and a relay never signs what it carries.
+- **Keys.** Node keys are RSA-3072, signed with SHA-384 (CrescoCrypto's policy). A region or global controller presents
+  its certificate as its credential; an agent an attestation from its region controller (tenant, region, name, public key;
+  valid `msg_signing_attestation_hours`, default 24, renewed on its pings when a third is left), and its certificate until
+  it holds one. A receiver accepts a certificate that verifies here as its name (a peer bound here, or under a recorded
+  region CA) or whose key the trust bundle lists for that controller, and an attestation signed by the controller the trust
+  bundle lists for the attested region (a superuser-tenant region attests any tenant's agents, any other its own tenant's
+  only). The trust bundle is the list of region and global controller keys: each region presents its certificate on its
+  pings to the global, which lists it when it verifies there as a joined controller, signs the list and sends it down on its
+  pongs when the region holds another; each region re-signs what it verified for its agents (as revocation lists travel).
+  A controller its global no longer lists is kept `msg_signing_bundle_grace_ms` (15 min). A revoked key never verifies.
+- **The receiver** refuses an unsigned message, a bad signature or credential, a signature older or newer than
+  `msg_signature_max_age_ms` (5 min) and one seen before (a replay); an RPC request is answered `401 unauthenticated`. The
+  signer must be the node of the signed caller -- or, for an API user, a node of the user's tenant (any tenant's from a
+  superuser tenant) -- and the broker's stamp, when there is one, must be that caller. When a bridge stripped a stamp it
+  could not vouch for (section 8), the origin's signed caller stands.
+- **Cost.** One signature per message a node originates (RSA-3072 private key: about 2 ms of one core), one hash, one map
+  lookup and one signature check per message dispatched (about 0.08 ms); credentials are verified once and cached. Nothing
+  in it grows with the size of the fleet; the trust bundle grows with the number of regions and travels only when it
+  changes.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `msg_signing_required` | `broker_security_enabled` | false: no signing or checking (development only; a WARNING every boot) |
+| `msg_signature_max_age_ms` | 300000 | the signing time's tolerance either way (clock skew included) |
+| `msg_signing_attestation_hours` | 24 | an agent attestation's lifetime |
+| `msg_signing_bundle_grace_ms` | 900000 | how long a controller dropped from the global's bundle is still trusted |
+

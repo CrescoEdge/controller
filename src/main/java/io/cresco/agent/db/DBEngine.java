@@ -1169,6 +1169,22 @@ public class DBEngine {
         return configParams;
     }
 
+    /** An agent's configparams in region {@code regionId}, or null when it is not registered here (no logging: a hot path). */
+    public String agentConfigParamsQuiet(String regionId, String agentId) {
+        if (regionId == null || agentId == null) return null;
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT A.configparams FROM ANODE A, AGENTOF O "
+                     + "WHERE O.REGION_ID = ? AND A.AGENT_ID = ? AND O.AGENT_ID = A.AGENT_ID")) {
+            stmt.setString(1, regionId);
+            stmt.setString(2, agentId);
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public String getNodeConfigParams(String regionId, String agentId, String pluginId) {
         String configParams = null;
         try {

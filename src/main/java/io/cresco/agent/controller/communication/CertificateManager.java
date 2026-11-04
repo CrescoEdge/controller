@@ -383,6 +383,24 @@ public class CertificateManager {
                 System.currentTimeMillis());
     }
 
+    private volatile PrivateKey identityKeyCache;
+    private volatile java.security.PublicKey identityKeyFor;
+
+    /**
+     * This node's identity private key (the key its leaf certificate carries), read from the keystore once and again only
+     * when the leaf's public key changes (renewal keeps the key). For per-message signing (MsgSigning).
+     */
+    public PrivateKey identityPrivateKey() throws Exception {
+        X509Certificate[] c = getPublicCertificate();
+        java.security.PublicKey pub = (c == null || c.length == 0) ? null : c[0].getPublicKey();
+        PrivateKey k = identityKeyCache;
+        if (k != null && pub != null && pub.equals(identityKeyFor)) return k;
+        k = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+        identityKeyCache = k;
+        identityKeyFor = pub;
+        return k;
+    }
+
     /** Sign {@code data} with this node's identity key (the key its leaf certificate carries). */
     public byte[] signWithIdentity(byte[] data) throws Exception {
         PrivateKey k = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
