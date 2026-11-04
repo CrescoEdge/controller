@@ -63,12 +63,23 @@ import java.util.function.Consumer;
  * with a new tag ({@code rgA/a1#2}).
  *
  * <p><b>Storage.</b> An append-only log of JSON lines, each carrying an HMAC-SHA-384 chained over the previous line's MAC,
- * keyed by a random per-node key in {@code <file>.key}. Appends are fsynced (group commit) before a bind is acknowledged,
- * and a HEAD ANCHOR ({@code <file>.head}: record count and last MAC, MAC'd, two alternating slots) is then moved up to
- * cover them, so a log truncated or rolled back to an earlier state is detected. A log that grows well past its live state
- * is compacted from the in-memory state after it includes the record that triggered it (temp file, fsync, rename,
- * directory fsync, new head). Reads never take a lock or do I/O. Files are created owner-only; a group- or world-writable
+ * keyed by a random per-node key in {@code <file>.key}. Every change is written and fsynced under the write lock BEFORE the
+ * in-memory state changes and before it is acknowledged; a write or fsync that fails is truncated away (the log is put back
+ * to the last durable offset) and nothing changes in memory, so a failed write can never leave a half line that later
+ * appends land behind, and a binding that was not made durable is never served. If even that truncation fails, this
+ * instance is fenced (it writes nothing more; a restart re-verifies the log). Several records of one change (a bind and the
+ * rebind token it consumes) are one write. A HEAD ANCHOR ({@code <file>.head}: record count and last MAC, MAC'd, two
+ * alternating slots) is then moved up to cover them, so a log truncated or rolled back to an earlier state is detected. A
+ * log that grows well past its live state is compacted from the in-memory state (temp file, fsync, rename, directory fsync,
+ * new head); the compacted log's first record names the last {@value #TAIL} MACs of the log it replaced, so a crash between
+ * the rename and the new head (the old head then covers more lines than the new log has) is recognised as exactly that and
+ * not as a rollback. Reads never take a lock or do I/O. Files are created owner-only; a group- or world-writable
  * directory is tightened (or reported when another user owns it).
+ *
+ * <p><b>One writer per store.</b> Opening a store fences any instance of the same store this JVM had open (it writes nothing
+ * more), and an exclusive file lock ({@code <file>.lock}) keeps another process from writing it: an instance that cannot
+ * take the lock serves what it read and records nothing. {@link #shared} returns the instance already open for a store
+ * whose files are intact, so re-created components share it.
  * The MAC detects corruption and edits by anyone who cannot read the key file; it does NOT stop someone who can read
  * the node's data directory and write it.
  *
@@ -125,6 +136,8 @@ public final class PeerTrustRegistry {
         String op;             // init | bind | ca | bridge | unbridge | unbind | seen | consume | revoke | noop
         String name, tenant, key, cert, source, role, token, kind, mode;   // mode: "follow" or absent (strict)
         long t;
+        Long prevLines;        // init of a compacted log: the replaced log's record count ...
+        List<String> prevTail; // ... and its last MACs (oldest first): a crash before the new head is recognised
         String mac;
     }
 
@@ -147,9 +160,19 @@ public final class PeerTrustRegistry {
     private final java.util.concurrent.atomic.AtomicBoolean flushScheduled = new java.util.concurrent.atomic.AtomicBoolean();
 
     private final Object writeLock = new Object();
-    private final Object syncLock = new Object();
-    private FileChannel channel;                                // the log, open for appends (with the write lock)
-    private volatile long writtenSeq, syncedSeq;                // group commit: one fsync covers every write before it
+    private FileChannel channel;                                // the log, open for positional writes (with the write lock)
+    private long goodOffset;                                    // the log's length after the last durable write
+    private Object logFileKey;                                  // the log file's identity when the channel was opened
+    private volatile String fenced;                             // non-null: this instance writes nothing more (why)
+    private FileChannel lockChannel;
+    private java.nio.channels.FileLock fileLock;
+    /** The last {@link #TAIL} MACs of the log, oldest first (named by the first record of a compaction). */
+    private final java.util.ArrayDeque<String> recentMacs = new java.util.ArrayDeque<>();
+    static final int TAIL = 64;
+    /** Notified (outside the write lock) when a name's key is replaced: (name, old key fingerprint). */
+    private volatile java.util.function.BiConsumer<String, String> keyReplacedListener;
+    /** The instance open for each store in this JVM (one writer per store). */
+    private static final Map<Path, PeerTrustRegistry> LIVE = new ConcurrentHashMap<>();
     private final Path file;
     private volatile boolean sealed;
     private volatile String sealReason;
@@ -196,8 +219,37 @@ public final class PeerTrustRegistry {
         return open(file, o, log);
     }
 
-    /** Open (or create) the persistent registry at {@code file}. */
+    private static Path storeKey(Path file) {
+        return file.toAbsolutePath().normalize();
+    }
+
+    /**
+     * The instance already open in this JVM for the store at {@code file}, when its files are still the ones it opened
+     * (re-created components share one writer), with {@code o}'s rebind and revoke entries added; else {@link #open}.
+     */
+    public static PeerTrustRegistry shared(Path file, Options o, Consumer<String> log) {
+        synchronized (LIVE) {
+            PeerTrustRegistry live = LIVE.get(storeKey(file));
+            if (live != null && live.fenced == null && live.storeIntact()) {
+                live.reconfigure(o);
+                return live;
+            }
+            return open(file, o, log);
+        }
+    }
+
+    /** Open (or create) the persistent registry at {@code file}, fencing any instance of it this JVM had open. */
     public static PeerTrustRegistry open(Path file, Options o, Consumer<String> log) {
+        synchronized (LIVE) {
+            PeerTrustRegistry old = LIVE.remove(storeKey(file));
+            if (old != null) old.supersede();
+            PeerTrustRegistry r = openNew(file, o, log);
+            LIVE.put(storeKey(file), r);
+            return r;
+        }
+    }
+
+    private static PeerTrustRegistry openNew(Path file, Options o, Consumer<String> log) {
         PeerTrustRegistry r = new PeerTrustRegistry(file);
         if (log != null) r.log = log;
         r.rebindConfig.addAll(o.rebind);
@@ -207,6 +259,7 @@ public final class PeerTrustRegistry {
         r.expectExisting = o.expectExisting;
         synchronized (r.writeLock) {
             secureDirectory(file.getParent(), r.log);
+            r.lock();
             // a recovery request counts only when the registry was ALREADY sealed when it was written: a request that is
             // present when the registry is not sealed (or becomes sealed only on this start) is set aside, never applied
             boolean sealedBefore = Files.exists(r.sealPath());
@@ -218,15 +271,112 @@ public final class PeerTrustRegistry {
                         : "the registry is not sealed");
             }
             r.reloadRebindFile();
-            if (!r.sealed) {
+            if (!r.sealed && r.fenced == null) {
                 long now = System.currentTimeMillis();
-                for (String n : r.revokedBridges) if (r.bridges.remove(n) != null) r.append(rec("unbridge", n));
+                r.revokeConfiguredBridges();
                 r.prune(now);
                 r.compactIfDue();
             }
         }
-        r.durable();
         return r;
+    }
+
+    /** With the write lock: drop the bridge peers the operator revoked (peer_bridge_revoke); fail-safe: memory first. */
+    private void revokeConfiguredBridges() {
+        List<Rec> recs = new ArrayList<>();
+        for (String n : revokedBridges) if (bridges.remove(n) != null) recs.add(rec("unbridge", n));
+        if (!recs.isEmpty() && !append(recs.toArray(new Rec[0]))) {
+            log.accept("peer trust registry: the bridge revocations " + recs.size() + " are in effect but could not be recorded");
+        }
+    }
+
+    /** {@link #shared}: add a re-created component's operator settings to the live instance. */
+    private void reconfigure(Options o) {
+        synchronized (writeLock) {
+            rebindConfig.addAll(o.rebind);
+            revokedBridges.addAll(o.revoke);
+            bridgePruneMs = o.bridgePruneDays <= 0 ? 0 : o.bridgePruneDays * DAY;
+            bindingPruneMs = o.bindingPruneDays <= 0 ? 0 : o.bindingPruneDays * DAY;
+            if (!sealed && fenced == null) revokeConfiguredBridges();
+        }
+    }
+
+    /** Are this instance's files still the ones it opened (not deleted or replaced underneath it)? */
+    private boolean storeIntact() {
+        if (file == null) return true;
+        try {
+            if (!Files.exists(file) || !Files.exists(keyPath())) return false;
+            Object k = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            synchronized (writeLock) {
+                return logFileKey == null || k == null || logFileKey.equals(k);
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Take the store's exclusive file lock; without it this instance is fenced (another process writes the store). */
+    private void lock() {
+        if (file == null) return;
+        try {
+            mkdirs(file.getParent());
+            Path lp = file.resolveSibling(file.getFileName() + ".lock");
+            lockChannel = OWNER_ONLY == null
+                    ? FileChannel.open(lp, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+                    : FileChannel.open(lp, Set.of(StandardOpenOption.CREATE, StandardOpenOption.WRITE), OWNER_ONLY);
+            fileLock = lockChannel.tryLock();
+            if (fileLock == null) fence("another process holds the registry's lock " + lp + " (two nodes on one data directory?)");
+        } catch (java.nio.channels.OverlappingFileLockException e) {
+            fence("this process already holds the registry's lock through another instance");
+        } catch (IOException e) {
+            fence("the registry's lock could not be taken (" + e.getMessage() + ")");
+        }
+    }
+
+    /** Stop writing: what this instance holds is still served, nothing new is recorded by it. */
+    private void fence(String why) {
+        if (fenced != null) return;
+        fenced = why;
+        log.accept("PEER TRUST REGISTRY instance FENCED (" + why + "): it records nothing more; what it holds is still served");
+    }
+
+    /** Fenced because another instance of the same store was opened in this JVM. */
+    private void supersede() {
+        synchronized (writeLock) {
+            if (fenced == null) fenced = "superseded by a newer instance of the same store";
+        }
+        close();
+    }
+
+    /** Why this instance records nothing (null when it does). */
+    public String fencedReason() { return fenced; }
+
+    /**
+     * Close the store: persist queued last-seen refreshes, release the files and the lock. The instance keeps serving what
+     * it holds but records nothing more.
+     */
+    public void close() {
+        if (file != null && fenced == null) flushSeen();
+        synchronized (writeLock) {
+            if (fenced == null) fenced = "closed";
+            closeChannels();
+            if (headChannel != null) { try { headChannel.close(); } catch (IOException ignore) { } headChannel = null; }
+            if (fileLock != null) { try { fileLock.release(); } catch (IOException ignore) { } fileLock = null; }
+            if (lockChannel != null) { try { lockChannel.close(); } catch (IOException ignore) { } lockChannel = null; }
+        }
+        if (background != null) background.shutdownNow();
+        if (file != null) LIVE.remove(storeKey(file), this);
+    }
+
+    /** Called (outside the write lock) with (name, old key fingerprint) whenever a name's key is replaced. */
+    public void setKeyReplacedListener(java.util.function.BiConsumer<String, String> l) {
+        this.keyReplacedListener = l;
+    }
+
+    private void fireReplaced(String n, String oldKey) {
+        java.util.function.BiConsumer<String, String> l = keyReplacedListener;
+        if (l == null || n == null || oldKey == null) return;
+        try { l.accept(n, oldKey); } catch (Exception e) { log.accept("peer trust registry: key-replaced listener failed: " + e.getMessage()); }
     }
 
     /** Operator settings for an in-memory registry (tests). */
@@ -276,8 +426,10 @@ public final class PeerTrustRegistry {
             return new BindResult(true, "known key");
         }
         BindResult result;
+        String replacedKey = null;
         synchronized (writeLock) {
             if (sealed && !tryRecover()) return new BindResult(false, sealedText());
+            if (fenced != null) return new BindResult(false, "this peer trust registry instance records nothing (" + fenced + ")");
             b = identities.get(n);
             if (b != null && b.key.equals(fp) && b.tenant.equals(tenant) && (ROLE_AGENT.equals(role) || role.equals(b.role))) {
                 return new BindResult(true, "known key");
@@ -303,14 +455,16 @@ public final class PeerTrustRegistry {
             boolean newFollow = token == null && (b == null ? follow : (replacesFollowed || (selfOverSelf && b.follow)));
             Rec r = rec("bind", n);
             r.tenant = tenant; r.key = fp; r.source = source; r.role = newRole; r.t = now; r.mode = newFollow ? "follow" : null;
-            if (!append(r)) return new BindResult(false, "could not record the binding durably");
+            Rec c = null;
             if (token != null) {
-                Rec c = rec("consume", n);
+                c = rec("consume", n);
                 c.token = token; c.t = now;
-                append(c);
-                consumed.add(token);
             }
+            // the binding and the token it consumes are one durable write; memory changes only after it
+            if (!(c == null ? append(r) : append(r, c))) return new BindResult(false, "could not record the binding durably");
+            if (token != null) consumed.add(token);
             replaced(n, b == null ? null : b.key, fp);
+            if (b != null && !b.key.equals(fp)) replacedKey = b.key;
             identities.put(n, new Binding(tenant, fp, null, source, newRole, newFollow,
                     b == null || token != null || !b.key.equals(fp) ? now : b.firstSeen, now));
             if (b != null && !b.key.equals(fp)) {
@@ -321,7 +475,8 @@ public final class PeerTrustRegistry {
             compactIfDue();
             result = new BindResult(true, b == null ? "new binding" : "rebound");
         }
-        return durable() ? result : new BindResult(false, "could not record the binding durably");
+        if (replacedKey != null) fireReplaced(n, replacedKey);
+        return result;
     }
 
     /** In memory, with the write lock: {@code oldKey} (when any) is now refused for {@code n}; {@code newKey} is not. */
@@ -382,6 +537,12 @@ public final class PeerTrustRegistry {
         return r.ok ? null : r.reason;
     }
 
+    /** The tenant bound to {@code region/agent}, or null. Lock-free. */
+    public String boundTenant(String region, String agent) {
+        Binding b = identities.get(name(region, agent));
+        return b == null ? null : b.tenant;
+    }
+
     /** The key fingerprint bound to {@code peer}, or null. */
     public String pinnedKey(PeerIdentity.Expected peer) {
         if (peer == null) return null;
@@ -422,6 +583,7 @@ public final class PeerTrustRegistry {
         try { cert = Base64.getEncoder().encodeToString(ca.getEncoded()); } catch (Exception e) { return "unencodable CA"; }
         synchronized (writeLock) {
             if (sealed && !tryRecover()) return sealedText();
+            if (fenced != null) return "this peer trust registry instance records nothing (" + fenced + ")";
             b = cas.get(region);
             if (b != null && b.key.equals(fp) && b.tenant.equals(tenant)) return null;
             String token = null;
@@ -436,19 +598,19 @@ public final class PeerTrustRegistry {
             boolean newFollow = token == null && follow;
             Rec r = rec("ca", region);
             r.tenant = tenant; r.key = fp; r.cert = cert; r.source = source; r.t = now; r.mode = newFollow ? "follow" : null;
-            if (!append(r)) return "could not record the CA durably";
+            Rec c = null;
             if (token != null) {
-                Rec c = rec("consume", region);
+                c = rec("consume", region);
                 c.token = token; c.t = now;
-                append(c);
-                consumed.add(token);
             }
+            if (!(c == null ? append(r) : append(r, c))) return "could not record the CA durably";
+            if (token != null) consumed.add(token);
             cas.put(region, new Binding(tenant, fp, cert, source, null, newFollow, now, now));
             if (b != null) log.accept("CA for region " + region + " REBOUND from " + PeerIdentity.shortFp(b.key) + " to " + PeerIdentity.shortFp(fp)
                     + (token != null ? " (operator rebind '" + token + "', now consumed)" : " (followed: the region this node joined re-keyed)"));
             compactIfDue();
         }
-        return durable() ? null : "could not record the CA durably";
+        return null;
     }
 
     /** {region, tenant} a CA certificate names (OU, O), when both are valid names. */
@@ -479,17 +641,17 @@ public final class PeerTrustRegistry {
             Binding now = cas.get(region);
             if ("none".equals(state)) {
                 if (now == null) return;
-                cas.remove(region);
-                append(rec("unca", region));
+                cas.remove(region);                               // fail-safe: a refused peer's CA is gone from memory at once
+                if (!append(rec("unca", region))) log.accept("CA for region " + region + " removed in memory; the removal could not be recorded");
             } else if (state instanceof Binding && now != state) {
                 Binding b = (Binding) state;
                 Rec r = rec("ca", region);
                 r.tenant = b.tenant; r.key = b.key; r.cert = b.cert; r.source = b.source; r.t = b.lastSeen; r.mode = b.follow ? "follow" : null;
                 if (append(r)) cas.put(region, b);
+                else { cas.remove(region); log.accept("CA for region " + region + " could not be restored durably; none is trusted for it now"); }
             }
             log.accept("CA for region " + region + " restored (the exchange that changed it was refused)");
         }
-        durable();
     }
 
     /** The CA certificates recorded for regions (to add to a truststore after a restart). */
@@ -583,24 +745,26 @@ public final class PeerTrustRegistry {
         if (b != null) { touch(bridges, n, b, now, "bridge"); return; }
         synchronized (writeLock) {
             if (sealed && !tryRecover()) return;
+            if (fenced != null) return;
             if (bridges.containsKey(n)) return;
             Rec r = rec("bridge", n);
             r.t = now;
             if (append(r)) bridges.put(n, new Binding(null, null, null, "discovery", null, false, now, now));
             compactIfDue();
         }
-        durable();
     }
 
     /** Stop accepting bridges from {@code region/agent} (until a discovery exchange allows it again). */
     public boolean revokeBridgePeer(String region, String agent) {
         String n = name(region, agent);
         synchronized (writeLock) {
-            if (bridges.remove(n) == null) return false;
-            append(rec("unbridge", n));
+            if (bridges.remove(n) == null) return false;            // fail-safe: refused from now on, recorded or not
+            if (!append(rec("unbridge", n))) {
+                log.accept("Bridge peer " + n + " revoked in memory, but the revocation could not be recorded: it applies until a restart");
+                return false;
+            }
             compactIfDue();
         }
-        durable();
         return true;
     }
 
@@ -634,6 +798,36 @@ public final class PeerTrustRegistry {
             append(r);
             compactIfDue();
         }
+    }
+
+    /**
+     * A verified connection for {@code id} is in use: refresh its binding's last-seen (in memory; persisted in the
+     * background at most daily), so a peer that stays connected is never pruned. Lock-free; no I/O.
+     */
+    public void touchIdentity(CrescoIdentity id) {
+        if (id == null || id.getRegion() == null || id.getAgent() == null) return;
+        String n = name(id.getRegion(), id.getAgent());
+        Binding b = identities.get(n);
+        if (b != null && b.tenant != null && b.tenant.equals(id.getTenant())) touch(identities, n, b, System.currentTimeMillis(), "id");
+    }
+
+    /**
+     * Why TLS must refuse {@code chain} even though it may chain to an anchor, or null: its leaf names a Cresco identity
+     * whose bound key is another one, or whose key was replaced (rebound away) for that name. Lock-free; no I/O.
+     */
+    public String refusedKey(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return null;
+        CrescoIdentity id = CrescoNames.identityOf(chain[0]);
+        if (id == null) return null;
+        String n = name(id.getRegion(), id.getAgent());
+        String fp = fingerprint(chain[0].getPublicKey().getEncoded());
+        Binding b = identities.get(n);
+        if (b != null && !b.key.equals(fp)) {
+            return "the certificate names " + n + " but carries another key than the one bound to it (" + PeerIdentity.shortFp(b.key) + ")";
+        }
+        Set<String> revoked = revokedKeys.get(n);
+        if (revoked != null && revoked.contains(fp)) return "the certificate names " + n + " but its key was replaced (rebound away) for it";
+        return null;
     }
 
     /** {@code region_agent} paths of the controllers this node joined (bound by following, as a client). */
@@ -689,32 +883,44 @@ public final class PeerTrustRegistry {
         flushScheduled.set(false);
         if (pendingSeen.isEmpty()) return;
         synchronized (writeLock) {
-            if (sealed) { pendingSeen.clear(); return; }
+            if (sealed || fenced != null) { pendingSeen.clear(); return; }
+            Map<String, Long> batch = new java.util.LinkedHashMap<>();
             for (String k : new ArrayList<>(pendingSeen.keySet())) {
                 Long t = pendingSeen.remove(k);
-                if (t == null) continue;
-                int bar = k.indexOf('|');
-                Rec r = rec("seen", k.substring(bar + 1));
-                r.kind = k.substring(0, bar); r.t = t;
-                append(r);
+                if (t != null) batch.put(k, t);
+            }
+            if (batch.isEmpty()) return;
+            List<Rec> recs = new ArrayList<>();
+            for (Map.Entry<String, Long> e : batch.entrySet()) {
+                int bar = e.getKey().indexOf('|');
+                Rec r = rec("seen", e.getKey().substring(bar + 1));
+                r.kind = e.getKey().substring(0, bar); r.t = e.getValue();
+                recs.add(r);
+            }
+            if (!append(recs.toArray(new Rec[0]))) {
+                // not recorded: keep them queued for the next batch (a newer refresh for the same name wins)
+                for (Map.Entry<String, Long> e : batch.entrySet()) pendingSeen.merge(e.getKey(), e.getValue(), Math::max);
+                return;
             }
             compactIfDue();
         }
-        durable();
     }
 
     void prune(long now) {
+        List<Rec> recs = new ArrayList<>();
         if (bridgePruneMs > 0) {
             for (Map.Entry<String, Binding> e : new ArrayList<>(bridges.entrySet())) {
-                if (now - e.getValue().lastSeen > bridgePruneMs) { bridges.remove(e.getKey()); append(rec("unbridge", e.getKey())); }
+                if (now - e.getValue().lastSeen > bridgePruneMs) { bridges.remove(e.getKey()); recs.add(rec("unbridge", e.getKey())); }
             }
         }
         if (bindingPruneMs > 0) {
             for (Map.Entry<String, Binding> e : new ArrayList<>(identities.entrySet())) {
                 if (ROLE_SELF.equals(e.getValue().role)) continue;
-                if (now - e.getValue().lastSeen > bindingPruneMs) { identities.remove(e.getKey()); append(rec("unbind", e.getKey())); }
+                if (now - e.getValue().lastSeen > bindingPruneMs) { identities.remove(e.getKey()); recs.add(rec("unbind", e.getKey())); }
             }
         }
+        // removals take effect in memory either way (the next start prunes them again if they were not recorded)
+        if (!recs.isEmpty() && !append(recs.toArray(new Rec[0]))) log.accept("peer trust registry: " + recs.size() + " pruned entries could not be recorded");
     }
 
     // ---------------------------------------------------------------- rebind tokens
@@ -848,7 +1054,7 @@ public final class PeerTrustRegistry {
 
     private void clearState() {
         identities.clear(); cas.clear(); bridges.clear(); consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
-        lastMac = ""; lines = 0; needsNewline = false;
+        lastMac = ""; lines = 0; needsNewline = false; recentMacs.clear();
     }
 
     private void seal(String reason) {
@@ -949,7 +1155,9 @@ public final class PeerTrustRegistry {
                 if (verify == Verify.CHAIN && !terminated && !out.isEmpty()) {
                     // a torn last line: a crash mid-append, never acknowledged -- drop it
                     log.accept("peer trust registry: dropping a torn last line (" + line.length() + " bytes; a crash during a write)");
-                    try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) { ch.truncate(pos); ch.force(true); }
+                    if (fenced == null) {
+                        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.WRITE)) { ch.truncate(pos); ch.force(true); }
+                    }
                     needsNewline = false;
                     break;
                 }
@@ -964,6 +1172,8 @@ public final class PeerTrustRegistry {
         }
         lastMac = prev;
         lines = out.size();
+        recentMacs.clear();
+        for (int i = Math.max(0, out.size() - TAIL); i < out.size(); i++) if (out.get(i).mac != null) recentMacs.addLast(out.get(i).mac);
         return out;
     }
 
@@ -976,6 +1186,19 @@ public final class PeerTrustRegistry {
         if (file == null) return;
         try { mkdirs(file.getParent()); } catch (Exception ignore) { /* reported below */ }
         boolean keyExists = Files.exists(keyPath()), logExists = Files.exists(file), headExists = Files.exists(headPath());
+        if (fenced != null) {
+            // another writer owns the store: read what verifies, write nothing
+            try {
+                if (keyExists && logExists) {
+                    macKey = readKey();
+                    try { for (Rec r : readRecords(Verify.CHAIN)) apply(r); }
+                    catch (BadRecord br) { for (Rec r : br.good) apply(r); }
+                }
+            } catch (Exception ex) {
+                log.accept("peer trust registry: could not read " + file + " (" + ex.getMessage() + ")");
+            }
+            return;
+        }
         headEpoch = headExists ? Math.min(maxHeadEpoch(), Long.MAX_VALUE / 2) : 0;   // slot writes continue above whatever is there
         try {
             if (keyExists) tightenFile(keyPath());
@@ -1020,14 +1243,23 @@ public final class PeerTrustRegistry {
                 return;
             }
             if (recs.isEmpty() || !"init".equals(recs.get(0).op)) { seal("the registry has no valid header"); return; }
+            goodOffset = Files.size(file);
             String anchor = checkHead(recs, kf != null && kf.anchored);
             for (Rec r : recs) apply(r);
             if (anchor != null) { seal(anchor); return; }
+            if (compactedPastHead) {
+                log.accept("peer trust registry: the log was compacted and the process stopped before its new head anchor was"
+                        + " written; the compacted log continues the anchored state exactly, so it is anchored now");
+                writeHead(new Head(generation, lines, lastMac));
+            }
             if (kf == null || !kf.anchored) { writeHead(new Head(generation, lines, lastMac)); writeKey(macKey, true); }
         } catch (Exception ex) {
             seal("unreadable: " + ex.getMessage());
         }
     }
+
+    /** Set by {@link #checkHead}: the head anchors the log this compacted log replaced (a crash before its new head). */
+    private boolean compactedPastHead;
 
     private void initLog() throws Exception {
         closeChannels();
@@ -1037,9 +1269,13 @@ public final class PeerTrustRegistry {
         lastMac = "";
         lines = 0;
         r.mac = macOf(r, lastMac);
-        writeAtomically(file, (GSON.toJson(r) + "\n").getBytes(StandardCharsets.UTF_8));
+        byte[] first = (GSON.toJson(r) + "\n").getBytes(StandardCharsets.UTF_8);
+        writeAtomically(file, first);
+        goodOffset = first.length;
         lastMac = r.mac;
         lines = 1;
+        recentMacs.clear();
+        recentMacs.addLast(r.mac);
         generation++;
         writeHead(new Head(generation, lines, lastMac));
         writeKey(macKey, true);
@@ -1047,28 +1283,111 @@ public final class PeerTrustRegistry {
 
     private void closeChannels() {
         if (channel != null) { try { channel.close(); } catch (IOException ignore) { } channel = null; }
+        logFileKey = null;
     }
 
-    /** Append one record (written, not yet fsynced: see {@link #durable}) and keep the chain. With the write lock. */
-    private boolean append(Rec r) {
+    /**
+     * Append {@code recs} as ONE durable write and keep the chain, with the write lock: any bytes past the last durable
+     * offset (left by a write that failed part-way) are truncated first; the records are written at that offset and
+     * fsynced; on any failure the file is truncated back and false is returned (callers change nothing in memory). Then the
+     * head anchor is moved up (a failed head write leaves an older, still valid anchor).
+     */
+    private boolean append(Rec... recs) {
         if (file == null) return true;
-        if (sealed) return false;
+        if (sealed || fenced != null || recs.length == 0) return false;
+        String prevMac = lastMac;
+        long prevLines = lines;
+        boolean prevNl = needsNewline;
         try {
-            r.mac = macOf(r, lastMac);
-            byte[] line = ((needsNewline ? "\n" : "") + GSON.toJson(r) + "\n").getBytes(StandardCharsets.UTF_8);
-            if (channel == null || !channel.isOpen()) channel = FileChannel.open(file, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
-            ByteBuffer b = ByteBuffer.wrap(line);
-            while (b.hasRemaining()) channel.write(b);
+            openLogChannel();
+            if (sealed) return false;
+            long size = channel.size();
+            if (size > goodOffset) {
+                log.accept("peer trust registry: removing " + (size - goodOffset) + " byte(s) after the last durable record (left by a"
+                        + " write that failed part-way)");
+                channel.truncate(goodOffset);
+                channel.force(true);
+            } else if (size < goodOffset) {
+                seal("the log is shorter (" + size + " bytes) than this process last made it durable (" + goodOffset + "): truncated underneath it");
+                return false;
+            }
+            StringBuilder sb = new StringBuilder();
+            if (needsNewline) sb.append('\n');
+            String mac = lastMac;
+            List<String> macs = new ArrayList<>(recs.length);
+            for (Rec r : recs) {
+                r.mac = macOf(r, mac);
+                mac = r.mac;
+                macs.add(mac);
+                sb.append(GSON.toJson(r)).append('\n');
+            }
+            ByteBuffer b = ByteBuffer.wrap(sb.toString().getBytes(StandardCharsets.UTF_8));
+            long pos = goodOffset;
+            if (injectedFailures > 0) {                       // tests: a full disk part-way through the write, or at fsync
+                injectedFailures--;
+                if (!injectAtFsync) {
+                    ByteBuffer half = ByteBuffer.wrap(b.array(), 0, Math.max(1, b.remaining() / 2));
+                    while (half.hasRemaining()) pos += channel.write(half, pos);
+                    throw new IOException("No space left on device (injected)");
+                }
+                while (b.hasRemaining()) pos += channel.write(b, pos);
+                throw new IOException("fsync failed (injected)");
+            }
+            while (b.hasRemaining()) pos += channel.write(b, pos);
+            channel.force(false);
+            goodOffset = pos;
             needsNewline = false;
-            lastMac = r.mac;
-            lines++;
-            head = new Head(generation, lines, lastMac);
-            writtenSeq++;
-            return true;
+            lastMac = mac;
+            lines += recs.length;
+            for (String m : macs) remember(m);
         } catch (Exception ex) {
-            log.accept("peer trust registry: could not append (" + ex.getMessage() + ")");
+            lastMac = prevMac;
+            lines = prevLines;
+            needsNewline = prevNl;
+            log.accept("peer trust registry: could not record " + recs.length + " record(s) (" + ex.getMessage() + "); nothing was changed");
+            try {
+                if (channel != null && channel.isOpen()) { channel.truncate(goodOffset); channel.force(true); }
+            } catch (Exception again) {
+                fence("the log could not be put back after a failed write (" + again.getMessage() + "); a restart re-verifies it");
+            }
             return false;
         }
+        head = new Head(generation, lines, lastMac);
+        try {
+            writeHead(head);
+        } catch (Exception ex) {
+            log.accept("peer trust registry: the records are durable, but the head anchor could not be moved up (" + ex.getMessage() + ")");
+        }
+        return true;
+    }
+
+    /** Open the log for writing when needed, and seal if the file at the path is not the one this instance wrote. */
+    private void openLogChannel() throws IOException {
+        Object k = null;
+        try { k = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes.class).fileKey(); } catch (IOException ignore) { }
+        if (channel != null && channel.isOpen()) {
+            if (logFileKey != null && k != null && !logFileKey.equals(k)) {
+                seal("the log file was replaced underneath this process");
+                closeChannels();
+            }
+            return;
+        }
+        channel = FileChannel.open(file, StandardOpenOption.WRITE, StandardOpenOption.READ);
+        logFileKey = k;
+    }
+
+    private volatile int injectedFailures;
+    private volatile boolean injectAtFsync;
+
+    /** Tests: the next {@code n} writes fail -- part-way through the bytes, or (atFsync) after all of them, at the fsync. */
+    void injectWriteFailures(int n, boolean atFsync) {
+        injectAtFsync = atFsync;
+        injectedFailures = n;
+    }
+
+    private void remember(String mac) {
+        recentMacs.addLast(mac);
+        while (recentMacs.size() > TAIL) recentMacs.removeFirst();
     }
 
     private int live() {
@@ -1090,39 +1409,16 @@ public final class PeerTrustRegistry {
         }
     }
 
-    /**
-     * Make every write so far durable (group commit: one fsync for all writers waiting), then move the head anchor up to
-     * cover it. Called after the write lock is released, before a bind is acknowledged. True when durable (or in memory).
-     */
-    private boolean durable() {
-        if (file == null) return true;
-        long target = writtenSeq;
-        if (syncedSeq >= target) return true;
-        synchronized (syncLock) {
-            if (syncedSeq >= target) return true;
-            long upto = writtenSeq;
-            Head h = head;
-            FileChannel c = channel;
-            try {
-                if (c != null) c.force(false);
-                if (h.generation == generation) writeHead(h);       // a compaction since then wrote a newer head itself
-                syncedSeq = Math.max(syncedSeq, upto);
-                return true;
-            } catch (java.nio.channels.ClosedChannelException closed) {
-                return syncedSeq >= target;                       // a compaction replaced (and fsynced) the log meanwhile
-            } catch (Exception ex) {
-                log.accept("peer trust registry: fsync failed (" + ex.getMessage() + ")");
-                return false;
-            }
-        }
-    }
-
     /** Rewrite the log as its live state (temp, fsync, rename, directory fsync), then its head anchor. With the write lock. */
     private void compact() throws Exception {
         List<Rec> recs = new ArrayList<>();
         Rec init = rec("init", null);
         init.t = System.currentTimeMillis();
         init.source = "cresco-peer-trust-v2";
+        // the log this one replaces: its record count and last MACs, so a crash between the rename below and the new head
+        // (the old head then covers more lines than this log has) is recognised as exactly that
+        init.prevLines = lines;
+        init.prevTail = new ArrayList<>(recentMacs);
         recs.add(init);
         for (Map.Entry<String, Binding> e : identities.entrySet()) {
             Rec r = rec("bind", e.getKey());
@@ -1157,17 +1453,19 @@ public final class PeerTrustRegistry {
             prev = r.mac;
             sb.append(GSON.toJson(r)).append('\n');
         }
-        writeAtomically(file, sb.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] all = sb.toString().getBytes(StandardCharsets.UTF_8);
+        writeAtomically(file, all);
         closeChannels();                                          // the old log is replaced; appends reopen the new one
+        logFileKey = null;
+        goodOffset = all.length;
         lastMac = prev;
         lines = recs.size();
         needsNewline = false;
-        synchronized (syncLock) {
-            generation++;
-            head = new Head(generation, lines, lastMac);
-            writeHead(head);
-            syncedSeq = writtenSeq;                               // the compacted log (and its head) is durable
-        }
+        recentMacs.clear();
+        for (int i = Math.max(0, recs.size() - TAIL); i < recs.size(); i++) recentMacs.addLast(recs.get(i).mac);
+        generation++;
+        head = new Head(generation, lines, lastMac);
+        writeHead(head);
     }
 
     // ---------------------------------------------------------------- head anchor
@@ -1241,7 +1539,19 @@ public final class PeerTrustRegistry {
             return "the head anchor is unreadable: " + e.getMessage();
         }
         if (best == null) return "the registry's head anchor does not verify";
-        if (recs.size() < best.lines || !best.mac.equals(recs.get((int) best.lines - 1).mac)) {
+        compactedPastHead = false;
+        if (recs.size() < best.lines || best.lines < 1 || !best.mac.equals(recs.get((int) best.lines - 1).mac)) {
+            // a compaction whose new head was never written: this log's first record names the replaced log's last MACs, and
+            // the anchor is one of them -- the compacted log continues exactly the anchored state (or a later one)
+            Rec first = recs.isEmpty() ? null : recs.get(0);
+            if (first != null && "init".equals(first.op) && first.prevLines != null && first.prevTail != null && !first.prevTail.isEmpty()) {
+                long lastLine = first.prevLines, firstLine = lastLine - first.prevTail.size() + 1;
+                if (best.lines >= firstLine && best.lines <= lastLine
+                        && best.mac.equals(first.prevTail.get((int) (best.lines - firstLine)))) {
+                    compactedPastHead = true;
+                    return null;
+                }
+            }
             return "the registry log is shorter than its head anchor, or differs from it (" + recs.size() + " records, the anchor"
                     + " covers " + best.lines + "): truncated or rolled back";
         }

@@ -65,8 +65,10 @@ class PeerTrustPersistenceTest {
         r.allowBridgePeer("rgB", "rc");
         r.allowBridgePeer("rgC", "rc");
         r.allowBridgePeer("rgD", "rc");
-        assertTrue(open(f, List.of()).isBridgePeer(rc), "a global restart forgot its regions");
-        r.backdateBridgePeer("rgD", "rc", 31L * 24 * 3600 * 1000);
+        // one writer per store (round-4 L1): the restarted instance fences r, so the node goes on with the restarted one
+        PeerTrustRegistry restarted = open(f, List.of());
+        assertTrue(restarted.isBridgePeer(rc), "a global restart forgot its regions");
+        restarted.backdateBridgePeer("rgD", "rc", 31L * 24 * 3600 * 1000);
         PeerTrustRegistry revoking = PeerTrustRegistry.open(f, List.of(), List.of("rgC/rc"), 30, m -> { });
         assertFalse(revoking.isBridgePeer(CrescoIdentity.of("t1", "rgC", "rc", null)), "a revoked bridge peer was kept");
         assertFalse(revoking.isBridgePeer(rd), "a bridge peer unseen for 31 days was kept");

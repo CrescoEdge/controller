@@ -509,7 +509,7 @@ public class ActiveClient {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
                 // mark this controller's own in-JVM connections: for recipient-bound dataplane streams the broker treats
                 // them (and so every plugin and wsapi client using them) as this controller's identity, not infrastructure
-                String tenant = controllerEngine.getPluginBuilder().getConfig().getStringParam("tenant_id", "default");
+                String tenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(controllerEngine.getPluginBuilder().getConfig());
                 activeMQSslConnectionFactory.setUserName(CrescoAuthorizationBroker.LOCAL_CONTROLLER_PREFIX
                         + tenant + "|" + controllerEngine.cstate.getRegion() + "|" + controllerEngine.cstate.getAgent());
             } else {
@@ -534,8 +534,8 @@ public class ActiveClient {
             // authorize it. OFF by default -> anonymous connections, exactly as before. (Cryptographic
             // binding of this identity is the mutual-TLS/cert-DN path; see distributed-identity design.)
             PluginBuilder pb = controllerEngine.getPluginBuilder();
-            if (pb.getConfig().getBooleanParam("broker_security_enabled", false) && !URI.startsWith("vm://")) {
-                String tenant = pb.getConfig().getStringParam("tenant_id", "default");
+            if (SecuritySettings.brokerSecurity(pb.getConfig()) && !URI.startsWith("vm://")) {
+                String tenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(pb.getConfig());
                 String username = tenant + "|" + controllerEngine.cstate.getRegion() + "|" + controllerEngine.cstate.getAgent();
                 activeMQSslConnectionFactory.setUserName(username);
                 activeMQSslConnectionFactory.setPassword(pb.getConfig().getStringParam("broker_security_secret", "cresco"));

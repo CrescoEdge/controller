@@ -188,7 +188,9 @@ public class CertificateManager {
 
     private PeerTrustRegistry openPeerTrust() {
         if (!plugin.getConfig().getBooleanParam("peer_trust_persist", true)) {
-            return new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
+            PeerTrustRegistry mem = new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
+            mem.setKeyReplacedListener(this::dropReplacedAnchors);
+            return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
         Path file = (f == null || f.isBlank()) ? identityDir().resolve("peer-trust.json") : Paths.get(f);
@@ -203,7 +205,41 @@ public class CertificateManager {
                 && plugin.getConfig().getStringParam("keystorefile") == null
                 && Files.exists(identityDir().resolve("node-identity.p12"));
         PeerTrustRegistry.secureDirectory(identityDir(), m -> logger.error(m));
-        return PeerTrustRegistry.open(file, o, m -> logger.error(m));
+        // one writer per store: a CertificateManager re-created in this JVM (regionInit after a global loss) shares the
+        // registry the broker already holds instead of opening a second writer on the same files
+        PeerTrustRegistry reg = PeerTrustRegistry.shared(file, o, m -> logger.error(m));
+        reg.setKeyReplacedListener(this::dropReplacedAnchors);
+        return reg;
+    }
+
+    /**
+     * A name's key was replaced in the registry: remove every truststore entry its old chain added (named by the peer's
+     * {@code <region>_<agent>} path) and every entry carrying the old key, so the old chain is no anchor any more. TLS
+     * already refuses the old key (BoundKeyTrustManager asks the registry); this removes the anchor too, and refreshes the
+     * broker's trust.
+     */
+    void dropReplacedAnchors(String name, String oldKeyFp) {
+        try {
+            if (trustStore == null || name == null) return;
+            String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
+            java.util.List<String> drop = new java.util.ArrayList<>();
+            synchronized (trustStore) {
+                for (String alias : java.util.Collections.list(trustStore.aliases())) {
+                    Certificate c = trustStore.getCertificate(alias);
+                    boolean sameKey = c != null && oldKeyFp != null && oldKeyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()));
+                    if (alias.toLowerCase(java.util.Locale.ROOT).startsWith(prefix) || sameKey) drop.add(alias);
+                }
+                for (String alias : drop) trustStore.deleteEntry(alias);
+            }
+            if (!drop.isEmpty()) {
+                logger.warn("Removed " + drop.size() + " truststore anchor(s) of " + name + " (its key " + PeerIdentity.shortFp(oldKeyFp)
+                        + " was replaced): " + drop);
+                saveKeyAndTrustStore();
+                if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+            }
+        } catch (Exception ex) {
+            logger.error("dropReplacedAnchors(" + name + "): " + ex.getMessage());
+        }
     }
 
     /**
@@ -445,7 +481,7 @@ public class CertificateManager {
             // any peer) can cryptographically identify this node from its certificate rather than a
             // spoofable connection username. Falls back to the legacy UUID CN before identity is known.
             String leafDN;
-            String idTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String idTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
             String idRegion = controllerEngine.cstate.getRegion();
             String idAgent = controllerEngine.cstate.getAgent();
             X500Name leafName;
@@ -583,7 +619,7 @@ public class CertificateManager {
             if (regionCA != null) return false;                        // a CA holder's identity is its own CA's to stamp
             String region = controllerEngine.cstate.getRegion();
             String agent = controllerEngine.cstate.getAgent();
-            String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String tenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
             if (region == null || agent == null || chain == null || chain[0] == null) return false;
             CrescoIdentity have = CrescoNames.identityOf(chain[0]);
             // under the regional CA the issuer stamps the tenant, so only region/agent must match there
@@ -752,7 +788,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             return;
         }
         try {
-            String tenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String tenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
             String region = controllerEngine.cstate.getRegion();
             String agent = controllerEngine.cstate.getAgent();
             regionCA = loadRegionCA(tenant, region);
@@ -861,7 +897,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             }
             String myRegion = controllerEngine.cstate.getRegion();
             String myAgent = controllerEngine.cstate.getAgent();
-            String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+            String myTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
             if (controllerJoin) {
                 return federateController(joinerCerts, claimed, myRegion, myAgent);
             }
@@ -947,7 +983,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
      */
     public String agentJoinRefusal(String tenant, String region, String agent) {
         String myRegion = controllerEngine.cstate.getRegion(), myAgent = controllerEngine.cstate.getAgent();
-        String myTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        String myTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
         if (myRegion == null || !myRegion.equals(region)) return "an agent can only join this controller's region " + myRegion + ", not " + region;
         if (!myTenant.equals(tenant)) return "an agent can only join in this controller's tenant " + myTenant + ", not " + tenant;
         if (superuserTenants().contains(tenant)) return "tenant " + tenant + " is a superuser tenant; agents cannot claim it";
