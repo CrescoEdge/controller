@@ -1366,8 +1366,16 @@ public class GlobalExecutor implements Executor {
 
     private MsgEvent addPlugin(MsgEvent ce) {
         try {
-            logger.error("g: add agentcontroller!");
+            logger.debug("g: add agentcontroller!");
 
+            String badId = ce.getParam("inode_id") == null ? null
+                    : io.cresco.agent.controller.agentcontroller.PluginIds.refusal(ce.getParam("inode_id"));
+            if (badId != null) {
+                // review F6: an iNode id becomes a plugin id, which names a directory on the agent
+                ce.setParam("status_code", "1");
+                ce.setParam("status_desc", badId);
+                return ce;
+            }
             if((ce.getParam("inode_id") != null) && (ce.getParam("resource_id") != null) && (ce.getParam("configparams") != null)) {
 
                 if(controllerEngine.getGDB().getpNodeINode(ce.getParam("inode_id")) == null)
