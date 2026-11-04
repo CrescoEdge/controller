@@ -442,7 +442,7 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
 | a revoked name | free again at once | tombstoned until an operator rebind |
 | health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate |
 
-## 9. End-to-end message signatures (D4)
+## 10. End-to-end message signatures (D4)
 
 A broker vouches for one hop. Across several brokers -- relays, source routes, the bridges of other regions -- the
 receiver also needs the origin's word, so every MsgEvent a node originates is signed with that node's identity key, and a
