@@ -241,10 +241,23 @@ class ReviewIdentity2Test {
     /**
      * Outbound connections are recorded for revocation only in PeerIdentityTrustManager.checkServerTrusted. A reconnect that
      * RESUMES its TLS session (TLS 1.3 session tickets: the JDK default for clients and servers) never calls the trust
-     * manager, so the reconnected bridge is not recorded and a later revocation of its peer does not close it.
+     * manager, so the reconnected bridge is not recorded and a later revocation of its peer does not close it. (A revoked
+     * NAME also tombstones it, and ActiveBroker.closeRevokedConnections removes bridge groups to tombstoned peers; a revoked
+     * region CA -- "nothing of that region is accepted" -- tombstones nothing, so the socket record is all there is. The
+     * control test below shows the same revocation closes a bridge that never reconnected.)
      */
     @Test
-    void aBridgeThatReconnectedIsClosedWhenItsPeerIsRevoked() throws Exception {
+    void aBridgeThatReconnectedIsClosedWhenItsRegionsCaIsRevoked() throws Exception {
+        bridgeAndRevokeCa(true);
+    }
+
+    /** Control for the test above: no reconnect -- the CA revocation closes the bridge (expected to pass). */
+    @Test
+    void controlABridgeThatNeverReconnectedIsClosedWhenItsRegionsCaIsRevoked() throws Exception {
+        bridgeAndRevokeCa(false);
+    }
+
+    private void bridgeAndRevokeCa(boolean blip) throws Exception {
         TlsTestSupport.provider();
         RegionCA caA = RegionCA.generate("t1", "rgA", 2048, 1);
         TlsTestSupport.Id rc = TlsTestSupport.issued(caA, "t1", "rgA", "rc");
@@ -258,19 +271,21 @@ class ReviewIdentity2Test {
         bridgeTo(cm, region);
         assertTrue(waitBridge(region, true, 10_000), "precondition: the global's bridge into rgA is up");
         int recordedFirst = cm.outboundConnections().size();
-        // a network blip: the region drops the bridge's connection; the bridge reconnects
-        for (org.apache.activemq.broker.Connection c : region.getRegionBroker().getClients()) {
-            if (c.isNetworkConnection()) c.serviceExceptionAsync(new java.io.IOException("network blip"));
+        if (blip) {
+            // a network blip: the region drops the bridge's connection; the bridge reconnects
+            for (org.apache.activemq.broker.Connection c : region.getRegionBroker().getClients()) {
+                if (c.isNetworkConnection()) c.serviceExceptionAsync(new java.io.IOException("network blip"));
+            }
+            Thread.sleep(500);
+            assertTrue(waitBridge(region, true, 10_000), "precondition: the bridge reconnected");
+            Thread.sleep(500);
         }
-        Thread.sleep(500);
-        assertTrue(waitBridge(region, true, 10_000), "precondition: the bridge reconnected");
-        Thread.sleep(500);
         int recordedAfter = cm.outboundConnections().size();
-        assertNull(cm.getPeerTrust().revoke("rgA/rc", "operator: region rgA compromised"));
+        assertNull(cm.getPeerTrust().revoke(fp(caA.caCert().getPublicKey()), "operator: region rgA's CA key leaked"));
         boolean down = waitBridge(region, false, 4000);
-        System.out.println("resumption: outbound connections recorded " + recordedFirst + " before the blip, " + recordedAfter
-                + " after the reconnect; the reconnected bridge after the revocation is " + (down ? "closed" : "STILL UP"));
-        assertTrue(down, "a bridge that reconnected (resumed TLS session) stays up after its peer was revoked");
+        System.out.println("resumption (blip=" + blip + "): outbound connections recorded " + recordedFirst + " at first, " + recordedAfter
+                + " before the CA revocation; the bridge after it is " + (down ? "closed" : "STILL UP"));
+        assertTrue(down, "a bridge into a region whose CA was revoked stays up" + (blip ? " after it reconnected once (resumed TLS session)" : ""));
     }
 
     private void bridgeTo(CertificateManager cm, BrokerService remote) throws Exception {
@@ -299,5 +314,26 @@ class ReviewIdentity2Test {
             Thread.sleep(50);
         } while (System.currentTimeMillis() < end);
         return false;
+    }
+
+    // ================================================================== renewal window and the 24-hour backdate
+
+    /**
+     * renewalWindow uses the certificate's notAfter - notBefore as its lifetime, and notBefore is now backdated 24 hours
+     * (identity_cert_backdate_hours). A leaf valid for L <= 24 h therefore has a "lifetime" of L + 24 h and a window of half
+     * of that, >= L: it is due the moment it is issued -- the round-1 floor bug again for any operator who shortens
+     * identity_leaf_validity_hours to a day or less (every check re-enrolls every agent, every check re-issues the region's
+     * own leaf). The soak that found the renewal deadlock ran exactly this (1-hour leaves).
+     */
+    @Test
+    void aFreshShortLivedLeafIsNotDueAtIssue() throws Exception {
+        TlsTestSupport.provider();
+        RegionCA ca = RegionCA.generate("t1", "rgA", 2048, 1);
+        X509Certificate[] twelveHours = ca.enrollFor(TlsTestSupport.rsa().getPublic(), "t1", "rgA", "a1", 12 * 3600_000L);
+        long life = twelveHours[0].getNotAfter().getTime() - twelveHours[0].getNotBefore().getTime();
+        System.out.println("renewal: a 12-hour leaf has notAfter-notBefore = " + life / 3600_000L + " h (backdate " + CertValidity.backdateMs() / 3600_000L
+                + " h); due at issue: " + CertificateManager.chainNeedsRenewal(twelveHours, System.currentTimeMillis(), 30 * DAY));
+        assertFalse(CertificateManager.chainNeedsRenewal(twelveHours, System.currentTimeMillis(), 30 * DAY),
+                "a 12-hour leaf issued a moment ago is due for renewal: the 24-hour backdate is counted as lifetime");
     }
 }
