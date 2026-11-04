@@ -182,8 +182,8 @@ public class AppScheduler implements IncomingApp {
                     gNode node_to = nodeMap.get(edge.node_to);
                     gNode node_from = nodeMap.get(edge.node_from);
 
-                    logger.debug("NODE_TO PARAMS: [" + node_to.params + "]");
-                    logger.debug("NODE_FROM PARAMS: [" + node_from.params + "]");
+                    logger.debug("NODE_TO PARAMS: " + io.cresco.agent.controller.communication.ParamLog.names(node_to.params));
+                    logger.debug("NODE_FROM PARAMS: " + io.cresco.agent.controller.communication.ParamLog.names(node_from.params));
 
                     String ntRegion = node_to.params.get("location_region");
                     String ntAgent = node_to.params.get("location_agent");
@@ -257,7 +257,7 @@ public class AppScheduler implements IncomingApp {
 
             //verify predicates
             for (gNode node : nodes) {
-                logger.trace("node_id=" + node.node_id + " node_name=" + node.node_name + " type" + node.type + " params" + node.params.toString());
+                logger.trace("node_id=" + node.node_id + " node_name=" + node.node_name + " type" + node.type + " params" + io.cresco.agent.controller.communication.ParamLog.names(node.params));
 
                 if (node.params.containsKey("location_region") && node.params.containsKey("location_agent")) {
                     if (controllerEngine.getGDB().nodeExist(node.params.get("location_region"), node.params.get("location_agent"),null)) {
