@@ -5,6 +5,8 @@ public class DiscoveryNode {
 	public DiscoveryType discovery_type;
 	public String broadcast_ip;
 	public int discovered_port;
+	/** CHALLENGE: the responder's operator-signed controller rebind statement, when it served one (RebindStatement). */
+	public transient String discovered_rebind;
 	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
 	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
 	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port

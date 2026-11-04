@@ -80,6 +80,8 @@ public final class DiscoveryAuth {
         public boolean ok;
         public String reason;
         public String rcert;
+        /** CHALLENGE, optional: an operator-signed controller rebind statement (RebindStatement; signed on its own, not MAC'd). */
+        public String rebind;
     }
 
     /** Derived keys, by (purpose, secret digest): bounded, so secrets that come and go cannot grow it without limit. */
