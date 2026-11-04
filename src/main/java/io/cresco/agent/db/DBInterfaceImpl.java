@@ -180,7 +180,7 @@ public class DBInterfaceImpl implements DBInterface {
                 } else {
                     // dbe.nodeUpdateStatus returned false. This indicates an issue with the 'mode' processing or config parts.
                     logger.warn("nodeUpdate: Mode '{}' present, but dbe.nodeUpdateStatus returned false. Timestamp updates success: {}. Msg: {}",
-                            mode, (timestampUpdatesPerformed > 0), de.getParams());
+                            mode, (timestampUpdatesPerformed > 0), io.cresco.agent.controller.communication.ParamLog.describe(de));
                     // If timestamp updates didn't happen AND this also failed, then the whole operation is a failure.
                     // If timestamps *did* succeed, wasProcessedCorrectly remains true from the earlier check.
                     if (timestampUpdatesPerformed == 0) {
