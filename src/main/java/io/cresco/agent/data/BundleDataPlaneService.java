@@ -54,7 +54,11 @@ public final class BundleDataPlaneService implements DataPlaneService {
         if (StdinGuard.EXECUTOR_BUNDLE.equals(bundleName)) return selector;
         String why = StdinGuard.refusal(selector);
         if (why != null) throw new SubscriptionRefusedException(why + " (" + bundleName + ")");
-        return StdinGuard.narrow(selector);
+        try {
+            return StdinGuard.narrow(selector);
+        } catch (IllegalArgumentException malformed) {
+            throw new SubscriptionRefusedException("refused: " + malformed.getMessage() + " (" + bundleName + ")");
+        }
     }
 
     @Override public void removeMessageListener(String listenerId) { impl.removeMessageListener(listenerId); }
