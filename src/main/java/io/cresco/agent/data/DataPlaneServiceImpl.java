@@ -103,8 +103,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         // Dataplane shard count (default 1 = unsharded, original behavior). Must match across all
         // agents in the fabric so publisher/subscriber derive the same shard topic from a shared key.
-        tenantNamespacing = plugin.getConfig().getBooleanParam("tenant_namespacing", false);
-        localTenant = plugin.getConfig().getStringParam("tenant_id", "default");
+        tenantNamespacing = io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig());
+        localTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
 
         dataPlaneShards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
         sendLanes = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_send_lanes", 4));
@@ -343,7 +343,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         } catch (Exception ex) {
             String refusal = policyRefusal(ex);
-            if (refusal != null) throw new SecurityException(refusal);
+            if (refusal != null) throw new io.cresco.library.data.SubscriptionRefusedException(refusal);
             logger.error("DataPlaneServiceImpl.getConsumer error", ex);
         }
 	    return  messageConsumer;
@@ -429,9 +429,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 }
             }
 
-        } catch (SecurityException refused) {
+        } catch (io.cresco.library.data.SubscriptionRefusedException refused) {
             logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refused.getMessage());
             throw refused;
+        } catch (SecurityException other) {
+            // any other security refusal reaches the plugin as the declared type
+            logger.warn("Dataplane subscription REFUSED (" + selectorString + "): " + other.getMessage());
+            throw new io.cresco.library.data.SubscriptionRefusedException(other.getMessage());
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.addMessageListener error", ex);
             return null;
@@ -678,7 +682,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             String refusal = policyRefusal(ex);
             if (refusal != null) {
                 logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refusal);
-                throw new SecurityException(refusal);
+                throw new io.cresco.library.data.SubscriptionRefusedException(refusal);
             }
             logger.error("DataPlaneServiceImpl.addMessageListener(shard) error", ex);
             return null;
