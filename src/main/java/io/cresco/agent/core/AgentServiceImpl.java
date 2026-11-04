@@ -499,6 +499,7 @@ public class AgentServiceImpl implements AgentService {
         }
         try {
             io.cresco.agent.controller.communication.CallerStamps.stamp(msg, controllerEngine.pluginCaller(id), controllerEngine.regionAlias());
+            controllerEngine.markForSigning(msg);
             controllerEngine.msgIn(msg);
         } catch (Exception ex) {
             logger.error("msgOut() from " + bundle.getSymbolicName() + ": " + ex.getMessage(), ex);
@@ -519,6 +520,7 @@ public class AgentServiceImpl implements AgentService {
         io.cresco.agent.controller.communication.CallerStamps.stamp(msg,
                 controllerEngine.securityOn() ? caller : io.cresco.library.security.Caller.anonymous());
         io.cresco.agent.controller.communication.CallerStamps.dropFiles(msg);   // a user names no file on this node's disk
+        controllerEngine.markForSigning(msg);
         controllerEngine.msgIn(msg);
     }
 
@@ -669,6 +671,10 @@ public class AgentServiceImpl implements AgentService {
         }
         if (io.cresco.agent.controller.communication.SecuritySettings.fileAccessRoots(c).isEmpty()) {
             logger.info("file_access_roots is not set: getfiledata and getfileinfo are refused");
+        }
+        if (io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(c) && !c.getBooleanParam("msg_signing_required", true)) {
+            logger.warn("msg_signing_required=false: messages are neither signed nor checked end to end (each hop's broker stamp "
+                    + "only); development only");
         }
     }
 

@@ -155,7 +155,8 @@ public final class TlsTestSupport {
         @Override public boolean isFailed() { return true; }
         public volatile boolean regional;
         @Override public boolean isRegionalController() { return regional; }
-        @Override public boolean isGlobalController() { return false; }
+        public volatile boolean global;
+        @Override public boolean isGlobalController() { return global; }
         @Override public String getRegion() { return region; }
         @Override public String getAgent() { return agent; }
         @Override public String getAgentPath() { return region + "_" + agent; }
