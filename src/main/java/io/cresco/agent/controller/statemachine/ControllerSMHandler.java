@@ -650,6 +650,7 @@ public class ControllerSMHandler {
                         DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort);
 
                         if(discoveryNode != null) {
+                            lastJoin = new Object[]{DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort};
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
                             cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
                             isStateInit = isRegionGlobal(discoveryNode);
@@ -824,10 +825,14 @@ public class ControllerSMHandler {
             logger.debug("trying host: " + discoveryNode.discovered_ip + " port:" + discoveryNode.discovered_port);
 
             TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-            List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), discoveryNode.discovered_ip, discoveryNode.discovered_port, true);
+            String joinIp = discoveryNode.discovered_ip;
+            int joinPort = discoveryNode.discovered_port;
+            List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), joinIp, joinPort, true);
 
             if(certDiscovery.size() == 1) {
                 discoveryNode = certDiscovery.get(0);
+                // every join path (multicast and static regional_controller_host alike) can re-enroll with this controller
+                lastJoin = new Object[]{DiscoveryType.AGENT, joinIp, joinPort};
                 // the region was adopted from the (unauthenticated) locator reply; the authenticated exchange decides
                 if (!discoveryNode.discovered_region.equals(cstate.getRegion())) {
                     logger.error("isAgent(): the authenticated discovery exchange says the controller at " + discoveryNode.discovered_ip

@@ -34,6 +34,7 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
     private final PeerIdentity.Mode mode;
     private final CLogger logger;
     private final String endpoint;
+    private final OutboundTlsConnections outbound;
 
     /**
      * @param pkix     the node's current PKIX trust manager (called per handshake)
@@ -43,6 +44,16 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
      */
     public PeerIdentityTrustManager(Supplier<X509TrustManager> pkix, PeerIdentity.Expected expected,
                                     PeerTrustRegistry registry, PeerIdentity.Mode mode, CLogger logger, String endpoint) {
+        this(pkix, expected, registry, mode, logger, endpoint, null);
+    }
+
+    /**
+     * As above; every connection whose handshake this accepts is recorded in {@code outbound}, so a later revocation of the
+     * peer closes it (see {@link OutboundTlsConnections}).
+     */
+    public PeerIdentityTrustManager(Supplier<X509TrustManager> pkix, PeerIdentity.Expected expected, PeerTrustRegistry registry,
+                                    PeerIdentity.Mode mode, CLogger logger, String endpoint, OutboundTlsConnections outbound) {
+        this.outbound = outbound;
         this.pkix = pkix;
         this.expected = expected;
         this.registry = registry;
@@ -71,6 +82,7 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
         if (d instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) d).checkServerTrusted(chain, authType, socket);
         else d.checkServerTrusted(chain, authType);
         bind(chain);
+        if (outbound != null) outbound.record(socket, chain, endpoint);
     }
 
     @Override
@@ -79,6 +91,7 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
         if (d instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) d).checkServerTrusted(chain, authType, engine);
         else d.checkServerTrusted(chain, authType);
         bind(chain);
+        if (outbound != null) outbound.record(engine, chain, endpoint);
     }
 
     // Client-side checks: these contexts only dial out, but keep PKIX semantics if one is ever used to accept.

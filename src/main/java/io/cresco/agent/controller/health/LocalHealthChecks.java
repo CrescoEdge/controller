@@ -26,6 +26,7 @@ public final class LocalHealthChecks {
         register(bc, "memory", new MemoryHealthCheck(ce));
         register(bc, "plugins", new PluginHealthCheck(ce));
         register(bc, "cep", new CepHealthCheck(ce));
+        register(bc, "identity", new IdentityHealthCheck(ce));
     }
 
     private static void register(BundleContext bc, String name, HealthCheck hc) {
