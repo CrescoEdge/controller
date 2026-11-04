@@ -444,6 +444,7 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
 | health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate, region CA unavailable |
 | `region_ca_allow_new` | (an unreadable region CA was silently replaced) | false: a region CA that existed and cannot be loaded is never replaced; true for one start makes a new one deliberately |
 | `<data>/peer-trust.json.hwm` | (none) | the revocation high-water mark, kept OUTSIDE `security/` (a restored `security/` starts a new revocation epoch) |
+| `identity_keystore`, `identity_keystore_password_file`, `trust_anchors`, `revocation_file` | (none) | a PRE-PROVISIONED identity from the operator's PKI (`security_profile=production`): nothing generated, enrolled or bound on first use -- see `pre-provisioned-identity.md` and `tools/cresco-pki.sh` |
 
 ### Round-2 re-review (2026-11-04)
 

@@ -633,6 +633,9 @@ public final class PeerTrustRegistry {
         String fp = fingerprint(leafKey.getEncoded());
         String n = name(region, agent);
         long now = System.currentTimeMillis();
+        if (pki != null && !ROLE_SELF.equals(role)) {
+            return new BindResult(false, "this node is pre-provisioned: identities come from the operator's PKI, never bound at a join");
+        }
         if (isRevokedFor(fp, region)) {
             return new BindResult(false, "the key " + PeerIdentity.shortFp(fp) + " is " + revokedText(fp, region) + "; a revoked node"
                     + " needs a new key");
@@ -819,18 +822,36 @@ public final class PeerTrustRegistry {
     /** The role {@code region/agent} is bound with when its bound key is {@code key}; else null. Lock-free. */
     public String boundRole(String region, String agent, java.security.PublicKey key) {
         if (key == null) return null;
+        if (pki != null) {
+            Binding own = identities.get(name(region, agent));
+            if (own != null && ROLE_SELF.equals(own.role)) return own.key.equals(fingerprint(key.getEncoded())) ? ROLE_SELF : null;
+            PkiSeen s = pkiSeenOf(null, region, agent);
+            return s != null && s.key.equals(fingerprint(key.getEncoded())) ? s.role : null;
+        }
         Binding b = identities.get(name(region, agent));
         return b != null && b.key.equals(fingerprint(key.getEncoded())) ? b.role : null;
     }
 
     /** The role {@code region/agent} is bound with here (when its tenant is {@code tenant}), or null. Lock-free. */
     public String roleOf(String tenant, String region, String agent) {
+        if (pki != null) {
+            Binding own = identities.get(name(region, agent));
+            if (own != null && ROLE_SELF.equals(own.role)) return ROLE_SELF;
+            PkiSeen s = pkiSeenOf(tenant, region, agent);
+            return s == null ? null : s.role;
+        }
         Binding b = identities.get(name(region, agent));
         return b == null || (tenant != null && !tenant.equals(b.tenant)) ? null : b.role;
     }
 
     /** The tenant bound to {@code region/agent}, or null. Lock-free. */
     public String boundTenant(String region, String agent) {
+        if (pki != null) {
+            Binding own = identities.get(name(region, agent));
+            if (own != null && ROLE_SELF.equals(own.role)) return own.tenant;
+            PkiSeen s = pkiSeenOf(null, region, agent);
+            return s == null ? null : s.tenant;
+        }
         Binding b = identities.get(name(region, agent));
         return b == null ? null : b.tenant;
     }
@@ -984,7 +1005,12 @@ public final class PeerTrustRegistry {
         try { leaf.checkValidity(); } catch (Exception e) { why[0] = "the certificate is not valid now (" + e.getMessage() + ")"; return null; }
         String n = name(id.getRegion(), id.getAgent());
         Tomb tomb = tombs.get(n);
-        if (tomb != null) { why[0] = tombText(n, tomb); return null; }
+        if (tomb != null && !(pki != null && liftTombByRebind(n, fp))) { why[0] = tombText(n, tomb); return null; }
+        Pki p = pki;
+        if (p != null) {
+            // pre-provisioned: the operator's PKI decides (this node's own identity is its own, from the same PKI)
+            return pkiVerify(p, chain, id, fp, why);
+        }
         Binding ident = identities.get(n);
         Binding ca = cas.get(id.getRegion());
         boolean caGoverned = ca != null && ca.tenant.equals(id.getTenant());
@@ -1063,7 +1089,7 @@ public final class PeerTrustRegistry {
      * issued by that CA (never a chain the key holder made itself).
      */
     public CrescoIdentity boundByKey(X509Certificate[] chain) {
-        if (chain == null || chain.length == 0 || chain[0] == null) return null;
+        if (chain == null || chain.length == 0 || chain[0] == null || pki != null) return null;   // pre-provisioned: the PKI only
         X509Certificate leaf = chain[0];
         try { leaf.checkValidity(); } catch (Exception e) { return null; }
         CrescoIdentity id = CrescoNames.identityOf(leaf);
@@ -1117,6 +1143,11 @@ public final class PeerTrustRegistry {
     /** Is {@code id} a recorded bridge peer (not revoked, not expired)? Lock-free; no I/O. */
     public boolean isBridgePeer(CrescoIdentity id) {
         if (id == null || !CrescoNames.isValid(id.getRegion()) || !CrescoNames.isValid(id.getAgent())) return false;
+        if (pki != null) {
+            // pre-provisioned: a controller is whoever the PKI says is one (SAN cresco:role:controller), verified on its connection
+            PkiSeen s = pkiSeenOf(id.getTenant(), id.getRegion(), id.getAgent());
+            return s != null && ROLE_CONTROLLER.equals(s.role);
+        }
         String n = name(id.getRegion(), id.getAgent());
         if (revokedBridges.contains(n)) return false;
         Binding b = bridges.get(n);
@@ -1131,6 +1162,10 @@ public final class PeerTrustRegistry {
      */
     public boolean isJoinedController(String tenant, String region, String agent) {
         if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return false;
+        if (pki != null) {
+            PkiSeen s = pkiSeenOf(tenant, region, agent);
+            return s != null && ROLE_CONTROLLER.equals(s.role);
+        }
         String n = name(region, agent);
         Binding id = identities.get(n);
         if (id != null && (tenant == null || !tenant.equals(id.tenant))) return false;
@@ -1191,6 +1226,13 @@ public final class PeerTrustRegistry {
         String n = name(id.getRegion(), id.getAgent());
         Tomb tomb = tombs.get(n);
         if (tomb != null) return tombText(n, tomb);
+        Pki p = pki;
+        if (p != null) {
+            String r = p.rev.refusal(chain);
+            if (r != null) return "the certificate is REVOKED by the operator (" + r + ")";
+            String v = ProvisionedIdentity.validate(chain, p.anchors, new java.util.Date());
+            return v == null ? null : "the certificate " + v;
+        }
         Binding b = identities.get(n);
         if (b != null && !b.key.equals(fp)) {
             return "the certificate names " + n + " but carries another key than the one bound to it (" + PeerIdentity.shortFp(b.key) + ")";
@@ -1311,6 +1353,15 @@ public final class PeerTrustRegistry {
             }
             n = target;
             Binding b = identities.get(n);
+            if (b == null && pki != null && !tombs.containsKey(n)) {
+                // pre-provisioned: names are not bound; the name is reserved (refused for every key), and its last verified key revoked
+                PkiSeen seen = pkiSeen.get(n);
+                tombstoneLocked(n, seen == null ? null : seen.key, source);
+                log.accept("Name " + n + " REVOKED (" + source + "): refused for every key until an operator rebind");
+                if (seen == null || revoked.containsKey(seen.key)) return null;
+                applyInMemory(seen.key, null, n, source, 0, true);
+                return null;
+            }
             if (b == null) {
                 if (tombs.containsKey(n)) return null;                      // already revoked (and tombstoned)
                 return "no key is bound to " + n + " (revoke its key fingerprint instead)";
@@ -1544,6 +1595,99 @@ public final class PeerTrustRegistry {
     /** Is the key with this fingerprint revoked (for every name, or for some region's names)? Lock-free. */
     public boolean isRevokedKey(String fp) { return fp != null && revokedAnyScope.containsKey(fp); }
 
+    // ---------------------------------------------------------------- pre-provisioned PKI (security_profile=production)
+
+    /** The operator's PKI this node trusts instead of bindings, when it is pre-provisioned (null otherwise). */
+    private volatile Pki pki;
+
+    private static final class Pki {
+        final java.util.List<X509Certificate> anchors;
+        final ProvisionedIdentity.Revocations rev;
+        Pki(java.util.List<X509Certificate> anchors, ProvisionedIdentity.Revocations rev) { this.anchors = anchors; this.rev = rev; }
+    }
+
+    /** What PKI verification learned of a name: its tenant, role (controller or agent) and key, when last verified. */
+    private static final class PkiSeen {
+        final String tenant, role, key; final long t;
+        PkiSeen(String tenant, String role, String key, long t) { this.tenant = tenant; this.role = role; this.key = key; this.t = t; }
+    }
+    private final Map<String, PkiSeen> pkiSeen = new ConcurrentHashMap<>();
+    static final int PKI_SEEN_MAX = 200_000;
+
+    /**
+     * Trust the operator's PKI: a certificate is an identity when its chain validates to {@code anchors} now (PKIX, CA scope)
+     * and neither the operator's revocations ({@code rev}) nor this node's revocation lists nor a tombstone refuse it. Names
+     * are then never bound first come: bindings, rebinds and per-region CAs play no part (this node's own identity excepted).
+     */
+    public void setPki(java.util.List<X509Certificate> anchors, ProvisionedIdentity.Revocations rev) {
+        this.pki = new Pki(java.util.List.copyOf(anchors), rev == null ? ProvisionedIdentity.Revocations.NONE : rev);
+        for (String n : rev == null ? java.util.Set.<String>of() : rev.names) {
+            if (!tombs.containsKey(n) && validName(n)) {
+                synchronized (writeLock) { tombstoneLocked(n, null, "operator revocation_file"); }
+            }
+        }
+    }
+
+    /** Is this node trusting a pre-provisioned PKI? */
+    public boolean isPki() { return pki != null; }
+
+    /** With the write lock: reserve {@code n} (its key, when known, was revoked); recorded. */
+    private void tombstoneLocked(String n, String key, String source) {
+        if (tombs.containsKey(n)) return;
+        long t = System.currentTimeMillis();
+        tombs.put(n, new Tomb(key, source, t));
+        Rec tr = rec("tomb", n);
+        tr.key = key; tr.source = source; tr.t = t;
+        if (!append(tr)) log.accept("peer trust registry: the tombstone of " + n + " is in force but could not be recorded");
+        pkiSeen.remove(n);
+    }
+
+    /**
+     * Pre-provisioned: an operator rebind token for the tombstoned name {@code n} that allows key {@code fp} lifts the
+     * tombstone (consumed, recorded): the PKI issued the name a new certificate. The revoked key stays revoked.
+     */
+    private boolean liftTombByRebind(String n, String fp) {
+        synchronized (writeLock) {
+            if (!tombs.containsKey(n)) return true;
+            String token = rebindToken(n, fp);
+            if (token == null) return false;
+            Rec c = rec("consume", n);
+            c.token = token; c.t = System.currentTimeMillis();
+            Rec u = rec("untomb", n);
+            u.key = fp; u.t = c.t;
+            if (!append(c, u)) return false;
+            consumed.add(token);
+            tombs.remove(n);
+            log.accept("Name " + n + " (revoked) REBOUND by the operator ('" + token + "', now consumed): its new certificate (key "
+                    + PeerIdentity.shortFp(fp) + ") is accepted");
+            return true;
+        }
+    }
+
+    /** PKI verification of {@code chain} (revocations, tombstones and validity were checked by the caller). */
+    private CrescoIdentity pkiVerify(Pki p, X509Certificate[] chain, CrescoIdentity id, String fp, String[] why) {
+        String r = p.rev.refusal(chain);
+        if (r != null) { why[0] = "the certificate is REVOKED by the operator (" + r + ")"; return null; }
+        String v = ProvisionedIdentity.validate(chain, p.anchors, new java.util.Date());
+        if (v != null) { why[0] = "the certificate " + v; return null; }
+        String n = name(id.getRegion(), id.getAgent());
+        String role = ProvisionedIdentity.isController(chain[0]) ? ROLE_CONTROLLER : ROLE_AGENT;
+        PkiSeen prev = pkiSeen.get(n);
+        long now = System.currentTimeMillis();
+        if (prev == null || !prev.key.equals(fp) || !prev.role.equals(role) || now - prev.t > 60_000L) {
+            if (prev != null || pkiSeen.size() < PKI_SEEN_MAX) pkiSeen.put(n, new PkiSeen(id.getTenant(), role, fp, now));
+        }
+        return id;
+    }
+
+    /** Pre-provisioned: what PKI verification learned of {@code region/agent} (tenant matching), or null. */
+    private PkiSeen pkiSeenOf(String tenant, String region, String agent) {
+        PkiSeen s = pkiSeen.get(name(region, agent));
+        if (s == null || (tenant != null && !tenant.equals(s.tenant))) return null;
+        if (tombs.containsKey(name(region, agent)) || isRevokedFor(s.key, region)) return null;
+        return s;
+    }
+
     /** Does this node record its OWN CA for {@code region} (it held a region CA)? Lock-free. */
     public boolean ownCaRecorded(String region) {
         Binding ca = region == null ? null : cas.get(region);
@@ -1580,6 +1724,11 @@ public final class PeerTrustRegistry {
         if (id == null) return null;
         Tomb t = tombs.get(name(id.getRegion(), id.getAgent()));
         if (t != null) return "its name " + name(id.getRegion(), id.getAgent()) + " was revoked";
+        Pki p = pki;
+        if (p != null) {
+            String r = p.rev.refusal(new X509Certificate[]{leaf});
+            if (r != null) return "it is revoked by the operator (" + r + ")";
+        }
         Binding ca = cas.get(id.getRegion());
         if (ca != null && revoked.containsKey(ca.key)) {
             X509Certificate c = ca.caCert();
@@ -2105,6 +2254,7 @@ public final class PeerTrustRegistry {
             case "bridge": bridges.put(r.name, new Binding(null, null, null, "discovery", null, false, r.t, r.t)); break;
             case "unbridge": bridges.remove(r.name); break;
             case "unbind": { Binding old = identities.get(r.name); if (old != null) removeIdentity(r.name, old); break; }
+            case "untomb": tombs.remove(r.name); break;
             case "tomb": {
                 Binding old = identities.get(r.name);
                 if (old != null && old.key.equals(r.key)) removeIdentity(r.name, old);

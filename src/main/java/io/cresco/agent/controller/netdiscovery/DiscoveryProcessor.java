@@ -235,6 +235,18 @@ public class DiscoveryProcessor {
 		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
 		DiscoveryType type = discoveryNode.discovery_type;
 		String region = discoveryNode.discovered_region, agent = discoveryNode.discovered_agent;
+		if (controllerEngine.getCertificateManager().isProvisioned()) {
+			// pre-provisioned: the responder must be a CONTROLLER of the operator's PKI naming itself as it answered (no pin is
+			// learned: the PKI decides at every exchange and every handshake); nothing is installed
+			io.cresco.agent.controller.communication.CertificateManager pcm = controllerEngine.getCertificateManager();
+			String json = discoveryNode.discovered_server_cert != null ? discoveryNode.discovered_server_cert : discoveryNode.discovered_cert;
+			String why = pcm.provisionedResponderRefusal(json == null ? null : pcm.getCertsfromJson(json), type, region, agent);
+			if (why != null) {
+				logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
+				return false;
+			}
+			return true;
+		}
 		// controller_trust_anchors: the RESPONDER's chain must have a validated path from its leaf to a listed anchor; under the
 		// regional CA the identity it issued us must come from a CA on that path (a copied chain cannot hand out identities)
 		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
@@ -396,6 +408,17 @@ public class DiscoveryProcessor {
 
 	/** Responder side of a certified discovery exchange (see {@link #setCertTrust(DiscoveryNode)}). */
 	private String configureCertTrust(DiscoveryNode discoveryNode) {
+		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+		if (cm.isProvisioned()) {
+			// pre-provisioned: the joiner's identity is its certificate from the operator's PKI -- nothing is bound or issued
+			String why = cm.provisionedJoinerRefusal(cm.getCertsfromJson(discoveryNode.discover_cert), discoveryNode.discovery_type,
+					discoveryNode.discover_region, discoveryNode.discover_agent);
+			if (why != null) {
+				logger.error("Discovery REFUSED " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": " + why);
+				return null;
+			}
+			return cm.getJsonFromCerts(cm.getPublicCertificate());
+		}
 		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
 		if (!regionalCa) {
 			// per-node trust: refuse before trusting anything when the joiner may not have this name

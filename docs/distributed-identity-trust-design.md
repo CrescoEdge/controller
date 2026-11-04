@@ -340,6 +340,8 @@ upgraded, with client certificates on.
 | `identity_leaf_validity_hours`, `identity_renew_before_days`, `identity_renew_check_minutes`, `identity_reenroll_retry_minutes` | 168, 30, 60, 5 | renewal at max(life/3, floor) but at most life/2; no self-made fallback |
 | `identity_cert_backdate_hours` | 24 | certificate backdate = tolerated clock lag; skew is reported by the `identity` health check |
 | `revocation_sync_max_entries` | 4096 | entries per pong of a revocation-list delta |
+| `identity_keystore`, `identity_keystore_password_file`, `trust_anchors`, `revocation_file`, `identity_keystore_reload_seconds` | --, --, --, --, 30 | pre-provisioned identities (`security_profile=production`): `pre-provisioned-identity.md` |
+| `region_ca_allow_new` | false | make a new region CA although one existed and cannot be loaded (one start) |
 | `peer_trust_persist`, `node_identity_persist`, `node_identity_dir` | true, true, `<data>/security` | |
 | `security_federated_tenants` | any | tenants a regional-CA controller federates with |
 | `broker_stream_recipient_binding` | true | with `broker_security_enabled` |
