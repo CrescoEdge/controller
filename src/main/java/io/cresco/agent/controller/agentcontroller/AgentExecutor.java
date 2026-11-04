@@ -138,8 +138,9 @@ public class AgentExecutor implements Executor {
                 return getAgentInfo(incoming);
 
             default:
-                logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
-                logger.error(incoming.getParams().toString());
+                if (io.cresco.agent.controller.communication.ParamLog.allow("agent-unknown-config")) {
+                    logger.error(io.cresco.agent.controller.communication.ParamLog.unknownAction(incoming));
+                }
                 break;
         }
 
@@ -284,8 +285,9 @@ public class AgentExecutor implements Executor {
                     return getCapabilityInventory(incoming);
 
                 default:
-                    logger.error("Unknown configtype found {} for {}:", incoming.getParam("action"), incoming.getMsgType().toString());
-                    logger.error(incoming.getParams().toString());
+                    if (io.cresco.agent.controller.communication.ParamLog.allow("agent-unknown-exec")) {
+                        logger.error(io.cresco.agent.controller.communication.ParamLog.unknownAction(incoming));
+                    }
                     break;
             }
             return null;
@@ -396,7 +398,7 @@ public class AgentExecutor implements Executor {
             }
 
             ce.setCompressedParam("agentslist",gson.toJson(controllerEngine.getGDB().getAgentList(actionRegionAgents)));
-            logger.trace("list agents return : " + ce.getParams().toString());
+            logger.trace("list agents return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());

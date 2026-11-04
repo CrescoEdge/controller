@@ -89,12 +89,19 @@ def main():
     ap.add_argument("--key", required=True)
     ap.add_argument("--messages", type=int, default=200)
     ap.add_argument("--settle", type=float, default=30.0)
+    ap.add_argument("--pin", action="append", default=[], help="<port>=<wsapi certificate fingerprint> (repeatable)")
     a = ap.parse_args()
+    pins = dict(p.split("=", 1) for p in a.pin if "=" in p and p.split("=", 1)[1])
 
-    tx = clientlib(a.host, a.tx_port, a.key)
-    rx = clientlib(a.host, a.rx_port, a.key)
-    spy = clientlib(a.host, a.spy_port, a.key)
-    spy2 = clientlib(a.host, a.spy2_port, a.key) if a.spy2_port else None
+    def client(port):
+        # pin the wsapi certificate when its fingerprint is known (clients verify it by default)
+        pin = pins.get(str(port))
+        return clientlib(a.host, port, a.key, fingerprint=pin) if pin else clientlib(a.host, port, a.key)
+
+    tx = client(a.tx_port)
+    rx = client(a.rx_port)
+    spy = client(a.spy_port)
+    spy2 = client(a.spy2_port) if a.spy2_port else None
     if not (tx.connect() and rx.connect() and spy.connect() and (spy2 is None or spy2.connect())):
         print(json.dumps({"error": "wsapi connect failed"}))
         return 2

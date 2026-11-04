@@ -26,11 +26,16 @@ public final class StdinGuard {
     public static final String NO_STDIN = "(type IS NULL OR (type <> 'input' AND type NOT LIKE 'input-%'))";
 
     private static final Pattern NAMES_STDIN = Pattern.compile("'input(-|'|%|_)", Pattern.CASE_INSENSITIVE);
+    /** Mentions that EXCLUDE stdin (a selector that keeps stdin out, like {@link #NO_STDIN}, is not refused). */
+    private static final Pattern EXCLUDES = Pattern.compile(
+            "<>\\s*'[^']*'|NOT\\s+LIKE\\s+'[^']*'(\\s+ESCAPE\\s+'[^']*')?|NOT\\s+IN\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE);
 
-    /** Why {@code selector} is refused (it names stdin), or null. */
+    /** Why {@code selector} is refused (it asks for stdin: names it other than to exclude it), or null. */
     public static String refusal(String selector) {
-        if (selector != null && NAMES_STDIN.matcher(selector).find()) {
-            return "a dataplane selector naming a process's stdin (type input/input-*) is refused: stdin is the executor's";
+        if (selector != null && NAMES_STDIN.matcher(EXCLUDES.matcher(selector).replaceAll(" ")).find()) {
+            return "refused: the selector asks for a process's stdin (type 'input' or 'input-*'); stdin never travels on the "
+                    + "dataplane to any subscriber but the executor (write it with the executor's write_stdin action). A selector "
+                    + "that only excludes it (type <> 'input', NOT LIKE 'input-%') is accepted";
         }
         return null;
     }

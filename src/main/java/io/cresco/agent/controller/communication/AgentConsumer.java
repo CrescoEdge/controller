@@ -72,7 +72,7 @@ public class AgentConsumer {
 					logger.error("IMPLEMENT REMOVAL OF FILES!");
 					logger.error(cause);
 					logger.error("key: " + n.getKey());
-					logger.error("value: " + n.getValue().getParams().toString());
+					logger.error("value: " + io.cresco.agent.controller.communication.ParamLog.describe(n.getValue()));
 				}
 			}
 		};
@@ -208,13 +208,13 @@ public class AgentConsumer {
 
 								if (callId != null) {
 									isMyRPC = true;
-									logger.trace("RPC Text Message: {}", me.getParams().toString());
+									logger.trace("RPC Text Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(me));
 									plugin.receiveRPC(callId, me);
 								}
 							}
 
 							if(!isMyRPC) {
-								logger.trace("Text Message: {}", me.getParams().toString());
+								logger.trace("Text Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(me));
 								//create new thread service for incoming messages
 								controllerEngine.msgInThreaded(me);
 							}

@@ -442,7 +442,7 @@ public class AgentServiceImpl implements AgentService {
             controllerEngine.msgIn(msg);
         } catch(Exception ex) {
             logger.error(msg.printHeader());
-            logger.error(msg.getParams().toString());
+            logger.error(io.cresco.agent.controller.communication.ParamLog.describe(msg));
 
             logger.error("msgOut()", ex);
         }
