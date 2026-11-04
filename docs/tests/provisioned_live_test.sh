@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live proof of PRE-PROVISIONED identities (security_profile=production, docs/pre-provisioned-identity.md) on one host:
 #
-#   global glob/gc (controller, issued by the root)      agent glob/a1 (issued by the root)
+#   global glob/gc (THE global: --global, by the root)  agent glob/a1 (issued by the root)
 #   region rgr/rc  (controller, issued by region CA rgr) agent rgr/b1  (issued by region CA rgr)
 #
 # every identity made beforehand by tools/cresco-pki.sh. Checks: the mesh comes up with NO enrollment, generation or
@@ -23,7 +23,7 @@ COMMON="-Djava.net.preferIPv4Stack=true -Xmx1024M -Droot_log_level=INFO -Denable
 PKI="$WORK/pki"
 echo "### the operator's PKI (offline): root, region CA rgr, two controllers, two agents"
 bash "$TOOL" init "$PKI" --days 30 >/dev/null && bash "$TOOL" region "$PKI" t1 rgr --days 30 >/dev/null \
-  && bash "$TOOL" node "$PKI" t1 glob gc --controller --days 10 >/dev/null && bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 10 >/dev/null \
+  && bash "$TOOL" node "$PKI" t1 glob gc --global --days 10 >/dev/null && bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 10 >/dev/null \
   && bash "$TOOL" node "$PKI" t1 glob a1 --days 10 >/dev/null && bash "$TOOL" node "$PKI" t1 rgr b1 --days 10 >/dev/null \
   && bash "$TOOL" crl "$PKI" >/dev/null || { echo "FATAL: the PKI tool failed"; exit 2; }
 PIDS="$WORK/pids"; : > "$PIDS"

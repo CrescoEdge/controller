@@ -4,15 +4,21 @@
 #
 #   cresco-pki.sh init   <pki> [--name "Cresco Fabric Root"] [--days 3650] [--key rsa|ec]
 #   cresco-pki.sh region <pki> <tenant> <region> [--days 1825]
-#   cresco-pki.sh node   <pki> <tenant> <region> <agent> [--controller] [--issuer root|region] [--days 365]
+#   cresco-pki.sh node   <pki> <tenant> <region> <agent> [--controller|--global] [--issuer root|region] [--days 365]
 #   cresco-pki.sh api    <pki> <tenant> <user> <admin|user> [--days 365]
 #   cresco-pki.sh revoke <pki> <certificate.pem>
 #   cresco-pki.sh crl    <pki> [--days 30]
 #
 # Names (what the broker and the registry use): a node's subject is CN=<agent>, OU=<region>, O=<tenant>, with the SAN URI
-# cresco:node:<tenant>/<region>/<agent>; a controller (a region or global controller) also carries cresco:role:controller.
-# A region CA's subject names its region and tenant (OU, O): it can issue only that region's names. An API user's
-# certificate carries cresco:api:<tenant>/<user> and cresco:role:<admin|user> (wsapi's mapping) and names no node.
+# cresco:node:<tenant>/<region>/<agent>; a controller (a region or global controller) also carries cresco:role:controller,
+# and THE global controller (--global, issued by the root only) also cresco:role:global.
+# A region CA carries its explicit scope (SAN URIs cresco:ca:<tenant>/<region> and cresco:ca-roles:node,controller): it can
+# issue only that region's node and controller names (never the global). The root (unscoped) issues any. A CA without an
+# explicit scope issues nothing a node accepts. An API user's certificate carries cresco:api:<tenant>/<user> and
+# cresco:role:<admin|user> (wsapi's mapping) and names no node.
+#
+# trust-anchors.pem holds the ROOT only; region CAs are intermediates every node presents in its chain (node.p12 holds
+# leaf, region CA, root), so revoking a region CA (revoke + crl) stops all of its leaves.
 #
 # Output, per node: <pki>/nodes/<region>_<agent>/{node.p12, node.p12.pass, trust-anchors.pem, node.pem} -- give the node
 #   identity_keystore=node.p12  identity_keystore_password_file=node.p12.pass  trust_anchors=trust-anchors.pem
@@ -69,10 +75,9 @@ CN = unused
 EOF
 }
 
-anchors() { # rewrite <pki>/trust-anchors.pem: the root and every region CA
+anchors() { # rewrite <pki>/trust-anchors.pem: the ROOT only (region CAs are intermediates in each node's chain)
   local pki=$1
   cat "$pki/root/ca.pem" > "$pki/trust-anchors.pem"
-  for d in "$pki"/regions/*/; do [ -f "$d/ca.pem" ] && cat "$d/ca.pem" >> "$pki/trust-anchors.pem"; done
   chmod 600 "$pki/trust-anchors.pem"
 }
 
@@ -105,11 +110,11 @@ region)
   cadir "$d" x
   newkey "$d/ca.key" "$(cat "$pki/keyalg")"
   openssl req -new -key "$d/ca.key" -subj "/O=$tenant/OU=$region/CN=$region CA" -config "$d/openssl.cnf" -out "$d/ca.csr" 2>/dev/null
-  printf '[ ext ]\nbasicConstraints = critical, CA:true, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\n' > "$d/ext.cnf"
+  printf '[ ext ]\nbasicConstraints = critical, CA:true, pathlen:0\nkeyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\nauthorityKeyIdentifier = keyid\nsubjectAltName = @san\n[ san ]\nURI.1 = cresco:ca:%s/%s\nURI.2 = cresco:ca-roles:node,controller\n' "$tenant" "$region" > "$d/ext.cnf"
   sign "$pki/root" "$d/ca.csr" "$d/ca.pem" "$(opt --days 1825 "$@")" "$d/ext.cnf"
   cat "$d/ca.pem" "$pki/root/ca.pem" > "$d/chain.pem"; chmod 600 "$d/ca.pem" "$d/chain.pem"; rm -f "$d/ca.csr"
   anchors "$pki"
-  echo "region CA $tenant/$region: $d/ca.pem (it issues only names of $tenant/$region)"
+  echo "region CA $tenant/$region: $d/ca.pem (it issues only node and controller names of $tenant/$region)"
   ;;
 node|api)
   pki=${1:?pki}; shift
@@ -118,11 +123,15 @@ node|api)
     tenant_ok "$tenant"; name_ok "$region"; name_ok "$agent"
     out="$pki/nodes/${region}_${agent}"; subj="/O=$tenant/OU=$region/CN=$agent"; base=node
     san="URI.1 = cresco:node:$tenant/$region/$agent"
-    [ "$(flag --controller "$@")" = 1 ] && san="$san
+    global=$(flag --global "$@")
+    { [ "$(flag --controller "$@")" = 1 ] || [ "$global" = 1 ]; } && san="$san
 URI.2 = cresco:role:controller"
+    [ "$global" = 1 ] && san="$san
+URI.3 = cresco:role:global"
     eku="serverAuth, clientAuth"
     issuer="$pki/root"
-    if [ "$(opt --issuer region "$@")" = region ] && [ -f "$pki/regions/${tenant}_${region}/ca.pem" ]; then issuer="$pki/regions/${tenant}_${region}"; fi
+    # the global is issued by the root (no region CA may issue it)
+    if [ "$global" = 0 ] && [ "$(opt --issuer region "$@")" = region ] && [ -f "$pki/regions/${tenant}_${region}/ca.pem" ]; then issuer="$pki/regions/${tenant}_${region}"; fi
   else
     tenant=${1:?tenant}; user=${2:?user}; role=${3:?admin|user}; shift 3
     tenant_ok "$tenant"; name_ok "$user"; [ "$role" = admin ] || [ "$role" = user ] || die "role must be admin or user"
@@ -175,6 +184,8 @@ crl)
   pki=${1:?pki}; shift
   days=$(opt --days 30 "$@")
   tmp="$pki/revocations.pem.new"; : > "$tmp"
+  # the region CAs' certificates first: a node verifies each region CA's CRL with it (region CAs are not trust anchors)
+  for d in "$pki"/regions/*; do [ -f "$d/ca.pem" ] && cat "$d/ca.pem" >> "$tmp"; done
   for d in "$pki/root" "$pki"/regions/*; do
     [ -f "$d/ca.pem" ] || continue
     openssl ca -gencrl -config "$d/openssl.cnf" -crldays "$days" -out "$d/crl.pem" >/dev/null 2>&1 || die "CRL for $d failed"
@@ -185,5 +196,5 @@ crl)
   echo "$pki/revocations.pem: $(grep -c 'BEGIN X509 CRL' "$pki/revocations.pem") CRL(s), $(grep -c '^key:' "$pki/revocations.txt" || true) key(s); valid $days days"
   ;;
 *)
-  sed -n '2,20p' "$0"; exit 2 ;;
+  sed -n '2,27p' "$0"; exit 2 ;;
 esac

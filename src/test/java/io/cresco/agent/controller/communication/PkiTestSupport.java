@@ -69,6 +69,10 @@ public final class PkiTestSupport {
                 new Date(now - DAY), new Date(now + 1825 * DAY), subject, kp.getPublic());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(0));
         b.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+        // its explicit scope (what tools/cresco-pki.sh region writes): this region and tenant, nodes and controllers
+        b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName[]{
+                new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:ca:" + tenant + "/" + region),
+                new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:ca-roles:node,controller")}));
         return new Ca(kp, sign(b, root.kp), new X509Certificate[]{root.cert});
     }
 
@@ -78,7 +82,16 @@ public final class PkiTestSupport {
         return node(issuer, kp, tenant, region, agent, controller, from, validMs);
     }
 
+    /** The fabric's GLOBAL controller (cresco:role:global and cresco:role:controller), issued by {@code issuer}. */
+    public static Node global(Ca issuer, String tenant, String region, String agent, long from, long validMs) throws Exception {
+        return node(issuer, TlsTestSupport.rsa(), tenant, region, agent, true, true, from, validMs);
+    }
+
     public static Node node(Ca issuer, KeyPair kp, String tenant, String region, String agent, boolean controller, long from, long validMs) throws Exception {
+        return node(issuer, kp, tenant, region, agent, controller, false, from, validMs);
+    }
+
+    public static Node node(Ca issuer, KeyPair kp, String tenant, String region, String agent, boolean controller, boolean global, long from, long validMs) throws Exception {
         JcaX509v3CertificateBuilder b = new JcaX509v3CertificateBuilder(X500Name.getInstance(issuer.cert.getSubjectX500Principal().getEncoded()), serial(),
                 new Date(from), new Date(from + validMs), CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null)), kp.getPublic());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
@@ -86,6 +99,7 @@ public final class PkiTestSupport {
         List<GeneralName> sans = new ArrayList<>();
         sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:node:" + tenant + "/" + region + "/" + agent));
         if (controller) sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:role:controller"));
+        if (global) sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:role:global"));
         b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(sans.toArray(new GeneralName[0])));
         X509Certificate leaf = sign(b, issuer.kp);
         X509Certificate[] chain = new X509Certificate[1 + issuer.above.length + 1];

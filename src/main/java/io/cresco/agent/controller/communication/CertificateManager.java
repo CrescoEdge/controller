@@ -196,6 +196,15 @@ public class CertificateManager {
     public boolean isProvisioned() { return provisioned != null; }
 
     /**
+     * Is this node the fabric's GLOBAL controller by the operator's PKI (SAN cresco:role:global, issued by a CA allowed to
+     * issue it)? Pre-provisioned, only it answers GLOBAL discovery.
+     */
+    public boolean isProvisionedGlobal() {
+        ProvisionedIdentity p = provisioned;
+        return p != null && p.global;
+    }
+
+    /**
      * Why this node, configured for a pre-provisioned identity, must NOT start, or null (also null when it is not
      * provisioned): its keystore, password file, trust anchors or revocation file cannot be used, its chain does not validate
      * to the anchors now, it is revoked by the operator, or it names another identity than this node is configured as.
@@ -236,6 +245,9 @@ public class CertificateManager {
             if (!p.controller) return "this node is configured as a controller but its certificate does not carry the SAN URI "
                     + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_CONTROLLER;
         }
+        if (config.getBooleanParam("is_global", false) && !p.global) return "this node is configured as the GLOBAL controller (is_global) but its"
+                + " certificate does not carry the SAN URI " + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_GLOBAL
+                + " (cresco-pki.sh node ... --global)";
         return null;
     }
 
@@ -290,6 +302,10 @@ public class CertificateManager {
         boolean controllerExchange = type == io.cresco.agent.controller.netdiscovery.DiscoveryType.REGION
                 || type == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL;
         if (controllerExchange && region.equals(myRegion)) return "a controller of this node's own region answered a " + type + " exchange";
+        if (type == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL && !ProvisionedIdentity.isGlobal(chain[0])) {
+            return "it answered a GLOBAL exchange but is not the fabric's global controller (its certificate does not carry the SAN URI "
+                    + ProvisionedIdentity.URI_ROLE + ProvisionedIdentity.ROLE_GLOBAL + ")";
+        }
         if (!controllerExchange && myRegion != null && !region.equals(myRegion)) return "it answered as region " + region + " but this node is of region " + myRegion;
         if (!controllerExchange && !id.getTenant().equals(SecuritySettings.tenant(plugin.getConfig()))) return "its tenant " + id.getTenant() + " is not this node's";
         return controllerAnchorRefusal(chain, null);
@@ -385,6 +401,21 @@ public class CertificateManager {
                     || ProvisionedIdentity.mtime(ta) != cur.anchorsMtime;
             boolean revChanged = rp != null ? (!Files.exists(rp) || ProvisionedIdentity.mtime(rp) != operatorRevocations.mtime)
                     : operatorRevocations != ProvisionedIdentity.Revocations.NONE;
+            // the D6 file rules hold at every tick, not only when a file changed: a directory opened to others since is alarmed
+            String exposed = null;
+            try {
+                ProvisionedIdentity.checkFile(ks, true, "identity_keystore");
+                ProvisionedIdentity.checkFile(pw, true, "identity_keystore_password_file");
+                ProvisionedIdentity.checkFile(ta, false, "trust_anchors");
+                if (rp != null && Files.exists(rp, java.nio.file.LinkOption.NOFOLLOW_LINKS)) ProvisionedIdentity.checkFile(rp, false, "revocation_file");
+            } catch (ProvisionedIdentity.ProvisioningException e) {
+                exposed = e.getMessage();
+            }
+            if (exposed != null) {
+                setProvisionedAlarm(EXPOSED + exposed + "); no replacement is loaded until they are owner-only again", true);
+                return false;
+            }
+            if (provisionedAlarm != null && provisionedAlarm.startsWith(EXPOSED)) setProvisionedAlarm(null, false);
             if (!idChanged && !revChanged) { checkProvisionedExpiry(); return false; }
             java.util.List<X509Certificate> anchors = ProvisionedIdentity.readAnchors(ta);
             ProvisionedIdentity.Revocations rev = readOperatorRevocations(cfg, anchors);
@@ -417,7 +448,7 @@ public class CertificateManager {
     private void checkProvisionedExpiry() {
         ProvisionedIdentity p = provisioned;
         if (p == null) return;
-        if (provisionedAlarm != null && provisionedAlarm.startsWith("the replaced")) return;   // a refusal stands until the files change
+        if (provisionedAlarm != null && (provisionedAlarm.startsWith("the replaced") || provisionedAlarm.startsWith(EXPOSED))) return;   // stands until fixed
         long now = System.currentTimeMillis(), na = p.chain[0].getNotAfter().getTime();
         long life = intendedLife(p.chain[0].getNotBefore().getTime(), na), left = na - now;
         if (left <= 0) setProvisionedAlarm("this node's pre-provisioned certificate EXPIRED on " + p.chain[0].getNotAfter() + "; replace "
@@ -429,6 +460,8 @@ public class CertificateManager {
                 + p.chain[0].getNotAfter() + "; replace " + plugin.getConfig().getStringParam("identity_keystore") + " before then", false);
         else setProvisionedAlarm(null, false);
     }
+
+    private static final String EXPOSED = "the pre-provisioned identity files are no longer protected (";
 
     private void setProvisionedAlarm(String text, boolean critical) {
         String old = provisionedAlarm;

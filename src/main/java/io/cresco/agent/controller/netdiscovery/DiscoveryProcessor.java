@@ -24,6 +24,17 @@ public class DiscoveryProcessor {
 		this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
 	}
 
+	/**
+	 * May this controller answer a discovery exchange of {@code type}? Pre-provisioned, a GLOBAL exchange is answered only by
+	 * the fabric's global controller (its certificate carries cresco:role:global): every region holds the global discovery
+	 * secret (it needs it to join), so the secret alone does not say which controller is the global.
+	 */
+	private boolean answersAs(DiscoveryType type) {
+		if (type != DiscoveryType.GLOBAL) return true;
+		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+		return cm == null || !cm.isProvisioned() || cm.isProvisionedGlobal();
+	}
+
 	private String getDiscoverySecret(DiscoveryNode discoveryNode) {
 		String discoverySecret = null;
 		try {
@@ -74,7 +85,7 @@ public class DiscoveryProcessor {
 					logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType != DiscoveryNode.NodeType.BROADCAST");
 				}
 			} else {
-				if(controllerEngine.cstate.isRegionalController()) {
+				if(controllerEngine.cstate.isRegionalController() && answersAs(discoveryNode.discovery_type)) {
 
 					String discoverySecret = getDiscoverySecret(discoveryNode);
 
@@ -636,6 +647,12 @@ public class DiscoveryProcessor {
 		String secret = (h == null || h.type == null) ? null : secretFor(h.type);
 		if (h == null || !"hello".equals(h.step) || secret == null || h.nc == null || !controllerEngine.cstate.isRegionalController()) {
 			logger.warn("discovery v2: not answering a hello from " + remote + " (unknown type, no secret for it, or not a controller)");
+			return null;
+		}
+		DiscoveryType ht;
+		try { ht = DiscoveryType.valueOf(h.type); } catch (Exception e) { return null; }
+		if (!answersAs(ht)) {
+			logger.warn("discovery v2: not answering a GLOBAL hello from " + remote + ": this node is not the fabric's global controller by the operator's PKI");
 			return null;
 		}
 		if (!DiscoveryAuth.leafNames(leafOf(h.ccert), h.creg, h.cagt)) {

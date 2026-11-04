@@ -659,8 +659,10 @@ public class ActiveBroker {
 				if (ss == null) continue;
 				try {
 					java.security.cert.Certificate[] peer = ss.getPeerCertificates();
-					if (peer.length > 0 && peer[0] instanceof java.security.cert.X509Certificate
-							&& peers.revokedReason((java.security.cert.X509Certificate) peer[0]) != null) ss.invalidate();
+					java.security.cert.X509Certificate[] pc = new java.security.cert.X509Certificate[peer.length];
+					int k = 0;
+					for (java.security.cert.Certificate c : peer) if (c instanceof java.security.cert.X509Certificate) pc[k++] = (java.security.cert.X509Certificate) c;
+					if (k > 0 && peers.revokedReason(java.util.Arrays.copyOf(pc, k)) != null) ss.invalidate();
 				} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
 					// no client certificate in this session
 				}

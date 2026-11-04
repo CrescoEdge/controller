@@ -193,6 +193,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean localController;    // this controller's own vm:// connection (LOCAL_CONTROLLER_PREFIX)
         final boolean anonymous;          // a network connection without a client certificate: no identity, no role
         volatile X509Certificate leaf;    // the TLS client certificate (leaf), when one was presented
+        volatile X509Certificate[] chain; // the whole chain it presented (the live sweep judges every certificate on its path)
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
         volatile Object bridgePeer;       // the controller at the other end of this bridge connection (resolved once), or NO_PEER
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
@@ -285,6 +286,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             // a connection without a certificate: quarantined
             CrescoSecurityContext sc = new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false, id == null && !isVm(context));
             sc.leaf = chain[0];
+            sc.chain = chain.clone();
             return sc;
         }
         String u = info.getUserName();
@@ -521,7 +523,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             if (sc == null || sc.leaf == null) continue;
             String why = null;
             if (now >= sc.leaf.getNotAfter().getTime()) why = "its certificate expired at " + sc.leaf.getNotAfter();
-            else why = peers.revokedReason(sc.leaf);    // key revoked for its name, name tombstoned, or its region's CA revoked
+            else why = peers.revokedReason(sc.chain != null ? sc.chain : new X509Certificate[]{sc.leaf});   // key/name/issuer/anchor revoked
             if (why != null) { close(ctx, why); n++; }
         }
         return n;

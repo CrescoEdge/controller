@@ -1230,7 +1230,7 @@ public final class PeerTrustRegistry {
         if (p != null) {
             String r = p.rev.refusal(chain);
             if (r != null) return "the certificate is REVOKED by the operator (" + r + ")";
-            String v = ProvisionedIdentity.validate(chain, p.anchors, new java.util.Date());
+            String v = pkiCheck(p, chain);
             return v == null ? null : "the certificate " + v;
         }
         Binding b = identities.get(n);
@@ -1603,7 +1603,29 @@ public final class PeerTrustRegistry {
     private static final class Pki {
         final java.util.List<X509Certificate> anchors;
         final ProvisionedIdentity.Revocations rev;
+        /** Leaf certificate SHA-256 -> its validated path (leaf .. anchor) under THESE anchors (signatures and scope hold). */
+        final Map<String, java.util.List<X509Certificate>> paths = new ConcurrentHashMap<>();
         Pki(java.util.List<X509Certificate> anchors, ProvisionedIdentity.Revocations rev) { this.anchors = anchors; this.rev = rev; }
+    }
+    static final int PKI_PATHS_MAX = 200_000;
+
+    /**
+     * Why {@code chain} is refused by the PKI now, or null: its validated path to the anchors (cached per leaf certificate
+     * for these anchors: signatures and CA scopes do not change) and then, every time, the validity of EVERY certificate on
+     * that path, the anchor included, and the operator's revocations of any of them.
+     */
+    private static String pkiCheck(Pki p, X509Certificate[] chain) {
+        String cfp;
+        try { cfp = CertificateManager.certFingerprint(chain[0]); } catch (Exception e) { return "is unreadable"; }
+        java.util.List<X509Certificate> path = p.paths.get(cfp);
+        java.util.Date now = new java.util.Date();
+        if (path == null) {
+            ProvisionedIdentity.Validated v = ProvisionedIdentity.validatePath(chain, p.anchors, now);
+            if (v.refusal != null) return v.refusal;
+            path = v.path;
+            if (p.paths.size() < PKI_PATHS_MAX) p.paths.put(cfp, path);
+        }
+        return ProvisionedIdentity.pathRefusal(path, now, p.rev);
     }
 
     /** What PKI verification learned of a name: its tenant, role (controller or agent) and key, when last verified. */
@@ -1668,7 +1690,7 @@ public final class PeerTrustRegistry {
     private CrescoIdentity pkiVerify(Pki p, X509Certificate[] chain, CrescoIdentity id, String fp, String[] why) {
         String r = p.rev.refusal(chain);
         if (r != null) { why[0] = "the certificate is REVOKED by the operator (" + r + ")"; return null; }
-        String v = ProvisionedIdentity.validate(chain, p.anchors, new java.util.Date());
+        String v = pkiCheck(p, chain);
         if (v != null) { why[0] = "the certificate " + v; return null; }
         String n = name(id.getRegion(), id.getAgent());
         String role = ProvisionedIdentity.isController(chain[0]) ? ROLE_CONTROLLER : ROLE_AGENT;
@@ -1716,7 +1738,18 @@ public final class PeerTrustRegistry {
      * signature checks (the broker sweeps its live connections with it).
      */
     public String revokedReason(X509Certificate leaf) {
-        if (leaf == null) return null;
+        return leaf == null ? null : revokedReason(new X509Certificate[]{leaf});
+    }
+
+    /**
+     * As {@link #revokedReason(X509Certificate)} for the chain a live connection presented (leaf first). Pre-provisioned, the
+     * PKI judges the whole path again (validated once per leaf certificate and set of anchors): a certificate on it -- an
+     * issuing region CA, the anchor itself -- revoked by the operator or out of its validity, or a path that no longer
+     * reaches the anchors (replaced), closes the connection.
+     */
+    public String revokedReason(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return null;
+        X509Certificate leaf = chain[0];
         String fp = fingerprint(leaf.getPublicKey().getEncoded());
         CrescoIdentity id = CrescoNames.identityOf(leaf);
         String region = id == null ? null : id.getRegion();
@@ -1726,8 +1759,10 @@ public final class PeerTrustRegistry {
         if (t != null) return "its name " + name(id.getRegion(), id.getAgent()) + " was revoked";
         Pki p = pki;
         if (p != null) {
-            String r = p.rev.refusal(new X509Certificate[]{leaf});
+            String r = p.rev.refusal(chain);
             if (r != null) return "it is revoked by the operator (" + r + ")";
+            String v = pkiCheck(p, chain);
+            if (v != null) return "its certificate " + v;
         }
         Binding ca = cas.get(id.getRegion());
         if (ca != null && revoked.containsKey(ca.key)) {
@@ -1740,7 +1775,7 @@ public final class PeerTrustRegistry {
     /** {@link #revokedReason} for a whole chain: also a revoked key anywhere above the leaf (a revoked CA). */
     public String revocationRefusal(X509Certificate[] chain) {
         if (chain == null || chain.length == 0) return null;
-        String r = revokedReason(chain[0]);
+        String r = revokedReason(chain);
         return r != null ? r : revokedIssuer(chain);
     }
 
