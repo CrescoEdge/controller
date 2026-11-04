@@ -121,6 +121,11 @@ public class MsgRouter {
 
     /** Hand {@code rm} to the broker; a send that cannot happen (producer torn down for a re-init) is reported. */
     private void send(MsgEvent rm, Hop hop) {
+        String crossTenant = tenantRefusal(rm);
+        if (crossTenant != null) {
+            refuse(rm, crossTenant);
+            return;
+        }
         ActiveClient client = controllerEngine.getActiveClient();
         if (client == null) {
             unavailable(rm, hop, "broker client not available");
@@ -129,6 +134,28 @@ public class MsgRouter {
         if (!client.sendMessage(rm)) {
             unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed");
         }
+    }
+
+    /**
+     * With tenant namespacing, the tenant a message travels in ({@code cresco_tenant}, which names the queues every hop
+     * qualifies it to) must be its verified caller's -- or the caller must be of a superuser tenant (or anonymous, in
+     * insecure mode). Otherwise a relay (a regional or global controller relays every tenant) would carry a message of
+     * tenant T2 into tenant T's namespace. An unstamped message is relayed as it is (its destination refuses it).
+     */
+    String tenantRefusal(MsgEvent rm) {
+        if (!SecuritySettings.tenantNamespacing(plugin.getConfig()) || !controllerEngine.securityOn()) return null;
+        return tenantRefusal(rm, SecuritySettings.superuserTenants(plugin.getConfig()));
+    }
+
+    /** {@link #tenantRefusal(MsgEvent)} with namespacing and security on. */
+    static String tenantRefusal(MsgEvent rm, java.util.Set<String> superuserTenants) {
+        String msgTenant = rm.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
+        if (msgTenant == null || msgTenant.isEmpty()) return null;        // qualified with this node's tenant at the send
+        io.cresco.library.security.Caller c = io.cresco.library.security.Caller.fromMsgEvent(rm);
+        if (c == null || c.isAnonymous() || msgTenant.equals(c.getTenant())) return null;
+        if (superuserTenants.contains(c.getTenant())) return null;
+        return "a message of " + c + " (tenant " + c.getTenant() + ") travels in tenant " + msgTenant
+                + "'s namespace; only a superuser tenant's caller sends into another tenant";
     }
 
     /**
@@ -523,7 +550,7 @@ public class MsgRouter {
                 rm.setParam(SRCROUTE, String.join(";", hops));
                 rm.setForwardDst(nextRegion, nextAgent, null);
                 if (!loggedSrcRoute) { loggedSrcRoute = true; logger.info("source-routing: active (forwarding " + me + " -> " + next + ")"); }
-                controllerEngine.getActiveClient().sendMessage(rm);
+                send(rm, Hop.REMOTE_REGION);
                 return true; // consumed here
             }
         } catch (Exception ex) {

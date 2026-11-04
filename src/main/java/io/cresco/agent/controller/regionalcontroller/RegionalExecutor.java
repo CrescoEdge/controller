@@ -34,6 +34,11 @@ public class RegionalExecutor implements Executor {
     private PluginBuilder plugin;
     private CLogger logger;
     private GlobalExecutor globalExecutor;
+    /** Who may call each regional and global action (docs/caller-authorization.md section 3). */
+    private final io.cresco.library.security.ActionAuthorizer regionalTable =
+            io.cresco.agent.controller.communication.ControllerActionRoles.regionalTier();
+    private final io.cresco.library.security.ActionAuthorizer globalTable =
+            io.cresco.agent.controller.communication.ControllerActionRoles.globalTier();
     private Type mapType;
     private Type type;
 
@@ -354,6 +359,10 @@ public class RegionalExecutor implements Executor {
                 }
                 return;
             }
+            boolean runsHere = !ControllerTiers.targetsGlobal(incoming) || controllerEngine.cstate.isGlobalController();
+            if (runsHere && !admitted(incoming, ControllerTiers.targetsGlobal(incoming))) {
+                return;
+            }
             if (ControllerTiers.targetsGlobal(incoming)) {
                 if (controllerEngine.cstate.isGlobalController()) {
                     if (!incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
@@ -412,6 +421,46 @@ public class RegionalExecutor implements Executor {
             logger.error("regional dispatch error: {}", ex.getMessage(), ex);
         }
     }
+
+    /**
+     * May the verified caller of {@code incoming} run it on this tier (the global's table when {@code global})? A refused
+     * RPC request is answered 403. A registry update must also be the caller's own records ({@link
+     * io.cresco.agent.controller.communication.RegistryBinding}).
+     */
+    boolean admitted(MsgEvent incoming, boolean global) {
+        if (!plugin.admit(incoming, global ? globalTable : regionalTable)) return false;
+        if (controllerEngine.securityOn() && io.cresco.agent.controller.communication.RegistryBinding.applies(incoming)) {
+            io.cresco.library.security.Caller caller = io.cresco.library.security.Caller.fromMsgEvent(incoming);
+            io.cresco.agent.db.DBInterfaceImpl gdb = controllerEngine.getGDB();
+            String why = io.cresco.agent.controller.communication.RegistryBinding.refusal(incoming, caller, global,
+                    gdb == null ? null : gdb::regionOfAgent);
+            if (why != null) {
+                logger.warn("REFUSED registry update {} {} from {}: {}", incoming.getMsgType(), incoming.getParam("action"), caller, why);
+                if (MsgRouter.isRpcRequest(incoming)) {
+                    incoming.setParam("status_code", "403");
+                    incoming.setParam("status_desc", "unauthorized: " + why);
+                    incoming.setReturn();
+                    plugin.msgOut(incoming);
+                }
+                return false;
+            }
+            // an agent's row names the tenant its controller was verified in (listagents shows it)
+            if (!global && caller != null && caller.getKind() == io.cresco.library.security.Caller.Kind.CONTROLLER
+                    && incoming.paramsContains("agentconfigs")) {
+                try {
+                    incoming.setCompressedParam("agentconfigs", io.cresco.agent.controller.communication.RegistryBinding
+                            .withVerifiedTenant(incoming.getCompressedParam("agentconfigs"), caller.getTenant()));
+                } catch (RuntimeException unreadable) {
+                    // RegistryBinding already read it; nothing to rewrite
+                }
+            }
+        }
+        return true;
+    }
+
+    /** The regional and global action tables (tests). */
+    io.cresco.library.security.ActionAuthorizer regionalTable() { return regionalTable; }
+    io.cresco.library.security.ActionAuthorizer globalTable() { return globalTable; }
 
     public void sendGlobalMsg(MsgEvent incoming) {
 

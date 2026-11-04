@@ -55,9 +55,16 @@ public final class TestAgentService implements AgentService {
 
     /** A PluginBuilder over this service with the given agent config (values as strings, like agent.ini). */
     public static PluginBuilder plugin(String dataDirectory, Map<String, Object> cfg) {
-        return new PluginBuilder(new TestAgentService(dataDirectory), AgentServiceImpl.class.getName(),
-                new MockBundleContext(), new HashMap<>(cfg));
+        TestAgentService as = new TestAgentService(dataDirectory);
+        as.securityEnabled = "true".equalsIgnoreCase(String.valueOf(cfg.get("broker_security_enabled")));
+        return new PluginBuilder(as, AgentServiceImpl.class.getName(), new MockBundleContext(), new HashMap<>(cfg));
     }
+
+    /** As the controller answers it: true only when the config turns broker security on (default off in tests). */
+    public volatile boolean securityEnabled;
+
+    @Override
+    public boolean isSecurityEnabled() { return securityEnabled; }
 
     /** A PluginBuilder of the node {@code region}/{@code agent}, every message it sends handed to {@code sink}. */
     public static PluginBuilder plugin(String dataDirectory, Map<String, Object> cfg,

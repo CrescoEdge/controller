@@ -107,6 +107,8 @@ public class ControllerEngine {
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
+        // who may call each agent-tier action (docs/caller-authorization.md section 3); undeclared actions fail closed
+        io.cresco.agent.controller.communication.ControllerActionRoles.agentTier(this.plugin.getAuthorizer());
         this.pluginAdmin = pluginAdmin;
         this.gdb = gdb;
 
@@ -158,6 +160,7 @@ public class ControllerEngine {
                 logger.error("Health executor failed to start: {}", String.valueOf(t));
             }
 
+            schedulePluginDataSweep();
             isStarted = true;
         } catch (Exception ex) {
             logger.error("ControllerEngine.start ", ex);
@@ -165,7 +168,29 @@ public class ControllerEngine {
         return isStarted;
     }
 
+    private volatile java.util.concurrent.ScheduledExecutorService pluginDataSweeper;
+
+    /**
+     * plugin_data_retention_days (default 0: never): once a day, delete the data of plugins no longer configured here
+     * after that many days without a change (PluginAdmin.sweepStalePluginData). Never on a stop.
+     */
+    private void schedulePluginDataSweep() {
+        long days = plugin.getConfig().getLongParam("plugin_data_retention_days", 0L);
+        if (days <= 0 || pluginAdmin == null) return;
+        java.util.concurrent.ScheduledExecutorService s = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "cresco-plugin-data-sweep");
+            t.setDaemon(true);
+            return t;
+        });
+        s.scheduleWithFixedDelay(() -> {
+            try { pluginAdmin.sweepStalePluginData(days); } catch (Exception ex) { logger.error("plugin-data sweep: " + ex.getMessage()); }
+        }, 1, 24, TimeUnit.HOURS);
+        pluginDataSweeper = s;
+    }
+
     public boolean stop() {
+        java.util.concurrent.ScheduledExecutorService sweeper = pluginDataSweeper;
+        if (sweeper != null) sweeper.shutdownNow();
         boolean isStopped = false;
         try {
 
@@ -627,6 +652,69 @@ public class ControllerEngine {
 
     public void msgInThreaded(MsgEvent msg) {
         msgInProcessQueue.submit(new MsgEventRunner(this, msg));
+    }
+
+    // ------------------------------------------------------------------ verified callers (docs/caller-authorization.md)
+
+    private volatile io.cresco.library.security.Caller selfCaller;
+    private volatile String selfCallerKey;
+    private volatile long lastStampProblemLog;
+
+    /** {@code broker_security_enabled}: callers are verified (otherwise every caller is {@code anonymous}). */
+    public boolean securityOn() {
+        return io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig());
+    }
+
+    /** This node's tenant. */
+    public String tenant() {
+        return io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
+    }
+
+    /**
+     * This controller as a caller: {@code controller:<tenant>/<region>/<agent>} with {@code infra}; {@code anonymous} when
+     * security is off; null while the node has no (valid) name yet -- its messages then go out unstamped and are refused.
+     */
+    public io.cresco.library.security.Caller selfCaller() {
+        if (!securityOn()) return io.cresco.library.security.Caller.anonymous();
+        String region = cstate == null ? null : cstate.getRegion();
+        String agent = cstate == null ? null : cstate.getAgent();
+        String tenant = tenant();
+        String key = tenant + "/" + region + "/" + agent;
+        io.cresco.library.security.Caller c = selfCaller;
+        if (c != null && key.equals(selfCallerKey)) return c;
+        try {
+            c = io.cresco.library.security.Caller.controller(tenant, region, agent);
+        } catch (IllegalArgumentException invalid) {
+            stampProblem("this node's name " + key + " is not a valid caller (" + invalid.getMessage() + "): its messages go unstamped");
+            return null;
+        }
+        selfCaller = c;
+        selfCallerKey = key;
+        return c;
+    }
+
+    /** A plugin of this node as a caller ({@code plugin:<tenant>/<region>/<agent>/<pluginid>}); see {@link #selfCaller}. */
+    public io.cresco.library.security.Caller pluginCaller(String pluginId) {
+        if (!securityOn()) return io.cresco.library.security.Caller.anonymous();
+        try {
+            return io.cresco.library.security.Caller.plugin(tenant(), cstate.getRegion(), cstate.getAgent(), pluginId);
+        } catch (RuntimeException invalid) {
+            stampProblem("plugin id " + pluginId + " is not a valid caller (" + invalid.getMessage() + "): its messages go unstamped");
+            return null;
+        }
+    }
+
+    /** Strip whatever {@code msg} says about its caller and stamp this controller. */
+    public void stampSelf(MsgEvent msg) {
+        io.cresco.agent.controller.communication.CallerStamps.stamp(msg, selfCaller());
+    }
+
+    private void stampProblem(String what) {
+        long now = System.currentTimeMillis();
+        if (now - lastStampProblemLog > 60_000L) {
+            lastStampProblemLog = now;
+            logger.error(what);
+        }
     }
 
     public PluginAdmin getPluginAdmin() { return pluginAdmin; }
