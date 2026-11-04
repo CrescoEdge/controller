@@ -133,7 +133,7 @@ public final class ProvisionedIdentity {
             throw new ProvisioningException("identity_keystore " + ks + " is unreadable: " + e.getMessage());
         }
         if (key == null) throw new ProvisioningException("identity_keystore " + ks + " holds no private key with a certificate chain");
-        if (!chain[0].getPublicKey().equals(publicKeyOf(key, chain[0]))) {
+        if (!matches(chain[0], key)) {
             throw new ProvisioningException("identity_keystore " + ks + ": the private key does not match its certificate");
         }
         String why = validate(chain, anchors, now);
@@ -148,19 +148,19 @@ public final class ProvisionedIdentity {
         }
     }
 
-    /** The public key that goes with {@code key} (checked against the leaf by signing a probe). */
-    private static java.security.PublicKey publicKeyOf(PrivateKey key, X509Certificate leaf) throws ProvisioningException {
+    /** Is {@code signer} the private half of {@code leaf}'s key (checked by signing a probe)? */
+    private static boolean matches(X509Certificate leaf, PrivateKey signer) throws ProvisioningException {
         try {
-            String alg = io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(key.getAlgorithm());
+            String alg = io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(signer.getAlgorithm());
             java.security.Signature s = java.security.Signature.getInstance(alg);
-            s.initSign(key);
+            s.initSign(signer);
             byte[] probe = "cresco-provisioned-key-check".getBytes(StandardCharsets.UTF_8);
             s.update(probe);
             byte[] sig = s.sign();
             java.security.Signature v = java.security.Signature.getInstance(alg);
             v.initVerify(leaf.getPublicKey());
             v.update(probe);
-            return v.verify(sig) ? leaf.getPublicKey() : null;
+            return v.verify(sig);
         } catch (Exception e) {
             throw new ProvisioningException("the identity key cannot be checked against its certificate: " + e.getMessage());
         }
