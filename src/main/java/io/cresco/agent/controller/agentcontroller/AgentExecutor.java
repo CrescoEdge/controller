@@ -922,6 +922,11 @@ public class AgentExecutor implements Executor {
                 ce.setParam("status_code", "9");
                 ce.setParam("status_desc", "Plugin NULL");
 
+            } else if (PluginIds.refusal(pluginId) != null) {
+                // review F6: a plugin id is one plain path segment
+                ce.setParam("status_code", "9");
+                ce.setParam("status_desc", PluginIds.refusal(pluginId));
+
             } else {
                 logger.info("disabling plugin : " + pluginId);
                 // removePlugin (not stopPlugin): an explicit remove drops the plugin from the inventory

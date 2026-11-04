@@ -57,6 +57,24 @@ public final class ParamLog {
         return sb.toString();
     }
 
+    /** The names (and value sizes) of a parameter map of any value type, never a value: {@code {name:size, ...}}. */
+    public static String names(Map<String, ?> p) {
+        if (p == null) return "{}";
+        StringBuilder sb = new StringBuilder("{");
+        int n = 0;
+        try {
+            for (Map.Entry<String, ?> e : new TreeMap<>(p).entrySet()) {
+                if (n++ == MAX_NAMES) { sb.append(", ... ").append(p.size() - MAX_NAMES).append(" more"); break; }
+                if (n > 1) sb.append(", ");
+                Object v = e.getValue();
+                sb.append(safeName(e.getKey())).append(':').append(v == null ? 0 : String.valueOf(v).length());
+            }
+        } catch (RuntimeException unreadable) {
+            sb.append(" (unreadable)");
+        }
+        return sb.append('}').toString();
+    }
+
     /** {@link #describe} for a raw parameter map. */
     public static String describe(Map<String, String> p) {
         MsgEvent m = new MsgEvent();

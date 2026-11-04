@@ -180,7 +180,7 @@ public class DBInterfaceImpl implements DBInterface {
                 } else {
                     // dbe.nodeUpdateStatus returned false. This indicates an issue with the 'mode' processing or config parts.
                     logger.warn("nodeUpdate: Mode '{}' present, but dbe.nodeUpdateStatus returned false. Timestamp updates success: {}. Msg: {}",
-                            mode, (timestampUpdatesPerformed > 0), de.getParams());
+                            mode, (timestampUpdatesPerformed > 0), io.cresco.agent.controller.communication.ParamLog.describe(de));
                     // If timestamp updates didn't happen AND this also failed, then the whole operation is a failure.
                     // If timestamps *did* succeed, wasProcessedCorrectly remains true from the earlier check.
                     if (timestampUpdatesPerformed == 0) {
@@ -935,6 +935,22 @@ public class DBInterfaceImpl implements DBInterface {
 
     public Map<String,String> getPNode(String pluginId) {
         return dbe.getPNode(pluginId);
+    }
+
+    /**
+     * The former region ({@code region_alias}, GaiaKeep gfs#26) agent {@code agent} of {@code region} registered here, read
+     * from its registration's configuration (which its own verified registration and keep-alives wrote: RegistryBinding);
+     * null for none.
+     */
+    public String recordedRegionAlias(String region, String agent) {
+        try {
+            String cp = dbe.getNodeConfigParams(region, agent, null);
+            if (cp == null) return null;
+            Map<String, String> params = gson.fromJson(cp, new com.google.gson.reflect.TypeToken<Map<String, String>>() { }.getType());
+            return params == null ? null : io.cresco.library.security.Caller.validAlias(params.get("region_alias"), region);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public Map<String,String> getANode(String agentId) {

@@ -48,7 +48,8 @@ of an action is (MsgEvent type, `action`).
 - An **open** action (no roles) admits a caller when `C == D`; or when it holds `infra` or `admin` and `C` is in `S`;
   or when it holds `infra` and the action admits every tenant's infrastructure (fabric mechanics on the controller
   tiers only: liveness `ping`, registration `agent_enable`/`agent_disable`/`region_enable`/`region_disable`/
-  `regionalimport`, `setinodestatus`, WATCHDOG and KPI keep-alives, `getcryptopolicy` at the global).
+  `regionalimport`, WATCHDOG and KPI keep-alives, `getcryptopolicy` at the global). `setinodestatus` is a scheduling
+  action (`infra` or `admin` of the global's tenant, or a superuser tenant), not a fabric mechanic.
 - A **role** action (`@CrescoAction(roles = {...})`, the controller tables, or the privileged floor) admits a caller
   holding one of the roles in scope: `C == D`; or the role is `infra` or `admin` and `C` is in `S`; or the role is
   `infra` and the action admits every tenant's infrastructure.
@@ -75,7 +76,11 @@ of an action is (MsgEvent type, `action`).
 - Registry updates are bound to their maker (`RegistryBinding`): an agent registers, unregisters and keeps alive only
   itself in its region, a region only itself and its agents at the global -- by message (`agent_enable`,
   `agent_disable`, `region_enable`, `region_disable`, `regionalimport`, WATCHDOG) and on the dataplane
-  (`update_mode` AGENT/REGION state updates, by their verified writer). An in-scope `admin` is not bound to one node.
+  (`update_mode` AGENT/REGION state updates, by their verified writer). At the global only the controller of a region --
+  the one that joined the global (a bridge peer or a controller bound in its peer trust registry) -- speaks for it; an
+  ordinary agent's stamp names its region too. Every delete names its records: an agent unregisters itself, never its
+  region; a region unregisters only its own agents; a plugin record is removed only with its agent named (the registry
+  never deletes a bare plugin id). An in-scope `admin` is not bound to one node, but names a plugin's agent too.
 
 ## 4. Defaults
 
@@ -217,8 +222,8 @@ is refused for its caller.
   tenant's node never mints another tenant's or a superuser tenant's users). A file list on such a message is dropped
   (a user names no file on the agent's disk).
 - **On the wire.** A sender copies its stamp into the JMS properties `cresco_caller`, `cresco_caller_tenant`,
-  `cresco_caller_roles` (an unstamped message declares an empty caller). The broker keeps what a verified bridge or
-  this controller's own in-JVM connection carries; from a verified node it keeps what that node may declare -- itself
+  `cresco_caller_roles` (an unstamped message declares an empty caller). The broker keeps what this controller's own
+  in-JVM connection carries, and what a verified bridge may carry (below); from a verified node it keeps what that node may declare -- itself
   (`infra`), its own plugins (`plugin`), its tenant's users (`admin`/`user`) -- and strips anything else (counted,
   logged); a node that declares nothing at all (no stamping code) is stamped `agent:<tenant>/<region>/<agent>` with
   `user`. The receiver strips the body's values and takes the properties. A file list in a message body is dropped;
@@ -228,11 +233,19 @@ is refused for its caller.
 - **Relays.** With tenant namespacing, a relay never carries a message into a tenant namespace (`cresco_tenant`) its
   verified caller does not belong to, unless the caller is of a superuser tenant.
 - **RPC replies** must come from the callee (phase 1); now that every delivery is stamped, an unstamped reply is
-  refused. An error reply a controller on the route generates (`route_unavailable`, `route_refused`) may come from any
-  controller.
-- **Stdin.** No dataplane subscription but the executor's sees a process's stdin (`type` `input`/`input-*`): a
-  selector naming it is refused, any other is narrowed so it cannot match. The controller's dataplane applies it per
-  bundle; the broker to every subscription that is not this controller's own or a bridge's.
+  refused. An error reply a controller on the route generates (`route_unavailable`, `route_refused`) is no answer: it
+  only FAILS the call, and the caller gets the marker, `error` and the controller's stamp (`status_code=503`) -- every
+  other parameter it carried is dropped. A node moved to another region (`region_alias`, GaiaKeep gfs#26) answers a call
+  made at its former address: its stamp carries `cresco_caller_alias`, which only infrastructure sets -- the broker the
+  node is attached to, from the alias its region recorded of the node's own verified registration (its `agent_enable`
+  configuration) -- and a sender's value is stripped on arrival.
+- **Stdin.** No dataplane subscription but the executor's sees a process's stdin (`type` `input`/`input-*`). Every
+  selector is narrowed, unconditionally, to `(<selector>) AND NO_STDIN`, after the selector parses on its own and the
+  narrowed form parses as exactly that conjunction (no `OR`, parenthesis or quote reaches past it). A selector that does
+  not parse, that evaluates bodies (XPATH/XQUERY), or that asks for stdin (judged on the parsed selector: a comparison
+  of `type` reached without a negation that holds for a stdin type and not for an ordinary one) is refused. The
+  controller's dataplane applies it per bundle (the executor is exempt only when this controller installed it); the
+  broker to every subscription that is not this controller's own or a bridge's.
 - **Remote files (D3a).** `getfiledata`/`getfileinfo` read only regular files below `file_access_roots`, both resolved
   to real paths; unset, both are refused. A plugin's dataplane offers no `downloadRemoteFile`.
 - **Signed installs.** Every jar that did not come embedded in the agent jar -- `pluginupload`, `pluginadd` from a
@@ -270,6 +283,34 @@ is refused for its caller.
   the broker writes advisory topics. No tenant name claims the broker's own destinations (`ActiveMQ.*`, e.g.
   `ActiveMQ.DLQ`).
 
+- **What a bridge carries** (review F2). A stamp arriving over a broker bridge is kept only when the controller at the
+  other end may carry it: a principal of its own tenant (any tenant's when that controller is in a superuser tenant),
+  with the roles of its kind, and -- for a node principal -- within its subtree: its own region's nodes, or, for this
+  node's parent (a region's global), any node below it. Anything else is stripped (counted in `outOfScopeStampCount`,
+  logged as a forged caller): the message travels without a caller and is refused wherever one is required. With
+  `net_source_routing` on, a message relayed through another region's controller loses its stamp at that hop until
+  messages are signed end to end (D4).
+- **Plugin ids** (review F6) are one plain path segment: 1-64 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
+  no `..`, checked where they enter (`pluginadd` `inode_id`, `pluginremove` `pluginid`, the global's `addplugin`). A purge
+  deletes only a real directory whose real parent is `plugin-data`, and never follows a link inside it.
+
+### The in-JVM trust boundary (review F5)
+
+In-process code is trusted code. Java 21 has no SecurityManager: a plugin can reach any object it can name (reflection,
+another bundle's `BundleContext` through `Bundle.getBundleContext()`, the classes of another bundle). Only signed plugins
+are installed (section 5), and that signature is the boundary. Inside it the controller adds what is structurally cheap:
+
+- The AgentService factory never hands out the controller's own instance, not even to the controller bundle (whose
+  context any bundle can borrow): the controller uses its own reference, never the service registry. The controller
+  bundle's registry instance is an ordinary per-bundle one with no plugins, so whatever is sent through it is dropped.
+- A capability bound to a bundle's symbolic name -- sending on behalf of an API user (`on_behalf_bundles`), naming a
+  dataplane writer user, the executor's stdin -- holds only for a bundle this controller installed itself (from the agent
+  jar, or from a copy whose signature verified). A bundle a plugin installs through its own context holds none of them,
+  whatever name it chose.
+- A send on behalf of an API user must be made by that bundle's own code: the first stack frame below the Cresco library,
+  the controller and the JDK must belong to the bound bundle, so borrowing wsapi's context is not enough by itself.
+  This does not stop code that runs wsapi's own classes (reflection): that is the boundary above.
+
 ### Operator-visible changes (phase 3)
 
 | Setting | Before | Now |
@@ -286,7 +327,16 @@ is refused for its caller.
 | `listagents` | no tenant | `tenant_id` per agent (verified) |
 | jar signatures | judged now | judged at a trusted RFC 3161 timestamp when present |
 | stream messages | lost silently to a slow subscriber | `cresco_seq` on every stream message, `cresco_gap` after a loss, `dataplane.stream.gap` |
-| AgentService | one shared instance | one per bundle (service factory) |
+| AgentService | one shared instance | one per bundle (service factory); never the controller's own instance |
+| `setinodestatus` (global) | any tenant's infra | infra/admin of the global's tenant or a superuser tenant |
+| `agent_disable` naming only a region, or a plugin without its agent | deleted region / plugin rows | refused |
+| registry updates at the global | any controller stamp of the region | only the region's own (joined) controller |
+| bridged caller stamps | kept from any verified bridge | kept only within the bridge peer's tenant and subtree |
+| route error replies (`route_unavailable`/`route_refused`) | delivered whole | fail the call with marker and error only |
+| `region_alias` nodes on a secured fabric | replies dropped | accepted via `cresco_caller_alias` (from the node's registration) |
+| plugin ids | any string | `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, no `..` |
+| dataplane selectors | refused by text match, narrowed unless containing `NO_STDIN` | parsed; always narrowed; malformed/XPATH refused |
+| named capabilities (`on_behalf_bundles`, executor stdin) | by symbolic name | by a bundle the controller installed (and, on behalf, its own code) |
 
 ## 9. Revocation, renewal and controller pins (identity review, 2026-11-04)
 

@@ -103,6 +103,7 @@ public class ControllerEngine {
 
         this.plugin = pluginBuilder;
         this.cstate = cstate;
+        if (cstate != null) cstate.setRegionControllerCheck(this::speaksForRegion);
         this.logger = pluginBuilder.getLogger(ControllerEngine.class.getName(), CLogger.Level.Info);
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
@@ -704,9 +705,55 @@ public class ControllerEngine {
         }
     }
 
-    /** Strip whatever {@code msg} says about its caller and stamp this controller. */
+    /** Strip whatever {@code msg} says about its caller and stamp this controller (with this node's region alias, if any). */
     public void stampSelf(MsgEvent msg) {
-        io.cresco.agent.controller.communication.CallerStamps.stamp(msg, selfCaller());
+        io.cresco.agent.controller.communication.CallerStamps.stamp(msg, selfCaller(), regionAlias());
+    }
+
+    /**
+     * This node's former region ({@code region_alias}, GaiaKeep gfs#26), stamped on what this node originates so a call made
+     * at its former address accepts its replies; null without one. A node's own value is declared only in-JVM: the broker a
+     * node is attached to replaces it with what its region recorded from the node's own registration.
+     */
+    public String regionAlias() {
+        if (regionAliasRead) return regionAlias;
+        try {
+            if (cstate == null || cstate.getControllerState() == null) return null;     // not decided yet: read again later
+            regionAlias = io.cresco.agent.controller.communication.RegionAlias.of(plugin, cstate.isGlobalController());
+            regionAliasRead = true;
+            return regionAlias;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private volatile String regionAlias;
+    private volatile boolean regionAliasRead;
+
+    private volatile boolean warnedRegionControllerUnverifiable;
+
+    /**
+     * At the global: does {@code c} speak for its region -- is it this node, or the controller of {@code c}'s region that
+     * joined this global (a bridge peer, or bound here as a joining controller, in the peer trust registry)? An ordinary
+     * agent's stamp names its region too; it never speaks for it (review F3). With {@code peer_identity_mode=off} nothing
+     * records who joined: then a controller stamp of the region is taken (logged once).
+     */
+    public boolean speaksForRegion(io.cresco.library.security.Caller c) {
+        if (c == null || c.getKind() != io.cresco.library.security.Caller.Kind.CONTROLLER) return false;
+        if (cstate != null && c.getRegion().equals(cstate.getRegion()) && c.getAgent().equals(cstate.getAgent())
+                && c.getTenant().equals(tenant())) return true;
+        io.cresco.agent.controller.communication.CertificateManager cm = certificateManager;
+        io.cresco.agent.controller.communication.PeerTrustRegistry reg = cm == null ? null : cm.getPeerTrust();
+        if (reg != null && reg.isJoinedController(c.getTenant(), c.getRegion(), c.getAgent())) return true;
+        if (cm != null && cm.peerIdentityMode() == io.cresco.agent.controller.communication.PeerIdentity.Mode.OFF) {
+            if (!warnedRegionControllerUnverifiable) {
+                warnedRegionControllerUnverifiable = true;
+                logger.warn("peer_identity_mode=off: the global cannot tell a region's controller from its agents; registry"
+                        + " updates are bound to the region named in the caller's stamp only (logged once)");
+            }
+            return true;
+        }
+        return false;
     }
 
     private void stampProblem(String what) {

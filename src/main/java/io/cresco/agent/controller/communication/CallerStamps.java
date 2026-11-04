@@ -32,11 +32,25 @@ public final class CallerStamps {
 
     /** Strip whatever {@code msg} carries in the reserved parameters and stamp {@code caller} (null: leave it unstamped). */
     public static void stamp(MsgEvent msg, Caller caller) {
+        stamp(msg, caller, null);
+    }
+
+    /**
+     * As {@link #stamp(MsgEvent, Caller)}, with {@code regionAlias}: the former region this (node) caller answers at
+     * ({@link Caller#PARAM_ALIAS}); null for none.
+     */
+    public static void stamp(MsgEvent msg, Caller caller, String regionAlias) {
         if (msg == null) return;
         if (msg.getParams() == null) msg.setParams(new java.util.HashMap<>());
         Caller.strip(msg);
-        if (caller != null) caller.stamp(msg);
+        if (caller != null) {
+            caller.stamp(msg);
+            if (regionAlias != null) caller.stampRegionAlias(msg, regionAlias);
+        }
     }
+
+    /** JMS property: the former region of the caller's node ({@link Caller#PARAM_ALIAS}). */
+    public static final String P_ALIAS = Caller.PARAM_ALIAS;
 
     /** JMS properties: the API user a bundle in {@code on_behalf_bundles} (wsapi) writes a dataplane message for. */
     public static final String P_WRITER = "cresco_writer", P_WRITER_ROLES = "cresco_writer_roles";
@@ -100,9 +114,11 @@ public final class CallerStamps {
         }
     }
 
-    /** Copy the stamp on {@code msg} (if any) to {@code jms}; an unstamped message declares an empty caller. */
+    /** Copy the stamp on {@code msg} (if any, with its region alias) to {@code jms}; an unstamped message declares an empty caller. */
     public static void toJms(MsgEvent msg, Message jms) throws JMSException {
         toJms(msg == null ? null : Caller.fromMsgEvent(msg), jms);
+        String alias = msg == null ? null : Caller.regionAliasOf(msg);
+        if (alias != null) jms.setStringProperty(P_ALIAS, alias);
     }
 
     /** Write {@code caller} (null: none, declared as an empty caller) as the JMS properties of {@code jms}. */
@@ -114,6 +130,7 @@ public final class CallerStamps {
         jms.setStringProperty(P_CALLER, caller == null ? "" : caller.getPrincipal());
         jms.setStringProperty(P_TENANT, caller == null ? "" : caller.getTenant());
         jms.setStringProperty(P_ROLES, caller == null ? "" : caller.getRolesCsv());
+        jms.setStringProperty(P_ALIAS, "");                 // the alias belongs to this stamp only (see toJms(MsgEvent, ..))
     }
 
     /** The caller the JMS properties of {@code jms} name, or null for none (absent, empty, or malformed). */
@@ -134,7 +151,15 @@ public final class CallerStamps {
     public static Caller fromJms(MsgEvent msg, Message jms, boolean securityOn) {
         Caller c = securityOn ? fromJmsProperties(jms) : Caller.anonymous();
         if (c != null && c.isAnonymous() && securityOn) c = null;      // anonymous never crosses the wire of a secured fabric
-        stamp(msg, c);
+        String alias = null;
+        if (c != null && securityOn) {
+            try {
+                alias = jms.getStringProperty(P_ALIAS);                 // set by the broker the caller's node is attached to
+            } catch (Exception unreadable) {
+                alias = null;
+            }
+        }
+        stamp(msg, c, alias == null || alias.isEmpty() ? null : alias);
         return c;
     }
 
