@@ -138,15 +138,14 @@ public class ControllerEngine {
 
     public boolean start() {
         boolean isStarted = false;
-        // a pre-provisioned node whose identity cannot be used does not start at all (never a generated or enrolled fallback)
-        String provisioning = io.cresco.agent.controller.communication.CertificateManager.provisioningRefusal(plugin.getConfig());
-        if (provisioning != null) {
-            logger.error("REFUSING TO START: the pre-provisioned identity cannot be used: " + provisioning);
-            return false;
-        }
         try {
-            // secure by default: inconsistent security settings stop the node here, before anything listens
-            java.util.List<String> refusals = io.cresco.agent.controller.communication.SecuritySettings.startupRefusals(plugin.getConfig());
+            // secure by default: inconsistent security settings stop the node here, before anything listens, every
+            // problem named; a pre-provisioned node whose identity cannot be used does not start at all (never a
+            // generated or enrolled fallback)
+            java.util.List<String> refusals = new java.util.ArrayList<>();
+            String provisioning = io.cresco.agent.controller.communication.CertificateManager.provisioningRefusal(plugin.getConfig());
+            if (provisioning != null) refusals.add("the pre-provisioned identity cannot be used: " + provisioning);
+            refusals.addAll(io.cresco.agent.controller.communication.SecuritySettings.startupRefusals(plugin.getConfig()));
             if (!refusals.isEmpty()) {
                 for (String r : refusals) logger.error("REFUSING TO START: " + r);
                 refusedByConfiguration = true;

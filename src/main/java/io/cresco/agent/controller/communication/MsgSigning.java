@@ -132,7 +132,8 @@ public final class MsgSigning {
     public MsgSigning(ControllerEngine ce) {
         this.ce = ce;
         io.cresco.library.plugin.Config c = ce.getPluginBuilder().getConfig();
-        this.required = SecuritySettings.brokerSecurity(c) && c.getBooleanParam("msg_signing_required", true);
+        this.required = SecuritySettings.production(c)
+                || (SecuritySettings.brokerSecurity(c) && c.getBooleanParam("msg_signing_required", true));
         this.maxAgeMs = Math.max(10_000L, c.getLongParam("msg_signature_max_age_ms", 300_000L));
         this.attestationMs = Math.max(1L, c.getLongParam("msg_signing_attestation_hours", 24L)) * 3_600_000L;
     }

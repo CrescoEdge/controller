@@ -6,8 +6,9 @@ fabric mints, enrolls or trusts on first use, and nothing accepts a password. `s
 never production. The upgrade path from an earlier build is `upgrade-1.3-secure-defaults.md`; the authorization
 contract is `caller-authorization.md`.
 
-The provisioned identity is loaded by the certificate manager (identity work, branch `hardening-identity`); this guide
-and the start-up interlocks use the same setting names.
+The provisioned identity is loaded by the certificate manager (`pre-provisioned-identity.md`: chain validated to the
+anchors, no generation, enrollment or trust on first use, hot reload of a replaced keystore); this guide and the start-up
+interlocks use the same setting names.
 
 ## 1. What production requires and refuses
 
@@ -38,13 +39,25 @@ A controller with `security_profile=production` **refuses to start** (exit 78) a
 
 Plugins see the profile through `AgentService.getSecurityProfile()` and enforce their side (wsapi: no password logins).
 
+### Discovery in production
+
+Discovery is authenticated by the PKI: each side presents its operator-issued chain, which must verify to
+`trust_anchors` (the identity comes from the certificate's subject and its `cresco:node:` SAN; controllers carry
+`cresco:role:controller`), and nothing is issued, enrolled or pinned on first use. The discovery secrets stay as an
+explicit **second, admission layer** on top of it: the authenticated exchange (discovery v2) is still keyed by them, so a
+host without the fabric's secret cannot even start an exchange. In production at least one discovery secret is required
+and every one comes from an owner-only `<name>_file` (or `CRESCO_<NAME>` in the environment); one given inline (`-D`) is
+refused at start. A leaked discovery secret alone admits nothing: without a certificate that chains to the anchors the
+exchange fails.
+
 ## 2. Issuing a fabric's certificates offline
 
 Keep the root CA offline (an air-gapped machine or an HSM). Region CAs are optional intermediates. Every node certificate
 names its identity in the subject -- `CN=<agent>, OU=<region>, O=<tenant>` -- with names from the Cresco grammar
 (1-64 of `A-Z a-z 0-9 . -`; a tenant without `.`; never `_`). Nodes are TLS servers and clients: the leaf carries both
-`serverAuth` and `clientAuth`. Keys are RSA-3072 (or EC P-384), signed with SHA-384 (CNSA). The commands below are a
-reference procedure with OpenSSL 3; the offline issuance tool from the identity work produces the same files.
+`serverAuth` and `clientAuth`. Keys are RSA-3072 (or EC P-384), signed with SHA-384 (CNSA). Use the offline issuance tool
+`tools/cresco-pki.sh` (documented in `pre-provisioned-identity.md`: it also writes the `cresco:node:` and
+`cresco:role:controller` SANs the provisioned identity reads); the OpenSSL commands below show what it produces.
 
 ```sh
 # 1. fabric root CA (offline, long-lived)
@@ -60,7 +73,8 @@ openssl x509 -req -in rgA-ca.csr -CA root.crt -CAkey root.key -CAcreateserial -s
 # 3. one leaf per node (here agent a1 of region rgA, tenant t1), issued by its region CA (or the root)
 openssl req -newkey rsa:3072 -sha384 -nodes -keyout a1.key -out a1.csr -subj "/O=t1/OU=rgA/CN=a1"
 openssl x509 -req -in a1.csr -CA rgA-ca.crt -CAkey rgA-ca.key -CAcreateserial -sha384 -days 90 -out a1.crt \
-  -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth\n")
+  -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=URI:cresco:node:t1/rgA/a1\n")
+# a region or global controller's leaf also carries URI:cresco:role:controller in its subjectAltName
 
 # 4. the node's keystore and its password file (owner-only), the fabric's trust anchors
 openssl rand -hex 32 > a1.p12.pass && chmod 600 a1.p12.pass

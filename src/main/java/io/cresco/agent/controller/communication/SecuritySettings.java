@@ -22,16 +22,19 @@ public final class SecuritySettings {
      * callers, recipient binding, message signatures. False only when set explicitly (insecure development mode).
      */
     public static boolean brokerSecurity(Config c) {
+        if (production(c)) return true;                       // production forces it on (and refuses to start if set off)
         return c == null || c.getBooleanParam(BROKER_SECURITY, true);
     }
 
     /** {@code broker_require_client_auth}, defaulting to {@link #brokerSecurity} (identities are proven when security is on). */
     public static boolean requireClientAuth(Config c) {
+        if (production(c)) return true;
         return c == null || c.getBooleanParam(CLIENT_AUTH, brokerSecurity(c));
     }
 
     /** {@code tenant_namespacing}, defaulting to {@link #brokerSecurity}: every destination is {@code T.<tenant>.<name>}. */
     public static boolean tenantNamespacing(Config c) {
+        if (production(c)) return true;
         return c == null || c.getBooleanParam(NAMESPACING, brokerSecurity(c));
     }
 
@@ -111,9 +114,9 @@ public final class SecuritySettings {
         }
         if (!production(c)) return out;
         String pre = "security_profile=production: ";
-        if (!brokerSecurity(c)) out.add(pre + "broker_security_enabled=false is not allowed (insecure debug mode is never production)");
-        if (!requireClientAuth(c)) out.add(pre + "broker_require_client_auth=false is not allowed");
-        if (!tenantNamespacing(c)) out.add(pre + "tenant_namespacing=false is not allowed");
+        if (!c.getBooleanParam(BROKER_SECURITY, true)) out.add(pre + "broker_security_enabled=false is not allowed (insecure debug mode is never production)");
+        if (!c.getBooleanParam(CLIENT_AUTH, true)) out.add(pre + "broker_require_client_auth=false is not allowed");
+        if (!c.getBooleanParam(NAMESPACING, true)) out.add(pre + "tenant_namespacing=false is not allowed");
         if (!c.getBooleanParam("plugin_signing_required", true)) out.add(pre + "plugin_signing_required=false is not allowed");
         if (!c.getBooleanParam("msg_signing_required", true)) out.add(pre + "msg_signing_required=false is not allowed");
         String pim = c.getStringParam(PeerIdentity.MODE_KEY);
@@ -147,6 +150,18 @@ public final class SecuritySettings {
             if ((v != null && !v.isEmpty()) || (f != null && !f.isBlank())) {
                 out.add(pre + k + " is a password, which production does not allow (debug and testing only)");
             }
+        }
+        // discovery in production: identity is the PKI's (each side's chain verifies to trust_anchors; nothing is issued,
+        // enrolled or pinned on first use); the discovery secrets stay as an explicit admission layer on top of it --
+        // required, and only from owner-only files or the environment
+        boolean anyDiscoverySecret = false;
+        for (String k : new String[]{"discovery_secret_agent", "discovery_secret_region", "discovery_secret_global"}) {
+            String v = c.getStringParam(k);
+            if (v != null && !v.isEmpty()) anyDiscoverySecret = true;
+        }
+        if (!anyDiscoverySecret) {
+            out.add(pre + "no discovery secret is configured: production discovery is authenticated by the PKI AND admitted by"
+                    + " the discovery secrets (discovery_secret_agent/region/global, from <name>_file or CRESCO_<NAME>)");
         }
         for (String k : FILE_ONLY_SECRETS) {
             if (System.getProperty(k) != null) {
@@ -299,6 +314,7 @@ public final class SecuritySettings {
      * set explicitly (development, logged as a WARNING on every boot) or in insecure development mode.
      */
     public static boolean pluginSigningRequired(Config config) {
+        if (production(config)) return true;
         return config != null && config.getBooleanParam("plugin_signing_required", brokerSecurity(config));
     }
 
