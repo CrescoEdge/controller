@@ -440,4 +440,44 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
 | rebind token | `<region>/<agent>[#tag]` | also `<region>/<agent>[#tag]=<key fingerprint>` (recommended) |
 | `controller_rebind_signers`, `<data>/security/controller-rebind.json` | (none) | operator keys whose signed rebind statements joiners follow; the statement a re-installed controller serves |
 | a revoked name | free again at once | tombstoned until an operator rebind |
-| health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate |
+| health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate, region CA unavailable |
+| `region_ca_allow_new` | (an unreadable region CA was silently replaced) | false: a region CA that existed and cannot be loaded is never replaced; true for one start makes a new one deliberately |
+| `<data>/peer-trust.json.hwm` | (none) | the revocation high-water mark, kept OUTSIDE `security/` (a restored `security/` starts a new revocation epoch) |
+
+### Round-2 re-review (2026-11-04)
+
+- **Trust anchors are a validated path.** `controller_trust_anchors` is satisfied only by a path built from the presented
+  LEAF up through the presented certificates -- each issuer's subject matching, a CA (basic constraints), its signature
+  verifying, every certificate valid now -- to a listed certificate or key; certificates merely carried along are ignored.
+  The same path vouches for a re-keyed controller. Under the regional CA the anchors are checked on the responder's own
+  chain, and the identity it issues the joiner (or the CA it returns) must come from a CA on that path: a copied public
+  chain cannot enroll anyone under another CA.
+- **Revocation expiry outlives every leaf.** A revocation of a key a region CA enrolled expires only after the longest
+  validity any such leaf could carry (three years, the pre-upgrade leaf lifetime, or the configured one if longer, plus
+  twice the backdate and a day), and the name it names is tombstoned wherever the revocation applies (not only at the
+  revoking region), so nothing is readmitted when it expires. (A remote tombstone refuses that name only for connections
+  made directly to that node, which an agent does not make: it connects to its own region, where its operator rebinds it.)
+- **Bridges are recorded at every handshake.** A bridge's TLS context records the connection whenever a handshake
+  completes -- a resumed one (a TLS 1.3 session ticket, which never calls the trust manager) included -- and closes it at
+  once if its peer is revoked (key, name, or a CA anywhere in its chain); bridge groups to a peer whose name is tombstoned or
+  whose region's CA is revoked are removed.
+- **Signed lists are signed by a valid certificate.** The signed-list cache is keyed by the signing certificate as well as
+  the positions; a renewed leaf signs anew, and a list is never signed or served with a certificate that is not valid now.
+- **A restored registry starts a new epoch.** The revocation high-water mark (epoch and furthest durable position) is kept
+  next to `security/`, outside it: a registry restored from an older copy (same epoch, fewer positions) or of another epoch
+  starts a new epoch at open, so its parent and children exchange their lists again from the start, both directions. A
+  verified peer that reports positions this node never made (a whole data directory restored) also starts one (at most once
+  an hour).
+- **Short leaves renew at a fraction of their intended life.** The renewal window counts a certificate's lifetime without
+  the backdate it carries (a leaf of a day or less was due at issue): a 1-hour leaf renews at half an hour left, a 12-hour
+  one at six hours.
+- **Clock skew is taken only from verified peers.** A child's clock counts only when the ping's broker-stamped caller is a
+  node bound here (never the names the message carries); a report ages out after 15 minutes without that peer.
+- **A region CA that existed is never silently replaced.** An unreadable, missing (while the registry records it) or
+  wrong-scope `region-ca.p12` leaves the region without a CA -- no identities issued, CRITICAL health, an ERROR with the
+  recovery steps (restore it, picked up within a minute; or `region_ca_allow_new=true` for one start, after which every peer
+  must rebind the region) -- instead of generating a new CA that every agent and peer refuses.
+- **The global serves its list only to its child controllers.** The global's ping handler sends its revocation list
+  (fingerprints and names) only to a pinger verified as a child controller (a verified signed list, or a broker-stamped
+  controller caller bound there as a controller), and in the explicit insecure mode; a region serves its own list to its
+  agents.

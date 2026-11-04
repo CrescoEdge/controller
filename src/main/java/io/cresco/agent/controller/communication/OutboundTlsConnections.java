@@ -34,11 +34,25 @@ public final class OutboundTlsConnections {
     }
 
     private final List<Entry> entries = new ArrayList<>();
+    private volatile Function<X509Certificate[], String> refusal;
+
+    /**
+     * Why a peer chain is refused now (revoked key, tombstoned name, revoked CA), checked at every recorded handshake: a
+     * RESUMED handshake (which skips the trust manager) to a revoked peer is closed at once instead of being recorded.
+     */
+    public void setRefusal(Function<X509Certificate[], String> refusal) { this.refusal = refusal; }
 
     /** A handshake on {@code conn} (an SSLSocket or SSLEngine) accepted the peer's {@code chain}. */
     public void record(Object conn, X509Certificate[] chain, String endpoint) {
         if (conn == null || chain == null || chain.length == 0) return;
+        Function<X509Certificate[], String> r = refusal;
+        String why = r == null ? null : r.apply(chain);
+        if (why != null) {
+            close(conn);
+            return;
+        }
         synchronized (entries) {
+            for (Entry e : entries) if (e.conn.get() == conn) return;          // recorded at its trust check and at completion
             if (entries.size() >= MAX / 2) prune();
             if (entries.size() >= MAX) entries.remove(0);
             entries.add(new Entry(conn, chain.clone(), endpoint));

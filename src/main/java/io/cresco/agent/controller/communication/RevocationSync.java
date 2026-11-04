@@ -135,12 +135,25 @@ public final class RevocationSync {
         return ce.getPluginBuilder().getLogger(RevocationSync.class.getName(), io.cresco.library.utilities.CLogger.Level.Info);
     }
 
-    /** A signed delta of this node's list after {@code from} ({@code ownOnly}: only its own entries); cached; null when it cannot sign. */
+    /**
+     * A signed delta of this node's list after {@code from} ({@code ownOnly}: only its own entries); null when it cannot sign.
+     * Cached per position AND per signing certificate: a renewed or re-keyed leaf signs anew, and a cached list whose
+     * certificate is no longer valid is never served (children would refuse it), it is signed again with the current one.
+     */
     static String signedDelta(ControllerEngine ce, long from, boolean ownOnly) {
         PeerTrustRegistry reg = ce.getCertificateManager().getPeerTrust();
         long upTo = ownOnly ? reg.ownRevocationSeq() : reg.revocationSeq();
         String epoch = reg.revocationEpoch();
-        String key = (ownOnly ? "own|" : "all|") + epoch + "|" + from + "|" + upTo;
+        X509Certificate[] mine = ce.getCertificateManager().getPublicCertificate();
+        if (mine == null || mine.length == 0 || mine[0] == null) return null;
+        long now = System.currentTimeMillis();
+        if (now >= mine[0].getNotAfter().getTime() || now < mine[0].getNotBefore().getTime()) {
+            warnOnce(ce, state(ce), "own-cert-invalid", "This node's certificate is not valid now (" + mine[0].getNotBefore() + " - "
+                    + mine[0].getNotAfter() + "): its revocation list cannot be signed for its peers until it is renewed");
+            return null;
+        }
+        String key = (ownOnly ? "own|" : "all|") + epoch + "|" + from + "|" + upTo + "|" + PeerIdentity.spkiFingerprint(mine[0])
+                + "|" + mine[0].getSerialNumber();
         State st = state(ce);
         String cached = st.cache.get(key);
         if (cached != null) return cached;
@@ -162,7 +175,7 @@ public final class RevocationSync {
             l.to = to;
             l.issued = System.currentTimeMillis();
             l.entries = entries;
-            l.cert = Base64.getEncoder().encodeToString(cm.getPublicCertificate()[0].getEncoded());
+            l.cert = Base64.getEncoder().encodeToString(mine[0].getEncoded());
             l.sig = Base64.getEncoder().encodeToString(cm.signWithIdentity(signedBytes(l)));
             String json = GSON.toJson(l);
             st.cache.put(key, json);
@@ -324,6 +337,13 @@ public final class RevocationSync {
             }
             String ack = pong.getParam(ACK);
             String myEpoch = reg.revocationEpoch();
+            if (ack != null && epochOf(ack).equals(myEpoch) && seqOf(ack) > reg.ownRevocationSeq()) {
+                // the parent acknowledged positions of this epoch this node never made: its registry went back in time
+                reg.rollbackSuspected("the parent " + parentRegion + "/" + parentAgent + " acknowledged position " + seqOf(ack)
+                        + " of this node's own revocation list, which has only " + reg.ownRevocationSeq() + " (restored from an older copy?)");
+                myEpoch = reg.revocationEpoch();
+                st.lastSentFrom = st.lastSentTo = -1;
+            }
             if (ack != null && epochOf(ack).equals(myEpoch)) {
                 st.ackedEpoch = myEpoch;
                 st.ackedSeq = seqOf(ack);
@@ -380,15 +400,58 @@ public final class RevocationSync {
                     }
                 }
             }
-            String ack = st.childAcks.get(child != null ? child : src);
-            if (ack != null) msg.setParam(ACK, ack);
+            // who pinged, as far as this node can tell: the controller whose signed list verified, else the caller the broker
+            // stamped -- when its name is bound here (never the names the message itself carries)
+            String pinger = child != null ? child : verifiedPinger(ce, reg, msg, childIsRegion);
+            boolean anonymous = "anonymous".equals(msg.getParam(io.cresco.library.security.Caller.PARAM_CALLER));
+            // the global serves its list (fingerprints and names) only to its verified child controllers (and in the explicit
+            // insecure development mode, where nothing is verified); a region serves its own list to its agents
+            boolean serve = !childIsRegion || pinger != null || anonymous;
+            if (pinger != null) {
+                String ack = st.childAcks.get(pinger);
+                if (ack != null) msg.setParam(ACK, ack);
+            }
             msg.setParam(EPOCH, reg.revocationEpoch());
-            String delta = parentDelta(ce, reg, have);
-            if (delta != null) msg.setCompressedParam(PARENT_LIST, delta);
-            if (clock != null) {
-                try { ce.getCertificateManager().noteClock(Long.parseLong(clock), "child " + src); } catch (NumberFormatException ignore) { }
+            if (serve) {
+                if (pinger != null && have != null && have.indexOf('.') > 0 && epochOf(have).equals(reg.revocationEpoch())
+                        && seqOf(have) > reg.revocationSeq()) {
+                    // a verified child holds more of this epoch than this node does: this registry went back in time
+                    reg.rollbackSuspected(pinger + " holds position " + seqOf(have) + " of this node's revocation list, which has only "
+                            + reg.revocationSeq() + " (the registry was restored from an older copy?)");
+                    msg.setParam(EPOCH, reg.revocationEpoch());
+                }
+                String delta = parentDelta(ce, reg, have);
+                if (delta != null) msg.setCompressedParam(PARENT_LIST, delta);
+            }
+            // clock skew is recorded only for a verified peer bound here (a ping's claimed name cannot raise an alarm)
+            if (clock != null && pinger != null) {
+                try { ce.getCertificateManager().noteClock(Long.parseLong(clock), "child " + pinger); } catch (NumberFormatException ignore) { }
             }
         } catch (Exception ignore) { }
+    }
+
+    /**
+     * The name {@code region/agent} of the caller the broker stamped on {@code msg} ({@code cresco_caller}), when it is an
+     * agent or controller whose name is bound here -- at the global ({@code childIsRegion}) only a controller bound as one, of
+     * another region; else null.
+     */
+    static String verifiedPinger(ControllerEngine ce, PeerTrustRegistry reg, MsgEvent msg, boolean childIsRegion) {
+        String caller = msg.getParam(io.cresco.library.security.Caller.PARAM_CALLER);
+        if (caller == null) return null;
+        int colon = caller.indexOf(':');
+        if (colon <= 0) return null;
+        String kind = caller.substring(0, colon);
+        String[] p = caller.substring(colon + 1).split("/");
+        if (p.length != 3 || !CrescoNames.isValid(p[1]) || !CrescoNames.isValid(p[2])) return null;
+        String region = p[1], agent = p[2];
+        String role = reg.roleOf(p[0], region, agent);
+        if (role == null || PeerTrustRegistry.ROLE_SELF.equals(role)) return null;
+        if (childIsRegion) {
+            if (!"controller".equals(kind) || !PeerTrustRegistry.ROLE_CONTROLLER.equals(role) || region.equals(ce.cstate.getRegion())) return null;
+        } else if (!"agent".equals(kind) && !"controller".equals(kind)) {
+            return null;
+        }
+        return region + "/" + agent;
     }
 
     /**

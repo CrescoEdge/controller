@@ -7,6 +7,8 @@ public class DiscoveryNode {
 	public int discovered_port;
 	/** CHALLENGE: the responder's operator-signed controller rebind statement, when it served one (RebindStatement). */
 	public transient String discovered_rebind;
+	/** CHALLENGE: the responder's own chain (the controller_trust_anchors path is checked on it). */
+	public transient String discovered_server_cert;
 	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
 	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
 	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port

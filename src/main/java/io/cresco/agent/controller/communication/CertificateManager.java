@@ -226,8 +226,15 @@ public class CertificateManager {
     /** The TLS connections this node opened (bridges, client connections), closed when their peer is revoked. */
     private final OutboundTlsConnections outbound = new OutboundTlsConnections();
 
-    /** The outbound connections this node opened, as recorded by their trust managers. */
-    public OutboundTlsConnections outboundConnections() { return outbound; }
+    /** The outbound connections this node opened, as recorded by their trust managers and handshakes. */
+    public OutboundTlsConnections outboundConnections() {
+        if (!outboundRefusalSet) {
+            outboundRefusalSet = true;
+            outbound.setRefusal(c -> peerTrust == null ? null : peerTrust.revocationRefusal(c));
+        }
+        return outbound;
+    }
+    private volatile boolean outboundRefusalSet;
 
     /** A key was revoked (see {@link #onKeysRevoked}). */
     void onKeyRevoked(String keyFp) {
@@ -282,19 +289,57 @@ public class CertificateManager {
      * authenticated exchange may be joined the first time (and is pinned from then on).
      */
     public String controllerAnchorRefusal(X509Certificate[] chain) {
-        java.util.List<String> anchors = csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""));
+        return controllerAnchorRefusal(chain, null);
+    }
+
+    /**
+     * As {@link #controllerAnchorRefusal(X509Certificate[])}: the responder's {@code chain} must have a validated path from
+     * its LEAF to a listed anchor ({@link AnchorPath}: issuer/subject, CA basic constraints, signatures, validity; other
+     * certificates it carries are ignored). Under the regional CA the exchange also returns {@code issued} -- this node's
+     * identity issued by the responder's CA -- and that leaf must have been issued by a CA ON the validated path, so a
+     * responder that copied the anchored controller's (public) chain cannot hand out identities under a CA of its own.
+     */
+    public String controllerAnchorRefusal(X509Certificate[] chain, X509Certificate[] issued) {
+        java.util.Set<String> anchors = controllerAnchors();
         if (anchors.isEmpty()) return null;
-        java.util.Set<String> want = new java.util.HashSet<>();
-        for (String a : anchors) want.add(a.replace(":", "").toLowerCase(java.util.Locale.ROOT));
-        if (chain != null) {
-            for (X509Certificate c : chain) {
-                if (c == null) continue;
-                try {
-                    if (want.contains(certFingerprint(c)) || want.contains(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) return null;
-                } catch (Exception ignore) { }
-            }
+        java.util.Date now = new java.util.Date();
+        java.util.List<X509Certificate> path = AnchorPath.path(chain, anchors, now);
+        if (path == null) {
+            return "its certificate does not chain to anything listed in controller_trust_anchors (a validated path from its leaf;"
+                    + " a listed certificate merely carried along does not count)";
         }
-        return "it presents no certificate or key listed in controller_trust_anchors";
+        if (issued != null && issued.length > 0 && issued[0] != null) {
+            boolean onPath = false;
+            // a federating controller returns its CA itself: it must BE a CA on the path (same key)
+            for (int i = 1; i < path.size() && !onPath; i++) {
+                if (path.get(i).getPublicKey().equals(issued[0].getPublicKey())) onPath = true;
+            }
+            for (int i = 1; i < path.size() && !onPath; i++) {
+                X509Certificate ca = path.get(i);
+                if (!issued[0].getIssuerX500Principal().equals(ca.getSubjectX500Principal())) continue;
+                try { issued[0].verify(ca.getPublicKey()); onPath = true; } catch (Exception ignore) { }
+            }
+            // a responder whose own leaf is the anchor (no CA on the path) issues under the CA in its chain
+            if (!onPath && path.size() == 1 && chain.length > 1) {
+                for (X509Certificate c : chain) {
+                    if (c == null || c == chain[0] || c.getBasicConstraints() < 0) continue;
+                    try {
+                        chain[0].verify(c.getPublicKey());
+                        if (c.getPublicKey().equals(issued[0].getPublicKey())) onPath = true;
+                        else if (issued[0].getIssuerX500Principal().equals(c.getSubjectX500Principal())) { issued[0].verify(c.getPublicKey()); onPath = true; }
+                    } catch (Exception ignore) { }
+                }
+            }
+            if (!onPath) return "the identity it issued was not issued by the CA on its anchored path (controller_trust_anchors)";
+        }
+        return null;
+    }
+
+    /** {@code controller_trust_anchors}, normalised (lowercase hex, no colons). */
+    private java.util.Set<String> controllerAnchors() {
+        java.util.Set<String> want = new java.util.HashSet<>();
+        for (String a : csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""))) want.add(a.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        return want;
     }
 
     /**
@@ -302,7 +347,7 @@ public class CertificateManager {
      * the operator vouched for it: a joined controller that re-keyed under such an anchor is followed without a rebind.
      */
     public boolean controllerAnchorVouches(X509Certificate[] chain) {
-        return !csv(plugin.getConfig().getStringParam("controller_trust_anchors", "")).isEmpty() && controllerAnchorRefusal(chain) == null;
+        return !controllerAnchors().isEmpty() && controllerAnchorRefusal(chain, null) == null;
     }
 
     private volatile String rebindStatementCache;
@@ -422,6 +467,10 @@ public class CertificateManager {
 
     private Object[] readStore(Path store, String alias) throws Exception {
         if (!Files.exists(store)) return null;
+        // reading never makes a password: a store whose password file is gone is unreadable, not "new"
+        if (!Files.exists(store.resolveSibling(store.getFileName() + ".pass"))) {
+            throw new IOException("its password file " + store.getFileName() + ".pass is missing");
+        }
         char[] pw = storePassword(store);
         KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         try (FileInputStream in = new FileInputStream(store.toFile())) {
@@ -501,9 +550,20 @@ public class CertificateManager {
             if (c == null) continue;
             long nb = c.getNotBefore().getTime(), na = c.getNotAfter().getTime();
             if (now < nb || now >= na) return true;
-            if (na - now <= renewalWindow(na - nb, minBeforeMs)) return true;
+            if (na - now <= renewalWindow(intendedLife(nb, na), minBeforeMs)) return true;
         }
         return false;
+    }
+
+    /**
+     * A certificate's INTENDED lifetime: notAfter - notBefore without the backdate (identity_cert_backdate_hours) that every
+     * Cresco certificate carries for peers whose clocks lag. Counting the backdate as lifetime made a leaf of a day or less
+     * due the moment it was issued (round-2 review N6). A certificate shorter than the backdate was not backdated by it (an
+     * older or foreign issuer): its whole span counts.
+     */
+    static long intendedLife(long notBefore, long notAfter) {
+        long span = notAfter - notBefore, backdate = CertValidity.backdateMs();
+        return span > backdate ? span - backdate : span;
     }
 
     /** How long before its expiry a certificate living {@code lifeMs} is renewed: max(life/3, floor), at most life/2. */
@@ -586,7 +646,7 @@ public class CertificateManager {
                 }
                 reEnrollFailures++;
                 long now = System.currentTimeMillis();
-                long left = chain[0].getNotAfter().getTime() - now, life = chain[0].getNotAfter().getTime() - chain[0].getNotBefore().getTime();
+                long left = chain[0].getNotAfter().getTime() - now, life = intendedLife(chain[0].getNotBefore().getTime(), chain[0].getNotAfter().getTime());
                 boolean critical = left <= life / 10;
                 String text = (left <= 0 ? "this node's region-issued identity EXPIRED on " + chain[0].getNotAfter() + ": its region refuses it until"
                         + " a re-enrollment succeeds" : "this node's region-issued identity " + validityText(chain) + " and re-enrollment with its"
@@ -677,6 +737,8 @@ public class CertificateManager {
     private volatile String clockAlarm;
     private volatile boolean clockAlarmCritical;
     private final java.util.Map<String, String> skewedPeers = new java.util.concurrent.ConcurrentHashMap<>();
+    /** How long a clock-skew report stands without being heard again (15 min). */
+    static final long SKEW_REPORT_TTL_MS = 15 * 60_000L;
 
     private void setIdentityAlarm(String text, boolean critical) {
         String old = identityAlarm;
@@ -702,7 +764,7 @@ public class CertificateManager {
             if (skewedPeers.remove(peer) != null) logger.info("Clock of " + peer + " agrees with this node's again");
         } else {
             boolean critical = Math.abs(skew) >= CertValidity.backdateMs();
-            String level = (critical ? "CRITICAL|" : "WARN|") + text;
+            String level = (critical ? "CRITICAL|" : "WARN|") + System.currentTimeMillis() + "|" + text;
             String old = skewedPeers.size() < 1024 || skewedPeers.containsKey(peer) ? skewedPeers.put(peer, level) : null;
             if (old == null || !old.startsWith(critical ? "CRITICAL" : "WARN")) {
                 if (critical) logger.error("CLOCK SKEW: " + text); else logger.warn("CLOCK SKEW: " + text);
@@ -725,13 +787,23 @@ public class CertificateManager {
         }
         String ia = identityAlarm;
         if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
+        String rcf = regionCaFailure;
+        if (rcf != null) crit.add("REGION CA UNAVAILABLE: " + rcf + " (no identity is issued; restore region-ca.p12 or set region_ca_allow_new)");
         if (chain != null && chain[0] != null) {
             long now = System.currentTimeMillis();
             if (now >= chain[0].getNotAfter().getTime()) crit.add("this node's certificate EXPIRED on " + chain[0].getNotAfter());
             else if (now < chain[0].getNotBefore().getTime()) crit.add("this node's certificate is NOT YET VALID (" + chain[0].getNotBefore()
                     + "): this node's clock is behind its issuer's by more than the certificate backdate");
         }
-        for (String v : skewedPeers.values()) (v.startsWith("CRITICAL|") ? crit : warn).add(v.substring(v.indexOf('|') + 1));
+        // a skew report ages out when that peer is not heard from again (a decommissioned node, a one-off): a peer pings
+        // every few seconds, so a report older than SKEW_REPORT_TTL_MS is stale
+        long nowMs = System.currentTimeMillis();
+        for (java.util.Map.Entry<String, String> e : new java.util.ArrayList<>(skewedPeers.entrySet())) {
+            String[] v = e.getValue().split("\\|", 3);
+            long at = v.length == 3 ? Long.parseLong(v[1]) : 0;
+            if (nowMs - at > SKEW_REPORT_TTL_MS) { skewedPeers.remove(e.getKey(), e.getValue()); continue; }
+            ("CRITICAL".equals(v[0]) ? crit : warn).add(v.length == 3 ? v[2] : e.getValue());
+        }
         if (!crit.isEmpty()) { crit.addAll(warn); return new String[]{"CRITICAL", String.join("; ", crit)}; }
         if (!warn.isEmpty()) return new String[]{"WARN", String.join("; ", warn)};
         return new String[]{"OK", chain == null || chain[0] == null ? "no identity yet" : "identity " + validityText(chain)};
@@ -1078,7 +1150,7 @@ public class CertificateManager {
         if (mode == PeerIdentity.Mode.OFF) {
             return getTrustManagers();
         }
-        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint, outbound) };
+        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint, outboundConnections()) };
     }
 
     /**
@@ -1268,15 +1340,30 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         if (regionCA != null) {
             return;
         }
+        // a region CA that existed but cannot be loaded is retried at most once a minute (an operator may restore it)
+        if (regionCaFailure != null && System.currentTimeMillis() - regionCaFailureAt < 60_000L) return;
         try {
             String tenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
             String region = controllerEngine.cstate.getRegion();
             String agent = controllerEngine.cstate.getAgent();
             regionCA = loadRegionCA(tenant, region);
+            if (regionCA == null && regionCaFailure != null) {
+                // never a silent new CA: every agent's identity and every peer's record of this region name the old one
+                regionCaFailureAt = System.currentTimeMillis();
+                logger.error("REGION CA UNAVAILABLE: " + regionCaFailure + ". This controller issues NO identities (joining agents are"
+                        + " refused, enrolled agents cannot re-enroll) until it is recovered. To recover: restore " + regionCaStore()
+                        + " and " + regionCaStore().getFileName() + ".pass from a backup (picked up within a minute, no restart); or, to start"
+                        + " a NEW region CA deliberately, set region_ca_allow_new=true for one start -- then every agent re-enrolls and every"
+                        + " peer that recorded this region's CA (its global, peer regions) must rebind the region (the line '" + region
+                        + "' in its peer-trust.json.rebind).");
+                return;
+            }
             if (regionCA == null) {
                 regionCA = RegionCA.generate(tenant, region, keySize, YEARS_VALID);
                 saveRegionCA();
+                if (regionCaFailureAt != 0) logger.warn("A NEW region CA was generated for region " + region + " (region_ca_allow_new)");
             }
+            regionCaFailure = null;
             replaceTrustStoreEntries("localRegionCA-" + region, new X509Certificate[]{ regionCA.caCert() });
             // revocations of keys this CA enrolled can expire once every leaf it issued for them has
             peerTrust.setIssuedLeafLifetime(leafValidityMs());
@@ -1315,30 +1402,61 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         }
     }
 
+    /** Why the region CA that existed cannot be loaded (none is generated in its place; CRITICAL), or null. */
+    private volatile String regionCaFailure;
+    private volatile long regionCaFailureAt;
+
+    /** Why this region's CA is unavailable (it existed and cannot be loaded), or null. */
+    public String regionCaFailure() { return regionCaFailure; }
+
+    /**
+     * Load the persisted region CA. Null with {@link #regionCaFailure} set when one EXISTED -- its store is present, or this
+     * node's registry records its own CA for the region -- but cannot be used (unreadable, its key or chain missing, made for
+     * another region or tenant): a new CA is then NOT generated unless {@code region_ca_allow_new=true}. Null without a
+     * failure on a first start (no CA ever) or with node_identity_persist=false.
+     */
     private RegionCA loadRegionCA(String tenant, String region) {
+        regionCaFailure = null;
         if (!plugin.getConfig().getBooleanParam("node_identity_persist", true)) return null;
+        boolean allowNew = plugin.getConfig().getBooleanParam("region_ca_allow_new", false);
+        Path store = regionCaStore();
+        boolean existed = Files.exists(store) || Files.exists(store.resolveSibling(store.getFileName() + ".pass"))
+                || peerTrust.ownCaRecorded(region);
+        String failure;
         try {
-            Object[] kc = readStore(regionCaStore(), "region-ca");
-            if (kc == null) return null;
-            X509Certificate[] c = (X509Certificate[]) kc[1];
-            String[] scope = PeerTrustRegistry.caScopeOf(c[0]);
-            if (scope == null || !scope[0].equals(region) || !scope[1].equals(tenant) || c.length < 2) {
-                logger.error("The persisted region CA is for " + (scope == null ? "?" : scope[0] + "/" + scope[1]) + ", not " + region + "/" + tenant + "; making a new one");
-                return null;
+            Object[] kc = readStore(store, "region-ca");
+            if (kc == null) {
+                if (!existed) return null;                           // a first start: the CA is made now
+                failure = Files.exists(store) ? store + " holds no region CA key and chain"
+                        : store + " is missing although this region's CA existed (its registry records it)";
+            } else {
+                X509Certificate[] c = (X509Certificate[]) kc[1];
+                String[] scope = PeerTrustRegistry.caScopeOf(c[0]);
+                if (scope == null || !scope[0].equals(region) || !scope[1].equals(tenant) || c.length < 2) {
+                    failure = "the persisted region CA " + store + " is for " + (scope == null ? "?" : scope[1] + "/" + scope[0]) + ", not "
+                            + tenant + "/" + region;
+                } else {
+                    logger.info("Loaded the persisted region CA for region " + region);
+                    RegionCA ca = RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
+                    if (chainNeedsRenewal(c, System.currentTimeMillis(), renewBeforeMs())) {
+                        logger.warn("The persisted region CA for region " + region + " " + validityText(c) + "; renewing it with the same key");
+                        ca = ca.renewed(keySize, YEARS_VALID);
+                        regionCA = ca;
+                        saveRegionCA();
+                    }
+                    return ca;
+                }
             }
-            logger.info("Loaded the persisted region CA for region " + region);
-            RegionCA ca = RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
-            if (chainNeedsRenewal(c, System.currentTimeMillis(), renewBeforeMs())) {
-                logger.warn("The persisted region CA for region " + region + " " + validityText(c) + "; renewing it with the same key");
-                ca = ca.renewed(keySize, YEARS_VALID);
-                regionCA = ca;
-                saveRegionCA();
-            }
-            return ca;
         } catch (Exception ex) {
-            logger.error("Persisted region CA unreadable (" + ex.getMessage() + "); making a new one");
+            failure = "the persisted region CA " + store + " is unreadable (" + ex.getMessage() + ")";
+        }
+        if (allowNew) {
+            logger.error(failure + "; region_ca_allow_new=true: a NEW region CA is made (every peer that recorded the old one must rebind"
+                    + " region " + region + ")");
             return null;
         }
+        regionCaFailure = failure;
+        return null;
     }
 
     /**
@@ -1366,6 +1484,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         try {
             ensureRegionCA();
             if (regionCA == null) {
+                if (regionCaFailure != null) logger.error("Enrollment REFUSED: this region's CA is unavailable (" + regionCaFailure + ")");
                 return null;
             }
             X509Certificate[] joinerCerts = getCertsfromJson(joinerCertJson);
