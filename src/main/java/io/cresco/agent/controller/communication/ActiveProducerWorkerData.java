@@ -75,6 +75,7 @@ public class ActiveProducerWorkerData implements Runnable {
 
 				textMessage.setStringProperty("fileobjects", gson.toJson(fileObjectList));
 				textMessage.setStringProperty("filegroup",fileGroup);
+				CallerStamps.toJms(me, textMessage);      // the receiver binds every part of the group to this caller
 
 				//send initial message to register the transfer
 				//create new producer and make sure it does not timeout
@@ -100,6 +101,7 @@ public class ActiveProducerWorkerData implements Runnable {
 						bytesMessage.setStringProperty("filegroup", fileGroup);
 						bytesMessage.setStringProperty("dst_region", me.getDstRegion());
 						bytesMessage.setStringProperty("dst_agent", me.getDstAgent());
+						CallerStamps.toJms(me, bytesMessage);
 
 						//bytesMessage.setStringProperty("JMSXGroupID", fileObject.getDataName());
 

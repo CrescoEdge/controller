@@ -346,6 +346,18 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             // with no identity, on everything but advisory and fabric-shared destinations
             return;
         }
+        if (dest.isComposite()) {
+            // every component is judged on its own, for this very operation; and only infrastructure uses composites
+            // beyond the client's own advisory consumer (a composite judged by its whole name read another tenant's data)
+            if (!allAdvisory(dest)) {
+                CrescoIdentity who = identityOf(ctx);
+                logger.warn("DENY " + access + " composite '" + dest.getPhysicalName() + "' for " + who);
+                throw new SecurityException("Cresco tenant policy: composite destinations are for infrastructure only ('"
+                        + dest.getPhysicalName() + "')");
+            }
+            for (ActiveMQDestination c : dest.getCompositeDestinations()) enforce(ctx, c, access);
+            return;
+        }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
         TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
@@ -685,6 +697,16 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 info.setPriority((byte) 0);
             }
             if (sc != null && info.isNetworkSubscription() && isVm(context)) sc.bridgeLocal = true;   // a bridge's local side
+            // a process's stdin is its executor's: a dataplane subscription that is not this controller's own (its dataplane
+            // applies the rule per bundle) or a bridge's never sees it (StdinGuard)
+            if (!isForwarder(context, sc) && !(sc != null && sc.localController) && StdinGuard.isDataplaneTopic(info.getDestination())) {
+                String why = StdinGuard.refusal(info.getSelector());
+                if (why != null) {
+                    logger.warn("DENY READ '" + info.getDestination().getPhysicalName() + "' for " + identityOf(context) + " : " + why);
+                    throw new SecurityException("Cresco: " + why);
+                }
+                info.setSelector(StdinGuard.narrow(info.getSelector()));
+            }
             // the early refusal (a typed error for the client) is for network clients and this controller's own connection
             // (wsapi clients); any other in-JVM connection is judged per message only
             boolean judged = sc != null && (sc.localController || !isVm(context));
@@ -737,6 +759,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                         refuseAdmin(context, "create", destination, "connections without a verified identity have created "
                                 + quarantineMaxDestinations + " destinations, the most they may");
                     }
+                } else if (destination.isComposite() && !allAdvisory(destination)) {
+                    refuseAdmin(context, "create", destination, "composite destinations are for infrastructure only");
                 } else if (!destination.isTemporary()) {
                     // creating a destination is using it: the identity must be able to read or write it
                     CrescoIdentity id = identityOf(context);
@@ -819,7 +843,102 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             enforce(ctx, messageSend.getDestination(), TenantPolicy.Access.WRITE);
             CrescoSecurityContext sc = stateOf(ctx);
             if (sc != null && sc.verified && sc.certificate && sc.identity != null) peers.touchIdentity(sc.identity);
+            stampCaller(ctx, sc, messageSend);
             super.send(producerExchange, messageSend);
+        }
+    }
+
+    // ---- verified callers (docs/caller-authorization.md sections 1-2) ----
+
+    private final AtomicLong forgedStamps = new AtomicLong();
+    private final AtomicLong legacyStamps = new AtomicLong();
+    private volatile long lastForgedLog;
+
+    /** Declared callers this broker stripped because the connection may not declare them. */
+    public long forgedStampCount() { return forgedStamps.get(); }
+
+    /** Messages from senders that declare no caller at all (nodes without stamping), stamped {@code agent:...}. */
+    public long legacyStampCount() { return legacyStamps.get(); }
+
+    /**
+     * The caller a message carries past this broker, written as its {@code cresco_caller*} properties:
+     * <ul>
+     *   <li>from a forwarder (broker-internal, a verified bridge, a bridge's local side): kept -- the first broker set it;</li>
+     *   <li>from this controller's own vm:// connection: kept -- the controller stamps what it originates and relays only
+     *       what its consumer took from these properties;</li>
+     *   <li>from a verified network node: what it declares, when {@link CallerStamps#acceptDeclared} accepts it for that
+     *       node; a forged declaration is stripped (counted, logged); a sender that declares nothing at all (a node without
+     *       stamping) is that node with minimal rights: {@code agent:<tenant>/<region>/<agent>}, role {@code user};</li>
+     *   <li>from anything else (another in-JVM connection, no verified identity): no caller.</li>
+     * </ul>
+     */
+    void stampCaller(ConnectionContext ctx, CrescoSecurityContext sc, Message m) throws java.io.IOException {
+        if (isForwarder(ctx, sc)) return;
+        if (sc != null && sc.localController) return;
+        Object raw = m.getProperty(CallerStamps.P_CALLER);
+        CrescoIdentity id = (sc != null && sc.verified && !isVm(ctx)) ? sc.identity : null;
+        userWriter(m, id);
+        if (id == null) {
+            if (raw != null && !"".equals(raw)) forged(m, null, raw, "a connection without a verified node identity");
+            setCaller(m, null);
+            return;
+        }
+        if (raw == null) {
+            legacyStamps.incrementAndGet();
+            io.cresco.library.security.Caller legacy = io.cresco.library.security.Caller.parse(
+                    "agent:" + id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent(), id.getTenant(), io.cresco.library.security.Caller.ROLE_USER);
+            setCaller(m, legacy);
+            return;
+        }
+        if ("".equals(raw)) {
+            setCaller(m, null);
+            return;
+        }
+        Object t = m.getProperty(CallerStamps.P_TENANT), r = m.getProperty(CallerStamps.P_ROLES);
+        io.cresco.library.security.Caller declared = io.cresco.library.security.Caller.parse(String.valueOf(raw),
+                t == null ? null : String.valueOf(t), r == null ? null : String.valueOf(r));
+        String why = declared == null ? "a malformed stamp" : CallerStamps.acceptDeclared(id, declared, superuserTenants);
+        if (why != null) {
+            forged(m, id, raw, why);
+            setCaller(m, null);
+            return;
+        }
+        setCaller(m, declared);
+    }
+
+    /**
+     * The API user a dataplane message names as its writer ({@code cresco_writer}, set by wsapi on its node): kept only
+     * from a verified node that may send for that user (its own tenant's users; any tenant's from a superuser tenant),
+     * removed otherwise.
+     */
+    private void userWriter(Message m, CrescoIdentity id) throws java.io.IOException {
+        Object w = m.getProperty(CallerStamps.P_WRITER), wr = m.getProperty(CallerStamps.P_WRITER_ROLES);
+        if (w == null && wr == null) return;
+        io.cresco.library.security.Caller user = null;
+        if (w != null && wr != null && String.valueOf(w).startsWith("api:") && String.valueOf(w).indexOf('/') > 4) {
+            String p = String.valueOf(w);
+            user = io.cresco.library.security.Caller.parse(p, p.substring(4, p.indexOf('/')), String.valueOf(wr));
+        }
+        if (user != null && id != null && CallerStamps.acceptDeclared(id, user, superuserTenants) == null) return;
+        if (w != null && !"".equals(w)) forged(m, id, w, "a writer the connection may not declare");
+        m.removeProperty(CallerStamps.P_WRITER);
+        m.removeProperty(CallerStamps.P_WRITER_ROLES);
+    }
+
+    private static void setCaller(Message m, io.cresco.library.security.Caller c) throws java.io.IOException {
+        m.setProperty(CallerStamps.P_CALLER, c == null ? "" : c.getPrincipal());
+        m.setProperty(CallerStamps.P_TENANT, c == null ? "" : c.getTenant());
+        m.setProperty(CallerStamps.P_ROLES, c == null ? "" : c.getRolesCsv());
+    }
+
+    private void forged(Message m, CrescoIdentity from, Object declared, String why) {
+        long n = forgedStamps.incrementAndGet();
+        long now = System.currentTimeMillis();
+        if (now - lastForgedLog > 10_000L) {
+            lastForgedLog = now;
+            logger.warn("STRIPPED a forged caller '" + declared + "' on a message to '"
+                    + (m.getDestination() == null ? "?" : m.getDestination().getPhysicalName()) + "' from " + from + ": " + why
+                    + " (" + n + " stripped so far; the message travels without a caller)");
         }
     }
 }

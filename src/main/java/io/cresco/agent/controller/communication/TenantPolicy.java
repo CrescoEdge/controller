@@ -177,7 +177,13 @@ public final class TenantPolicy {
             return Decision.allow(role == Role.SUPERUSER ? "superuser" : "internal");
         }
         if (isAdvisory(destination)) {
-            return Decision.allow("advisory");
+            // only the broker (and infrastructure, exempt before here) writes advisories: a forged ConsumerInfo advisory
+            // could steer a bridge's demand
+            return access == Access.READ ? Decision.allow("advisory") : Decision.deny("only the broker writes advisories");
+        }
+        if (destination.regionMatches(true, 0, "ActiveMQ", 0, "ActiveMQ".length())) {
+            // the broker's own destinations (ActiveMQ.DLQ holds every tenant's dead letters): no tenant name claims them
+            return Decision.deny("a broker destination");
         }
         if (matchesShared(destination, sharedPrefixes)) {
             return Decision.allow("fabric-shared");

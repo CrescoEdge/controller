@@ -370,6 +370,28 @@ public class ControllerStatePersistance {
     }
 
 
+    /**
+     * A state update on the dataplane is made only by the node it reports (its writer, stamped by that node's controller
+     * and checked by the broker): RegistryBinding. Insecure mode checks nothing.
+     */
+    private String writerRefusal(Message msg, boolean atGlobal, String regionId, String agentId, String regionconfigs,
+                                 String agentconfigs, String pluginconfigs) {
+        if (!io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) return null;
+        io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg);
+        return io.cresco.agent.controller.communication.RegistryBinding.dataplaneRefusal(writer, atGlobal,
+                dbe::regionOfAgentQuiet, regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
+    }
+
+    private volatile long lastRefusedUpdateLog;
+
+    private void refusedUpdate(String mode, String why) {
+        long now = System.currentTimeMillis();
+        if (now - lastRefusedUpdateLog > 10_000L) {
+            lastRefusedUpdateLog = now;
+            logger.warn("REFUSED a " + mode + " state update on the dataplane: " + why);
+        }
+    }
+
     public String registerRegionalListener() {
         String lid = null;
         try {
@@ -384,7 +406,15 @@ public class ControllerStatePersistance {
 
                                 MapMessage mapMessage = (MapMessage)msg;
                                 //logger.error("REGIONAL HEALTH MESSAGE: INCOMING");
-                                dbe.nodeUpdateStatus("AGENT",null, mapMessage.getStringProperty("agent_id"), null, null,mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                String why = writerRefusal(msg, false, null, mapMessage.getStringProperty("agent_id"),
+                                        null, mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                if (why != null) { refusedUpdate("AGENT", why); return; }
+                                String agentconfigs = mapMessage.getString("agentconfigs");
+                                if (io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) {
+                                    io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg);
+                                    if (writer != null) agentconfigs = io.cresco.agent.controller.communication.RegistryBinding.withVerifiedTenant(agentconfigs, writer.getTenant());
+                                }
+                                dbe.nodeUpdateStatus("AGENT",null, mapMessage.getStringProperty("agent_id"), null, null, agentconfigs, mapMessage.getString("pluginconfigs"));
 
                             }
                         } catch(Exception ex) {
@@ -422,6 +452,9 @@ public class ControllerStatePersistance {
 
                                 MapMessage mapMessage = (MapMessage)msg;
                                 //logger.error("GLOBAL HEALTH MESSAGE: INCOMING " + mapMessage.getStringProperty("region_id"));
+                                String why = writerRefusal(msg, true, mapMessage.getStringProperty("region_id"), null,
+                                        mapMessage.getString("regionconfigs"), mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                if (why != null) { refusedUpdate("REGION", why); return; }
                                 dbe.nodeUpdateStatus("REGION", mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
 
                             }

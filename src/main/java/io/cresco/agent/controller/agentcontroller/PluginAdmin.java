@@ -57,6 +57,7 @@ public class PluginAdmin {
     private static final long SERVICE_WAIT_MS = 30000L;
     private Map<String,Configuration> configMap;
     private Map<String,PluginNode> pluginMap;
+    private final JarIntake jarIntake;
     private Map<Long,List<String>> bundleMap;
     private Map<String,List<String>> jarRepoSyncMap;
 
@@ -94,6 +95,7 @@ public class PluginAdmin {
 
         this.context = context;
         this.logger = plugin.getLogger(PluginAdmin.class.getName(), CLogger.Level.Info);
+        this.jarIntake = new JarIntake(plugin);
 
         this.dataPlaneLogger = dataPlaneLogger;
 
@@ -837,7 +839,7 @@ public class PluginAdmin {
                     bundle = context.getBundle((String) map.get("jarfile"));
 
                     if (bundle == null) {
-                        bundle = context.installBundle("file:" + map.get("jarfile"));
+                        bundle = installVerified(Paths.get((String) map.get("jarfile")), "file:" + map.get("jarfile"));
                     }
 
                     break;
@@ -848,7 +850,7 @@ public class PluginAdmin {
                         bundle = context.getBundle(jarPath.toFile().getAbsolutePath());
 
                         if (bundle == null) {
-                            bundle = context.installBundle("file:" + jarPath.toFile().getAbsolutePath());
+                            bundle = installVerified(jarPath, "file:" + jarPath.toFile().getAbsolutePath());
                         }
                     }
                     break;
@@ -880,6 +882,28 @@ public class PluginAdmin {
         }
         return bundleID;
     }
+
+    /**
+     * Install the jar at {@code jar} (not embedded in the agent) from a private copy that verifies ({@link JarIntake});
+     * null (logged) when it does not.
+     */
+    private Bundle installVerified(Path jar, String location) throws Exception {
+        Path copy;
+        try {
+            copy = jarIntake.verifiedCopy(jar);
+        } catch (io.cresco.library.security.JarSignatures.Rejected rejected) {
+            logger.error("addBundle: REFUSED to install " + jar + ": " + rejected.getMessage());
+            return null;
+        }
+        try (InputStream in = Files.newInputStream(copy)) {
+            return context.installBundle(location, in);
+        } finally {
+            try { Files.deleteIfExists(copy); } catch (Exception ignore) { }
+        }
+    }
+
+    /** Verifies every jar that did not come embedded in the agent before it is cached or installed. */
+    public JarIntake getJarIntake() { return jarIntake; }
 
     public boolean startBundle(long bundleID, String pid) {
         boolean isStarted = false;
@@ -926,6 +950,47 @@ public class PluginAdmin {
         return  isRemoved;
     }
 
+    /**
+     * {@code plugin_data_retention_days} (default 0: never): delete the data directory of a plugin that is no longer
+     * configured on this agent (not running, no inventory row) once the directory has not changed for that many days.
+     * Never on a stop. Returns the directories deleted.
+     */
+    public List<String> sweepStalePluginData(long retentionDays) {
+        List<String> deleted = new ArrayList<>();
+        if (retentionDays <= 0) return deleted;
+        File base = new File(agentService.getAgentDataDirectory() + "/plugin-data");
+        File[] dirs = base.listFiles(File::isDirectory);
+        if (dirs == null) return deleted;
+        long cutoff = System.currentTimeMillis() - retentionDays * 24L * 3600 * 1000;
+        for (File d : dirs) {
+            String id = d.getName();
+            try {
+                boolean configured;
+                synchronized (lockPlugin) {
+                    configured = pluginMap.containsKey(id);
+                }
+                if (configured || pendingOwners.containsKey(id) || gdb.nodeExist(plugin.getRegion(), plugin.getAgent(), id)) continue;
+                if (newestChange(d.toPath()) > cutoff) continue;
+                FileUtils.deleteDirectory(d);
+                deleted.add(id);
+                logger.warn("Deleted the plugin-data of " + id + ": no longer configured here and unchanged for "
+                        + retentionDays + " days (plugin_data_retention_days)");
+            } catch (Exception ex) {
+                logger.error("sweepStalePluginData " + id + ": " + ex.getMessage());
+            }
+        }
+        return deleted;
+    }
+
+    private static long newestChange(java.nio.file.Path dir) throws java.io.IOException {
+        try (java.util.stream.Stream<java.nio.file.Path> all = Files.walk(dir)) {
+            return all.mapToLong(p -> {
+                try { return Files.getLastModifiedTime(p, java.nio.file.LinkOption.NOFOLLOW_LINKS).toMillis(); }
+                catch (java.io.IOException e) { return Long.MAX_VALUE; }
+            }).max().orElse(Long.MAX_VALUE);
+        }
+    }
+
     public void stopAllPlugins() {
 
         Set<String> keys = null;
@@ -958,10 +1023,29 @@ public class PluginAdmin {
      * on the next agent restart. The plugin-data of a persistent plugin is kept (identity-keyed state).
      */
     public boolean removePlugin(String pluginId) {
-        return stopPlugin(pluginId, true);
+        return removePlugin(pluginId, false);
+    }
+
+    /**
+     * {@link #removePlugin(String)}; {@code purgeData}: also delete the plugin's data directory
+     * ({@code plugin-data/<id>}). Only an explicit pluginremove with {@code purge_data=true} from an admin purges; a
+     * plugin's data otherwise outlives its removal (and every stop) -- a plugin's data may be the only copy of what it
+     * holds (a file repository).
+     */
+    public boolean removePlugin(String pluginId, boolean purgeData) {
+        return stopPlugin(pluginId, true, purgeData);
     }
 
     private boolean stopPlugin(String pluginId, boolean isRemove) {
+        return stopPlugin(pluginId, isRemove, false);
+    }
+
+    /** The data directory of plugin {@code pluginId}. */
+    File pluginDataDirectory(String pluginId) {
+        return new File(agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId);
+    }
+
+    private boolean stopPlugin(String pluginId, boolean isRemove, boolean purgeData) {
         boolean isStopped = false;
         try {
 
@@ -1056,15 +1140,17 @@ public class PluginAdmin {
 
                                 //remove from database
                                 gdb.removeNode(plugin.getRegion(), plugin.getAgent(), pluginId);
-
-                                //remove data directory
-                                String pluginDataDirectory = agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId;
-                                File folder = new File(pluginDataDirectory);
-                                if (folder.exists()) {
-                                    if (folder.isDirectory()) {
-                                        FileUtils.deleteDirectory(folder);
-                                        logger.info("Removing stale plugin-data: " + folder.getName());
-                                    }
+                            }
+                            // a plugin's data is never deleted on a stop (a graceful agent shutdown stops every plugin)
+                            // nor on a remove without an explicit purge: it may be the only copy of what the plugin held
+                            File folder = pluginDataDirectory(pluginId);
+                            if (folder.isDirectory()) {
+                                if (isRemove && purgeData) {
+                                    FileUtils.deleteDirectory(folder);
+                                    logger.warn("PURGED the plugin-data of removed plugin " + pluginId + ": " + folder);
+                                } else if (isRemove) {
+                                    logger.info("Plugin " + pluginId + " removed; its plugin-data is kept at " + folder.getAbsolutePath()
+                                            + " (pluginremove with purge_data=true from an admin deletes it)");
                                 }
                             }
                         } catch (Exception ex) {
@@ -1158,6 +1244,34 @@ public class PluginAdmin {
     }
 */
 
+    /**
+     * Does the bundle {@code bundleId} run the plugin {@code pluginId}? The controller sends a message as a plugin only for
+     * the bundle that runs it: one bundle cannot speak as another bundle's plugin.
+     */
+    public boolean bundleRunsPlugin(long bundleId, String pluginId) {
+        if (pluginId == null) return false;
+        Long pending = pendingOwners.get(pluginId);
+        if (pending != null && pending == bundleId) return true;
+        synchronized (lockPlugin) {
+            PluginNode n = pluginMap.get(pluginId);
+            return n != null && n.getBundleID() == bundleId;
+        }
+    }
+
+    /** Plugins being added: id -> bundle, from before their component can activate until they are in pluginMap. */
+    private final Map<String, Long> pendingOwners = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The plugin ids the bundle {@code bundleId} runs, sorted. */
+    public java.util.SortedSet<String> pluginIdsOf(long bundleId) {
+        java.util.SortedSet<String> ids = new java.util.TreeSet<>();
+        synchronized (lockPlugin) {
+            for (Map.Entry<String, PluginNode> e : pluginMap.entrySet()) {
+                if (e.getValue() != null && e.getValue().getBundleID() == bundleId) ids.add(e.getKey());
+            }
+        }
+        return ids;
+    }
+
     public void msgIn(MsgEvent msg) {
 
         String pluginID = msg.getDstPlugin();
@@ -1206,6 +1320,10 @@ public class PluginAdmin {
                         }
 
                         //String pluginID = addConfig(pluginName, map);
+                        // the plugin may send as soon as its component activates (addConfig/startBundle), before it is in
+                        // pluginMap: it already speaks as pluginID of this bundle (bundleRunsPlugin)
+                        pendingOwners.put(pluginID, bundleID);
+                        try {
                         if (addConfig(pluginID, map)) {
 
                             if (startBundle(bundleID, (String)map.get("pluginname"))) {
@@ -1247,6 +1365,9 @@ public class PluginAdmin {
                             }
                         } else {
                             logger.info("Could not create config pluginName " + map.get("pluginname") + " for jar " + map.get("jarfile"));
+                        }
+                        } finally {
+                            pendingOwners.remove(pluginID);
                         }
                         //controllerEngine.getPluginAdmin().startBundle(bundleID);
                         //String pluginID = controllerEngine.getPluginAdmin().addConfig(pluginName,jarFile, map);
@@ -1778,17 +1899,30 @@ public class PluginAdmin {
         return repoDirPath;
     }
 
+    /**
+     * An uploaded plugin jar: kept in the repository cache, under its own content hash, only when it verifies
+     * ({@link JarIntake}). The caller's {@code md5} is advisory (a mismatch is logged). Returns the cached path, or null.
+     */
     public String pluginUpdate(Map<String, String> hm, byte[] jarData) {
         String jarPath = null;
+        Path verified = null;
         try {
-
-            String jarFile = hm.get("md5");
-            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + System.getProperty("file.separator") + jarFile);
-            Files.write(path, jarData);
+            verified = jarIntake.verifiedFromBytes(jarData);
+            Path path = jarIntake.moveToContentName(verified, getRepoCacheDir());
+            verified = null;
+            String claimed = hm == null ? null : hm.get("md5");
+            if (claimed != null && !claimed.equals(path.getFileName().toString())) {
+                logger.warn("pluginUpdate(): the uploader's hash " + claimed + " is not the jar's (" + path.getFileName() + "); the jar's is used");
+            }
             jarPath = path.toAbsolutePath().toString();
-
+        } catch (io.cresco.library.security.JarSignatures.Rejected rejected) {
+            logger.error("pluginUpdate(): REFUSED an uploaded jar: " + rejected.getMessage());
         } catch (Exception ex) {
             logger.error("pluginUpdate() ", ex);
+        } finally {
+            if (verified != null) {
+                try { Files.deleteIfExists(verified); } catch (Exception ignore) { }
+            }
         }
         return jarPath;
     }
@@ -1829,22 +1963,25 @@ public class PluginAdmin {
 
                             logger.debug("region: " + region + " agent: " + agent + " pluginId: " + pluginID + " responded with jar data");
 
-                            Path path = Paths.get(getRepoCacheDir().toFile().getAbsolutePath() + System.getProperty("file.separator") + jarFile);
-
-                            Files.write(path, retMsg.getDataParam("jardata"));
-
-                            if (path.toFile().isFile()) {
-                                String md5 = plugin.getMD5(path.toFile().getAbsolutePath());
-                                if (pluginMD5.equals(md5)) {
-                                    jarPath = path;
+                            // a fetched jar enters the cache only when it verifies, and only as the jar asked for
+                            Path verified = null;
+                            try {
+                                verified = jarIntake.verifiedFromBytes(retMsg.getDataParam("jardata"));
+                                String hash = io.cresco.library.crypto.CrescoCrypto.contentHashHex(verified);
+                                if (pluginMD5 == null || pluginMD5.equals(hash)) {
+                                    jarPath = jarIntake.moveToContentName(verified, getRepoCacheDir());
+                                    verified = null;
+                                    break;
                                 } else {
-                                    logger.error("Jar " + pluginName + " failed MD5 Check");
+                                    logger.error("Jar " + pluginName + " from " + region + "/" + agent + "/" + pluginID
+                                            + " is not the jar asked for (hash " + hash + ", wanted " + pluginMD5 + ")");
                                 }
-                            } else {
-                                if(jarPath != null) {
-                                    logger.error("Jar " + pluginName + " Path: " + jarPath.toFile().getAbsolutePath() + " is not a file!");
-                                } else {
-                                    logger.error("Jar " + pluginName + " Path = NULL");
+                            } catch (io.cresco.library.security.JarSignatures.Rejected rejected) {
+                                logger.error("Jar " + pluginName + " from " + region + "/" + agent + "/" + pluginID + " REFUSED: "
+                                        + rejected.getMessage());
+                            } finally {
+                                if (verified != null) {
+                                    try { Files.deleteIfExists(verified); } catch (Exception ignore) { }
                                 }
                             }
                         } else {

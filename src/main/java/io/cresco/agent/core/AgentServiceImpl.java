@@ -29,13 +29,21 @@ import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
 
 
+/*
+ * Not published by DS (service = {}): activate() registers AgentService itself, through a service factory, so every bundle
+ * gets its own instance (BundleAgentService) and the controller knows which bundle is calling. The controller bundle gets
+ * this object.
+ */
 @Component(
-        service = {AgentService.class} ,
+        service = {} ,
         immediate = true,
         reference=@Reference(name="ConfigurationAdmin", service=ConfigurationAdmin.class)
 )
 
 public class AgentServiceImpl implements AgentService {
+
+    private volatile org.osgi.framework.ServiceRegistration<?> agentServiceRegistration;
+    private volatile long controllerBundleId = -1;
 
     private ControllerEngine controllerEngine;
     private ControllerStateImp cstate;
@@ -287,6 +295,9 @@ public class AgentServiceImpl implements AgentService {
         }
         controllerEngine = new ControllerEngine(cstate, plugin, pluginAdmin, gdb);
 
+        logSecurityModeWarnings();
+        registerAgentServiceFactory(context);
+
 
 
         (new Thread() {
@@ -323,6 +334,11 @@ public class AgentServiceImpl implements AgentService {
 
         if(logger != null) {
             logger.info("Starting Controller Shutdown");
+        }
+        org.osgi.framework.ServiceRegistration<?> reg = agentServiceRegistration;
+        agentServiceRegistration = null;
+        if (reg != null) {
+            try { reg.unregister(); } catch (Exception ignore) { }
         }
 
         if(controllerEngine != null) {
@@ -415,15 +431,225 @@ public class AgentServiceImpl implements AgentService {
     }
 
 
+    /**
+     * The controller's own send (its PluginBuilder holds this object): whatever the message says about its caller is
+     * replaced by this controller.
+     */
     @Override
     public void msgOut(String id, MsgEvent msg) {
         try {
+            controllerEngine.stampSelf(msg);
             controllerEngine.msgIn(msg);
         } catch(Exception ex) {
             logger.error(msg.printHeader());
             logger.error(msg.getParams().toString());
 
             logger.error("msgOut()", ex);
+        }
+    }
+
+    // ------------------------------------------------------------------ per-bundle service (verified callers)
+
+    private void registerAgentServiceFactory(BundleContext context) {
+        if (context == null || context.getBundle() == null) {
+            logger.error("no bundle context: the AgentService is not registered (only a test runs the controller this way)");
+            return;
+        }
+        controllerBundleId = context.getBundle().getBundleId();
+        final AgentServiceImpl core = this;
+        agentServiceRegistration = context.registerService(AgentService.class.getName(),
+                new org.osgi.framework.ServiceFactory<AgentService>() {
+                    @Override
+                    public AgentService getService(org.osgi.framework.Bundle bundle, org.osgi.framework.ServiceRegistration<AgentService> r) {
+                        return bundle.getBundleId() == controllerBundleId ? core : new BundleAgentService(core, bundle);
+                    }
+
+                    @Override
+                    public void ungetService(org.osgi.framework.Bundle bundle, org.osgi.framework.ServiceRegistration<AgentService> r,
+                                             AgentService service) { }
+                }, null);
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> refusalLog = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** One WARN line per kind of refusal per minute. */
+    private void refused(String kind, String detail) {
+        long now = System.currentTimeMillis();
+        Long last = refusalLog.get(kind);
+        if (last == null || now - last > 60_000L) {
+            refusalLog.put(kind, now);
+            logger.warn("REFUSED " + kind + ": " + detail);
+        }
+    }
+
+    /**
+     * A plugin's send: it goes out as {@code plugin:<tenant>/<region>/<agent>/<id>}, and only when {@code bundle} runs the
+     * plugin {@code id}; otherwise it is dropped (logged).
+     */
+    void msgOutFromBundle(org.osgi.framework.Bundle bundle, String id, MsgEvent msg) {
+        if (msg == null) return;
+        if (pluginAdmin == null || !pluginAdmin.bundleRunsPlugin(bundle.getBundleId(), id)) {
+            refused("send as a plugin the bundle does not run", bundle.getSymbolicName() + " sent as plugin " + id
+                    + " (it runs " + (pluginAdmin == null ? "nothing yet" : pluginAdmin.pluginIdsOf(bundle.getBundleId())) + "); dropped "
+                    + msg.printHeader());
+            return;
+        }
+        try {
+            io.cresco.agent.controller.communication.CallerStamps.stamp(msg, controllerEngine.pluginCaller(id));
+            controllerEngine.msgIn(msg);
+        } catch (Exception ex) {
+            logger.error("msgOut() from " + bundle.getSymbolicName() + ": " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * A send on behalf of an API user {@code bundle} authenticated: only from a bundle in {@code on_behalf_bundles}, for
+     * one of its plugins, for an API caller of this node's tenant (any tenant when this node's tenant is a superuser
+     * tenant -- the broker applies the same rule, so a tenant's node never mints another tenant's users).
+     */
+    void msgOutOnBehalfOf(org.osgi.framework.Bundle bundle, String id, MsgEvent msg, io.cresco.library.security.Caller caller) {
+        String why = onBehalfRefusal(bundle, id, caller);
+        if (why != null) {
+            refused("send on behalf of a user", bundle.getSymbolicName() + ": " + why);
+            throw new SecurityException(why);
+        }
+        io.cresco.agent.controller.communication.CallerStamps.stamp(msg,
+                controllerEngine.securityOn() ? caller : io.cresco.library.security.Caller.anonymous());
+        io.cresco.agent.controller.communication.CallerStamps.dropFiles(msg);   // a user names no file on this node's disk
+        controllerEngine.msgIn(msg);
+    }
+
+    String onBehalfRefusal(org.osgi.framework.Bundle bundle, String id, io.cresco.library.security.Caller caller) {
+        return onBehalfRefusal(bundle.getSymbolicName(),
+                io.cresco.agent.controller.communication.SecuritySettings.onBehalfBundles(plugin.getConfig()),
+                pluginAdmin != null && pluginAdmin.bundleRunsPlugin(bundle.getBundleId(), id), id, caller, getTenant(),
+                getSuperuserTenants());
+    }
+
+    /**
+     * Why a bundle may not send on behalf of {@code caller}, or null: the bundle must be in {@code on_behalf_bundles}, run
+     * the plugin it sends as, and send for an API caller of this node's tenant -- of any tenant only when this node's
+     * tenant is a superuser tenant.
+     */
+    static String onBehalfRefusal(String bundleName, java.util.Set<String> allowed, boolean runsPlugin, String pluginId,
+                                  io.cresco.library.security.Caller caller, String nodeTenant, java.util.Set<String> superuserTenants) {
+        if (!allowed.contains(bundleName)) {
+            return "bundle " + bundleName + " is not in on_behalf_bundles " + allowed;
+        }
+        if (caller == null || caller.getKind() != io.cresco.library.security.Caller.Kind.API) {
+            return "on behalf of " + caller + ": only an API caller (api:<tenant>/<user>)";
+        }
+        if (!runsPlugin) {
+            return "bundle " + bundleName + " does not run plugin " + pluginId;
+        }
+        if (!caller.getTenant().equals(nodeTenant) && !superuserTenants.contains(nodeTenant)) {
+            return "a user of tenant " + caller.getTenant() + " on a node of tenant " + nodeTenant
+                    + " (only a node of a superuser tenant sends for another tenant's users)";
+        }
+        return null;
+    }
+
+    /** A plugin sets the level of its own loggers ({@code <pluginid>:...}) only. */
+    void setLogLevelFromBundle(org.osgi.framework.Bundle bundle, String logId, CLogger.Level level) {
+        if (logId != null && pluginAdmin != null) {
+            for (String own : pluginAdmin.pluginIdsOf(bundle.getBundleId())) {
+                if (logId.toLowerCase(java.util.Locale.ROOT).startsWith(own.toLowerCase(java.util.Locale.ROOT) + ":")) {
+                    setLogLevel(logId, level);
+                    return;
+                }
+            }
+        }
+        refused("log level of another component", bundle.getSymbolicName() + " tried to set " + logId + " to " + level);
+    }
+
+    private final java.util.Map<org.osgi.framework.Bundle, io.cresco.library.data.DataPlaneService> bundleDataPlanes =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** The dataplane {@code bundle} sees: every message it writes carries its plugin as the writer. */
+    io.cresco.library.data.DataPlaneService dataPlaneFor(org.osgi.framework.Bundle bundle, io.cresco.library.data.DataPlaneService impl) {
+        if (!(impl instanceof io.cresco.agent.data.DataPlaneServiceImpl)) return impl;
+        final long bundleId = bundle.getBundleId();
+        final String name = bundle.getSymbolicName();
+        io.cresco.library.data.DataPlaneService d = new io.cresco.agent.data.BundleDataPlaneService(
+                (io.cresco.agent.data.DataPlaneServiceImpl) impl, () -> {
+                    java.util.SortedSet<String> ids = pluginAdmin == null ? new java.util.TreeSet<>() : pluginAdmin.pluginIdsOf(bundleId);
+                    // a bundle running several plugin instances writes as the first of them (instances of one bundle
+                    // are one code base); a bundle running none writes as nobody
+                    return ids.isEmpty() ? null : controllerEngine.pluginCaller(ids.first());
+                }, name, io.cresco.agent.controller.communication.SecuritySettings.onBehalfBundles(plugin.getConfig()).contains(name));
+        bundleDataPlanes.put(bundle, d);
+        return d;
+    }
+
+    boolean isCurrentDataPlane(io.cresco.library.data.DataPlaneService wrapper, io.cresco.library.data.DataPlaneService impl) {
+        return wrapper instanceof io.cresco.agent.data.BundleDataPlaneService
+                && ((io.cresco.agent.data.BundleDataPlaneService) wrapper).wraps(impl);
+    }
+
+    @Override
+    public boolean isSecurityEnabled() {
+        return plugin == null || io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig());
+    }
+
+    /** This node's tenant ({@code tenant_id}). */
+    @Override
+    public String getTenant() {
+        return plugin == null ? null : io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
+    }
+
+    @Override
+    public java.util.Set<String> getSuperuserTenants() {
+        return plugin == null ? java.util.Collections.emptySet()
+                : java.util.Collections.unmodifiableSet(io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()));
+    }
+
+    private volatile java.security.KeyStore signingTrust;
+    private volatile String signingTrustKey;
+
+    /** {@code plugin_signing_truststore} (PKCS12 or JKS, trusted-certificate entries), re-read when the file changes. */
+    @Override
+    public java.security.KeyStore getPluginSigningTrust() {
+        if (plugin == null) return null;
+        String path = plugin.getConfig().getStringParam("plugin_signing_truststore", null);
+        if (path == null || path.trim().isEmpty()) return null;
+        try {
+            Path p = Paths.get(path.trim()).toAbsolutePath();
+            java.nio.file.attribute.BasicFileAttributes a = java.nio.file.Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes.class);
+            String key = p + "|" + a.lastModifiedTime().toMillis() + "|" + a.size();
+            if (key.equals(signingTrustKey) && signingTrust != null) return signingTrust;
+            String pw = plugin.getConfig().getStringParam("plugin_signing_truststore_password", "");
+            java.security.KeyStore ks = io.cresco.library.security.JarSignatures.loadTrustStore(p, pw == null ? new char[0] : pw.toCharArray());
+            signingTrust = ks;
+            signingTrustKey = key;
+            return ks;
+        } catch (Exception ex) {
+            refused("plugin signing trust store", "plugin_signing_truststore " + path + " cannot be read (" + ex.getMessage()
+                    + "): every jar arriving over the network is refused");
+            return null;
+        }
+    }
+
+    @Override
+    public boolean isPluginSigningRequired() {
+        return plugin == null || io.cresco.agent.controller.communication.SecuritySettings.pluginSigningRequired(plugin.getConfig());
+    }
+
+    /** Every boot says plainly what is not protected. */
+    private void logSecurityModeWarnings() {
+        io.cresco.library.plugin.Config c = plugin.getConfig();
+        if (!io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(c)) {
+            logger.warn("SECURITY IS DISABLED (broker_security_enabled=false): every caller is anonymous with every role; "
+                    + "development only");
+        }
+        if (!isPluginSigningRequired()) {
+            logger.warn("plugin_signing_required=false: jars arriving over the network are installed without a valid signature; "
+                    + "development only");
+        } else if (c.getStringParam("plugin_signing_truststore", null) == null) {
+            logger.warn("plugin_signing_truststore is not set: every plugin or repository jar arriving over the network is "
+                    + "refused (jars embedded in the agent are trusted)");
+        }
+        if (io.cresco.agent.controller.communication.SecuritySettings.fileAccessRoots(c).isEmpty()) {
+            logger.info("file_access_roots is not set: getfiledata and getfileinfo are refused");
         }
     }
 

@@ -640,7 +640,8 @@ public class GlobalExecutor implements Executor {
             jarInfo.put("md5",pluginMD5);
 
 
-            if((pluginName != null) && (pluginMD5 != null) && (pluginJarFile != null) && (pluginVersion != null) && (ce.paramsContains("jardata"))) {
+            if((pluginName != null) && (pluginMD5 != null) && (pluginJarFile != null) && (pluginVersion != null) && (ce.paramsContains("jardata"))
+                    && verifiesForRepo(ce, pluginName)) {
 
                 List<Map<String,String>> repoList = controllerEngine.getGDB().getPluginListMapByType("pluginname","io.cresco.repo");
 
@@ -1187,17 +1188,48 @@ public class GlobalExecutor implements Executor {
         return ce;
     }
 
+    /** The global replicates only a jar that verifies (each repo verifies it again on putjar). */
+    private boolean verifiesForRepo(MsgEvent ce, String pluginName) {
+        java.nio.file.Path verified = null;
+        try {
+            verified = controllerEngine.getPluginAdmin().getJarIntake().verifiedFromBytes(ce.getDataParam("jardata"));
+            return true;
+        } catch (io.cresco.library.security.JarSignatures.Rejected rejected) {
+            logger.error("savetorepo: REFUSED " + pluginName + ": " + rejected.getMessage());
+            ce.setParam("error", "jar refused: " + rejected.getMessage());
+            return false;
+        } catch (Exception ex) {
+            logger.error("savetorepo: cannot verify " + pluginName + ": " + ex.getMessage());
+            return false;
+        } finally {
+            if (verified != null) {
+                try { java.nio.file.Files.deleteIfExists(verified); } catch (Exception ignore) { }
+            }
+        }
+    }
+
     private MsgEvent pluginDownload(MsgEvent ce) {
         try
         {
             String baseUrl = ce.getParam("pluginurl");
-            if(!baseUrl.endsWith(System.getProperty("file.separator")))
+            String jarName = ce.getParam("agentcontroller");
+            // a plain jar name (it becomes a file name here) from an http(s) URL (never file:, jar: or anything local);
+            // the jar is kept only when it verifies (signed installs)
+            if (!io.cresco.agent.controller.agentcontroller.JarIntake.simpleName(jarName) || baseUrl == null) {
+                ce.setParam("error", "plugindownload needs a plain jar name (agentcontroller) and a pluginurl");
+                return ce;
+            }
+            if(!baseUrl.endsWith("/"))
             {
-                baseUrl = baseUrl + System.getProperty("file.separator");
+                baseUrl = baseUrl + "/";
             }
 
 
-            URL website = new URL(baseUrl + ce.getParam("agentcontroller"));
+            URL website = new URL(baseUrl + jarName);
+            if (!"https".equalsIgnoreCase(website.getProtocol()) && !"http".equalsIgnoreCase(website.getProtocol())) {
+                ce.setParam("error", "plugindownload fetches http(s) URLs only, not " + website.getProtocol());
+                return ce;
+            }
 
             try (ReadableByteChannel rbc = Channels.newChannel(website.openStream())) {
                 //ReadableByteChannel rbc = Channels.newChannel(website.openStream());
@@ -1225,9 +1257,11 @@ public class GlobalExecutor implements Executor {
                 File pluginFileObject = new File(pluginFile);
                 if (!pluginFileObject.exists() || forceDownload) {
 
-                    try (FileOutputStream fos = new FileOutputStream(parentDirName + "/plugins/" + ce.getParam("agentcontroller"))) {
+                    try (InputStream body = Channels.newInputStream(rbc)) {
 
-                        fos.getChannel().transferFrom(rbc, 0, Long.MAX_VALUE);
+                        io.cresco.agent.controller.agentcontroller.JarIntake intake = controllerEngine.getPluginAdmin().getJarIntake();
+                        java.nio.file.Path verified = intake.verifiedFromStream(body);
+                        java.nio.file.Files.move(verified, pluginFileObject.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                         if (pluginFileObject.exists()) {
                             ce.setParam("hasplugin", ce.getParam("agentcontroller"));
                             //ce.setMsgBody("Downloaded Plugin:" + ce.getParam("agentcontroller"));
