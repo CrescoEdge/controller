@@ -1034,6 +1034,24 @@ public final class PeerTrustRegistry {
         return b != null && (bridgePruneMs <= 0 || System.currentTimeMillis() - b.lastSeen <= bridgePruneMs);
     }
 
+    /**
+     * Did {@code region/agent} of {@code tenant} join this node as a controller: a recorded bridge peer (a REGION/GLOBAL
+     * discovery exchange with this node), or a name bound here as a controller it joined as (not one this node followed)?
+     * A name bound to another tenant never is. Lock-free; no I/O. (The global asks it of a registry update's caller: only
+     * a region's own controller speaks for its region.)
+     */
+    public boolean isJoinedController(String tenant, String region, String agent) {
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return false;
+        String n = name(region, agent);
+        Binding id = identities.get(n);
+        if (id != null && (tenant == null || !tenant.equals(id.tenant))) return false;
+        if (!revokedBridges.contains(n)) {
+            Binding b = bridges.get(n);
+            if (b != null && (bridgePruneMs <= 0 || System.currentTimeMillis() - b.lastSeen <= bridgePruneMs)) return true;
+        }
+        return id != null && ROLE_CONTROLLER.equals(id.role) && !id.follow;
+    }
+
     /** A recorded bridge peer is in use (keeps it from being pruned). In memory; persisted in the background, at most daily. */
     public void touchBridgePeer(CrescoIdentity id) {
         if (id == null) return;
