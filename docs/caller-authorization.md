@@ -352,9 +352,20 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   `identity_leaf_validity_hours` where links are that unreliable).
 - **Re-installed controllers (one action).** A rebind token may name the key it allows: `<region>/<agent>=<fingerprint>`
   (`#tag` as before); a token without one rebinds to the first key presented and is logged as such. A joiner follows its
-  pinned controller to a new key WITHOUT a token when the new leaf is vouched for: issued by the CA it pinned for that
-  region (a region controller re-installed with its `region-ca.p12` restored), or carrying a certificate or key listed in
-  `controller_trust_anchors` -- never for a revoked (tombstoned) name or key.
+  pinned controller to a new key WITHOUT a token when the new leaf is vouched for -- never for a revoked (tombstoned) name
+  or key:
+  - by an **operator-signed rebind statement** the controller serves in discovery: the operator signs "`<region>/<agent>`
+    now holds key `<fingerprint>`" (at most 30 days) with an operator key and puts it in the re-installed controller's
+    `<data>/security/controller-rebind.json`; every joiner that lists that operator key's SHA-256 (of its
+    SubjectPublicKeyInfo) in `controller_rebind_signers` follows. One action at the controller instead of one rebind per
+    joiner. Made with the JDK alone: `java -cp controller-1.3-SNAPSHOT.jar
+    io.cresco.agent.controller.communication.RebindStatement <operator-key.pem> <operator-pub.pem> <region>/<agent>
+    <new key fingerprint> [days]` (PKCS#8 / SubjectPublicKeyInfo PEM, e.g. `openssl genpkey -algorithm EC -pkeyopt
+    ec_paramgen_curve:P-384`); a node logs its key fingerprint at start ("This node's identity key: ...");
+  - by the CA it pinned for that region (a region controller re-installed with its `region-ca.p12` restored);
+  - by a certificate or key listed in `controller_trust_anchors`.
+  Under the regional CA, back up `region-ca.p12` (and its `.pass`): restoring it on a re-installed region controller is
+  the one action (its agents verify the new controller leaf by that CA).
 - **Clocks.** Certificates are backdated `identity_cert_backdate_hours` (24; was a fixed hour), so a clock lagging less than
   that accepts a certificate issued "now". Pongs (`remote_ts`) and pings (the child's clock) are compared: a skew of half the
   backdate is WARN, the full backdate CRITICAL (`identity` health); an enrollment refused as not yet valid says the clock is
@@ -373,5 +384,6 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
 | revocation list wire | `rev_have`/`rev_ack` = digest of the whole list; v1 lists | `<epoch>.<position>`; `rev_epoch`, `rev_ts`; v2 signed deltas (only this branch spoke v1) |
 | `peer_binding_prune_days` | every binding but this node's own | AGENT bindings only |
 | rebind token | `<region>/<agent>[#tag]` | also `<region>/<agent>[#tag]=<key fingerprint>` (recommended) |
+| `controller_rebind_signers`, `<data>/security/controller-rebind.json` | (none) | operator keys whose signed rebind statements joiners follow; the statement a re-installed controller serves |
 | a revoked name | free again at once | tombstoned until an operator rebind |
 | health check `identity` | (none) | CRITICAL: registry fenced/sealed, revocations not recorded, own leaf expired or in its last tenth with re-enrollment failing, clock skew > backdate |

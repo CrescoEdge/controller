@@ -154,6 +154,10 @@ public class CertificateManager {
             }
 
             startRenewalCheck();
+            if (chain != null && chain[0] != null) {
+                logger.info("This node's identity key: " + PeerIdentity.spkiFingerprint(chain[0])
+                        + " (SHA-256 of its SubjectPublicKeyInfo: what a rebind token or statement names)");
+            }
 
             // Export the public key
             exportPublicKey();
@@ -299,6 +303,39 @@ public class CertificateManager {
      */
     public boolean controllerAnchorVouches(X509Certificate[] chain) {
         return !csv(plugin.getConfig().getStringParam("controller_trust_anchors", "")).isEmpty() && controllerAnchorRefusal(chain) == null;
+    }
+
+    private volatile String rebindStatementCache;
+    private volatile long rebindStatementMtime = -1;
+
+    /**
+     * The operator-signed controller rebind statement this controller serves in discovery ({@code <identity dir>/
+     * controller-rebind.json}, see {@link RebindStatement}), or null. Re-read when the file changes.
+     */
+    public String controllerRebindStatement() {
+        try {
+            Path f = identityDir().resolve("controller-rebind.json");
+            long m = Files.exists(f) ? Files.getLastModifiedTime(f).toMillis() : 0;
+            if (m != rebindStatementMtime) {
+                String s = null;
+                if (m != 0 && Files.size(f) <= 16_384) s = Files.readString(f).trim();
+                rebindStatementCache = s == null || s.isEmpty() ? null : s;
+                rebindStatementMtime = m;
+                if (rebindStatementCache != null) logger.info("Serving the controller rebind statement " + f + " in discovery");
+            }
+            return rebindStatementCache;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Why {@code statement} does not vouch that the controller {@code region/agent} this node pinned now holds {@code keyFp}
+     * ({@code controller_rebind_signers}: SHA-256 of the operator public keys trusted to sign one), or null when it does.
+     */
+    public String rebindStatementRefusal(String statement, String region, String agent, String keyFp) {
+        return RebindStatement.refusal(statement, region, agent, keyFp, csv(plugin.getConfig().getStringParam("controller_rebind_signers", "")),
+                System.currentTimeMillis());
     }
 
     /** Sign {@code data} with this node's identity key (the key its leaf certificate carries). */

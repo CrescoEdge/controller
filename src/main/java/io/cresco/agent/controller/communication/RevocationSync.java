@@ -406,8 +406,11 @@ public final class RevocationSync {
             why[0] = v.region + "/" + v.agent + " is this node's parent, not a child";
             return null;
         }
-        String caller = msg.getParam("cresco_caller");
-        if (caller != null && !(caller.startsWith("controller:") && caller.endsWith("/" + v.region + "/" + v.agent))) {
+        // the verified caller the broker stamped (phase 3): when there is one it must be this same controller ("anonymous"
+        // only in the explicit insecure development mode, where no identity is verified and the signature alone decides)
+        String caller = msg.getParam(io.cresco.library.security.Caller.PARAM_CALLER);
+        if (caller != null && !caller.isEmpty() && !"anonymous".equals(caller)
+                && !(caller.startsWith("controller:") && caller.endsWith("/" + v.region + "/" + v.agent))) {
             why[0] = "the verified caller " + caller + " is not the controller " + v.region + "/" + v.agent + " that signed the list";
             return null;
         }

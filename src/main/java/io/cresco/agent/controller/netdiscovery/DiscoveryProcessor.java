@@ -249,7 +249,7 @@ public class DiscoveryProcessor {
 			return true;
 		}
 		// per-node trust: bind the responder's key first (it can be refused); only then trust its chain for TLS
-		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, true, true, true)) return false;
+		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, true, true, true, discoveryNode.discovered_rebind)) return false;
 		return setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
 	}
 
@@ -272,6 +272,12 @@ public class DiscoveryProcessor {
 	/** As above; with {@code record=false} only the checks run (nothing is bound or allowed). */
 	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient,
 							  boolean record) {
+		return learnPeer(type, region, agent, certJson, pinLeaf, asClient, record, null);
+	}
+
+	/** As above; {@code rebindStatement}: what the responder served (an operator-signed controller rebind statement), or null. */
+	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient,
+							  boolean record, String rebindStatement) {
 		try {
 			if (!io.cresco.agent.controller.communication.CrescoNames.isValid(region)
 					|| !io.cresco.agent.controller.communication.CrescoNames.isValid(agent)) {
@@ -327,8 +333,15 @@ public class DiscoveryProcessor {
 					// the controller this node joined re-keyed (re-installed): accepted without an operator action at each joiner
 					// only when the new identity is VOUCHED for -- issued by the CA this node pinned for its region, or matching an
 					// operator-configured controller trust anchor (controller_trust_anchors) -- never for a revoked name or key
+					io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+					String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(certs[0]);
+					String statementWhy = rebindStatement == null ? null : cm.rebindStatementRefusal(rebindStatement, region, agent, keyFp);
+					if (rebindStatement != null && statementWhy != null) {
+						logger.warn("Discovery: the rebind statement " + region + "/" + agent + " served was not accepted: " + statementWhy);
+					}
 					String voucher = reg.issuedByRecordedCa(certs) ? "vouched for by region " + region + "'s pinned CA"
-							: controllerEngine.getCertificateManager().controllerAnchorVouches(certs) ? "vouched for by controller_trust_anchors" : null;
+							: cm.controllerAnchorVouches(certs) ? "vouched for by controller_trust_anchors"
+							: rebindStatement != null && statementWhy == null ? "vouched for by an operator-signed rebind statement" : null;
 					if (voucher != null) {
 						io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult r =
 								reg.rebindVouched(named.getTenant(), region, agent, certs[0].getPublicKey(), voucher);
@@ -574,6 +587,7 @@ public class DiscoveryProcessor {
 		n.discovered_agent = ch.sagt;
 		n.discovered_broker_port = ch.sport;
 		n.discovered_cert = plugin.getConfig().getBooleanParam("security_regional_ca", false) ? r.rcert : ch.scert;
+		n.discovered_rebind = ch.rebind;
 		n.discover_region = hello.creg;
 		n.discover_agent = hello.cagt;
 		if (!setCertTrust(n)) {
@@ -605,6 +619,7 @@ public class DiscoveryProcessor {
 		ch.sreg = plugin.getRegion();
 		ch.sagt = plugin.getAgent();
 		ch.scert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
+		ch.rebind = controllerEngine.getCertificateManager().controllerRebindStatement();
 		ch.sport = advertisedBrokerPort();
 		byte[] key = DiscoveryAuth.key(secret, "handshake|" + h.type);
 		ch.mac = DiscoveryAuth.mac(key, "S1", DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), false));
