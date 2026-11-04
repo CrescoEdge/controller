@@ -944,7 +944,7 @@ public class DBInterfaceImpl implements DBInterface {
      */
     public String recordedRegionAlias(String region, String agent) {
         try {
-            String cp = dbe.getNodeConfigParams(region, agent, null);
+            String cp = dbe.agentConfigParamsQuiet(region, agent);
             if (cp == null) return null;
             Map<String, String> params = gson.fromJson(cp, new com.google.gson.reflect.TypeToken<Map<String, String>>() { }.getType());
             return params == null ? null : io.cresco.library.security.Caller.validAlias(params.get("region_alias"), region);

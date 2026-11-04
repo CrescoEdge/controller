@@ -634,6 +634,8 @@ public class RegionHealthWatcher {
                     io.cresco.agent.controller.statemachine.CryptoPolicySync.advertise(pingRequest);
                     // revocations: this region's own list up (until acknowledged), and what it holds of the global's
                     io.cresco.agent.controller.communication.RevocationSync.onChildPing(controllerEngine, pingRequest);
+                    // message signatures: our certificate up (the global lists it in its trust bundle), the bundle down (D4)
+                    controllerEngine.msgSigning().onChildPing(pingRequest);
 
                     // Retry within this tick before counting a miss; a single delayed pong (GC pause,
                     // load burst) must never drop the global.

@@ -197,6 +197,8 @@ public class AgentProducer {
             }
             dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
         }
+        // D4: a message this node originated is signed as it leaves (relays carry their origin's signature)
+        controllerEngine.msgSigning().signIfPending(sm);
 
         // QoS: liveness + control ride a dedicated, isolated control-plane sender so a flood of
         // telemetry or bulk can never serialize behind, block, or evict agent-contact traffic.
