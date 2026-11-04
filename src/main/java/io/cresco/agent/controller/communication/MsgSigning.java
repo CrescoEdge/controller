@@ -234,7 +234,8 @@ public final class MsgSigning {
             s.initSign(ownKey());
             s.update(canonical(m));
             m.setParam(SIG, Base64.getEncoder().encodeToString(s.sign()));
-            signedCount.incrementAndGet();
+            if (signedCount.incrementAndGet() == 1) info("message signatures ON: this node signs what it originates (first: "
+                    + m.getMsgType() + " " + m.getParam("action") + " as " + c + ", credential " + m.getParam(CRED).substring(0, 4) + ")");
         } catch (Exception e) {
             for (String k : new String[]{SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES}) m.removeParam(k);
             refusal("cannot sign a message this node sends (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "): it goes unsigned and is refused");
@@ -311,7 +312,8 @@ public final class MsgSigning {
                 return refuse("the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
             if (!fresh(sig, now)) return refuse("a signature seen before (a replay) from " + by);
-            verifiedCount.incrementAndGet();
+            if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
+                    + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + ")");
             return new Verdict(signed, null);
         } catch (Exception e) {
             return refuse("an unreadable signature (" + e.getClass().getSimpleName() + ")");
@@ -338,6 +340,12 @@ public final class MsgSigning {
         refusedCount.incrementAndGet();
         refusal(why);
         return new Verdict(null, why);
+    }
+
+    private void info(String line) {
+        try {
+            ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info).info(line);
+        } catch (RuntimeException ignore) { }
     }
 
     private void refusal(String why) {
