@@ -114,6 +114,11 @@ public class DBInterfaceImpl implements DBInterface {
     // Replace the existing nodeUpdate method in java/io/cresco/agent/db/DBInterfaceImpl.java
 // with the following:
 
+    /** The region {@code agentId} is registered in here, or null when it is not (registry binding). */
+    public String regionOfAgent(String agentId) {
+        return agentId == null ? null : dbe.regionOfAgentQuiet(agentId);
+    }
+
     @Override
     public boolean nodeUpdate(MsgEvent de) {
         boolean wasProcessedCorrectly = false; // Default to false, indicates if any valid action was taken
@@ -579,6 +584,9 @@ public class DBInterfaceImpl implements DBInterface {
                                 regionMap.put("location",params.get("location"));
                                 regionMap.put("platform",params.get("platform"));
                                 regionMap.put("environment",params.get("environment"));
+                                // the tenant the agent's controller was verified in (set by its region; see RegistryBinding)
+                                String tenant = params.get("tenant_id");
+                                regionMap.put("tenant_id", tenant == null || tenant.isEmpty() ? "default" : tenant);
 
                             } catch(Exception ex) {
                                 logger.error("getAgentList() configParams", ex);

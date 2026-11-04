@@ -336,7 +336,7 @@ upgraded, with client certificates on.
 | `peer_identity_rebind` / `<data>/security/peer-trust.json.rebind` | empty | one-shot rebind tokens |
 | `<data>/security/peer-trust.json.recover` | -- | `accept` or `reset` a sealed registry |
 | `peer_bridge_revoke`, `peer_bridge_prune_days`, `peer_binding_prune_days` | empty, 30, 90 | the binding prune applies to agent bindings only |
-| `peer_identity_revoke` / `<data>/security/peer-trust.json.revoke` | empty | revocation (see `caller-authorization.md` §7-8: tombstoned names, positive scope, fail-closed, versioned lists) |
+| `peer_identity_revoke` / `<data>/security/peer-trust.json.revoke` | empty | revocation (see `caller-authorization.md` §7 and §9: tombstoned names, positive scope, fail-closed, versioned lists) |
 | `identity_leaf_validity_hours`, `identity_renew_before_days`, `identity_renew_check_minutes`, `identity_reenroll_retry_minutes` | 168, 30, 60, 5 | renewal at max(life/3, floor) but at most life/2; no self-made fallback |
 | `identity_cert_backdate_hours` | 24 | certificate backdate = tolerated clock lag; skew is reported by the `identity` health check |
 | `revocation_sync_max_entries` | 4096 | entries per pong of a revocation-list delta |

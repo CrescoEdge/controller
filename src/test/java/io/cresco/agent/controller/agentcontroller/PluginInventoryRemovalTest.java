@@ -129,10 +129,10 @@ class PluginInventoryRemovalTest {
         assertTrue(pa.removePlugin("plugin-pipeline"));
         assertFalse(gdb.getNodeList("r1", "a1").contains("plugin-pipeline"));
 
-        // non-persistent plugin: unchanged behaviour (row and plugin-data removed)
+        // non-persistent plugin: its row is removed, its plugin-data kept (no purge asked for)
         assertTrue(pa.removePlugin("plugin-adhoc"));
         assertFalse(gdb.getNodeList("r1", "a1").contains("plugin-adhoc"));
-        assertFalse(adhocData.exists());
+        assertTrue(adhocData.isDirectory(), "a remove without purge keeps the plugin's data");
 
         // a leftover row with no running plugin (e.g. one that failed to start) is dropped by a remove
         gdb.addPNode("a1", "plugin-orphan", 10, "stale", 15000, System.currentTimeMillis(), "io.cresco.z", "z.jar", "1", "m", "{}", 20);
@@ -187,5 +187,52 @@ class PluginInventoryRemovalTest {
         assertTrue(globalDbe.getNodeList("r1", "a1").isEmpty());
         assertEquals(List.of("a2-plugin"), globalDbe.getNodeList("r1", "a2"));
         pa.close();
+    }
+
+    /**
+     * Plugin re-review finding: a runtime-added plugin's whole plugin-data directory was deleted on pluginremove AND on
+     * every graceful agent shutdown, and a filerepo's only copy lived there. A plugin's data now survives a stop and a
+     * remove; only an explicit purge deletes it, and stale data goes only by an opt-in retention sweep.
+     */
+    @Test
+    void aPluginsDataSurvivesAGracefulStopAndARemoveWithoutPurge() throws Exception {
+        String agentData = tmp.resolve("agent-data").toString();
+        PluginBuilder pb = pb(agentData);
+        agentDbe = db(pb, "a1");
+        DBInterfaceImpl gdb = new DBInterfaceImpl(pb, agentDbe);
+        PluginAdmin pa = new PluginAdmin(new TestAgentService(agentData), pb, null, gdb, new MockBundleContext(), null);
+        running(pa, pb, gdb, "plugin-repo", "io.cresco.filerepo", 0);
+        running(pa, pb, gdb, "plugin-gone", "io.cresco.y", 0);
+        running(pa, pb, gdb, "plugin-purged", "io.cresco.z", 0);
+        File repo = new File(agentData + "/plugin-data/plugin-repo");
+        File gone = new File(agentData + "/plugin-data/plugin-gone");
+        File purged = new File(agentData + "/plugin-data/plugin-purged");
+        for (File d : new File[]{repo, gone, purged}) {
+            assertTrue(d.mkdirs());
+            Files.writeString(d.toPath().resolve("only-copy.bin"), "irreplaceable");
+        }
+
+        pa.stopAllPlugins();                                                   // a graceful agent shutdown
+        assertTrue(new File(repo, "only-copy.bin").isFile(), "a graceful stop deleted a plugin's data");
+        assertTrue(new File(gone, "only-copy.bin").isFile());
+
+        running(pa, pb, gdb, "plugin-gone", "io.cresco.y", 0);
+        running(pa, pb, gdb, "plugin-purged", "io.cresco.z", 0);
+        assertTrue(pa.removePlugin("plugin-gone"));
+        assertTrue(new File(gone, "only-copy.bin").isFile(), "a remove without purge deleted the plugin's data");
+        assertTrue(pa.removePlugin("plugin-purged", true));
+        assertFalse(purged.exists(), "an explicit purge deletes it");
+
+        // the retention sweep: off by default; only unconfigured plugins' data, only after the retention period
+        assertTrue(pa.sweepStalePluginData(0).isEmpty());
+        assertTrue(pa.sweepStalePluginData(1).isEmpty(), "data changed today is kept");
+        long old = System.currentTimeMillis() - 3L * 24 * 3600 * 1000;
+        for (File d : new File[]{repo, gone}) {
+            Files.setLastModifiedTime(d.toPath().resolve("only-copy.bin"), java.nio.file.attribute.FileTime.fromMillis(old));
+            Files.setLastModifiedTime(d.toPath(), java.nio.file.attribute.FileTime.fromMillis(old));
+        }
+        running(pa, pb, gdb, "plugin-repo", "io.cresco.filerepo", 0);       // configured again
+        assertEquals(List.of("plugin-gone"), pa.sweepStalePluginData(1), "only the unconfigured plugin's stale data goes");
+        assertTrue(repo.isDirectory());
     }
 }
