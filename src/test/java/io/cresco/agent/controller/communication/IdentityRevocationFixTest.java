@@ -414,6 +414,41 @@ class IdentityRevocationFixTest {
         System.out.println("renewal fallback: " + h[1]);
     }
 
+    /**
+     * Re-enrollment runs a discovery exchange whose handler (another thread) takes the certificate manager's lock; the
+     * renewal must not hold that lock meanwhile. (Found live: with renewal checks every minute an agent's renewal thread and
+     * its discovery handler deadlocked at the first re-enrollment, and the node never renewed again.)
+     */
+    @Test
+    void aReEnrollmentDoesNotDeadlockWithTheDiscoveryHandler() throws Exception {
+        TlsTestSupport.provider();
+        RegionCA ca = RegionCA.generate("t1", "rgA", 2048, 1);
+        Path dir = Files.createTempDirectory("idfix-reenroll");
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("public_key_directory", dir.resolve("public-keys").toString());
+        cfg.put("tenant_id", "t1");
+        PluginBuilder pb = TestAgentService.plugin(dir.toString(), cfg, m -> { }, "rgA", "a1");
+        java.util.concurrent.atomic.AtomicReference<ControllerEngine> self = new java.util.concurrent.atomic.AtomicReference<>();
+        ControllerEngine agent = new ControllerEngine(null, pb, null, null) {
+            @Override public boolean reEnroll() {
+                // what the discovery client's handler does on its own (netty) thread before it answers
+                java.util.concurrent.CompletableFuture<Boolean> handler = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    self.get().getCertificateManager().ensureLeafIdentity();
+                    return true;
+                });
+                try { return handler.get(5, java.util.concurrent.TimeUnit.SECONDS); } catch (Exception e) { return false; }
+            }
+        };
+        self.set(agent);
+        agent.cstate = TlsTestSupport.state(pb, "rgA", "a1");
+        agent.setCertificateManager(new CertificateManager(agent));
+        CertificateManager cm = agent.getCertificateManager();
+        assertTrue(cm.installEnrollment(cm.getJsonFromCerts(ca.enrollFor(cm.getPublicCertificate()[0].getPublicKey(), "t1", "rgA", "a1", 3600_000L))));
+        long t0 = System.currentTimeMillis();
+        assertTrue(cm.renewIfDue(), "the re-enrollment's discovery handler could not take the certificate manager's lock (deadlock)");
+        assertTrue(System.currentTimeMillis() - t0 < 4000, "the re-enrollment waited on the certificate manager's lock");
+    }
+
     /** Re-enrolling with the same key and CA leaves the truststore as it was. */
     @Test
     void reEnrollmentsDoNotGrowTheTruststore() throws Exception {
