@@ -62,7 +62,13 @@ class TrustAnchorDirectoryTest {
         Files.setPosixFilePermissions(d, PosixFilePermissions.fromString("rwx------"));
         try (var s = Files.list(d)) { for (Path f : (Iterable<Path>) s::iterator) Files.setPosixFilePermissions(f, PosixFilePermissions.fromString("rw-rw-rw-")); }
         assertTrue(node(d, fp).getCertificateManager().importPublicKeysFromDirectory().isEmpty(), "a world-writable file");
-        assertTrue(node(Path.of("relative-public-keys"), fp).getCertificateManager().importPublicKeysFromDirectory().isEmpty(), "a relative path");
+        // a relative path (under the build directory: the node exports its own certificate there)
+        Path rel = Path.of("target", "relative-public-keys-" + System.nanoTime());
+        try {
+            assertTrue(node(rel, fp).getCertificateManager().importPublicKeysFromDirectory().isEmpty(), "a relative path");
+        } finally {
+            if (Files.exists(rel)) try (var w = Files.walk(rel)) { w.sorted(java.util.Comparator.reverseOrder()).forEach(q -> q.toFile().delete()); }
+        }
     }
 
     @Test
