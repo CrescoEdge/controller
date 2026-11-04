@@ -79,6 +79,7 @@ public final class RevocationSync {
         long issued;
         List<String> entries;   // fp|scope|name|exp
         String cert;            // the issuer's leaf certificate, base64 DER
+        List<String> chain;     // the certificates above it (base64 DER), for a pre-provisioned PKI path; not signed
         String sig;             // base64
     }
 
@@ -176,6 +177,10 @@ public final class RevocationSync {
             l.issued = System.currentTimeMillis();
             l.entries = entries;
             l.cert = Base64.getEncoder().encodeToString(mine[0].getEncoded());
+            if (mine.length > 1 && mine[1] != null) {
+                l.chain = new ArrayList<>();
+                for (int i = 1; i < mine.length && mine[i] != null; i++) l.chain.add(Base64.getEncoder().encodeToString(mine[i].getEncoded()));
+            }
             l.sig = Base64.getEncoder().encodeToString(cm.signWithIdentity(signedBytes(l)));
             String json = GSON.toJson(l);
             st.cache.put(key, json);
@@ -198,10 +203,17 @@ public final class RevocationSync {
             if (l == null || l.v != 2 || l.entries == null || l.cert == null || l.sig == null || l.issuer == null || l.epoch == null
                     || l.from < 0 || l.to < l.from) { why[0] = "malformed"; return null; }
             if (l.entries.size() > 100_000) { why[0] = "too long"; return null; }
-            X509Certificate leaf = (X509Certificate) CertificateFactory.getInstance("X.509")
-                    .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(l.cert)));
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+            X509Certificate leaf = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(l.cert)));
+            List<X509Certificate> presented = new ArrayList<>();
+            presented.add(leaf);
+            if (l.chain != null) {
+                for (int i = 0; i < l.chain.size() && i < CertificateManager.MAX_CHAIN_CERTS; i++) {
+                    presented.add((X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(l.chain.get(i)))));
+                }
+            }
             String[] w = new String[1];
-            CrescoIdentity id = ce.getCertificateManager().getPeerTrust().verifiedIdentity(new X509Certificate[]{leaf}, w);
+            CrescoIdentity id = ce.getCertificateManager().getPeerTrust().verifiedIdentity(presented.toArray(new X509Certificate[0]), w);
             if (id == null || !(id.getRegion() + "/" + id.getAgent()).equals(l.issuer)) {
                 why[0] = "its certificate does not verify here as its issuer " + l.issuer + (w[0] == null ? "" : " (" + w[0] + ")");
                 return null;

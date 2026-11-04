@@ -34,6 +34,15 @@ final class NodeIdentityKeyManager extends X509ExtendedKeyManager {
         return this;
     }
 
+    /** The node's CURRENT private key (a provisioned keystore replaced at run time), or null to use the delegate's. */
+    private volatile Supplier<PrivateKey> currentKey;
+
+    /** Present the key {@code current} supplies for this node's own alias (when it supplies one). */
+    NodeIdentityKeyManager withCurrentKey(Supplier<PrivateKey> current) {
+        this.currentKey = current;
+        return this;
+    }
+
     NodeIdentityKeyManager(X509KeyManager delegate, Supplier<String> ownAlias) {
         this.d = delegate;
         this.ownAlias = ownAlias;
@@ -44,8 +53,8 @@ final class NodeIdentityKeyManager extends X509ExtendedKeyManager {
         if (chosen != null) return chosen;
         String a = ownAlias.get();
         if (a == null) return null;
-        PrivateKey k = d.getPrivateKey(a);
-        X509Certificate[] c = d.getCertificateChain(a);
+        PrivateKey k = getPrivateKey(a);
+        X509Certificate[] c = getCertificateChain(a);
         if (k == null || c == null || c.length == 0) return null;
         if (keyTypes == null) return a;
         for (String t : keyTypes) {
@@ -101,5 +110,12 @@ final class NodeIdentityKeyManager extends X509ExtendedKeyManager {
     }
 
     @Override
-    public PrivateKey getPrivateKey(String alias) { return d.getPrivateKey(alias); }
+    public PrivateKey getPrivateKey(String alias) {
+        Supplier<PrivateKey> cur = currentKey;
+        if (cur != null && alias != null && alias.equals(ownAlias.get())) {
+            PrivateKey k = cur.get();
+            if (k != null) return k;
+        }
+        return d.getPrivateKey(alias);
+    }
 }
