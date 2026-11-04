@@ -1469,15 +1469,15 @@ public class ControllerSMHandler {
 
         logger.debug("getDiscoveryNode discoveryNodeList Size = " + discoveryNodeList.size() );
 
-        java.util.Set<String> joined = java.util.Set.of();
-        try { joined = controllerEngine.getCertificateManager().getPeerTrust().joinedControllers(); } catch (Exception ignore) { }
-        for (DiscoveryNode discoveryNodeCanidate : orderCandidates(discoveryNodeList, joined)) {
+        for (DiscoveryNode discoveryNodeCanidate : orderCandidates(discoveryNodeList, authenticatedControllerAddresses)) {
             logger.info("Found canidate: " + discoveryNodeCanidate.discovered_ip + " (" + discoveryNodeCanidate.discovered_region + "_"
                     + discoveryNodeCanidate.discovered_agent + ", reports " + discoveryNodeCanidate.discovered_agent_count + " agents)");
             //see if we can exchange keys with the canidate host
             discoveryNode = exchangeKeyWithBroker(discoveryNodeCanidate.discovery_type, discoveryNodeCanidate.discovered_ip, discoveryNodeCanidate.discovered_port);
             if(discoveryNode != null) {
                 logger.debug("Found node: " + discoveryNode.discovered_ip);
+                rememberAuthenticatedAddress(discoveryNodeCanidate.discovered_ip);
+                lastJoin = new Object[]{discoveryNodeCanidate.discovery_type, discoveryNodeCanidate.discovered_ip, discoveryNodeCanidate.discovered_port};
                 break;
             }
         }
@@ -1485,22 +1485,46 @@ public class ControllerSMHandler {
         return discoveryNode;
     }
 
-    /** Agent counts a candidate may report; anything outside is treated as unknown (least preferred). */
-    static final int MAX_PLAUSIBLE_AGENT_COUNT = 1_000_000;
+    /** The exchange this node last joined its controller with: {type, ip, port}. */
+    private volatile Object[] lastJoin;
 
     /**
-     * The order in which to try discovered responders. Their reports are unauthenticated (anyone who saw an answer can
-     * replay or forge one), so a self-reported agent count is a load hint at best: a negative or implausible count is
-     * treated as unknown and tried last, never first. A responder that claims to be a controller this node already joined
-     * (bound by following) is tried first; the rest by reported count, ties in random order.
+     * Re-enroll: run the authenticated certificate exchange with the controller this node last joined again (renews a
+     * region-issued leaf for the same key). True when it succeeded.
      */
-    static List<DiscoveryNode> orderCandidates(List<DiscoveryNode> found, java.util.Set<String> joinedControllers) {
+    public boolean reEnroll() {
+        Object[] j = lastJoin;
+        if (j == null) return false;
+        DiscoveryNode n = exchangeKeyWithBroker((DiscoveryType) j[0], (String) j[1], (Integer) j[2]);
+        if (n != null) logger.info("Re-enrolled with " + n.discovered_region + "/" + n.discovered_agent + " at " + j[1]);
+        return n != null;
+    }
+
+    /** Addresses of controllers this node completed an authenticated discovery exchange with (bounded). */
+    private final java.util.Set<String> authenticatedControllerAddresses = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    static final int MAX_AUTHENTICATED_ADDRESSES = 64;
+
+    private void rememberAuthenticatedAddress(String ip) {
+        if (ip == null) return;
+        if (authenticatedControllerAddresses.size() >= MAX_AUTHENTICATED_ADDRESSES) authenticatedControllerAddresses.clear();
+        authenticatedControllerAddresses.add(ip);
+    }
+
+    /**
+     * The order in which to try discovered responders. A locator reply is unauthenticated -- anyone who saw one can replay
+     * or forge it -- so NOTHING a responder says about itself (its agent count, its region or agent name, even the name of
+     * the controller this node joined) orders it: an impostor could otherwise always go first by claiming a load of 0 or the
+     * joined controller's name. The order is the order the replies arrived, except that an address this node already
+     * completed an AUTHENTICATED exchange with (in this process) is tried first. Whoever is tried must still pass the
+     * authenticated exchange (discovery v2) before anything is recorded; the order only decides who is asked first.
+     *
+     * @param authenticatedAddresses addresses of controllers this node authenticated before
+     */
+    static List<DiscoveryNode> orderCandidates(List<DiscoveryNode> found, java.util.Set<String> authenticatedAddresses) {
         List<DiscoveryNode> order = new java.util.ArrayList<>(found);
-        java.util.Collections.shuffle(order);
-        order.sort(java.util.Comparator
-                .comparingInt((DiscoveryNode n) -> joinedControllers.contains(n.discovered_region + "_" + n.discovered_agent) ? 0 : 1)
-                .thenComparingInt(n -> (n.discovered_agent_count < 0 || n.discovered_agent_count > MAX_PLAUSIBLE_AGENT_COUNT)
-                        ? Integer.MAX_VALUE : n.discovered_agent_count));
+        // List.sort is stable: arrival order is kept within each group
+        order.sort(java.util.Comparator.comparingInt((DiscoveryNode n) ->
+                n.discovered_ip != null && authenticatedAddresses.contains(n.discovered_ip) ? 0 : 1));
         return order;
     }
 

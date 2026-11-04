@@ -370,8 +370,19 @@ public class ControllerEngine {
     public CertificateManager getCertificateManager() {
         return certificateManager;
     }
+    /**
+     * Re-enroll with this node's regional controller: one authenticated discovery exchange with the controller it joined,
+     * which issues a fresh (short-lived) leaf for the same key. False when there is none to ask or it did not succeed.
+     */
+    public boolean reEnroll() {
+        io.cresco.agent.controller.statemachine.ControllerSMHandler h = controllerSMHandler;
+        return h != null && h.reEnroll();
+    }
+
     public void setCertificateManager(CertificateManager certificateManager) {
+        CertificateManager previous = this.certificateManager;
         this.certificateManager = certificateManager;
+        if (previous != null && previous != certificateManager) previous.close();   // its renewal check; the registry is shared
     }
 
     public PluginBuilder getPluginBuilder() {return  plugin; }
@@ -511,6 +522,10 @@ public class ControllerEngine {
         // a policy change at the global reaches this node on its parent's pong (CryptoPolicySync)
         io.cresco.agent.controller.statemachine.CryptoPolicySync.adopt(pong, cstate,
                 "parent " + pong.getSrcRegion() + "/" + pong.getSrcAgent(), logger);
+        // revocations: the parent's signed list, verified as the controller this node joined
+        boolean region = cstate.isRegionalController();
+        io.cresco.agent.controller.communication.RevocationSync.onParentPong(this, pong,
+                region ? cstate.getGlobalRegion() : cstate.getRegionalRegion(), region ? cstate.getGlobalAgent() : cstate.getRegionalAgent());
         StateResync resync = stateResync;
         if (resync == null) {
             resync = initStateResync();

@@ -291,6 +291,8 @@ public class GlobalExecutor implements Executor {
         io.cresco.agent.controller.health.MeshHealthPing.stampParent(controllerEngine, msg);
         // the fabric's crypto policy: its id always, the policy itself when the region holds another one
         io.cresco.agent.controller.statemachine.CryptoPolicySync.stamp(msg, childPolicyId);
+        // revocations: the region's own list (its names only) in, the global's list down when the region holds another
+        io.cresco.agent.controller.communication.RevocationSync.onPingAtParent(controllerEngine, msg, true);
         return msg;
     }
     @Override

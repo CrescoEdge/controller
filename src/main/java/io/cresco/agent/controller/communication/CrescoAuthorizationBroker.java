@@ -95,8 +95,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final int quarantineMaxConnections, quarantineMaxConsumers, quarantineMaxProducers, quarantineMaxDestinations;
     private final java.util.concurrent.atomic.AtomicInteger quarantinedConnections = new java.util.concurrent.atomic.AtomicInteger();
     private final java.util.concurrent.atomic.AtomicInteger quarantineCreatedDestinations = new java.util.concurrent.atomic.AtomicInteger();
-    /** Verified identities of the network connections that are up now (connection id -> identity): kept fresh in the registry. */
-    private final java.util.Map<String, CrescoIdentity> liveVerified = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The verified network connections that are up now (connection id -> context): kept fresh in the registry, and closed
+     * when their certificate expires or their key is revoked.
+     */
+    private final java.util.Map<String, ConnectionContext> liveVerified = new java.util.concurrent.ConcurrentHashMap<>();
     private final long seenRefreshMs;
     private volatile java.util.concurrent.ScheduledExecutorService seenRefresher;
 
@@ -171,6 +174,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             return t;
         });
         ex.scheduleWithFixedDelay(this::refreshLiveIdentities, seenRefreshMs, seenRefreshMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        // an identity that expires or is revoked while connected loses its connection within a minute
+        ex.scheduleWithFixedDelay(() -> { try { closeInvalidConnections(); } catch (Exception ignore) { } }, 60, 60,
+                java.util.concurrent.TimeUnit.SECONDS);
         seenRefresher = ex;
         return new AuthFilter(next);
     }
@@ -186,6 +192,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean certificate;        // the TLS session presented a client certificate
         final boolean localController;    // this controller's own vm:// connection (LOCAL_CONTROLLER_PREFIX)
         final boolean anonymous;          // a network connection without a client certificate: no identity, no role
+        volatile X509Certificate leaf;    // the TLS client certificate (leaf), when one was presented
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
         final java.util.concurrent.atomic.AtomicInteger producers = new java.util.concurrent.atomic.AtomicInteger();
@@ -275,7 +282,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             }
             // a certificate that passed TLS but carries no identity here (unbound, rebound away, foreign CA) gets no more than
             // a connection without a certificate: quarantined
-            return new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false, id == null && !isVm(context));
+            CrescoSecurityContext sc = new CrescoSecurityContext(id == null ? null : id.toX500Name(), id, id != null, true, false, id == null && !isVm(context));
+            sc.leaf = chain[0];
+            return sc;
         }
         String u = info.getUserName();
         if (isVm(context) && u != null && u.startsWith(LOCAL_CONTROLLER_PREFIX)) {
@@ -466,8 +475,53 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
 
     /** Refresh last-seen for every verified network connection that is up (a peer connected for months is never pruned). */
     void refreshLiveIdentities() {
-        for (CrescoIdentity id : liveVerified.values()) {
-            try { peers.touchIdentity(id); } catch (Exception ignore) { }
+        for (ConnectionContext ctx : liveVerified.values()) {
+            CrescoSecurityContext sc = stateOf(ctx);
+            if (sc != null && sc.identity != null) {
+                try { peers.touchIdentity(sc.identity); } catch (Exception ignore) { }
+            }
+        }
+    }
+
+    /**
+     * Close every live verified connection whose key is {@code keyFp} (just revoked). Returns how many were closed.
+     */
+    public int closeConnectionsOfKey(String keyFp) {
+        int n = 0;
+        for (ConnectionContext ctx : liveVerified.values()) {
+            CrescoSecurityContext sc = stateOf(ctx);
+            if (sc == null || sc.leaf == null) continue;
+            if (keyFp.equals(PeerTrustRegistry.fingerprint(sc.leaf.getPublicKey().getEncoded()))) {
+                close(ctx, "its key was revoked");
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** Close every live verified connection whose certificate is no longer valid or whose key is revoked. */
+    int closeInvalidConnections() {
+        int n = 0;
+        long now = System.currentTimeMillis();
+        for (ConnectionContext ctx : liveVerified.values()) {
+            CrescoSecurityContext sc = stateOf(ctx);
+            if (sc == null || sc.leaf == null) continue;
+            String why = null;
+            if (now >= sc.leaf.getNotAfter().getTime()) why = "its certificate expired at " + sc.leaf.getNotAfter();
+            else if (peers.isRevokedKey(PeerTrustRegistry.fingerprint(sc.leaf.getPublicKey().getEncoded()))) why = "its key was revoked";
+            if (why != null) { close(ctx, why); n++; }
+        }
+        return n;
+    }
+
+    private void close(ConnectionContext ctx, String why) {
+        CrescoSecurityContext sc = stateOf(ctx);
+        logger.warn("CLOSING the connection of " + (sc == null ? "?" : sc.identity) + " from " + remoteOf(ctx) + ": " + why);
+        try {
+            if (ctx.getConnectionId() != null) liveVerified.remove(ctx.getConnectionId().getValue());
+            ctx.getConnection().serviceExceptionAsync(new java.io.IOException("Cresco: connection closed: " + why));
+        } catch (Exception e) {
+            logger.error("could not close a connection (" + why + "): " + e.getMessage());
         }
     }
 
@@ -587,7 +641,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 }
             }
             if (sc.verified && sc.certificate && sc.identity != null && context.getConnectionId() != null) {
-                liveVerified.put(context.getConnectionId().getValue(), sc.identity);
+                liveVerified.put(context.getConnectionId().getValue(), context);
             }
             if (sc.certificate && sc.identity != null) info.setUserName(sc.identity.toX500Name());
             // Bridge claim (BrokerInfo before ConnectionInfo, as every real bridge does): judge it now so an impostor

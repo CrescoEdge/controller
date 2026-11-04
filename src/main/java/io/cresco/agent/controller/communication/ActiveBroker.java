@@ -368,6 +368,7 @@ public class ActiveBroker {
 				// Tenant isolation authorization plugin (ON by default; off only with broker_security_enabled=false explicitly).
 				if (SecuritySettings.brokerSecurity(plugin.getConfig())) {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
+					this.authorization = authz;
 					brokerPlugins.add(authz);
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
 					// Recipient-bound dataplane messages (cresco_to) reach only their recipient's connection; set on the
@@ -601,6 +602,33 @@ public class ActiveBroker {
 	/** broker_require_client_auth, defaulting to broker_security_enabled (both default true): see SecuritySettings. */
 	static boolean requireClientAuth(io.cresco.library.plugin.Config config) {
 		return SecuritySettings.requireClientAuth(config);
+	}
+
+	/** This broker's authorization plugin (null when broker security is off). */
+	private volatile CrescoAuthorizationBroker authorization;
+
+	/**
+	 * Close every connection to this broker that holds the (revoked) key {@code keyFp}, and invalidate the TLS sessions it
+	 * holds: a reconnect that RESUMED one would not have its certificate checked again.
+	 */
+	public int closeConnectionsOfKey(String keyFp) {
+		try {
+			javax.net.ssl.SSLSessionContext sessions = broker.getSslContext().getSSLContext().getServerSessionContext();
+			for (byte[] id : java.util.Collections.list(sessions.getIds())) {
+				javax.net.ssl.SSLSession ss = sessions.getSession(id);
+				if (ss == null) continue;
+				try {
+					java.security.cert.Certificate[] peer = ss.getPeerCertificates();
+					if (peer.length > 0 && keyFp.equals(PeerTrustRegistry.fingerprint(peer[0].getPublicKey().getEncoded()))) ss.invalidate();
+				} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
+					// no client certificate in this session
+				}
+			}
+		} catch (Exception ex) {
+			logger.error("invalidating the TLS sessions of a revoked key: " + ex.getMessage());
+		}
+		CrescoAuthorizationBroker a = authorization;
+		return a == null ? 0 : a.closeConnectionsOfKey(keyFp);
 	}
 
 	public void updateTrustManager() {

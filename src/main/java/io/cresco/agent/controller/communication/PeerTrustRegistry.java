@@ -122,6 +122,8 @@ public final class PeerTrustRegistry {
     public static final class Options {
         public Collection<String> rebind = List.of();
         public Collection<String> revoke = List.of();
+        /** Identities to revoke at open ({@code peer_identity_revoke}): {@code region/agent} names or key fingerprints. */
+        public Collection<String> revokeIdentities = List.of();
         public int bridgePruneDays = 30;
         public int bindingPruneDays = 90;
         /**
@@ -133,7 +135,7 @@ public final class PeerTrustRegistry {
 
     /** One log record. */
     static final class Rec {
-        String op;             // init | bind | ca | bridge | unbridge | unbind | seen | consume | revoke | noop
+        String op;             // init | bind | ca | bridge | unbridge | unbind | seen | consume | revoke | revokekey | noop
         String name, tenant, key, cert, source, role, token, kind, mode;   // mode: "follow" or absent (strict)
         long t;
         Long prevLines;        // init of a compacted log: the replaced log's record count ...
@@ -155,6 +157,13 @@ public final class PeerTrustRegistry {
     private final Set<String> revokedBridges = ConcurrentHashMap.newKeySet();
     /** name -> key fingerprints that were replaced for it (rebinds); never pruned. */
     private final Map<String, Set<String>> revokedKeys = new ConcurrentHashMap<>();
+    /** Key fingerprints REVOKED for every name (operator revocation, or a verified revocation list); never pruned. */
+    private final Set<String> revokedEverywhere = ConcurrentHashMap.newKeySet();
+    /** Who revoked each key (for the signed revocation list: a region revokes only names of its own region). */
+    private final Map<String, String> revokedBy = new ConcurrentHashMap<>();
+    /** Notified (outside the write lock) with the key fingerprint when a key is revoked. */
+    private volatile Consumer<String> revokedListener;
+    private long revokeFileMtime = -1;
     /** last-seen refreshes waiting for the background writer (kind|name -> time). */
     private final Map<String, Long> pendingSeen = new ConcurrentHashMap<>();
     private final java.util.concurrent.atomic.AtomicBoolean flushScheduled = new java.util.concurrent.atomic.AtomicBoolean();
@@ -274,10 +283,20 @@ public final class PeerTrustRegistry {
             if (!r.sealed && r.fenced == null) {
                 long now = System.currentTimeMillis();
                 r.revokeConfiguredBridges();
+                for (String t : o.revokeIdentities) r.revokeLocked(t, "peer_identity_revoke");
+                r.reloadRevokeFileLocked();
                 r.prune(now);
                 r.compactIfDue();
             }
         }
+        if (r.background != null) {
+            // the operator revocation file is re-read every 10 s (no restart): a revocation takes effect at once
+            r.background.scheduleWithFixedDelay(() -> {
+                try { synchronized (r.writeLock) { r.reloadRevokeFileLocked(); } } catch (Exception ignore) { }
+                r.fireRevokedPending();                         // close the revoked keys' connections at once
+            }, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        r.fireRevokedPending();
         return r;
     }
 
@@ -420,6 +439,10 @@ public final class PeerTrustRegistry {
         String fp = fingerprint(leafKey.getEncoded());
         String n = name(region, agent);
         long now = System.currentTimeMillis();
+        if (revokedEverywhere.contains(fp)) {
+            return new BindResult(false, "the key " + PeerIdentity.shortFp(fp) + " is REVOKED (" + revokedBy.get(fp) + "); a revoked node"
+                    + " needs a new key");
+        }
         Binding b = identities.get(n);
         if (b != null && b.key.equals(fp) && b.tenant.equals(tenant) && (ROLE_AGENT.equals(role) || role.equals(b.role))) {
             touch(identities, n, b, now, "id");                // a refresh: no I/O on this path
@@ -681,6 +704,8 @@ public final class PeerTrustRegistry {
         CrescoIdentity id = CrescoNames.identityOf(leaf);
         if (id == null) { why[0] = "the certificate names no valid Cresco identity"; return null; }
         String fp = fingerprint(leaf.getPublicKey().getEncoded());
+        if (revokedEverywhere.contains(fp)) { why[0] = "the certificate's key is REVOKED (" + revokedBy.get(fp) + ")"; return null; }
+        try { leaf.checkValidity(); } catch (Exception e) { why[0] = "the certificate is not valid now (" + e.getMessage() + ")"; return null; }
         String n = name(id.getRegion(), id.getAgent());
         Binding ident = identities.get(n);
         Binding ca = cas.get(id.getRegion());
@@ -728,9 +753,11 @@ public final class PeerTrustRegistry {
         try { leaf.checkValidity(); } catch (Exception e) { return null; }
         CrescoIdentity id = CrescoNames.identityOf(leaf);
         if (id == null) return null;
+        String fp = fingerprint(leaf.getPublicKey().getEncoded());
+        if (revokedEverywhere.contains(fp)) return null;
         Binding ident = identities.get(name(id.getRegion(), id.getAgent()));
         if (ident == null || !ident.tenant.equals(id.getTenant())) return null;
-        return ident.key.equals(fingerprint(leaf.getPublicKey().getEncoded())) ? id : null;
+        return ident.key.equals(fp) ? id : null;
     }
 
     // ---------------------------------------------------------------- bridge peers
@@ -817,10 +844,11 @@ public final class PeerTrustRegistry {
      */
     public String refusedKey(X509Certificate[] chain) {
         if (chain == null || chain.length == 0 || chain[0] == null) return null;
+        String fp = fingerprint(chain[0].getPublicKey().getEncoded());
+        if (revokedEverywhere.contains(fp)) return "the certificate's key is REVOKED (" + revokedBy.get(fp) + ")";
         CrescoIdentity id = CrescoNames.identityOf(chain[0]);
         if (id == null) return null;
         String n = name(id.getRegion(), id.getAgent());
-        String fp = fingerprint(chain[0].getPublicKey().getEncoded());
         Binding b = identities.get(n);
         if (b != null && !b.key.equals(fp)) {
             return "the certificate names " + n + " but carries another key than the one bound to it (" + PeerIdentity.shortFp(b.key) + ")";
@@ -828,6 +856,155 @@ public final class PeerTrustRegistry {
         Set<String> revoked = revokedKeys.get(n);
         if (revoked != null && revoked.contains(fp)) return "the certificate names " + n + " but its key was replaced (rebound away) for it";
         return null;
+    }
+
+    // ---------------------------------------------------------------- revocation
+
+    /** Revocations made with the write lock, to announce once it is released. */
+    private final List<String> revokedPending = new ArrayList<>();
+
+    private static boolean isFingerprint(String s) {
+        return s != null && s.matches("[0-9a-fA-F]{64}");
+    }
+
+    /**
+     * Revoke an identity: {@code region/agent} (its bound key) or a key fingerprint (SHA-256 of the SubjectPublicKeyInfo,
+     * hex). The key is refused from now on for EVERY name -- at TLS, at the broker and on the CA path -- the binding is
+     * removed, live connections holding the key are closed (listener), and this node's signed revocation list carries it to
+     * its parent and children. Permanent: a revoked node gets a new key and is bound again (operator rebind).
+     *
+     * @return null when revoked (or already revoked), else why not
+     */
+    public String revoke(String target, String source) {
+        String why;
+        synchronized (writeLock) {
+            if (sealed && !tryRecover()) return sealedText();
+            if (fenced != null) return "this peer trust registry instance records nothing (" + fenced + ")";
+            why = revokeLocked(target, source);
+        }
+        fireRevokedPending();
+        return why;
+    }
+
+    /** With the write lock. */
+    private String revokeLocked(String target, String source) {
+        if (target == null || target.isBlank()) return "nothing to revoke";
+        target = target.trim();
+        String fp, n = null;
+        if (isFingerprint(target)) {
+            fp = target.toLowerCase(java.util.Locale.ROOT);
+        } else {
+            int slash = target.indexOf('/');
+            if (slash <= 0 || !CrescoNames.isValid(target.substring(0, slash)) || !CrescoNames.isValid(target.substring(slash + 1))) {
+                return "'" + target + "' is neither a region/agent name nor a key fingerprint";
+            }
+            n = target;
+            Binding b = identities.get(n);
+            if (b == null) return "no key is bound to " + n + " (revoke its key fingerprint instead)";
+            if (ROLE_SELF.equals(b.role)) return n + " is this node's own identity";
+            fp = b.key;
+        }
+        if (revokedEverywhere.contains(fp)) return null;
+        Rec r = rec("revokekey", n);
+        r.key = fp; r.source = source; r.t = System.currentTimeMillis();
+        if (!append(r)) return "could not record the revocation durably";
+        applyRevocation(fp, source);
+        log.accept("Key " + PeerIdentity.shortFp(fp) + (n == null ? "" : " of " + n) + " REVOKED (" + source + "): refused for every name from now on");
+        revokedPending.add(fp);
+        compactIfDue();
+        return null;
+    }
+
+    /** In memory: refuse {@code fp} everywhere and drop every binding that holds it. */
+    private void applyRevocation(String fp, String source) {
+        revokedEverywhere.add(fp);
+        revokedBy.putIfAbsent(fp, source == null ? "?" : source);
+        for (Map.Entry<String, Binding> e : new ArrayList<>(identities.entrySet())) {
+            if (fp.equals(e.getValue().key) && !ROLE_SELF.equals(e.getValue().role)) identities.remove(e.getKey(), e.getValue());
+        }
+    }
+
+    private void fireRevokedPending() {
+        List<String> fire;
+        synchronized (writeLock) {
+            if (revokedPending.isEmpty()) return;
+            fire = new ArrayList<>(revokedPending);
+            revokedPending.clear();
+        }
+        Consumer<String> l = revokedListener;
+        if (l == null) return;
+        for (String fp : fire) {
+            try { l.accept(fp); } catch (Exception e) { log.accept("peer trust registry: revocation listener failed: " + e.getMessage()); }
+        }
+    }
+
+    /** Called (outside the write lock) with each newly revoked key fingerprint. */
+    public void setRevokedListener(Consumer<String> l) { this.revokedListener = l; }
+
+    /** Is the key with this fingerprint revoked? Lock-free. */
+    public boolean isRevokedKey(String fp) { return fp != null && revokedEverywhere.contains(fp); }
+
+    /** The revoked key fingerprints this node knows, with who revoked each (for its signed revocation list). */
+    public Map<String, String> revocations() { return new java.util.TreeMap<>(revokedBy); }
+
+    /**
+     * Merge revocations a peer's verified, signed list carries. {@code scopeRegion} non-null (a CHILD's list): a key bound
+     * here to a name outside that region is not revoked (a region revokes only its own identities); null (the PARENT's list):
+     * any key. This node's own key is never revoked by a list.
+     *
+     * @return how many keys were newly revoked
+     */
+    public int mergeRevocations(Collection<String> fps, String source, String scopeRegion) {
+        int added = 0;
+        synchronized (writeLock) {
+            if (sealed || fenced != null) return 0;
+            for (String raw : fps) {
+                if (!isFingerprint(raw)) continue;
+                String fp = raw.toLowerCase(java.util.Locale.ROOT);
+                if (revokedEverywhere.contains(fp)) continue;
+                String outside = null;
+                boolean own = false;
+                for (Map.Entry<String, Binding> e : identities.entrySet()) {
+                    if (!fp.equals(e.getValue().key)) continue;
+                    if (ROLE_SELF.equals(e.getValue().role)) own = true;
+                    else if (scopeRegion != null && !e.getKey().startsWith(scopeRegion + "/")) outside = e.getKey();
+                }
+                if (own) { log.accept("A revocation list from " + source + " lists THIS node's own key; ignored"); continue; }
+                if (outside != null) {
+                    log.accept("A revocation list from " + source + " lists the key bound to " + outside + ", outside its region "
+                            + scopeRegion + "; ignored");
+                    continue;
+                }
+                if (revokeLocked(fp, source) == null) added++;
+            }
+        }
+        fireRevokedPending();
+        return added;
+    }
+
+    private Path revokePath() { return file == null ? null : file.resolveSibling(file.getFileName() + ".revoke"); }
+
+    /**
+     * With the write lock: the operator file {@code <file>.revoke} (one {@code region/agent} or key fingerprint per line,
+     * {@code #} comments), re-read when it changes; each entry is revoked once (revocation is idempotent and permanent).
+     */
+    private void reloadRevokeFileLocked() {
+        Path p = revokePath();
+        if (p == null || sealed || fenced != null) return;
+        try {
+            long m = Files.exists(p) ? Files.getLastModifiedTime(p).toMillis() : 0;
+            if (m == revokeFileMtime) return;
+            revokeFileMtime = m;
+            if (m == 0) return;
+            for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+                String t = line.trim();
+                if (t.isEmpty() || t.startsWith("#")) continue;
+                String why = revokeLocked(t, "operator file " + p.getFileName());
+                if (why != null) log.accept("Revocation '" + t + "' in " + p + " not applied: " + why);
+            }
+        } catch (IOException e) {
+            log.accept("could not read " + p + ": " + e.getMessage());
+        }
     }
 
     /** {@code region_agent} paths of the controllers this node joined (bound by following, as a client). */
@@ -1054,6 +1231,7 @@ public final class PeerTrustRegistry {
 
     private void clearState() {
         identities.clear(); cas.clear(); bridges.clear(); consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
+        revokedEverywhere.clear(); revokedBy.clear();
         lastMac = ""; lines = 0; needsNewline = false; recentMacs.clear();
     }
 
@@ -1096,6 +1274,7 @@ public final class PeerTrustRegistry {
             case "unbind": identities.remove(r.name); break;
             case "consume": if (r.token != null) consumed.add(r.token); break;
             case "revoke": if (r.key != null) revokedKeys.computeIfAbsent(r.name, k -> ConcurrentHashMap.newKeySet()).add(r.key); break;
+            case "revokekey": if (r.key != null) applyRevocation(r.key, r.source); break;
             case "seen": {
                 Map<String, Binding> m = "ca".equals(r.kind) ? cas : "bridge".equals(r.kind) ? bridges : identities;
                 Binding b = m.get(r.name);
@@ -1393,7 +1572,7 @@ public final class PeerTrustRegistry {
     private int live() {
         int rk = 0;
         for (Set<String> v : revokedKeys.values()) rk += v.size();
-        return identities.size() + cas.size() + bridges.size() + consumed.size() + rk;
+        return identities.size() + cas.size() + bridges.size() + consumed.size() + rk + revokedEverywhere.size();
     }
 
     /**
@@ -1430,6 +1609,7 @@ public final class PeerTrustRegistry {
         for (Map.Entry<String, Set<String>> e : revokedKeys.entrySet()) {
             for (String k : e.getValue()) { Rec r = rec("revoke", e.getKey()); r.key = k; recs.add(r); }
         }
+        for (String k : revokedEverywhere) { Rec r = rec("revokekey", null); r.key = k; r.source = revokedBy.get(k); recs.add(r); }
         for (Map.Entry<String, Binding> e : cas.entrySet()) {
             Rec r = rec("ca", e.getKey());
             Binding b = e.getValue();
