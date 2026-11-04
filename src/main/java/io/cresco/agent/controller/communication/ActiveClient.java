@@ -687,7 +687,7 @@ public class ActiveClient {
         if (p != null) {
             p.sendMessage(msg);
         } else {
-            logger.error("sendAPMessage called but AgentProducer is null. Message not sent: {}", msg.getParams());
+            logger.error("sendAPMessage called but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(msg));
         }
     }
 
@@ -756,7 +756,7 @@ public class ActiveClient {
         if (p != null) {
             return p.sendMessage(sm);
         } else {
-            logger.error("sendMessage called directly on ActiveClient, but AgentProducer is null. Message not sent: {}", sm.getParams());
+            logger.error("sendMessage called directly on ActiveClient, but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
             return false;
         }
     }

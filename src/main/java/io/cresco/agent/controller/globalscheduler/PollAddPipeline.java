@@ -61,7 +61,7 @@ public class PollAddPipeline implements Runnable {
                     logger.debug("gnode_id : " + gnode.node_id + " params : " + gnode.params);
                     MsgEvent me = schedulingRequest(gnode, pipelineId);
                     logger.debug("AddPipeline RUN MsgEvent [" + gson.toJson(me) + "]");
-                    logger.debug("Message [" + me.getParams().toString() + "]");
+                    logger.debug("Message [" + io.cresco.agent.controller.communication.ParamLog.describe(me) + "]");
                     controllerEngine.getGDB().setINodeStatusCode(gnode.node_id, 4,"iNode resources scheduled.");
 
                     //controllerEngine.getGDB().set setINodeParam(gnode.node_id,"status_code","4");

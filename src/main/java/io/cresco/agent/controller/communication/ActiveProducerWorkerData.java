@@ -156,7 +156,7 @@ public class ActiveProducerWorkerData implements Runnable {
 				}
 
 			} catch (JMSException jmse) {
-				logger.error("ActiveProducerWorkerData.run sendMessage: jmse {} : {}", me.getParams(), jmse.getMessage(), jmse);
+				logger.error("ActiveProducerWorkerData.run sendMessage: jmse {} : {}", io.cresco.agent.controller.communication.ParamLog.describe(me), jmse.getMessage(), jmse);
 			}
 			catch (Exception ex) {
 				logger.error("ActiveProducerWorkerData.run ERROR SENDING FILE MESSAGE", ex);

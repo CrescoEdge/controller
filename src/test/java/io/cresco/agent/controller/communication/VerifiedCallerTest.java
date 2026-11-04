@@ -226,6 +226,9 @@ class VerifiedCallerTest {
         assertNotNull(StdinGuard.refusal("type IN ('event','input')"));
         assertNull(StdinGuard.refusal("type = 'inputs'"));
         assertNull(StdinGuard.refusal("region_id = 'rgA'"));
+        assertNull(StdinGuard.refusal("stream_name = 's' AND " + StdinGuard.NO_STDIN), "a selector that excludes stdin");
+        assertNull(StdinGuard.refusal("type NOT IN ('input', 'input-1')"));
+        assertNotNull(StdinGuard.refusal("type <> 'event' OR type = 'input-7'"), "naming it besides an exclusion");
         assertEquals(StdinGuard.NO_STDIN, StdinGuard.narrow(null));
         assertEquals("(region_id = 'rgA') AND " + StdinGuard.NO_STDIN, StdinGuard.narrow("region_id = 'rgA'"));
         assertTrue(StdinGuard.isDataplaneTopic(new org.apache.activemq.command.ActiveMQTopic("T.t1.global.event")));
@@ -245,5 +248,19 @@ class VerifiedCallerTest {
         assertNull(MsgRouter.tenantRefusal(m, Set.of(SU)), "a superuser tenant's caller sends into any tenant");
         Caller.strip(m);
         assertNull(MsgRouter.tenantRefusal(m, Set.of(SU)), "an unstamped message is refused at its destination, not here");
+    }
+
+    @Test
+    void aLoggedMessageShowsParameterNamesAndSizesNeverValues() {
+        MsgEvent m = msg(MsgEvent.Type.CONFIG, "nosuch");
+        m.setParam("password", "hunter2-secret");
+        m.setParam("jardata", "QUJDREVGRw==");
+        String line = ParamLog.describe(m);
+        assertFalse(line.contains("hunter2-secret") || line.contains("QUJDREVGRw=="), line);
+        assertTrue(line.contains("password:14") && line.contains("action=nosuch"), line);
+        MsgEvent odd = msg(MsgEvent.Type.EXEC, "x' OR secret");
+        assertFalse(ParamLog.describe(odd).contains("secret"), "an action that is not a plain token is logged by its size");
+        assertTrue(ParamLog.allow("test-key"));
+        assertFalse(ParamLog.allow("test-key"), "rate limited");
     }
 }

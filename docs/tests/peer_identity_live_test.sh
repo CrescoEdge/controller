@@ -60,9 +60,14 @@ waitport $((WS0+1)) && waitport $((WS0+2)) || { echo "FATAL: agent wsapi did not
 for _ in $(seq 1 60); do grep -q "Starting Bridge" "$WORK/logs/region.log" 2>/dev/null && break; sleep 2; done
 sleep 15   # registrations + first full exports settle
 
+pin() { # the wsapi certificate fingerprint of node $1 (clients verify the wsapi certificate by default)
+  local f; f=$(find "$WORK/nodes/$1/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1)
+  [ -n "$f" ] && head -1 "$f" | tr -d '[:space:]'
+}
 probe() {
   PYTHONPATH="${PYCRESCOLIB_PATH:-}${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$HERE/peer_identity_dataplane.py" --tx-port "$WS0" --rx-port $((WS0+2)) \
-    --spy-port $((WS0+1)) --spy2-port "$WS0" --rx-path rgr_b1 --key "$KEY" --messages 200
+    --spy-port $((WS0+1)) --spy2-port "$WS0" --rx-path rgr_b1 --key "$KEY" --messages 200 \
+    --pin "$WS0=$(pin global)" --pin "$((WS0+1))=$(pin a1)" --pin "$((WS0+2))=$(pin b1)"
 }
 echo "### dataplane probe (plain stream, recipient-bound stream, spy)"
 PROBE=$(probe)
