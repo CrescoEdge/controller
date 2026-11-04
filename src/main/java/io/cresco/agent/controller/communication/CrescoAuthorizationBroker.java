@@ -705,7 +705,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     logger.warn("DENY READ '" + info.getDestination().getPhysicalName() + "' for " + identityOf(context) + " : " + why);
                     throw new SecurityException("Cresco: " + why);
                 }
-                info.setSelector(StdinGuard.narrow(info.getSelector()));
+                try {
+                    info.setSelector(StdinGuard.narrow(info.getSelector()));
+                } catch (IllegalArgumentException malformed) {
+                    logger.warn("DENY READ '" + info.getDestination().getPhysicalName() + "' for " + identityOf(context) + " : " + malformed.getMessage());
+                    throw new SecurityException("Cresco: " + malformed.getMessage());
+                }
             }
             // the early refusal (a typed error for the client) is for network clients and this controller's own connection
             // (wsapi clients); any other in-JVM connection is judged per message only
