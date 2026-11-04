@@ -204,10 +204,16 @@ class VerifiedCallerTest {
         MsgEvent region = registry(MsgEvent.Type.CONFIG, "region_enable", Map.of("region_watchdog_update", "rgA"));
         region.setCompressedParam("agentconfigs", "{\"rgA\":[{\"agent_id\":\"a1\"},{\"agent_id\":\"a7\"}]}");
         region.setCompressedParam("pluginconfigs", "{\"a1\":[{\"plugin_id\":\"p1\"}]}");
-        assertNull(RegistryBinding.refusal(region, rgA, true, agent -> "a1".equals(agent) ? "rgA" : null));
-        assertNotNull(RegistryBinding.refusal(region, rgA, true, agent -> "rgB"), "plugin records of another region's agent");
+        // review F3: at the global only the region's own controller (the one that joined it) speaks for the region
+        java.util.function.Predicate<Caller> joined = c -> c.equals(rgA);
+        assertNull(RegistryBinding.refusal(region, rgA, true, agent -> "a1".equals(agent) ? "rgA" : null, joined));
+        assertNotNull(RegistryBinding.refusal(region, rgA, true, agent -> "a1".equals(agent) ? "rgA" : null),
+                "without knowing who joined, no controller speaks for a region");
+        assertNotNull(RegistryBinding.refusal(region, Caller.controller(T, "rgA", "a1"), true, agent -> "rgA", joined),
+                "an agent of the region is not its controller");
+        assertNotNull(RegistryBinding.refusal(region, rgA, true, agent -> "rgB", joined), "plugin records of another region's agent");
         region.setCompressedParam("regionconfigs", "{\"x\":[{\"region_id\":\"rgB\"}]}");
-        assertNotNull(RegistryBinding.refusal(region, rgA, true, null), "another region's record");
+        assertNotNull(RegistryBinding.refusal(region, rgA, true, null, joined), "another region's record");
         assertNotNull(RegistryBinding.refusal(registry(MsgEvent.Type.WATCHDOG, null, Map.of("agent_watchdog_update", "a1")),
                 Caller.plugin(T, "rgA", "a1", "p"), false, null), "a plugin is no controller");
         assertNotNull(RegistryBinding.refusal(registry(MsgEvent.Type.WATCHDOG, null, Map.of("plugin_watchdog_update", "p9")), a1, false, null));

@@ -433,7 +433,7 @@ public class RegionalExecutor implements Executor {
             io.cresco.library.security.Caller caller = io.cresco.library.security.Caller.fromMsgEvent(incoming);
             io.cresco.agent.db.DBInterfaceImpl gdb = controllerEngine.getGDB();
             String why = io.cresco.agent.controller.communication.RegistryBinding.refusal(incoming, caller, global,
-                    gdb == null ? null : gdb::regionOfAgent);
+                    gdb == null ? null : gdb::regionOfAgent, controllerEngine::speaksForRegion);
             if (why != null) {
                 logger.warn("REFUSED registry update {} {} from {}: {}", incoming.getMsgType(), incoming.getParam("action"), caller, why);
                 if (MsgRouter.isRpcRequest(incoming)) {

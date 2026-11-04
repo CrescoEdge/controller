@@ -20,6 +20,13 @@ public class ControllerStatePersistance {
     private String regionalListener = null;
     private String globalListener = null;
 
+    /** At the global: does a REGION state update's writer speak for its region (ControllerEngine.speaksForRegion)? */
+    private volatile java.util.function.Predicate<io.cresco.library.security.Caller> regionController;
+
+    void setRegionControllerCheck(java.util.function.Predicate<io.cresco.library.security.Caller> check) {
+        this.regionController = check;
+    }
+
     public ControllerStatePersistance(PluginBuilder plugin, DBEngine dbe) {
         this.plugin = plugin;
         this.logger = plugin.getLogger(ControllerStatePersistance.class.getName(),CLogger.Level.Info);
@@ -379,7 +386,7 @@ public class ControllerStatePersistance {
         if (!io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) return null;
         io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg);
         return io.cresco.agent.controller.communication.RegistryBinding.dataplaneRefusal(writer, atGlobal,
-                dbe::regionOfAgentQuiet, regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
+                dbe::regionOfAgentQuiet, regionController, regionId, agentId, regionconfigs, agentconfigs, pluginconfigs);
     }
 
     private volatile long lastRefusedUpdateLog;

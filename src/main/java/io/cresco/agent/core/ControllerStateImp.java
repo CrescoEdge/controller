@@ -33,6 +33,11 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	// The active (serving) modes. Was missing REGION (a region-only controller reported not-active).
+	/** At the global, who speaks for a region in its dataplane state updates (review F3; set by the ControllerEngine). */
+	public void setRegionControllerCheck(java.util.function.Predicate<io.cresco.library.security.Caller> check) {
+		controllerStatePersistance.setRegionControllerCheck(check);
+	}
+
 	public boolean isActive() {
 		return ((currentMode == ControllerMode.STANDALONE)
 				|| (currentMode == ControllerMode.AGENT)

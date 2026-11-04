@@ -194,6 +194,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean anonymous;          // a network connection without a client certificate: no identity, no role
         volatile X509Certificate leaf;    // the TLS client certificate (leaf), when one was presented
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
+        volatile Object bridgePeer;       // the controller at the other end of this bridge connection (resolved once), or NO_PEER
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
         final java.util.concurrent.atomic.AtomicInteger producers = new java.util.concurrent.atomic.AtomicInteger();
         CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
@@ -878,7 +879,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      * </ul>
      */
     void stampCaller(ConnectionContext ctx, CrescoSecurityContext sc, Message m) throws java.io.IOException {
-        if (isForwarder(ctx, sc)) return;
+        if (isForwarder(ctx, sc)) {
+            bridgeScope(ctx, sc, m);
+            return;
+        }
         if (sc != null && sc.localController) return;
         Object raw = m.getProperty(CallerStamps.P_CALLER);
         CrescoIdentity id = (sc != null && sc.verified && !isVm(ctx)) ? sc.identity : null;
@@ -893,6 +897,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             io.cresco.library.security.Caller legacy = io.cresco.library.security.Caller.parse(
                     "agent:" + id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent(), id.getTenant(), io.cresco.library.security.Caller.ROLE_USER);
             setCaller(m, legacy);
+            nodeAlias(m, id, legacy);
             return;
         }
         if ("".equals(raw)) {
@@ -909,6 +914,181 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             return;
         }
         setCaller(m, declared);
+        nodeAlias(m, id, declared);
+    }
+
+    // ---- region aliases (GaiaKeep gfs#26): the former region a node answers at, from its own verified registration ----
+
+    private volatile java.util.function.BiFunction<String, String, String> aliasLookup;
+    private final java.util.concurrent.ConcurrentHashMap<String, Object[]> aliasCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long ALIAS_CACHE_MS = 30_000L;
+
+    /**
+     * Where this broker reads the {@code region_alias} of a node attached to it: (region, agent) -> the alias its region's
+     * registry recorded from the node's own verified registration, or null. Set by the region controller that owns this
+     * broker; unset, no network node carries an alias.
+     */
+    public void setRegionAliasLookup(java.util.function.BiFunction<String, String, String> lookup) {
+        this.aliasLookup = lookup;
+        aliasCache.clear();
+    }
+
+    /** {@code region/agent}'s recorded alias, cached for 30 s (so a message costs a map lookup, not a registry read). */
+    String recordedAlias(String region, String agent) {
+        java.util.function.BiFunction<String, String, String> f = aliasLookup;
+        if (f == null) return null;
+        String k = region + "_" + agent;
+        long now = System.currentTimeMillis();
+        Object[] hit = aliasCache.get(k);
+        if (hit != null && (Long) hit[1] > now) return (String) hit[0];
+        String a;
+        try {
+            a = io.cresco.library.security.Caller.validAlias(f.apply(region, agent), region);
+        } catch (RuntimeException e) {
+            a = null;
+        }
+        if (aliasCache.size() > 100_000) aliasCache.clear();
+        aliasCache.put(k, new Object[]{a, now + ALIAS_CACHE_MS});
+        return a;
+    }
+
+    /** A node's own stamp (controller, plugin, legacy agent) carries the alias its region recorded; an API user's none. */
+    private void nodeAlias(Message m, CrescoIdentity id, io.cresco.library.security.Caller c) throws java.io.IOException {
+        if (c == null || id == null || c.getKind() == io.cresco.library.security.Caller.Kind.API) return;
+        String a = recordedAlias(id.getRegion(), id.getAgent());
+        if (a != null) m.setProperty(CallerStamps.P_ALIAS, a);
+    }
+
+    // ---- what a bridge may carry (review Phase 3 F2) ----
+
+    private static final Object NO_PEER = new Object();
+    private final AtomicLong outOfScopeStamps = new AtomicLong();
+    /** The bridges this broker opened: connector name -> the controller at the other end. */
+    private final java.util.concurrent.ConcurrentHashMap<String, PeerIdentity.Expected> outboundBridges = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile java.util.function.Supplier<PeerIdentity.Expected> parent = () -> null;
+
+    /** Stamps a bridge carried outside what it may carry, stripped so far. */
+    public long outOfScopeStampCount() { return outOfScopeStamps.get(); }
+
+    /** This node's parent controller (a region's global), whose bridge carries the whole fabric below it; null for none. */
+    public void setParent(java.util.function.Supplier<PeerIdentity.Expected> parent) {
+        this.parent = parent == null ? () -> null : parent;
+    }
+
+    /** A bridge this broker opened ({@code ActiveBroker}): what arrives over its local side came from {@code peer}. */
+    public void registerOutboundBridge(String connectorName, PeerIdentity.Expected peer) {
+        if (connectorName != null && peer != null && peer.isComplete()) outboundBridges.put(connectorName, peer);
+    }
+
+    public void unregisterOutboundBridge(String connectorName) {
+        if (connectorName != null) outboundBridges.remove(connectorName);
+    }
+
+    /**
+     * The controller a forwarding connection carries messages from: a verified bridge peer (an inbound bridge, its
+     * certificate), or the controller this broker opened the bridge to (the local side of an outbound bridge, by its
+     * connector name, which ActiveMQ puts at the head of the local connection's client id). Null when unknown.
+     */
+    private CrescoIdentity bridgePeerOf(ConnectionContext ctx, CrescoSecurityContext sc) {
+        if (sc == null) return null;
+        Object cached = sc.bridgePeer;
+        if (cached != null) return cached == NO_PEER ? null : (CrescoIdentity) cached;
+        CrescoIdentity peer = null;
+        try {
+            if (ctx.isNetworkConnection()) {
+                peer = (sc.verified && sc.certificate) ? sc.identity : null;
+            } else {
+                String cid = ctx.getClientId();
+                if (cid != null) {
+                    for (java.util.Map.Entry<String, PeerIdentity.Expected> e : outboundBridges.entrySet()) {
+                        if (cid.startsWith(e.getKey())) {
+                            PeerIdentity.Expected x = e.getValue();
+                            String t = peers.boundTenant(x.region, x.agent);
+                            if (t == null) t = ownTenant;
+                            peer = CrescoIdentity.of(t, x.region, x.agent, null);
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            peer = null;
+        }
+        sc.bridgePeer = peer == null ? NO_PEER : peer;
+        return peer;
+    }
+
+    /**
+     * A stamp a forwarding connection carries is kept only when its bridge peer may carry it ({@link #bridgeCarryRefusal});
+     * otherwise it is stripped (counted, logged). Broker-internal contexts carry what they carry.
+     */
+    private void bridgeScope(ConnectionContext ctx, CrescoSecurityContext sc, Message m) throws java.io.IOException {
+        if (ctx == null || ctx.getConnector() == null || sc == null) return;     // broker-internal
+        Object raw = m.getProperty(CallerStamps.P_CALLER);
+        if (raw == null || "".equals(raw)) return;
+        CrescoIdentity peer = bridgePeerOf(ctx, sc);
+        String why;
+        io.cresco.library.security.Caller declared = null;
+        if (peer == null) {
+            if (ctx.isNetworkConnection() && !sc.certificate && allowUnverifiedBridges) return;   // migration flag: as before
+            why = "the bridge carrying it has no verified controller identity";
+        } else {
+            Object t = m.getProperty(CallerStamps.P_TENANT), r = m.getProperty(CallerStamps.P_ROLES);
+            declared = io.cresco.library.security.Caller.parse(String.valueOf(raw), t == null ? null : String.valueOf(t),
+                    r == null ? null : String.valueOf(r));
+            PeerIdentity.Expected p = parent.get();
+            boolean isParent = p != null && peer.getRegion().equals(p.region) && peer.getAgent().equals(p.agent);
+            why = declared == null ? "a malformed stamp" : bridgeCarryRefusal(peer, isParent, declared, superuserTenants);
+        }
+        if (why == null) return;
+        outOfScopeStamps.incrementAndGet();
+        forged(m, peer, raw, "carried over the bridge of " + (peer == null ? "an unknown controller" : peer) + ": " + why);
+        setCaller(m, null);
+    }
+
+    /**
+     * May the bridge of controller {@code peer} carry {@code c}? Only a principal it may legitimately carry:
+     * <ul>
+     *   <li>of its own tenant, unless {@code peer} is in a superuser tenant (then of any tenant);</li>
+     *   <li>a node (controller, plugin, agent) within its subtree: its own region's nodes, or -- for this node's parent
+     *       (a region's global) -- any node below it; an API user (no region) of an admitted tenant;</li>
+     *   <li>with the roles of its kind ({@code controller:} infra, {@code plugin:} plugin, {@code agent:} user, {@code api:}
+     *       admin/user); never anonymous.</li>
+     * </ul>
+     * @return null when it may, else why not
+     */
+    static String bridgeCarryRefusal(CrescoIdentity peer, boolean peerIsParent, io.cresco.library.security.Caller c,
+                                     java.util.Set<String> superuserTenants) {
+        if (peer == null || peer.getTenant() == null || peer.getRegion() == null) return "no verified bridge peer";
+        if (c == null || c.isAnonymous()) return "anonymous never crosses a bridge of a secured fabric";
+        boolean superPeer = superuserTenants != null && superuserTenants.contains(peer.getTenant());
+        if (!superPeer && !peer.getTenant().equals(c.getTenant())) {
+            return "a principal of tenant " + c.getTenant() + " over a bridge of tenant " + peer.getTenant();
+        }
+        java.util.Set<String> roles = c.getRoles();
+        switch (c.getKind()) {
+            case API:
+                for (String role : roles) {
+                    if (!io.cresco.library.security.Caller.ROLE_ADMIN.equals(role) && !io.cresco.library.security.Caller.ROLE_USER.equals(role)) {
+                        return "an API stamp with role " + role;
+                    }
+                }
+                return null;
+            case CONTROLLER:
+                if (!roles.equals(java.util.Collections.singleton(io.cresco.library.security.Caller.ROLE_INFRA))) return "a controller stamp with roles " + c.getRolesCsv();
+                break;
+            case PLUGIN:
+                if (!roles.equals(java.util.Collections.singleton(io.cresco.library.security.Caller.ROLE_PLUGIN))) return "a plugin stamp with roles " + c.getRolesCsv();
+                break;
+            case AGENT:
+                if (!roles.equals(java.util.Collections.singleton(io.cresco.library.security.Caller.ROLE_USER))) return "an agent stamp with roles " + c.getRolesCsv();
+                break;
+            default:
+                return "a " + c.getKind().name().toLowerCase(java.util.Locale.ROOT) + " stamp never crosses a bridge";
+        }
+        if (peerIsParent) return null;                       // the fabric below this node's global is the global's subtree
+        return peer.getRegion().equals(c.getRegion()) ? null
+                : "a node of region " + c.getRegion() + " over the bridge of region " + peer.getRegion() + " (outside its subtree)";
     }
 
     /**
@@ -934,6 +1114,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         m.setProperty(CallerStamps.P_CALLER, c == null ? "" : c.getPrincipal());
         m.setProperty(CallerStamps.P_TENANT, c == null ? "" : c.getTenant());
         m.setProperty(CallerStamps.P_ROLES, c == null ? "" : c.getRolesCsv());
+        m.setProperty(CallerStamps.P_ALIAS, "");             // a node's alias is set from its region's record only (nodeAlias)
     }
 
     private void forged(Message m, CrescoIdentity from, Object declared, String why) {

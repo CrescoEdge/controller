@@ -81,12 +81,14 @@ public final class ControllerActionRoles {
         ActionAuthorizer a = new ActionAuthorizer(ActionAuthorizer.CONTROLLER_BUNDLE);
         a.setDefaultRoles(INFRA, ADMIN);
         // region federation: every region registers here; RegistryBinding confines each to its own records
-        for (String f : new String[]{"region_enable", "region_disable", "regionalimport", "setinodestatus"}) {
+        for (String f : new String[]{"region_enable", "region_disable", "regionalimport"}) {
             a.require(C, f, INFRA);
             a.allowAnyTenantInfra(C, f);
         }
-        // scheduling and the repository: deploys code
-        for (String f : new String[]{"addplugin", "removeplugin", "gpipelinesubmit", "gpipelineremove", "plugindownload", "savetorepo"}) {
+        // scheduling and the repository: deploys code. setinodestatus rewrites an iNode's scheduling state: no fabric
+        // mechanic (no controller sends it), so infra or admin of the tenant that schedules here only (review F4)
+        for (String f : new String[]{"addplugin", "removeplugin", "gpipelinesubmit", "gpipelineremove", "plugindownload", "savetorepo",
+                "setinodestatus"}) {
             a.require(C, f, INFRA, ADMIN);
         }
         // the fabric registry, read: open to the global's tenant (and a superuser tenant's infra/admin)

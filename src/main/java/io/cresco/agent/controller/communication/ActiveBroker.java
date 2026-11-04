@@ -369,6 +369,19 @@ public class ActiveBroker {
 				if (SecuritySettings.brokerSecurity(plugin.getConfig())) {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
 					this.authorization = authz;
+					// review F2: a bridge carries only principals it may carry; this node's global carries the fabric below it
+					authz.setParent(() -> {
+						io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+						if (cs == null || cs.isGlobalController()) return null;
+						String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
+						return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
+					});
+					// gfs#26: a node attached here answers at the former region its own registration recorded (region_alias)
+					authz.setRegionAliasLookup((region, agent) -> {
+						io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+						if (cs == null || !region.equals(cs.getRegion()) || controllerEngine.getGDB() == null) return null;
+						return controllerEngine.getGDB().recordedRegionAlias(region, agent);
+					});
 					brokerPlugins.add(authz);
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
 					// Recipient-bound dataplane messages (cresco_to) reach only their recipient's connection; set on the
@@ -781,6 +794,8 @@ public class ActiveBroker {
 					int wait = 0;
 					while(!nc.isStopped() && wait++ < 10) { Thread.sleep(1000); }
 					broker.removeNetworkConnector(nc);
+					CrescoAuthorizationBroker az = authorization;
+					if (az != null) az.unregisterOutboundBridge(nc.getName());
 				} catch (Exception e) {
 					logger.error("removeNetworkConnector member {}", e.getMessage());
 				}
@@ -874,6 +889,8 @@ public class ActiveBroker {
 		}
 		String role = split ? (index == 0 ? "ctl" : "data") : "mixed";
 		bridge.setName("cresco-bridge-" + hostname + "-" + discoveryPort + "-" + index + "-" + role + "-" + java.util.UUID.randomUUID());
+		CrescoAuthorizationBroker authz = authorization;
+		if (authz != null && expected != null) authz.registerOutboundBridge(bridge.getName(), expected);   // what arrives over it came from expected
 		bridge.setDuplex(true);
 		// Data connectors get a SMALL prefetch: prefetch is the per-destination FIFO batch already
 		// committed to the socket ahead of later messages — 100 x 256KB was ~25MB of head-of-line
@@ -1003,6 +1020,8 @@ public class ActiveBroker {
 					int wait = 0;
 					while (!nc.isStopped() && wait++ < 10) { Thread.sleep(1000); }
 					broker.removeNetworkConnector(nc);
+					CrescoAuthorizationBroker az = authorization;
+					if (az != null) az.unregisterOutboundBridge(nc.getName());
 				} catch (Exception e) {
 					logger.error("removeBridgeConnections member {}", e.getMessage());
 				}

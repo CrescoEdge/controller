@@ -937,6 +937,22 @@ public class DBInterfaceImpl implements DBInterface {
         return dbe.getPNode(pluginId);
     }
 
+    /**
+     * The former region ({@code region_alias}, GaiaKeep gfs#26) agent {@code agent} of {@code region} registered here, read
+     * from its registration's configuration (which its own verified registration and keep-alives wrote: RegistryBinding);
+     * null for none.
+     */
+    public String recordedRegionAlias(String region, String agent) {
+        try {
+            String cp = dbe.getNodeConfigParams(region, agent, null);
+            if (cp == null) return null;
+            Map<String, String> params = gson.fromJson(cp, new com.google.gson.reflect.TypeToken<Map<String, String>>() { }.getType());
+            return params == null ? null : io.cresco.library.security.Caller.validAlias(params.get("region_alias"), region);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public Map<String,String> getANode(String agentId) {
         return dbe.getANode(agentId);
     }
