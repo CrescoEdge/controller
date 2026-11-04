@@ -313,7 +313,7 @@ public class MsgRouter {
     }
 
     private void forwardToLocalGlobal2(MsgEvent rm) {
-        logger.error("forwardToLocalGlobal() " + rm.getParams());
+        logger.error("forwardToLocalGlobal() " + io.cresco.agent.controller.communication.ParamLog.describe(rm));
         boolean isOk = false;
         if(rm.getParam("desc") != null) {
             if(rm.getParam("desc").startsWith("to-global")) {
@@ -322,20 +322,20 @@ public class MsgRouter {
         }
 
         if(!isOk) {
-            logger.error("forwardToLocalGlobal() BAD MESSAGE : " + rm.getParams() + " RouteCase :" + getRoutePath(rm));
+            logger.error("forwardToLocalGlobal() BAD MESSAGE : " + io.cresco.agent.controller.communication.ParamLog.describe(rm) + " RouteCase :" + getRoutePath(rm));
         }
        
     }
 
     private void forwardToLocalGlobal(MsgEvent rm) {
-        logger.debug("forwardToLocalGlobal() " + rm.getParams());
+        logger.debug("forwardToLocalGlobal() " + io.cresco.agent.controller.communication.ParamLog.describe(rm));
         forwardToLocalRegion(rm);
     }
 
     private void forwardToRemoteGlobal(MsgEvent rm) {
         // an ordinary relay hop toward the global's region (every message for a region_alias address in that region
         // takes it, gfs#26): logged at ERROR with its params it flooded the log thousands of times a minute
-        logger.trace("forwardToRemoteGlobal() {}", rm.getParams());
+        logger.trace("forwardToRemoteGlobal() {}", io.cresco.agent.controller.communication.ParamLog.describe(rm));
         forwardToRemoteRegion(rm);
     }
 
@@ -418,7 +418,7 @@ public class MsgRouter {
                 Hop hop = tierStep.hop != null ? tierStep.hop
                         : decide(routePath, rm, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
                 logger.debug("route rp=" + routePath + " -> " + hop);
-                logger.trace(rm.getParams().toString());
+                logger.trace(io.cresco.agent.controller.communication.ParamLog.describe(rm));
 
                 switch (hop) {
                     case LOCAL_AGENT:                forwardToLocalAgent(rm); break;
@@ -434,7 +434,7 @@ public class MsgRouter {
             }
 
         } catch (Exception ex) {
-            logger.error("MsgRouter.route Route Failed " + ex + " " + (rm != null ? rm.getParams() : "rm=null"), ex);
+            logger.error("MsgRouter.route Route Failed " + ex + " " + (rm != null ? io.cresco.agent.controller.communication.ParamLog.describe(rm) : "rm=null"), ex);
 
         }
         finally
@@ -567,7 +567,7 @@ public class MsgRouter {
                     plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
         } catch (Exception ex) {
             if(rm != null) {
-                logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " " + rm.getParams().toString());
+                logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " " + io.cresco.agent.controller.communication.ParamLog.describe(rm));
             } else {
                 logger.error("Controller : MsgRoute : getRoutePath Error: " + ex.getMessage() + " RM=NULL");
             }
@@ -860,7 +860,7 @@ public class MsgRouter {
                 if (ttlCount > 10) {
                     logger.error("**Controller : MsgRoute : High Loop Count**");
                     logger.error("MsgType=" + rm.getMsgType().toString());
-                    logger.error("params=" + rm.getParams());
+                    logger.error("params=" + io.cresco.agent.controller.communication.ParamLog.describe(rm));
                     isValid = false;
                 }
 

@@ -189,7 +189,7 @@ public class DBInterfaceImpl implements DBInterface {
                 }
             } else { // mode is null
                 if (!wasProcessedCorrectly) { // Only an issue if timestamps also weren't updated
-                    logger.warn("nodeUpdate() called with no 'mode' and no specific watchdog parameters. Msg: {}", de.getParams());
+                    logger.warn("nodeUpdate() called with no 'mode' and no specific watchdog parameters. Msg: {}", io.cresco.agent.controller.communication.ParamLog.describe(de));
                 }
             }
         } catch (Exception ex) {

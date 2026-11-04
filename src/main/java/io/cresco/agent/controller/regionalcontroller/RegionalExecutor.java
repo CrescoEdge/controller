@@ -400,7 +400,7 @@ public class RegionalExecutor implements Executor {
                         retMsg = executeKPI(incoming);
                         break;
                     default:
-                        logger.error("UNKNOWN MESSAGE TYPE! {}", incoming.getParams());
+                        logger.error("UNKNOWN MESSAGE TYPE! {}", io.cresco.agent.controller.communication.ParamLog.describe(incoming));
                         break;
                 }
 
@@ -495,7 +495,7 @@ public class RegionalExecutor implements Executor {
                             break;
 
                         default:
-                            logger.error("UNKNOWN MESSAGE TYPE! " + incoming.getParams());
+                            logger.error("UNKNOWN MESSAGE TYPE! " + io.cresco.agent.controller.communication.ParamLog.describe(incoming));
                             break;
                     }
 

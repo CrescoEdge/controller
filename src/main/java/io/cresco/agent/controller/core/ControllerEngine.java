@@ -618,7 +618,7 @@ public class ControllerEngine {
                 boolean logged = false;
                 while (!getActiveClient().isFaultURIActive()) {
                     if (System.currentTimeMillis() >= deadline) {
-                        logger.error("msgIn: parent link in connection fault for " + waitMs + "ms, dropping message [" + msg.getParams() + "]");
+                        logger.error("msgIn: parent link in connection fault for " + waitMs + "ms, dropping message [" + io.cresco.agent.controller.communication.ParamLog.describe(msg) + "]");
                         return;
                     }
                     if (!logged) {

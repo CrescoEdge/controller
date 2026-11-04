@@ -180,7 +180,7 @@ public class AgentProducer {
 
         String dstPath = sm.getForwardDst();
         if (dstPath == null) {
-            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", sm.getParams());
+            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
             return false; // Cannot proceed without a destination
         }
 

@@ -2034,7 +2034,7 @@ public class ControllerSMHandler {
                 return false;
             }
 
-            logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + enableMsg.getParams());
+            logger.debug("registerAgent() SENDING MESSAGE: " + enableMsg.printHeader() + " " + io.cresco.agent.controller.communication.ParamLog.describe(enableMsg));
 
             MsgEvent re = plugin.sendRPC(enableMsg);
 
@@ -2048,7 +2048,7 @@ public class ControllerSMHandler {
                 } else {
                     logger.error("RETURN DOES NOT CONTAIN IS REGISTERED");
                     logger.error("[" + re.printHeader() + "]");
-                    logger.error("[" + re.getParams() + "]");
+                    logger.error("[" + io.cresco.agent.controller.communication.ParamLog.describe(re) + "]");
                 }
             } else {
                 logger.error("registerAgent : RETURN = NULL");
