@@ -390,7 +390,11 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
 - **Renewal without churn.** Renewal is at a fraction of the certificate's own lifetime (above). This node's own chain,
   region CA, issuing CA and a peer's rediscovered chain REPLACE their truststore entries. A re-enrollment with the same key
   and CA keeps every live connection (the key managers present the new leaf at the next handshake); an agent enrollment no
-  longer rewrites the region broker's TLS context. Every join path re-enrolls -- multicast and static
+  longer rewrites the region broker's TLS context. A connection keeps the leaf it was opened with: when THAT leaf expires
+  (by default about 3.5 days after the renewal) the broker closes it, as it closes any connection whose certificate expires,
+  and the client reconnects at once with its current leaf -- one reconnect per leaf lifetime, by design (an expired
+  certificate is never honoured). The re-enrollment runs outside the certificate manager's lock (holding it deadlocked the
+  renewal against the discovery handler, found by the live renewal soak). Every join path re-enrolls -- multicast and static
   `regional_controller_host` / `global_controller_host` alike.
 - **No silent fallback.** A region-issued leaf is never replaced by a self-made chain (at renewal or at start). When
   re-enrollment keeps failing the node keeps serving its last valid leaf: WARN, then CRITICAL in its last tenth (retrying

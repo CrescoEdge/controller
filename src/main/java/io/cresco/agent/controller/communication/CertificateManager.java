@@ -584,7 +584,47 @@ public class CertificateManager {
      * unrevoked key whatever its last leaf's validity). Connectivity is kept as long as the identity is valid; it is never
      * extended past what the region vouched for.
      */
-    public synchronized boolean renewIfDue() throws Exception {
+    public boolean renewIfDue() throws Exception {
+        Object local = renewLocally();
+        if (local != RE_ENROLL) return (Boolean) local;
+        // Re-enrollment runs an authenticated discovery exchange, and the exchange's own handler takes this manager's lock
+        // (it may re-issue the leaf for a new name): it must never be called with the lock held -- that was a self-deadlock
+        // that stopped every later renewal of the node (seen live with renewal checks every minute).
+        if (!reEnrolling.compareAndSet(false, true)) return false;
+        try {
+            logger.info("This node's region-issued leaf " + validityText(chain) + "; re-enrolling with its regional controller");
+            boolean reEnrolled = false;
+            String failure = null;
+            try { reEnrolled = controllerEngine.reEnroll(); } catch (Exception ex) { failure = ex.getMessage(); }
+            synchronized (this) {
+                if (reEnrolled) {
+                    reEnrollFailures = 0;
+                    setIdentityAlarm(null, false);
+                    return true;
+                }
+                reEnrollFailures++;
+                long now = System.currentTimeMillis();
+                long left = chain[0].getNotAfter().getTime() - now, life = chain[0].getNotAfter().getTime() - chain[0].getNotBefore().getTime();
+                boolean critical = left <= life / 10;
+                String text = (left <= 0 ? "this node's region-issued identity EXPIRED on " + chain[0].getNotAfter() + ": its region refuses it until"
+                        + " a re-enrollment succeeds" : "this node's region-issued identity " + validityText(chain) + " and re-enrollment with its"
+                        + " regional controller failed " + reEnrollFailures + " time(s)" + (failure == null ? "" : " (" + failure + ")")
+                        + "; the last valid leaf is kept in use") + "; retrying" + (critical ? " every " + reEnrollRetryMinutes() + " min" : " at every renewal check");
+                setIdentityAlarm(text, critical);
+                if (critical) scheduleRenewalRetry();
+                return false;
+            }
+        } finally {
+            reEnrolling.set(false);
+        }
+    }
+
+    /** {@link #renewIfDue}'s answer when the node's leaf must be renewed by re-enrolling (done without this manager's lock). */
+    private static final Object RE_ENROLL = new Object();
+    private final java.util.concurrent.atomic.AtomicBoolean reEnrolling = new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** With the lock: renew what this node renews itself; {@link #RE_ENROLL} when its leaf must be re-enrolled; else renewed or not. */
+    private synchronized Object renewLocally() throws Exception {
         long now = System.currentTimeMillis(), before = renewBeforeMs();
         boolean renewed = false;
         if (regionCA != null && chainNeedsRenewal(regionCA.caChain(), now, before)) {
@@ -605,26 +645,9 @@ public class CertificateManager {
                     storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, myKey, fresh);
                 }
             } else if (issuedByRemoteRegionCa(chain)) {
-                // a leaf our region's CA issued: re-enroll over the authenticated exchange (a fresh short-lived leaf, same key)
-                logger.info("This node's region-issued leaf " + validityText(chain) + "; re-enrolling with its regional controller");
-                boolean reEnrolled = false;
-                String failure = null;
-                try { reEnrolled = controllerEngine.reEnroll(); } catch (Exception ex) { failure = ex.getMessage(); }
-                if (reEnrolled) {
-                    reEnrollFailures = 0;
-                    setIdentityAlarm(null, false);
-                    return true;
-                }
-                reEnrollFailures++;
-                long left = chain[0].getNotAfter().getTime() - now, life = chain[0].getNotAfter().getTime() - chain[0].getNotBefore().getTime();
-                boolean critical = left <= life / 10;
-                String text = (left <= 0 ? "this node's region-issued identity EXPIRED on " + chain[0].getNotAfter() + ": its region refuses it until"
-                        + " a re-enrollment succeeds" : "this node's region-issued identity " + validityText(chain) + " and re-enrollment with its"
-                        + " regional controller failed " + reEnrollFailures + " time(s)" + (failure == null ? "" : " (" + failure + ")")
-                        + "; the last valid leaf is kept in use") + "; retrying" + (critical ? " every " + reEnrollRetryMinutes() + " min" : " at every renewal check");
-                setIdentityAlarm(text, critical);
-                if (critical) scheduleRenewalRetry();
-                return renewed;
+                // a leaf our region's CA issued: re-enroll over the authenticated exchange (a fresh short-lived leaf, same key),
+                // outside this lock; never renewed with a self-made chain
+                return RE_ENROLL;
             } else {
                 logger.warn("This node's certificate chain " + validityText(chain) + "; renewing it with the same key");
                 generateCertChain(new KeyPair(chain[0].getPublicKey(), myKey));
