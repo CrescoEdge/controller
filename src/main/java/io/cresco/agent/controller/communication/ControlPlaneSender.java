@@ -196,6 +196,7 @@ class ControlPlaneSender {
                     // the send inside the lock is bounded by the connection sendTimeout set in
                     // ensureOpen, so a dead transport fails this send instead of parking senders
                     TextMessage tm = used.createTextMessage(gson.toJson(sm));
+                    CallerStamps.toJms(sm, tm);       // the verified caller travels as properties the broker checks
                     p.send(dest(used, dstQueueName), tm, tier.deliveryMode, tier.priority, ttl);
                 } finally {
                     lock.unlock();

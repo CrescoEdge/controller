@@ -444,10 +444,10 @@ public class AgentExecutor implements Executor {
 
             if(ce.paramsContains("filepath") && ce.paramsContains("skiplength") && ce.paramsContains("partsize")) {
 
-                Path filePath = Paths.get(ce.getParam("filepath"));
-                if(!isFileAccessAllowed(filePath)) {
+                Path filePath = allowedFile(ce.getParam("filepath"));
+                if(filePath == null) {
                     ce.setParam("status","9");
-                    ce.setParam("status_desc","file access denied by file_access_roots");
+                    ce.setParam("status_desc","file access denied (file_access_roots)");
                 } else if (filePath.toFile().exists()) {
                     if (filePath.toFile().isFile()) {
 
@@ -532,33 +532,35 @@ public class AgentExecutor implements Executor {
         return ce;
     }
     /**
-     * getfileinfo/getfiledata serve operator-named absolute paths by design (filerepo sync
-     * downloads from configured scan directories anywhere on disk), so they cannot be hard-chrooted
-     * without breaking that feature. When the agent config sets file_access_roots (comma-separated
-     * directories), remote reads are confined to those roots; unset preserves open access.
+     * getfileinfo/getfiledata read only below {@code file_access_roots} (audit D3a): unset, both are refused. The roots
+     * and the requested path are resolved to real paths (every symlink followed), so a link cannot lead out of a root,
+     * and the file is then read through its real path. Returns that real path, or null (logged) when the read is refused.
      */
-    private boolean isFileAccessAllowed(Path filePath) {
+    Path allowedFile(String requested) {
+        java.util.List<String> roots = io.cresco.agent.controller.communication.SecuritySettings.fileAccessRoots(plugin.getConfig());
+        Path real = allowedFile(roots, requested);
+        if (real == null) logger.warn("remote file access refused (file_access_roots " + roots + "): " + requested);
+        return real;
+    }
+
+    /** {@link #allowedFile(String)} for the roots {@code roots}: the requested file's real path, or null. */
+    static Path allowedFile(java.util.List<String> roots, String requested) {
+        if (roots == null || roots.isEmpty() || requested == null || requested.indexOf('\0') >= 0) return null;
+        Path real;
         try {
-            String roots = plugin.getConfig().getStringParam("file_access_roots");
-            if ((roots == null) || roots.trim().isEmpty()) {
-                return true;
-            }
-            Path requested = filePath.toAbsolutePath().normalize();
-            for (String root : roots.split(",")) {
-                if (root.trim().isEmpty()) {
-                    continue;
-                }
-                Path base = Paths.get(root.trim()).toAbsolutePath().normalize();
-                if (requested.startsWith(base)) {
-                    return true;
-                }
-            }
-            logger.error("remote file access denied by file_access_roots: " + requested);
-            return false;
-        } catch (Exception ex) {
-            logger.error("isFileAccessAllowed", ex);
-            return false;
+            real = Paths.get(requested).toAbsolutePath().toRealPath();
+        } catch (Exception notThere) {
+            return null;
         }
+        if (!java.nio.file.Files.isRegularFile(real, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return null;
+        for (String root : roots) {
+            try {
+                if (real.startsWith(Paths.get(root).toAbsolutePath().toRealPath())) return real;
+            } catch (Exception missingRoot) {
+                // a root that does not exist admits nothing
+            }
+        }
+        return null;
     }
 
     private MsgEvent getFileInfo (MsgEvent ce) {
@@ -566,10 +568,10 @@ public class AgentExecutor implements Executor {
 
             if(ce.paramsContains("filepath")) {
 
-                Path filePath = Paths.get(ce.getParam("filepath"));
-                if(!isFileAccessAllowed(filePath)) {
+                Path filePath = allowedFile(ce.getParam("filepath"));
+                if(filePath == null) {
                     ce.setParam("status","9");
-                    ce.setParam("status_desc","file access denied by file_access_roots");
+                    ce.setParam("status_desc","file access denied (file_access_roots)");
                 } else if (filePath.toFile().exists()) {
                     if (filePath.toFile().isFile()) {
                         ce.setParam("status","10");
@@ -634,7 +636,19 @@ public class AgentExecutor implements Executor {
 
         try {
 
-            String jar_file_path = me.getParam("jar_file_path");
+            // the next controller is a verified private copy, never the file the message named (signed installs)
+            String requested = me.getParam("jar_file_path");
+            String jar_file_path;
+            try {
+                JarIntake intake = controllerEngine.getPluginAdmin().getJarIntake();
+                java.nio.file.Path copy = intake.verifiedCopy(java.nio.file.Paths.get(requested));
+                java.nio.file.Path staged = intake.intakeDir().resolveSibling("controller-updates");
+                java.nio.file.Files.createDirectories(staged);
+                jar_file_path = intake.moveToContentName(copy, staged).toAbsolutePath().toString();
+            } catch (io.cresco.library.security.JarSignatures.Rejected rejected) {
+                logger.error("updateController() REFUSED " + requested + ": " + rejected.getMessage());
+                return;
+            }
 
             //create a version record so that updated controller will be used on restart
             File confDir = new File("conf");
@@ -910,7 +924,14 @@ public class AgentExecutor implements Executor {
                 logger.info("disabling plugin : " + pluginId);
                 // removePlugin (not stopPlugin): an explicit remove drops the plugin from the inventory
                 // whatever its persistence code; stopPlugin is the shutdown path that keeps it
-                boolean isDisabled = controllerEngine.getPluginAdmin().removePlugin(pluginId);
+                // purge_data=true deletes the plugin's data directory too -- for an admin caller only
+                boolean purge = "true".equalsIgnoreCase(ce.getParam("purge_data"));
+                io.cresco.library.security.Caller who = io.cresco.library.security.Caller.fromMsgEvent(ce);
+                if (purge && controllerEngine.securityOn() && (who == null || !who.hasRole(io.cresco.library.security.Caller.ROLE_ADMIN))) {
+                    logger.warn("pluginremove " + pluginId + ": purge_data ignored, it needs an admin caller (not " + who + ")");
+                    purge = false;
+                }
+                boolean isDisabled = controllerEngine.getPluginAdmin().removePlugin(pluginId, purge);
 
                 if (isDisabled) {
                     // push the changed inventory upstream now, not on the next watchdog tick

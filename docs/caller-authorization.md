@@ -36,24 +36,46 @@ value written by the sender is never read.
 ## 3. Enforcement
 
 `PluginBuilder.msgIn` checks every message before it calls the executor. This is the one dispatch point
-for every plugin and for the controller itself.
+for every plugin and for the controller's agent tier; the controller's regional and global executors are checked
+the same way at `RegionalExecutor.dispatch`, each against its own table (`ControllerActionRoles`).
 
-- `@CrescoAction(roles = {...})` names the roles allowed to call an action.
-- An action with no `roles` is open to any caller whose tenant is this agent's tenant, and to `infra`.
-  `admin` counts only when it belongs to the superuser tenant.
-- A message with no caller, or a caller without a required role, is refused with `status_code=403`,
-  `status_desc=unauthorized: <action> needs <roles>`. The refusal is logged, counted in
-  `cresco.authz.denied{action}`, and the executor never runs.
-- These actions require `infra` or `admin`, and nothing else:
-  - plugin lifecycle: `pluginadd`, `pluginupload`, `pluginremove`;
-  - controller and JVM: `controllerupdate`, `killjvm`, `restartframework`, `restartcontroller`;
+Terms: `C` is the caller's tenant (stamped), `D` the destination agent's own tenant (`tenant_id` of the node
+running the action), `S` the superuser tenants (`broker_superuser_tenants`, default `cresco-system`). The key
+of an action is (MsgEvent type, `action`).
+
+- No caller, or a malformed stamp: refused, whatever the action.
+- `anonymous` (only with `broker_security_enabled=false`, set explicitly): allowed; nothing is refused for its caller.
+- An **open** action (no roles) admits a caller when `C == D`; or when it holds `infra` or `admin` and `C` is in `S`;
+  or when it holds `infra` and the action admits every tenant's infrastructure (fabric mechanics on the controller
+  tiers only: liveness `ping`, registration `agent_enable`/`agent_disable`/`region_enable`/`region_disable`/
+  `regionalimport`, `setinodestatus`, WATCHDOG and KPI keep-alives, `getcryptopolicy` at the global).
+- A **role** action (`@CrescoAction(roles = {...})`, the controller tables, or the privileged floor) admits a caller
+  holding one of the roles in scope: `C == D`; or the role is `infra` or `admin` and `C` is in `S`; or the role is
+  `infra` and the action admits every tenant's infrastructure.
+- So an admin of tenant T acts only on agents of T unless T is a superuser tenant; `user` and `plugin` never cross a
+  tenant; `infra` crosses one only for the fabric mechanics above. A controller that manages other tenants' agents (a
+  global or region hosting several tenants) must be in a superuser tenant.
+- A refused RPC request is answered `status_code=403`, `status_desc=unauthorized: <action> needs <roles> (<why>)`.
+  The refusal is logged (at most 20 lines per 10 s), counted in `cresco.authz.denied{action}`, and the executor never
+  runs. A refused one-way message is dropped.
+- These actions require `infra` or `admin`, and nothing else (the privileged floor):
+  - plugin lifecycle: `pluginadd`, `pluginupload`, `pluginremove`, `pluginrepopull`;
+  - controller and JVM: `controllerupdate`, `killjvm`, `restartframework`, `restartcontroller`, `stopcontroller`;
   - agent state: `agent_disable`, `agent_enable`;
   - remote file access: `getfiledata`, `getfileinfo`;
-  - executor: `config_process`, `run_process`;
+  - logging that exposes other callers' traffic: `setloglevel`, `setlogdp`;
+  - executor: `config_process`, `run_process`, `start_process`, `end_process`, `write_stdin`;
   - filerepo: `clearrepo`, `putjar`, `removefile`, `putfiles`;
   - repo: `putjar`.
 
-  Each plugin's owner may add actions to this list. None may be removed from it.
+  Each plugin's owner may add actions to this list. None may be removed from it; an annotation can only narrow an
+  action on it (to `infra`).
+- The controller fails closed: an action its tables do not list needs `infra` or `admin`. A drift test checks that
+  every `@CrescoAction` of the three executors is listed.
+- Registry updates are bound to their maker (`RegistryBinding`): an agent registers, unregisters and keeps alive only
+  itself in its region, a region only itself and its agents at the global -- by message (`agent_enable`,
+  `agent_disable`, `region_enable`, `region_disable`, `regionalimport`, WATCHDOG) and on the dataplane
+  (`update_mode` AGENT/REGION state updates, by their verified writer). An in-scope `admin` is not bound to one node.
 
 ## 4. Defaults
 
@@ -178,3 +200,89 @@ These change code that only this branch runs (discovery v2, the peer trust regis
 | `identity_leaf_validity_hours` | 3 years | 168 |
 | `identity_renew_before_days`, `identity_renew_check_minutes` | (no renewal) | 30, 60 |
 | `peer_identity_revoke`, `peer-trust.json.revoke` | (none) | revocation |
+
+## 8. Verified callers on every path (phase 3)
+
+Nothing here applies while `broker_security_enabled=false` is set explicitly: every caller is `anonymous` and nothing
+is refused for its caller.
+
+- **In-JVM.** Each bundle gets its own `AgentService` (a service factory), so the controller knows the calling
+  bundle. A message a plugin sends goes out as `plugin:<tenant>/<region>/<agent>/<pluginid>` only for a plugin id that
+  bundle runs (a send as another bundle's plugin is dropped and logged); the controller's own messages as
+  `controller:<tenant>/<region>/<agent>`. Whatever a sender wrote into the three reserved parameters is replaced.
+- **On behalf of an API user.** `msgOutOnBehalfOf`/`sendRPCOnBehalfOf` are honoured only from a bundle in
+  `on_behalf_bundles` (default `io.cresco.wsapi`), for a plugin it runs, for an `api:` caller of the node's own tenant
+  -- of any tenant only when the node's own tenant is a superuser tenant (the broker applies the same rule, so a
+  tenant's node never mints another tenant's or a superuser tenant's users). A file list on such a message is dropped
+  (a user names no file on the agent's disk).
+- **On the wire.** A sender copies its stamp into the JMS properties `cresco_caller`, `cresco_caller_tenant`,
+  `cresco_caller_roles` (an unstamped message declares an empty caller). The broker keeps what a verified bridge or
+  this controller's own in-JVM connection carries; from a verified node it keeps what that node may declare -- itself
+  (`infra`), its own plugins (`plugin`), its tenant's users (`admin`/`user`) -- and strips anything else (counted,
+  logged); a node that declares nothing at all (no stamping code) is stamped `agent:<tenant>/<region>/<agent>` with
+  `user`. The receiver strips the body's values and takes the properties. A file list in a message body is dropped;
+  every part of a file transfer must come from the caller that registered it.
+- **Dataplane.** Every dataplane message carries its verified writer in the same properties: the plugin (per bundle)
+  or the controller, checked by the broker like any message.
+- **Relays.** With tenant namespacing, a relay never carries a message into a tenant namespace (`cresco_tenant`) its
+  verified caller does not belong to, unless the caller is of a superuser tenant.
+- **RPC replies** must come from the callee (phase 1); now that every delivery is stamped, an unstamped reply is
+  refused. An error reply a controller on the route generates (`route_unavailable`, `route_refused`) may come from any
+  controller.
+- **Stdin.** No dataplane subscription but the executor's sees a process's stdin (`type` `input`/`input-*`): a
+  selector naming it is refused, any other is narrowed so it cannot match. The controller's dataplane applies it per
+  bundle; the broker to every subscription that is not this controller's own or a bridge's.
+- **Remote files (D3a).** `getfiledata`/`getfileinfo` read only regular files below `file_access_roots`, both resolved
+  to real paths; unset, both are refused. A plugin's dataplane offers no `downloadRemoteFile`.
+- **Signed installs.** Every jar that did not come embedded in the agent jar -- `pluginupload`, `pluginadd` from a
+  repository or an absolute path, `getjar` fetches, `plugindownload`, `controllerupdate`, the repository cache,
+  `savetorepo` at the global -- is installed only from an owner-only private copy that verifies against
+  `plugin_signing_truststore` (`JarSignatures.verify`). The cache names a jar by its own hash; a hash the caller
+  supplies is advisory. `plugindownload` fetches only http(s) URLs into a plain file name.
+- **Logging.** A plugin sets the log level of its own loggers (`<pluginid>:...`) only.
+- **Dataplane loss is never silent.** The broker still drops the oldest messages a slow topic subscriber has not taken
+  (its pending limit protects the other subscribers and the broker's memory), and counts every drop
+  (`dataplane.broker.discarded`, logged). Every message of a stream (one carrying `stream_name`) is numbered by its
+  writer's controller per (writer, `stream_name`, `type`) in `cresco_seq`; the subscriber's controller checks the
+  numbers, counts what is missing in `dataplane.stream.gap`, and marks the first message after a gap with `cresco_gap`
+  = how many messages of the stream that subscriber did not get. A subscriber joining mid-stream, and a writer that
+  restarts (back to 1), are not gaps. A consumer that needs completeness reads `cresco_gap` (or `cresco_seq`) and
+  recovers or reports; nothing in the stream path blocks a writer for a slow reader.
+- **Plugin data is kept.** A plugin's data directory (`plugin-data/<pluginid>`) is never deleted when the plugin stops
+  (every graceful agent shutdown stops every plugin) nor when it is removed: `pluginremove` deletes it only with
+  `purge_data=true` from an `admin` caller, and logs where the kept data is otherwise. Data of plugins no longer
+  configured on the agent is deleted only by the opt-in sweep `plugin_data_retention_days` (default 0: never), once a
+  day, after that many days without a change.
+- **Agent listings carry the tenant.** `listagents` (regional and global) gives each agent's `tenant_id`: the tenant its
+  controller was verified in when it registered and kept alive (its region writes it; an agent's own claim is replaced),
+  so a client resolves a destination's tenant.
+- **Dataplane user writers.** A bundle in `on_behalf_bundles` (wsapi) names the API user it writes for in
+  `cresco_writer`/`cresco_writer_roles`; that is kept only from such a bundle and for a user of the node's tenant (any
+  tenant's from a superuser tenant), and at the broker only from a node that may send for that user. Anyone else's is
+  removed.
+- **Signed jars and time.** A jar signature carrying a trusted RFC 3161 timestamp (the TSA's certificate has the
+  time-stamping extended key usage and chains, valid at the stamped time, to `plugin_signing_truststore`) is judged at
+  the stamped time, so a stored jar stays installable after its signing certificate expires. Without one, re-sign
+  jars before the signing certificate expires.
+- **Review findings fixed here.** A composite destination is for infrastructure only (beyond a client's own advisory
+  consumer): judged by its whole name it let a tenant read another tenant's dataplane and consume a peer's inbox. Only
+  the broker writes advisory topics. No tenant name claims the broker's own destinations (`ActiveMQ.*`, e.g.
+  `ActiveMQ.DLQ`).
+
+### Operator-visible changes (phase 3)
+
+| Setting | Before | Now |
+|---|---|---|
+| `on_behalf_bundles` | (none) | `io.cresco.wsapi` |
+| `plugin_signing_required` | (none) | defaults to `broker_security_enabled` |
+| `plugin_signing_truststore`, `plugin_signing_truststore_password` | (none) | trust anchors for jar signatures; unset, every jar arriving over the network is refused while signing is required |
+| `file_access_roots` | unset = open | unset = `getfiledata`/`getfileinfo` refused |
+| controller actions | open to every caller | the tables above; undeclared actions need `infra` or `admin` |
+| `plugindownload` | any URL, any file name | http(s), plain jar name, signed |
+| composite destinations (non-infra) | judged by the whole name | refused (except a client's own advisory consumer) |
+| advisory topics | any tenant could write | read only, for tenants |
+| plugin data | deleted on every stop and remove of a runtime plugin | kept; `purge_data=true` (admin) on `pluginremove`; `plugin_data_retention_days` sweep (default off) |
+| `listagents` | no tenant | `tenant_id` per agent (verified) |
+| jar signatures | judged now | judged at a trusted RFC 3161 timestamp when present |
+| stream messages | lost silently to a slow subscriber | `cresco_seq` on every stream message, `cresco_gap` after a loss, `dataplane.stream.gap` |
+| AgentService | one shared instance | one per bundle (service factory) |

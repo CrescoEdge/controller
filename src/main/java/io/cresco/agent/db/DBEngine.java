@@ -1120,6 +1120,20 @@ public class DBEngine {
         }
     }
 
+    /** The region {@code agentId} is registered in here, or null (unknown: not logged, a new agent is normal). */
+    public String regionOfAgentQuiet(String agentId) {
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT region_id FROM agentOf WHERE agent_id = ?")) {
+            stmt.setString(1, textParam(agentId));
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.regionOfAgentQuiet(): {}", ex.getMessage());
+            return null;
+        }
+    }
+
     public String getRNodeFromAnode(String agentId) {
         String configParams = null;
         try {

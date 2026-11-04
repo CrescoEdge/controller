@@ -180,6 +180,7 @@ public class ActiveProducerWorker {
 		try {
 			logger.trace("Worker [{}] sending message: Type={}, Params={}", producerWorkerName, type, se.getParams());
 			TextMessage textMessage = sess.createTextMessage(gson.toJson(se));
+			CallerStamps.toJms(se, textMessage);       // the verified caller travels as properties the broker checks
 
 			// Send with determined delivery mode, priority, and TTL (0 = broker default)
 			// Note: producer.getTimeToLive() was set during producer creation.

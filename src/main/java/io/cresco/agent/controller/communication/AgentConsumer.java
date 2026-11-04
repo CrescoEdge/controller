@@ -173,6 +173,8 @@ public class AgentConsumer {
 						if(me != null) {
 							// gfs#26: addressed to this node's former address (region_alias): it is for this node
 							RegionAlias.normalize(me, aliasRegion, plugin.getRegion(), plugin.getAgent());
+							// the verified caller comes from the properties the broker checked, never from the body
+							io.cresco.library.security.Caller caller = CallerStamps.fromJms(me, msg, controllerEngine.securityOn());
 
 							//logger.info("TEST PLUG 0");
 							//logger.info("Q: " + RXQueueName);
@@ -182,12 +184,16 @@ public class AgentConsumer {
 							//check if message is for this agent
 							//check if message has file payload and needs to be registered
 							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstAgent().equals(plugin.getAgent()))) {
-								if(!registerIncomingFiles(msgEventString, fileobjectString, filegroup)) {
+								if(!registerIncomingFiles(me, fileobjectString, filegroup, caller)) {
 									logger.error("Unable to register files!");
 								}
 								//don't forward message until files have arrived
 								return;
 							}
+
+							// files travel only as a file group (above): a file list in a body names files on the
+							// RECEIVER's disk, which a relay would read and ship onward
+							CallerStamps.dropFiles(me);
 
 							//start RPC checks
 							boolean isMyRPC = false;
@@ -232,7 +238,8 @@ public class AgentConsumer {
 
 						logger.debug("Byte Message: dst_region: " + dstRegion + " dst_agent: " + dstAgent);
 
-						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)) {
+						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)
+								&& partFromGroupSender(filegroup, msg)) {
 
 							//logger.info("MSG REGION: " + dstRegion + " MSG AGENT: " + dstAgent);
 
@@ -475,11 +482,30 @@ public class AgentConsumer {
 		}
 	}
 
-	private boolean registerIncomingFiles(String msgEventString, String fileobjectString, String fileGroup) {
+	/**
+	 * Is the file part {@code part} from the caller that registered {@code filegroup} (stamped on the group's message)?
+	 * Otherwise it is ignored (logged). A part of an unknown group passes here; the group lookup ignores it.
+	 */
+	private boolean partFromGroupSender(String filegroup, Message part) {
+		FileObjectGroupReceiver group;
+		synchronized (lockGroupMap) {
+			group = fileGroupMap.get(filegroup);
+		}
+		if (group == null) return true;
+		io.cresco.library.security.Caller ownerCaller = io.cresco.library.security.Caller.fromMsgEvent(group.getMsgEvent());
+		String owner = ownerCaller == null ? "" : ownerCaller.getPrincipal();
+		io.cresco.library.security.Caller c = controllerEngine.securityOn() ? CallerStamps.fromJmsProperties(part)
+				: io.cresco.library.security.Caller.anonymous();
+		String sender = c == null ? "" : c.getPrincipal();
+		if (owner.equals(sender)) return true;
+		logger.warn("IGNORED a file part for group {} from {}: the group was registered by {}", filegroup, sender, owner);
+		return false;
+	}
+
+	private boolean registerIncomingFiles(MsgEvent me, String fileobjectString, String fileGroup,
+										  io.cresco.library.security.Caller caller) {
 		boolean isRegistered = false;
 		try {
-
-			MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 
 			List<FileObject> fileObjects = controllerEngine.getDataPlaneService().getFileObjectsFromString(fileobjectString);
 			Map<String,FileObject> fileObjectMap = new HashMap<>();

@@ -215,6 +215,7 @@ public class PerfMonitorNet {
 
                 tick.setCompressedParam("perf", discoveryListString);
 
+                controllerEngine.stampSelf(tick);          // delivered in-JVM to this controller: it is the caller
                 plugin.msgIn(tick);
 
             }

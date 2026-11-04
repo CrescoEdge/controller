@@ -376,7 +376,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
     public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString) {
-        return addMessageListener(topicType, messageListener, selectorString, true);
+        return addMessageListener(topicType, StreamSequence.detecting(messageListener), selectorString, true);
     }
 
     public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, boolean persistant) {
@@ -653,7 +653,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         if (dataPlaneShards <= 1) {
             return addMessageListener(topicType, messageListener, selectorString);
         }
-        return addShardListener(topicType, messageListener, selectorString, shard, null);
+        return addShardListener(topicType, StreamSequence.detecting(messageListener), selectorString, shard, null);
     }
 
     /**
@@ -772,10 +772,45 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     @Override
     public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive, int shard) {
+        return sendMessageAs(null, topicType, message, deliveryMode, priority, timeToLive, shard);
+    }
+
+    /**
+     * Write the verified writer onto a dataplane message: {@code writer} (a plugin, see {@link BundleDataPlaneService}), or
+     * this controller when null. Whatever the caller set in the reserved properties is overwritten; the broker checks what
+     * a connection declares against its own identity (docs/caller-authorization.md).
+     */
+    private void stampWriter(java.util.function.Supplier<io.cresco.library.security.Caller> writer, Message message) throws JMSException {
+        stampWriter(writer, message, false);
+    }
+
+    /**
+     * As above; {@code onBehalf}: the sending bundle is in {@code on_behalf_bundles}, so an API user it names as the
+     * writer ({@code cresco_writer}) is kept when the on-behalf rule allows it. From anyone else it is removed.
+     */
+    void stampWriter(java.util.function.Supplier<io.cresco.library.security.Caller> writer, Message message, boolean onBehalf)
+            throws JMSException {
+        io.cresco.library.security.Caller c = writer == null ? controllerEngine.selfCaller() : writer.get();
+        io.cresco.agent.controller.communication.CallerStamps.toJms(c, message);
+        io.cresco.agent.controller.communication.CallerStamps.filterUserWriter(message, onBehalf && writer != null,
+                controllerEngine.tenant(), io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()));
+        streamSequence.number(message);                  // a subscriber that loses stream messages sees the gap
+    }
+
+    private final StreamSequence streamSequence = new StreamSequence();
+
+    boolean sendMessageAs(java.util.function.Supplier<io.cresco.library.security.Caller> writer, TopicType topicType, Message message,
+                          int deliveryMode, int priority, int timeToLive, int shard) {
+        return sendMessageAs(writer, false, topicType, message, deliveryMode, priority, timeToLive, shard);
+    }
+
+    boolean sendMessageAs(java.util.function.Supplier<io.cresco.library.security.Caller> writer, boolean onBehalf, TopicType topicType,
+                          Message message, int deliveryMode, int priority, int timeToLive, int shard) {
         if (dataPlaneShards <= 1) {
-            return sendMessage(topicType, message, deliveryMode, priority, timeToLive);
+            return sendMessageAs(writer, onBehalf, MsgEvent.Type.INFO, topicType, message, deliveryMode, priority, timeToLive);
         }
         try {
+            stampWriter(writer, message, onBehalf);
             // BOUNDED: parking the caller forever on an inactive controller wedged send threads
             int waited = 0;
             int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
@@ -947,18 +982,36 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 
     public boolean sendMessage(TopicType topicType, Message message) {
-        return sendMessage(MsgEvent.Type.INFO, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
+        return sendMessageAs(null, MsgEvent.Type.INFO, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
     }
 
     @Override
     public boolean sendMessage(MsgEvent.Type msgEventType, TopicType topicType, Message message) {
         //priority and delivery model will be adjusted in downstream function baed on MsgEvent type
-        return sendMessage(msgEventType, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
+        return sendMessageAs(null, msgEventType, topicType, message, DeliveryMode.NON_PERSISTENT, 0, 0);
     }
 
     public boolean sendMessage(TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
-        return sendMessage(MsgEvent.Type.INFO, topicType, message, deliveryMode, priority, timeToLive);
+        return sendMessageAs(null, MsgEvent.Type.INFO, topicType, message, deliveryMode, priority, timeToLive);
     }
+
+    /** As the public sendMessage methods, written by {@code writer} (null: this controller). */
+    boolean sendMessageAs(java.util.function.Supplier<io.cresco.library.security.Caller> writer, MsgEvent.Type msgEventType,
+                          TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
+        return sendMessageAs(writer, false, msgEventType, topicType, message, deliveryMode, priority, timeToLive);
+    }
+
+    boolean sendMessageAs(java.util.function.Supplier<io.cresco.library.security.Caller> writer, boolean onBehalf, MsgEvent.Type msgEventType,
+                          TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
+        try {
+            stampWriter(writer, message, onBehalf);
+        } catch (Exception ex) {
+            logger.error("sendMessage: cannot write the writer onto the message ({}); not sent", ex.getMessage());
+            return false;
+        }
+        return sendMessage(msgEventType, topicType, message, deliveryMode, priority, timeToLive);
+    }
+
     private boolean sendMessage(MsgEvent.Type msgEventType, TopicType topicType, Message message, int deliveryMode, int priority, int timeToLive) {
         try {
 
@@ -1036,6 +1089,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                         ActiveMQSession activeMQSession = getSession();
                         if(activeMQSession != null) {
                             BlobMessage blobMessage = activeMQSession.createBlobMessage(inputStream);
+                            // the blob carries the writer the caller's message was stamped with
+                            io.cresco.agent.controller.communication.CallerStamps.toJms(
+                                    io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(message), blobMessage);
                             agentProducer.send(blobMessage, deliveryMode, priority, timeToLive);
                         }
                         if (inputStream != null) {

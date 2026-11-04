@@ -85,6 +85,12 @@ public class PerfControllerMonitor {
                     .description("Slow-subscriber episodes on this node's broker (more than prefetch pending; loss only past the pending limit).")
                     .register(me.getCrescoMeterRegistry());
             me.setExisting("dataplane.broker.slow.consumers", "dataplane");
+            io.micrometer.core.instrument.FunctionCounter
+                    .builder("dataplane.stream.gap", io.cresco.agent.data.StreamSequence.GAPS, java.util.concurrent.atomic.AtomicLong::get)
+                    .description("Stream messages this node's subscribers did not get (numbers missing from a stream; the first "
+                            + "message after a gap carries cresco_gap).")
+                    .register(me.getCrescoMeterRegistry());
+            me.setExisting("dataplane.stream.gap", "dataplane");
         } catch (Exception ex) {
             logger.error("initDataplaneLossMetrics ", ex);
         }
