@@ -186,7 +186,9 @@ class MsgSessionTest {
         assertNull(b1.getCertificateManager().getPeerTrust().revoke(fp, "test"));
         MsgSigning.Verdict v = b1.msgSigning().verify(m, plugin(a2), false);
         assertFalse(v.ok(), "a revoked key's session");
-        assertTrue(v.refusal.contains("revoked"), v.refusal);
+        // the revocation dropped the session at once (and each message's signer is checked against the revocations anyway)
+        assertTrue(v.refusal.contains("does not hold") || v.refusal.contains("revoked"), v.refusal);
+        assertFalse(b1.msgSigning().verify(sent(a2, b1), plugin(a2), false).ok(), "a revoked key's next message");
     }
 
     @Test

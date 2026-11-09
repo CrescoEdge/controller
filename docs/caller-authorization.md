@@ -496,7 +496,13 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 
 - **What is signed.** The type, the source header and every parameter except what infrastructure rewrites in transit:
   `routepath-*`, `linkcost-*`, `srcroute*`, `ttl`, the broker's caller stamp (`cresco_caller*`, including the alias) and
-  the signature itself. The destination header is not signed (`region_alias` and the controller tiers rewrite it). The
+  the signature itself. The destination header is not signed (`region_alias`, source routes and the controller tiers
+  rewrite it), but the **recipient** is (`cresco_sig_to`): the node and plugin the message is for, as the origin's router
+  decided it -- after the controller tiers, the last waypoint of a source route -- as `<region>/<agent>/<plugin>` (plugin
+  empty for the node itself), or `^<region>/<agent>` for a function of the global that an agent hands its region controller
+  to carry on ("the global above that region controller": accepted only by a global whose child region it is, from a
+  signer of that region). A receiver refuses a signed or MAC'd message that does not name it, or its former address
+  (`region_alias`): a message signed for one node is never accepted by another, whoever re-sends it. The
   origin's caller is signed as a copy (`cresco_sig_caller`, `cresco_sig_caller_tenant`, `cresco_sig_caller_roles`) next
   to the signer (`cresco_sig_by`, `<tenant>/<region>/<agent>`), its credential (`cresco_sig_cred`) and the signing time
   (`cresco_sig_ts`); `cresco_tenant` is set when the message is stamped, so it is signed too. A message is signed as it
@@ -510,9 +516,20 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   only). The trust bundle is the list of region and global controller keys: each region presents its certificate on its
   pings to the global, which lists it when it verifies there as a joined controller, signs the list and sends it down on its
   pongs when the region holds another; each region re-signs what it verified for its agents (as revocation lists travel).
-  A controller its global no longer lists is kept `msg_signing_bundle_grace_ms` (15 min). A revoked key never verifies.
-- **The receiver** refuses an unsigned message, a bad signature or credential, a signature older or newer than
-  `msg_signature_max_age_ms` (5 min) and one seen before (a replay); an RPC request is answered `401 unauthenticated`. The
+  A controller its global no longer lists is kept `msg_signing_bundle_grace_ms` (15 min). An attestation and a bundle
+  entry carry, by reference, the certificates the key stands on (each one's key and certificate digests, issuer and
+  serial, validity): a credential is verified once and cached, but on EVERY message the signer -- and an attestation's
+  issuer -- is checked against this node's revocations as they stand: a key revoked here (any scope), a tombstoned name,
+  a certificate out of its validity, and with a PKI the operator's `revocation_file` (a listed key or certificate, a CRL
+  serial, a CRL past its `nextUpdate`: fail closed). A revocation coming in force (a reload of `revocation_file`, a revoked
+  key, a merged list) also re-verifies every cached credential, drops the sessions of what it now refuses and, at a
+  global, re-verifies its regions' certificates and drops those refused from the bundle it sends down.
+- **The receiver** refuses an unsigned message, a bad signature or credential, a message that does not name it, a
+  signature older or newer than `msg_signature_max_age_ms` (5 min) and one seen before (a replay); an RPC request is
+  answered `401 unauthenticated`. What a node only carries on (a source route's waypoint, a region controller carrying an
+  agent's global function to its global, a message not addressed to it) is not checked on arrival but noted, and checked
+  wherever it is then dispatched on that node -- whatever re-addressed it on the way (the controller tiers turn a global
+  function addressed elsewhere into one for the controller they pass): nothing is dispatched unverified. The
   signer must be the node of the signed caller -- or, for an API user, a node of the user's tenant (any tenant's from a
   superuser tenant) -- and the broker's stamp, when there is one, must be that caller. When a bridge stripped a stamp it
   could not vouch for (section 8), the origin's signed caller stands.
@@ -552,8 +569,15 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   carries; the receiver checks the signing time, the replay memory, the signed caller, the broker's stamp, and the
   signer's credential and revocation on every message exactly as for a signature (a revoked key's session is dropped).
   What a session does not give is a signature a third node could check: a MAC convinces its one receiver only, which is all
-  a MsgEvent needs. A node sends under a session only while its peer said within the last 30 s that it holds it (every
-  message to a peer names the session the sender holds with it, `cresco_sig_held`) and names its sender's incarnation
+  a MsgEvent needs. The message that carries an offer or an answer is always signed (never MAC'd), and a receiver acts on
+  an offer or answer only from a signed message: an agreement costs its sender a signature, and every renewal refreshes
+  both credentials. While a session is usable an offer or answer rides at most one message a second; the others stay
+  MAC'd. An offer is accepted from a peer at most once every 10 s, under that peer's own lock (a P-384 key pair and an ECDH
+  each): no peer can make a node spend more, or hold up the others. A renewal never interrupts: an offer from a peer that
+  still holds the confirmed session goes to a pending slot, and both keep sending under the confirmed session until the
+  peer uses (or names) the new one. A node sends under a session only while its peer said within the last 30 s that it
+  holds it (every message to a peer names the session the sender holds with it, `cresco_sig_held`; a message from the peer
+  that names another one, or none, stops this node's MACs to it at once) and names its sender's incarnation
   (`cresco_sig_inc`, random at each start): a peer that restarted names a new one, and its next message makes this node
   return to signatures and agree anew. A message sent to a restarted node under the session it lost is refused like any
   unauthenticated message (an RPC is answered `401`). Sessions last `msg_signing_session_seconds` (one hour) and are
@@ -566,8 +590,16 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   message dispatched (about 0.08 ms), the signed message carrying its signer's credential (about 2.2 KB). Credentials are
   verified once and cached. Direct-link messages cost no cryptography beyond TLS: the bulk of the control plane
   (keepalives, registrations, pings, the replies of regions and the global) is direct. Nothing in it grows with the size
-  of the fleet (every table is a bounded cache, O(1) per message); the trust bundle grows with the number of regions and
-  travels only when it changes. `docs/tests/control_plane_bench.sh` measures it live (`ControlPlaneCostBench`,
+  of the fleet (every table is bounded, O(1) per message); the trust bundle grows with the number of regions and
+  travels only when it changes: a version number bumped on each change makes a child's ping O(1) at its parent, with no
+  lock (it was rebuilt and hashed whole on every ping: 260 us at 1,000 regions, 1.1 ms at 5,000), and it is signed and
+  compressed once per change. Bounded memory, sized for 100,000+ agents with no cliff: the replay memory keeps each
+  signature in the bucket of its signed time for one max-age (8 bytes of digest an entry in primitive tables, about 17
+  bytes with their slack; `msg_replay_memory_max`, 4,000,000; full, it drops its oldest bucket and refuses what was signed
+  in it, never accepting a replay), the check and the record one step under one of 64 locks; credentials are a bounded LRU
+  (`msg_signing_credentials_max`, 100,000: past it the least recently used goes, never all at once); sessions are one
+  entry per peer (`msg_signing_sessions_max`, 200,000, about 1 KB each) holding who the peer authenticated as, not its
+  2 KB credential -- a full table gives a new peer no session (it stays signed), never evicting one in use. `docs/tests/control_plane_bench.sh` measures it live (`ControlPlaneCostBench`,
   `-Dcresco.bench=true`, in one JVM). Measured on one host (2026-11-09, RPCs from a client at the global to an agent of
   another region, across its region's bridge; before hardening: p50 1.1 ms, 3948/s at 8 callers): per-message signatures
   p50 5.9 ms, 1371/s; with session keys p50 1.4 ms, 3410/s (production, FIPS: 7.1 ms and 1094/s, now 1.8 ms and 3228/s).
@@ -583,6 +615,30 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_threads` | cores / 2 (2 to 8) | signing workers; each signs a batch at a time |
 | `msg_signing_sessions` | true | end-to-end session keys (HMAC under an ECDH-agreed key) with the nodes that read them |
 | `msg_signing_session_seconds` | 3600 | a session key's lifetime (renewed ahead of its end) |
+| `msg_signing_sessions_max` | 200000 | peers a node holds sessions with (past it, a new peer stays signed) |
+| `msg_signing_credentials_max` | 100000 | credentials held verified (an LRU) |
+| `msg_replay_memory_max` | 4000000 | signatures and MACs the replay memory holds (past it, the oldest signing times are refused as too old) |
+
+### Final review (2026-11-09)
+
+An independent review of the message authentication above found, and `FinalReviewProofTest` first proved and now guards:
+
+- **F1** a signed message was accepted by every node, not just its addressee (the destination was not signed, and the
+  replay memory is per receiver): an agent could re-send an admin's `stopcontroller` meant for itself to every node of its
+  tenant, and the global accepted its own infra message reflected back. Now the recipient is signed and checked (above);
+  session offers, batch signatures and session MACs are bound to it the same way (they cover the same canonical form), so
+  an offer re-sent to another node is refused there and can no longer replace that pair's session (F1b).
+- **F2** in production the operator's `revocation_file` did not stop message authentication: a revoked agent kept acting
+  through its region's attestation, a revoked region controller through the global's trust bundle and the credential
+  cache. Now every message's signer and issuer are checked against the revocations as they stand (above).
+- **F3** the upgrade window is decided at start (`upgrade-1.3-secure-defaults.md`); **F4** the ping cost is O(1) (above).
+- Also: verified wherever dispatched (a function re-addressed to this node was dispatched unverified); offers only on
+  signed messages, rate-limited per peer, no node-wide lock; bounded memory without a thrash cliff; the replay check
+  atomic (a copy could pass twice across a rotation); `security_profile=production` checks FIPS approved-only mode itself
+  (`production-deployment.md` section 6).
+- Cost of the fixes, `control_plane_bench.sh` on one host, cross-region RPC at 8 callers (before -> after, two runs of
+  the build before): standard p50 1.65-1.71 ms, 3423-3446/s -> 1.70 ms, 3442/s; production (FIPS) 2.02-2.12 ms,
+  3207-3222/s -> 2.09 ms, 3222/s: within the run-to-run spread.
 
 ## 11. Secure by default, security profiles and the upgrade (phase 4)
 

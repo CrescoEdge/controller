@@ -188,8 +188,14 @@ public class AgentConsumer {
 								controllerEngine.legacyNodes().upgraded(caller.getRegion(), caller.getAgent());
 							}
 							// D4: what is dispatched here (to this node's controller or plugins, or an RPC reply for it) must carry
-							// a valid origin signature; relays carry the message on unchecked (its destination checks it)
-							if (forThisNode(me) && controllerEngine.msgSigning().required()) {
+							// a valid origin signature naming this node as its recipient. What this node only carries on (not
+							// addressed here, a source route's waypoint, an agent's global function on its way to the global) is
+							// not checked now: it is noted, and checked wherever it is dispatched (MsgSigning.verifyIfDeferred)
+							MsgSigning signing = controllerEngine.msgSigning();
+							boolean checkNow = signing.required() && forThisNode(me)
+									&& (me.getParam(callIdKey) != null || filegroup != null || !signing.relayOnly(me));
+							if (signing.required() && !checkNow) signing.deferred(me);
+							if (checkNow) {
 								MsgSigning.Verdict v = controllerEngine.msgSigning().verify(me, caller, controllerEngine.legacyNodesAdmitted(),
 										firstHand(msg, caller));
 								if (!v.ok()) {
@@ -600,17 +606,7 @@ public class AgentConsumer {
 	/** A message that failed its signature check: an RPC request is answered 401, anything else dropped (logged by MsgSigning). */
 	private void refuseUnauthenticated(MsgEvent me, String why) {
 		unauthenticated.incrementAndGet();
-		try {
-			if (MsgRouter.isRpcRequest(me) && me.getParam(MsgRouter.ROUTE_UNAVAILABLE) == null && me.getParam(MsgRouter.ROUTE_REFUSED) == null) {
-				MsgSigning.clear(me);
-				me.setParam("status_code", "401");
-				me.setParam("status_desc", "unauthenticated: " + why);
-				me.setReturn();
-				plugin.msgOut(me);
-			}
-		} catch (Exception e) {
-			logger.error("refuseUnauthenticated: " + e.getMessage());
-		}
+		if (!MsgRouter.answerUnauthenticated(plugin, me, why)) logger.error("refuseUnauthenticated: the 401 reply failed");
 	}
 
 	private boolean registerIncomingFiles(MsgEvent me, String fileobjectString, String fileGroup,

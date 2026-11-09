@@ -146,13 +146,26 @@ public class ControllerEngine {
             String provisioning = io.cresco.agent.controller.communication.CertificateManager.provisioningRefusal(plugin.getConfig());
             if (provisioning != null) refusals.add("the pre-provisioned identity cannot be used: " + provisioning);
             refusals.addAll(io.cresco.agent.controller.communication.SecuritySettings.startupRefusals(plugin.getConfig()));
+            // production runs in FIPS 140-3 approved-only mode: checked here, never assumed (providers, the module's
+            // approved-only mode and self-tests, a non-approved algorithm refused, an approved one's known answer)
+            if (io.cresco.agent.controller.communication.SecuritySettings.production(plugin.getConfig())) {
+                String fips = io.cresco.agent.controller.communication.FipsMode.refusal();
+                if (fips != null) {
+                    refusals.add("security_profile=production runs in FIPS 140-3 approved-only mode, and this JVM is not in it: " + fips
+                            + " (start the node with the agent jar, whose crypto boot sets it up; docs/production-deployment.md, section 6)");
+                } else {
+                    logger.info("FIPS 140-3 approved-only mode verified (self-tests passed, MD5 refused): " + io.cresco.agent.controller.communication.FipsMode.summary());
+                }
+            }
             if (!refusals.isEmpty()) {
                 for (String r : refusals) logger.error("REFUSING TO START: " + r);
                 refusedByConfiguration = true;
                 return false;
             }
             for (String w : io.cresco.agent.controller.communication.SecuritySettings.bootWarnings(plugin.getConfig(), System.currentTimeMillis())) {
-                logger.warn("WARNING: " + w);
+                // an open upgrade window admits unauthenticated legacy nodes: said as loudly as an error, at every boot
+                if (w.startsWith("UPGRADE WINDOW OPEN")) logger.error("WARNING: " + w);
+                else logger.warn("WARNING: " + w);
             }
 
             controllerSMHandler = new ControllerSMHandler(this);
@@ -755,6 +768,25 @@ public class ControllerEngine {
         return s;
     }
 
+    /** The message signing state once made (null before its first use): what a revocation flushes. */
+    public io.cresco.agent.controller.communication.MsgSigning msgSigningIfCreated() {
+        return msgSigning;
+    }
+
+    /**
+     * D4: before {@code msg} is dispatched on this node (to its controller, its agent executor or a plugin), a message off the
+     * wire this node did not verify on arrival -- it was not addressed here, or was only to be carried on -- is verified now
+     * (MsgSigning.verifyIfDeferred), whatever re-addressed it on the way. False when it is refused: an RPC request is
+     * answered 401, anything else is dropped.
+     */
+    public boolean admitDeferred(MsgEvent msg) {
+        io.cresco.agent.controller.communication.MsgSigning s = msgSigning();
+        io.cresco.agent.controller.communication.MsgSigning.Verdict v = s.verifyIfDeferred(msg, legacyNodesAdmitted());
+        if (v == null || v.ok()) return true;
+        io.cresco.agent.controller.communication.MsgRouter.answerUnauthenticated(plugin, msg, v.refusal);
+        return false;
+    }
+
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
     public void markForSigning(MsgEvent msg) {
         msgSigning().markForSigning(msg, tenant());
@@ -768,11 +800,19 @@ public class ControllerEngine {
         // read on hot paths (every inbound message, every broker write): the window is re-evaluated at most once a second
         long now = System.currentTimeMillis();
         if (now - windowCheckedAt >= 1000L || now < windowCheckedAt) {
+            // the window was decided when the configuration was first read (it never opens later by itself); it closes on time
             windowOpen = io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), now);
             windowCheckedAt = now;
+            if (windowOpen && now - windowRemindedAt >= 3_600_000L) {
+                windowRemindedAt = now;
+                logger.error("UPGRADE WINDOW OPEN until " + io.cresco.agent.controller.communication.SecuritySettings.compatOpenUntil(plugin.getConfig(), now)
+                        + ": nodes not yet upgraded are admitted unauthenticated to their own membership (logged hourly while it is open)");
+            }
         }
         return windowOpen;
     }
+
+    private volatile long windowRemindedAt = Long.MIN_VALUE / 2;
 
     private volatile long windowCheckedAt = Long.MIN_VALUE / 2;
     private volatile boolean windowOpen;

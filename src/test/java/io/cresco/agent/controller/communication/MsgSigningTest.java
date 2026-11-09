@@ -128,8 +128,12 @@ class MsgSigningTest {
         m.setParam("routepath-x", "1");
         m.setParam("ttl", "3");
         m.setParam("srcroute", "a;b");
-        m.setForwardDst("rgOther", "b1", null);                     // tiers and region_alias rewrite the destination
         assertTrue(b1.msgSigning().verify(m, plugin(a1), false).ok());
+        MsgEvent moved = sent(a1, plugin(a1), b1);
+        moved.setForwardDst("rgOther", "b1", null);                 // the destination is not signed, the recipient is
+        assertTrue(b1.msgSigning().verify(moved, plugin(a1), false).ok(), "its recipient, whatever the header says on the way");
+        MsgEvent elsewhere = sent(a1, plugin(a1), b1);
+        assertFalse(rB.msgSigning().verify(elsewhere, null, false).ok(), "delivered to a node it does not name");
         MsgEvent t = sent(a1, plugin(a1), b1);
         t.setParam("payload", "tampered");
         assertFalse(b1.msgSigning().verify(t, plugin(a1), false).ok(), "a changed parameter");
@@ -212,17 +216,73 @@ class MsgSigningTest {
         assertTrue(signPerS > 20 && verifyPerS > 100);
     }
 
-    /** The replay memory is three generations of one max-age each: a signature is caught for at least two max-ages, no scan. */
+    /**
+     * The replay memory keeps each signature in the bucket of its SIGNED time (a replay carries the same time) for as long as
+     * that time is accepted: a copy is caught whenever it arrives inside the max age; once its time is older than the max age
+     * it is refused by its age, and the bucket is gone. No scan; one lookup.
+     */
     @Test
-    void theReplayMemoryRotatesWithoutScanning() {
+    void theReplayMemoryKeepsASignatureWhileItsTimeIsAccepted() {
         MsgSigning ms = rA.msgSigning();
-        long t0 = System.currentTimeMillis() + 1000, age = 300_000L;      // msg_signature_max_age_ms default
+        long t0 = System.currentTimeMillis(), age = 300_000L;              // msg_signature_max_age_ms default
         byte[] sig = new byte[64];
         new java.security.SecureRandom().nextBytes(sig);
-        assertTrue(ms.fresh(sig, t0), "a new signature");
-        assertFalse(ms.fresh(sig, t0 + 1), "the same signature again");
-        assertFalse(ms.fresh(sig, t0 + age + 1), "one max-age later (its generation rotated once)");
-        assertFalse(ms.fresh(sig, t0 + 2 * age + 2), "two max-ages later: still caught (an accepted signature is at most two old)");
-        assertTrue(ms.fresh(sig, t0 + 3 * age + 3), "three max-ages later it is forgotten (its age refuses it long before)");
+        assertEquals(ReplayMemory.Result.FRESH, ms.remember(sig, t0, t0), "a new signature");
+        assertEquals(ReplayMemory.Result.REPLAY, ms.remember(sig, t0, t0 + 1), "the same signature again");
+        assertEquals(ReplayMemory.Result.REPLAY, ms.remember(sig, t0, t0 + age), "one max-age later: still caught");
+        byte[] early = new byte[64];
+        new java.security.SecureRandom().nextBytes(early);
+        assertEquals(ReplayMemory.Result.FRESH, ms.remember(early, t0 + age, t0), "signed by a clock a max-age ahead");
+        assertEquals(ReplayMemory.Result.REPLAY, ms.remember(early, t0 + age, t0 + 2 * age), "caught until its own time is a max-age old");
+    }
+
+    /** Two copies of one message arriving at once, on many threads: exactly one is accepted (the check and the record are one step). */
+    @Test
+    void theReplayMemoryAcceptsOneCopyOnly() throws Exception {
+        ReplayMemory mem = new ReplayMemory(300_000L, 1_000_000L, null);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(16);
+        try {
+            for (int round = 0; round < 200; round++) {
+                long d = new java.security.SecureRandom().nextLong(), t = System.currentTimeMillis();
+                java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+                java.util.List<java.util.concurrent.Future<ReplayMemory.Result>> fs = new java.util.ArrayList<>();
+                for (int i = 0; i < 16; i++) fs.add(pool.submit(() -> { go.await(); return mem.record(d, t, t); }));
+                go.countDown();
+                int fresh = 0;
+                for (java.util.concurrent.Future<ReplayMemory.Result> f : fs) if (f.get() == ReplayMemory.Result.FRESH) fresh++;
+                assertEquals(1, fresh, "copies accepted at once");
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * Bounded memory: past its bound the replay memory drops its OLDEST bucket and from then on refuses what was signed in it
+     * as too old -- it never grows past the bound and never accepts a replay.
+     */
+    @Test
+    void theReplayMemoryIsBoundedAndFailsClosed() {
+        long age = 300_000L, now = System.currentTimeMillis();
+        ReplayMemory mem = new ReplayMemory(age, 64 * 256, null);            // 256 an stripe
+        java.util.Random rnd = new java.util.Random(7);
+        long[] old = new long[2000];
+        for (int i = 0; i < old.length; i++) assertEquals(ReplayMemory.Result.FRESH, mem.record(old[i] = rnd.nextLong() | 1, now - age + 1000, now));
+        for (int i = 0; i < 40_000; i++) {
+            ReplayMemory.Result r = mem.record(rnd.nextLong() | 1, now - (i % 10) * 1000, now);
+            assertNotEquals(ReplayMemory.Result.REPLAY, r, "a new signature taken for a replay");
+            assertTrue(mem.size() <= 64 * 256, "past its bound: " + mem.size());
+        }
+        for (long d : old) assertNotEquals(ReplayMemory.Result.FRESH, mem.record(d, now - age + 1000, now), "a replay after eviction was accepted");
+        // the per-entry footprint: a million entries in primitive tables
+        ReplayMemory big = new ReplayMemory(age, 4_000_000L, null);
+        Runtime rt = Runtime.getRuntime();
+        System.gc();
+        long before = rt.totalMemory() - rt.freeMemory();
+        for (int i = 0; i < 1_000_000; i++) big.record(rnd.nextLong() | 1, now - (i % 300) * 1000, now);
+        System.gc();
+        long used = rt.totalMemory() - rt.freeMemory() - before;
+        System.out.printf("replay memory: %d entries, about %.1f bytes each%n", big.size(), used / (double) big.size());
+        assertEquals(1_000_000, big.size());
     }
 }

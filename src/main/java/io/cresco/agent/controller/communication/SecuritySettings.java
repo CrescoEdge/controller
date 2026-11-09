@@ -185,7 +185,7 @@ public final class SecuritySettings {
     public static java.util.List<String> bootWarnings(Config c, long now) {
         java.util.List<String> out = new java.util.ArrayList<>(compatProblems(c, now));
         if (compatOpen(c, now)) {
-            out.add("UPGRADE WINDOW OPEN until " + compatUntil(c, now) + " (discovery_auth=compat, " + DISCOVERY_COMPAT_UNTIL + "): agents"
+            out.add("UPGRADE WINDOW OPEN until " + compatOpenUntil(c, now) + " (discovery_auth=compat, " + DISCOVERY_COMPAT_UNTIL + "): agents"
                     + " not yet upgraded may join over the legacy unauthenticated discovery exchange and register and keep alive their own"
                     + " node with minimal rights (agent:<tenant>/<region>/<agent>, role user; their messages unsigned). Upgrade each"
                     + " before then; after the window closes they are refused");
@@ -264,14 +264,52 @@ public final class SecuritySettings {
     }
 
     /**
+     * The window as decided when a node's configuration was first read (its start): {@code discovery_compat_until} as it was
+     * set then, and its end -- null when it was absent, unparseable or more than 90 days ahead AT THAT TIME. Decided once per
+     * configuration (identity) and setting: a date that was too far ahead is never accepted later as the days pass (a
+     * restart, which reads the setting anew, is needed to open a window). Weak keys: a configuration let go is forgotten.
+     */
+    private static final com.google.common.cache.Cache<Config, CompatDecision> COMPAT_DECIDED =
+            com.google.common.cache.CacheBuilder.newBuilder().weakKeys().build();
+
+    private static final class CompatDecision {
+        final String setting;
+        final java.time.Instant until;
+        final long decidedAt;
+        CompatDecision(String setting, java.time.Instant until, long decidedAt) { this.setting = setting; this.until = until; this.decidedAt = decidedAt; }
+    }
+
+    private static CompatDecision compatDecision(Config config, long now) {
+        String v = config.getStringParam(DISCOVERY_COMPAT_UNTIL);
+        CompatDecision d = COMPAT_DECIDED.getIfPresent(config);
+        if (d != null && java.util.Objects.equals(d.setting, v)) return d;
+        synchronized (COMPAT_DECIDED) {
+            d = COMPAT_DECIDED.getIfPresent(config);
+            if (d == null || !java.util.Objects.equals(d.setting, v)) {
+                d = new CompatDecision(v, compatUntil(config, now), now);
+                COMPAT_DECIDED.put(config, d);
+            }
+            return d;
+        }
+    }
+
+    /**
      * Is the upgrade window open now: {@code discovery_auth=compat} with a {@code discovery_compat_until} that has not passed
-     * (at most 90 days ahead)? Inside it, agents not yet upgraded may use the legacy discovery exchange and register and keep
-     * alive their own node with minimal rights; outside it, never.
+     * and was at most 90 days ahead when the node started (decided ONCE, {@link #compatDecision}: one more than 90 days
+     * ahead stays closed for good, it never opens by itself as the date comes nearer)? Inside it, agents not yet upgraded
+     * may use the legacy discovery exchange and register and keep alive their own node with minimal rights; outside it,
+     * never.
      */
     public static boolean compatOpen(Config config, long now) {
         if (!compatConfigured(config)) return false;
-        java.time.Instant until = compatUntil(config, now);
+        java.time.Instant until = compatDecision(config, now).until;
         return until != null && now < until.toEpochMilli();
+    }
+
+    /** The end of the open window as decided at start (see {@link #compatOpen}), or null when none is open. */
+    public static java.time.Instant compatOpenUntil(Config config, long now) {
+        if (!compatOpen(config, now)) return null;
+        return compatDecision(config, now).until;
     }
 
     /** Problems with the window settings worth an ERROR at every boot (they leave the window closed). */
@@ -279,13 +317,14 @@ public final class SecuritySettings {
         java.util.List<String> out = new java.util.ArrayList<>();
         if (!compatConfigured(config)) return out;
         String v = config.getStringParam(DISCOVERY_COMPAT_UNTIL);
-        java.time.Instant until = compatUntil(config, now);
+        java.time.Instant until = compatDecision(config, now).until;
         if (v == null || v.isBlank()) {
             out.add("discovery_auth=compat is IGNORED: it needs " + DISCOVERY_COMPAT_UNTIL + " (an ISO-8601 date at most 90 days ahead)"
                     + " that ends the upgrade window; only the authenticated exchange (v2) is used");
         } else if (until == null) {
             out.add("discovery_auth=compat is IGNORED: " + DISCOVERY_COMPAT_UNTIL + "=" + v + " is not an ISO-8601 date or instant"
-                    + " at most 90 days ahead; only the authenticated exchange (v2) is used");
+                    + " at most 90 days ahead; only the authenticated exchange (v2) is used, and the window stays closed until a"
+                    + " restart with a date at most 90 days ahead (it never opens by itself as the date comes nearer)");
         } else if (now >= until.toEpochMilli()) {
             out.add("the upgrade window has CLOSED (" + DISCOVERY_COMPAT_UNTIL + "=" + v + "): only the authenticated exchange (v2) is"
                     + " used, and agents that are not upgraded are refused; remove discovery_auth=compat");

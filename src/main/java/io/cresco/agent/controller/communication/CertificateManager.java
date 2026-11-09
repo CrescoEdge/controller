@@ -653,6 +653,14 @@ public class CertificateManager {
      */
     void onKeysRevoked(java.util.Collection<String> keyFps) {
         dropAnchorsOfKeys(new java.util.HashSet<>(keyFps));
+        // message authentication: every credential verified anew, the sessions and trust-bundle entries of what is now refused
+        // dropped (each message is checked against the revocations as they stand in any case)
+        try {
+            MsgSigning ms = controllerEngine == null ? null : controllerEngine.msgSigningIfCreated();
+            if (ms != null) ms.onRevocations();
+        } catch (Exception ex) {
+            logger.error("message signatures: applying revocations: " + ex.getMessage());
+        }
         try {
             if (controllerEngine.getBroker() != null) controllerEngine.getBroker().closeRevokedConnections();
         } catch (Exception ex) {

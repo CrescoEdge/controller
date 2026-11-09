@@ -133,7 +133,11 @@ because its chain verifies to `trust_anchors` -- never because it answered first
   a controller's revocations also travel down its pings as signed lists (`caller-authorization.md` section 9), and
   `peer_identity_revoke` revokes a key or a name at once on a running node.
 - A revoked key is refused at TLS, at the broker (live connections holding it are closed at once), for message
-  signatures, and as a signer of trust lists.
+  signatures, and as a signer of trust lists. Message authentication applies `revocation_file` itself, on every message:
+  the signer's certificate and the ones above it (an agent's attestation and a trust-bundle entry carry them by
+  reference: key, certificate digest, issuer and serial) are checked against the operator's keys, certificates and CRL
+  serials, and a CRL past its `nextUpdate` refuses what its issuer issued (fail closed); a reload drops the sessions of
+  what is now refused and the global drops a revoked region controller from the trust bundle it sends down.
 - Keep leaf lifetimes short (days to weeks): an expired certificate is never honoured, and a connection is closed when the
   certificate it opened with expires.
 
@@ -153,7 +157,12 @@ old CA and revoke it.
 every JCA provider that is not a FIPS 140-3 validated module is removed, Bouncy Castle FIPS (BC-FJA 2.1, CMVP #4943)
 runs approved-only, and on Linux x86_64/aarch64 ACCP-FIPS (AWS-LC FIPS 3.0, CMVP #4816) serves its approved algorithms
 first. TLS (the broker, wsapi) is TLS 1.3 over those modules. A non-approved algorithm (MD5, DES, RC4, ChaCha20, X25519 ...)
-is refused, and a node does not start unless it is. `crypto_fips_mode=false` with this profile is refused.
+is refused, and a node does not start unless it is. `crypto_fips_mode=false` with this profile is refused. The controller
+does not take it on trust: before a production node starts, it checks that every JCA provider is one FIPS mode leaves
+(`BCFIPS`, `BCJSSE`, `CrescoACCP-FIPS`, `CrescoFIPS`, `SunJSSE`), that Bouncy Castle FIPS is in approved-only mode and
+passed its self-tests, that ACCP-FIPS (where present) is the FIPS build and healthy, that MD5 is refused and that SHA-384
+gives its known answer -- and refuses to start otherwise (`REFUSING TO START: security_profile=production runs in FIPS
+140-3 approved-only mode, and this JVM is not in it: ...`).
 
 Keystores are BCFKS, the FIPS module's own format: a PKCS#12 file's integrity MAC derives its key with the PKCS#12 KDF,
 which FIPS does not approve, so approved-only mode cannot check one, and refuses it, saying how to convert it. Convert each
@@ -171,7 +180,8 @@ stores BCFKS). `trust_anchors`, `revocation_file` and a PEM `plugin_signing_trus
 ## 7. Checking a production node
 
 - Start-up: no `REFUSING TO START` line; `security profile production` is reported by `AgentService.getSecurityProfile()`;
-  `crypto: FIPS 140-3 approved-only mode: ... MD5 refused` (section 6).
+  `crypto: FIPS 140-3 approved-only mode: ... MD5 refused` and `FIPS 140-3 approved-only mode verified (self-tests passed,
+  MD5 refused): <providers>` (section 6).
 - `discovery (PKI): authenticated <TYPE> exchange with <region>/<agent>` for each join, `message signatures ON` lines,
   `Broker mutual-TLS ENABLED`, and `Peer identity verified` for each bridge and broker connection.
 - A plugin jar that is not signed to `plugin_signing_truststore` is refused (`REFUSED to install`).

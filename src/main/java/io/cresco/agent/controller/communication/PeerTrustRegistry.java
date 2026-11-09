@@ -1811,6 +1811,120 @@ public final class PeerTrustRegistry {
     /** Is {@code region/agent} tombstoned (its key was revoked; reserved until an operator rebind)? Lock-free. */
     public boolean isTombstoned(String region, String agent) { return tombs.containsKey(name(region, agent)); }
 
+    // ---- message signers (MsgSigning): the certificates behind a credential, so every revocation reaches its messages
+
+    /**
+     * One certificate of a message signer's path, by reference, as message credentials carry it (an agent's attestation, a
+     * trust-bundle entry): enough for any node to apply ITS revocations to a certificate it never sees -- this node's revoked
+     * keys, and the operator's {@code revocation_file} (key, certificate, a CRL serial of its issuer, that issuer's CRL
+     * freshness) -- and the certificate's validity.
+     */
+    public static final class CertRef {
+        /** SHA-256 of the key (SubjectPublicKeyInfo) and of the certificate (DER), hex; the issuer's DN; the serial, hex. */
+        public String k, c, i, s;
+        /** notBefore, notAfter (ms). */
+        public long nb, na;
+        /** {@code <issuer DN>|<serial>}, as a CRL lists it (made once). */
+        private transient String issuerSerial;
+
+        String issuerSerial() {
+            String v = issuerSerial;
+            if (v == null) issuerSerial = v = i + "|" + s;
+            return v;
+        }
+
+        public static CertRef of(X509Certificate cert) {
+            CertRef r = new CertRef();
+            r.k = fingerprint(cert.getPublicKey().getEncoded());
+            try { r.c = CertificateManager.certFingerprint(cert); } catch (Exception e) { r.c = null; }
+            r.i = cert.getIssuerX500Principal().getName();
+            r.s = cert.getSerialNumber().toString(16);
+            r.nb = cert.getNotBefore().getTime();
+            r.na = cert.getNotAfter().getTime();
+            return r;
+        }
+
+        /** Every field present and well formed (what arrived over the wire). */
+        public boolean wellFormed() {
+            return isFingerprint(k) && isFingerprint(c) && i != null && s != null && !s.isEmpty() && s.length() <= 64 && nb <= na;
+        }
+
+        /** The canonical form signatures cover. */
+        public String canonical() { return k + "|" + c + "|" + i.length() + ":" + i + "|" + s + "|" + nb + "|" + na; }
+
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof CertRef)) return false;
+            CertRef x = (CertRef) o;
+            return nb == x.nb && na == x.na && java.util.Objects.equals(k, x.k) && java.util.Objects.equals(c, x.c)
+                    && java.util.Objects.equals(i, x.i) && java.util.Objects.equals(s, x.s);
+        }
+
+        @Override public int hashCode() { return java.util.Objects.hash(k, c, i, s, nb, na); }
+    }
+
+    /**
+     * The certificates {@code chain}'s leaf stands on, leaf first, by reference: with a PKI its validated path (the anchor
+     * included; validated now when not cached yet), else the chain as given. Empty when it cannot be had.
+     */
+    public List<CertRef> pathRefs(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return List.of();
+        List<X509Certificate> path = null;
+        Pki p = pki;
+        if (p != null) {
+            try {
+                String cfp = CertificateManager.certFingerprint(chain[0]);
+                path = p.paths.get(cfp);
+                if (path == null) {
+                    ProvisionedIdentity.Validated v = ProvisionedIdentity.validatePath(chain, p.anchors, new java.util.Date());
+                    path = v.path;
+                }
+            } catch (Exception e) {
+                path = null;
+            }
+        }
+        List<CertRef> out = new ArrayList<>();
+        if (path != null && !path.isEmpty()) {
+            for (X509Certificate c : path) out.add(CertRef.of(c));
+        } else {
+            for (X509Certificate c : chain) if (c != null) out.add(CertRef.of(c));
+            // without a PKI: the region CA recorded here that issued the leaf (its key's revocation refuses what it issued)
+            CrescoIdentity id = CrescoNames.identityOf(chain[0]);
+            Binding ca = id == null ? null : cas.get(id.getRegion());
+            X509Certificate caCert = ca == null ? null : ca.caCert();
+            if (chain.length == 1 && caCert != null && signedBy(chain[0], caCert)) out.add(CertRef.of(caCert));
+        }
+        return out;
+    }
+
+    /**
+     * Why a message signer of {@code region} whose certificates are {@code refs} (leaf first) is refused now, or null: a key
+     * revoked here (the leaf's for the names of that region, a CA's for every name), a certificate out of its validity, and
+     * with a PKI the operator's revocations of any of them (key, certificate, CRL serial, an out-of-date CRL of its issuer).
+     * Lock-free, O(path): a few map lookups per certificate.
+     */
+    public String refsRefusal(List<CertRef> refs, String region, long now) {
+        if (refs == null || refs.isEmpty()) return "no certificate is known for it";
+        Pki p = pki;
+        for (int n = 0; n < refs.size(); n++) {
+            CertRef r = refs.get(n);
+            String what = n == 0 ? "its certificate" : "the certificate of its issuer '" + refs.get(n - 1).i + "'";
+            if (n == 0 ? isRevokedFor(r.k, region) : revoked.containsKey(r.k)) return what + "'s key is " + revokedText(r.k, n == 0 ? region : null);
+            if (now < r.nb || now > r.na) return what + " is not valid now (" + new java.util.Date(r.nb) + " to " + new java.util.Date(r.na) + ")";
+            if (p != null) {
+                String why = p.rev.refusal(r.k, r.c, r.i, r.issuerSerial(), now);
+                if (why != null) return what + " is REVOKED by the operator (" + why + ")";
+            }
+        }
+        return null;
+    }
+
+    /** Why messages signed in the name {@code region/agent} are refused (it is tombstoned: revoked, reserved), or null. Lock-free. */
+    public String nameRefusal(String region, String agent) {
+        String n = name(region, agent);
+        Tomb t = tombs.get(n);
+        return t == null ? null : tombText(n, t);
+    }
+
     /** The revocations this node holds: id ({@code fp}, or {@code fp@region} for one region's names) -> who revoked it. Sorted. */
     public Map<String, String> revocations() {
         Map<String, String> out = new java.util.TreeMap<>();
