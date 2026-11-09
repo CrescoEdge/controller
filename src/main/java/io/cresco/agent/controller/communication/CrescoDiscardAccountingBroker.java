@@ -61,7 +61,8 @@ public class CrescoDiscardAccountingBroker implements BrokerPlugin {
 
     private void logSlow(long total) {
         long since = total - slowAtLastLog.getAndSet(total);
-        if (since > 0) logger.info(since + " slow-subscriber episode(s) (more than prefetch pending, no loss until the pending-message limit), last "
+        if (since > 0) logger.info(since + " slow-subscriber episode(s) (more than prefetch pending: with dataplane backpressure its writers"
+                + " are slowed, nothing lost; without, its oldest are discarded past the pending-message limit), last "
                 + "on " + lastSlowDest + ": " + describe(lastSlowSub) + "; dataplane.broker.slow.consumers total=" + total);
     }
 

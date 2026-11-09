@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""The gate table from gate.sh's results: one column per build (old, std, prod), one row per metric, PASS/FAIL per the gate.
+
+Gate (each candidate against the earlier build, same harness): throughput no more than 10% lower, p99 no more than 20%
+higher, every frame delivered whole and in order, every agent registered, no refusal or loss line, and the per-op cost
+flat as agents grow (serial p50 at the largest step within 1.25x of the smallest, 8-caller rate within 0.8x).
+
+Usage: report.py <results dir> [builds...]   (default: old std prod)
+"""
+import json
+import os
+import statistics
+import sys
+
+
+def load(d, b):
+    p = os.path.join(d, b + ".json")
+    return json.load(open(p)) if os.path.exists(p) else None
+
+
+def get(d, *path):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return None
+        d = d[k]
+    return d
+
+
+def fmt(v):
+    if v is None:
+        return "-"
+    if isinstance(v, float):
+        return ("%.1f" % v) if v >= 10 else ("%.2f" % v)
+    return str(v)
+
+
+def main():
+    d = sys.argv[1]
+    builds = sys.argv[2:] or ["old", "std", "prod"]
+    R = {b: load(d, b) for b in builds}
+    base = R.get("old")
+    rows, fails = [], []
+
+    def row(name, vals, kind=None):
+        """kind: 'tput' (higher better, -10%), 'p99' (lower better, +20%), None (informational)."""
+        verdicts = []
+        for b in builds:
+            if b == "old" or kind is None or base is None:
+                continue
+            v, o = vals.get(b), vals.get("old")
+            if v is None or o is None or o == 0:
+                continue
+            ok = (v >= 0.9 * o) if kind == "tput" else (v <= 1.2 * o)
+            verdicts.append("%s %s" % (b, "PASS" if ok else "FAIL"))
+            if not ok:
+                fails.append("%s: %s %s vs old %s" % (name, b, fmt(v), fmt(o)))
+        rows.append([name] + [fmt(vals.get(b)) for b in builds] + [", ".join(verdicts)])
+
+    for tgt in ("global", "region", "agent"):
+        cp = {b: get(R[b], "control_plane", "targets", tgt) for b in builds}
+        row("CP %s serial p50 ms" % tgt, {b: get(cp[b], "serial", "p50_ms") for b in builds})
+        row("CP %s serial p99 ms" % tgt, {b: get(cp[b], "serial", "p99_ms") for b in builds}, "p99")
+        for th in ("8", "32"):
+            row("CP %s %s callers msg/s" % (tgt, th), {b: get(cp[b], "concurrent", th, "msg_per_s") for b in builds}, "tput")
+            row("CP %s %s callers p99 ms" % (tgt, th), {b: get(cp[b], "concurrent", th, "p99_ms") for b in builds}, "p99")
+    for size, label in (("262144", "256KiB"), ("4194304", "4MiB")):
+        for flows in ("1", "4"):
+            def reps(b):
+                dp = get(R[b], "dataplane") or {}
+                return [v for k, v in dp.items() if k.startswith("%s_%sf_" % (size, flows)) and v]
+            row("DP %s %s flow(s) MiB/s" % (label, flows),
+                {b: (statistics.median([r["mib_s"] for r in reps(b)]) if reps(b) else None) for b in builds}, "tput")
+            row("DP %s %s flow(s) p50 ms" % (label, flows),
+                {b: (statistics.median([r["p50_ms"] for r in reps(b)]) if reps(b) else None) for b in builds})
+            row("DP %s %s flow(s) p99 ms" % (label, flows),
+                {b: (statistics.median([r["p99_ms"] for r in reps(b)]) if reps(b) else None) for b in builds}, "p99")
+            lost = {}
+            for b in builds:
+                rs = reps(b)
+                lost[b] = sum(r["sent"] - r["received"] + r["out_of_order"] + r["bad_size"] + r["dups"] for r in rs) if rs else None
+                if b != "old" and rs and lost[b]:
+                    fails.append("DP %s %s flow(s): %s lost/damaged/reordered %d" % (label, flows, b, lost[b]))
+            row("DP %s %s flow(s) lost+damaged+reordered" % (label, flows), lost)
+    steps = sorted({int(s) for b in builds for s in (get(R[b], "scale") or {}).keys()})
+    for s in steps:
+        sc = {b: get(R[b], "scale", str(s)) for b in builds}
+        row("SCALE %d listed" % s, {b: get(sc[b], "listed") for b in builds})
+        row("SCALE %d all registered after s" % s, {b: get(sc[b], "all_listed_after_s") for b in builds})
+        for n in ("global", "region"):
+            row("SCALE %d %s CPU %% steady" % (s, n), {b: get(sc[b], n, "cpu_pct_steady") for b in builds})
+            row("SCALE %d %s heap MB / threads" % (s, n),
+                {b: "%s / %s" % (get(sc[b], n, "heap_used_mb"), get(sc[b], n, "threads")) for b in builds})
+        row("SCALE %d global probe in storm p99 ms" % s, {b: get(sc[b], "global_probe_during_storm", "p99_ms") for b in builds})
+        row("SCALE %d global probe longest gap s / errors" % s,
+            {b: "%s / %s" % (get(sc[b], "global_probe_during_storm", "gap_max_s"), get(sc[b], "global_probe_during_storm", "errors"))
+             for b in builds})
+        row("SCALE %d CP global serial p50 ms" % s, {b: get(sc[b], "control_plane", "targets", "global", "serial", "p50_ms") for b in builds})
+        row("SCALE %d CP agent 8 callers msg/s" % s,
+            {b: get(sc[b], "control_plane", "targets", "agent", "concurrent", "8", "msg_per_s") for b in builds})
+        for b in builds:
+            if b != "old" and sc[b] and (sc[b].get("listed") or 0) < s:
+                fails.append("SCALE %d: %s listed only %s" % (s, b, sc[b].get("listed")))
+    if len(steps) >= 2:
+        lo, hi = str(steps[0]), str(steps[-1])
+        for b in builds:
+            if b == "old":
+                continue
+            p_lo = get(R[b], "scale", lo, "control_plane", "targets", "global", "serial", "p50_ms")
+            p_hi = get(R[b], "scale", hi, "control_plane", "targets", "global", "serial", "p50_ms")
+            r_lo = get(R[b], "scale", lo, "control_plane", "targets", "agent", "concurrent", "8", "msg_per_s")
+            r_hi = get(R[b], "scale", hi, "control_plane", "targets", "agent", "concurrent", "8", "msg_per_s")
+            if None not in (p_lo, p_hi, r_lo, r_hi):
+                flat = p_hi <= 1.25 * p_lo and r_hi >= 0.8 * r_lo
+                rows.append(["per-op cost flat %s->%s (%s)" % (lo, hi, b), "", "", "", "PASS" if flat else "FAIL"])
+                if not flat:
+                    fails.append("per-op cost %s: p50 %s->%s ms, rate %s->%s" % (b, p_lo, p_hi, r_lo, r_hi))
+    row("log ERROR lines", {b: get(R[b], "logs", "error_lines") for b in builds})
+    row("log refusal/loss lines", {b: get(R[b], "logs", "refusal_or_loss_lines") for b in builds})
+    for b in builds:
+        if b != "old" and (get(R[b], "logs", "refusal_or_loss_lines") or 0) > 0:
+            fails.append("%s: %s refusal/loss line(s): %s" % (b, get(R[b], "logs", "refusal_or_loss_lines"),
+                                                              [k for k, _ in (get(R[b], "logs", "top") or []) if k.startswith("REFUSAL")][:3]))
+    w = [max(len(str(r[i])) for r in rows + [["metric"] + builds + ["gate"]]) for i in range(len(builds) + 2)]
+    hdr = ["metric"] + builds + ["gate"]
+    print("  ".join(h.ljust(w[i]) for i, h in enumerate(hdr)))
+    for r in rows:
+        print("  ".join(str(c).ljust(w[i]) for i, c in enumerate(r)))
+    print()
+    print("GATE " + ("PASS" if not fails else "FAIL"))
+    for f in fails:
+        print("  FAIL " + f)
+    return 0 if not fails else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -64,12 +64,15 @@ def concurrent(a, region, agent, threads, seconds):
     clients = [connect(a) for _ in range(threads)]
     done = [0] * threads
     errs = [0] * threads
+    lats = [[] for _ in range(threads)]
     stop = time.time() + seconds
 
     def run(i):
         while time.time() < stop:
+            t = time.perf_counter()
             try:
                 call(clients[i], region, agent)
+                lats[i].append((time.perf_counter() - t) * 1000.0)
                 done[i] += 1
             except Exception:
                 errs[i] += 1
@@ -86,7 +89,11 @@ def concurrent(a, region, agent, threads, seconds):
             c.close()
         except Exception:
             pass
-    return {"msg_per_s": round(sum(done) / el, 1), "errors": sum(errs)}
+    lat = [x for l in lats for x in l]
+    r = {"msg_per_s": round(sum(done) / el, 1), "errors": sum(errs)}
+    if lat:
+        r.update({"p50_ms": round(pct(lat, 50), 2), "p99_ms": round(pct(lat, 99), 2)})
+    return r
 
 
 def main():

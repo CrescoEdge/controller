@@ -240,9 +240,30 @@ public class ActiveBroker {
 					topics.setUseCache(useCache);
 					topics.setPrioritizedMessages(prioritizedMessages);
 					topics.setTopicPrefetch(topicPrefetchLimit);
-					PrefetchRatePendingMessageLimitStrategy topicRate = new PrefetchRatePendingMessageLimitStrategy();
-					topicRate.setMultiplier(plugin.getConfig().getDoubleParam("prefetch_rate_multiplier",2.5));
-					topics.setPendingMessageLimitStrategy(topicRate);
+					// Backpressure, not loss (dataplane_backpressure, default on): a topic subscriber that falls behind --
+					// a wsapi client that reads slower than its stream, an agent behind a slow link, a bridge -- keeps every
+					// message; what it has not taken counts against the topic's memory limit, and once that is full producer
+					// flow control slows the topic's writers to what its slowest subscriber takes. Before, a subscriber more
+					// than prefetch x 2.5 messages behind (250 at the consumer prefetch, 160 at the data bridges') had its
+					// oldest messages DISCARDED: with 256 KiB frames that is 40-62 MiB, far below the 256 MiB memory limit,
+					// so flow control never engaged and a burst a few percent faster than the reader lost frames (smoke
+					// 1993/2000 behind an agent, DGX 1908/2000, old and new builds alike). Order is kept: a writer waits in
+					// line, never beside it -- dataplane sends ride producer-only connections without a producer window
+					// (DataPlaneServiceImpl send lanes), so the broker holds the connection while the topic is full instead of
+					// parking the message, which let the next one overtake it; and holding that connection holds no
+					// consumer's acks (which would be what frees the topic: a deadlock). Bridged messages wait in line at
+					// the receiving broker (DataplaneBridgeInbound; the data connectors send synchronously), which backs a
+					// bridge up into the SENDING broker's topic, whose writers then wait; a wait is bounded so that two
+					// brokers full of each other's traffic cannot wait on each other forever. A subscriber that stops
+					// taking anything is cut off by its owner (wsapi closes a WebSocket client that reads nothing).
+					// dataplane_backpressure=false restores the discarding limit, counted (dataplane.broker.discarded).
+					double multiplier = plugin.getConfig().getDoubleParam("prefetch_rate_multiplier", 2.5);
+					if (slowSubscriberPolicy(topics, dataplaneBackpressure(plugin), multiplier)) {
+						logger.info("topics: backpressure -- a subscriber behind keeps its messages; the topic's writers are slowed instead");
+					} else {
+						logger.warn("topics: dataplane_backpressure=false -- a subscriber more than prefetch x " + multiplier
+								+ " messages behind loses its oldest (counted: dataplane.broker.discarded)");
+					}
 					topics.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
 					topics.setAdvisoryForDiscardingMessages(discardAccounting);
 					topics.setAdvisoryForSlowConsumers(discardAccounting);
@@ -392,6 +413,11 @@ public class ActiveBroker {
 						broker.setMessageAuthorizationPolicy(authz);
 						logger.info("Dataplane stream recipient binding ENABLED (" + StreamRecipientPolicy.TO + ")");
 					}
+				}
+				// Dataplane backpressure across bridges: what a bridge delivers waits in line, bounded, instead of being
+				// parked out of order by the topic's flow control or held until two brokers deadlock (see the topic policy).
+				if (dataplaneBackpressure(plugin)) {
+					brokerPlugins.add(new DataplaneBridgeInbound(plugin));
 				}
 				// Slow-subscriber discards: counted (dataplane.broker.discarded) and logged instead of silent.
 				if (discardAccounting) {
@@ -829,6 +855,32 @@ public class ActiveBroker {
 
 	}
 
+	/**
+	 * What a topic does with a subscriber that falls behind: with {@code backpressure}, nothing (it keeps every message, the
+	 * topic's memory limit and producer flow control slow the writers); without, a subscriber more than prefetch x
+	 * {@code multiplier} messages behind has its oldest discarded.
+	 * @return {@code backpressure}
+	 */
+	static boolean slowSubscriberPolicy(PolicyEntry topics, boolean backpressure, double multiplier) {
+		if (backpressure) {
+			topics.setPendingMessageLimitStrategy(null);
+			return true;
+		}
+		PrefetchRatePendingMessageLimitStrategy rate = new PrefetchRatePendingMessageLimitStrategy();
+		rate.setMultiplier(multiplier);
+		topics.setPendingMessageLimitStrategy(rate);
+		return false;
+	}
+
+	/**
+	 * Dataplane backpressure (default on): topic subscribers that fall behind slow the writers instead of losing messages
+	 * (see the topic policy in the constructor). Needs the topics' producer flow control, which it implies.
+	 */
+	public static boolean dataplaneBackpressure(PluginBuilder plugin) {
+		return plugin.getConfig().getBooleanParam("dataplane_backpressure", true)
+				&& plugin.getConfig().getBooleanParam("activemq_topic_producer_flow_control", true);
+	}
+
 	// Create the bridge group to a remote host. Returns the PRIMARY connector (index 0) un-started so
 	// the existing BrokerMonitor connect path starts+monitors it; any extra connectors are started here.
 	//
@@ -930,6 +982,13 @@ public class ActiveBroker {
 			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch_data", 64));
 		} else {
 			bridge.setPrefetchSize(plugin.getConfig().getIntegerParam("broker_bridge_prefetch", 100));
+		}
+		// Dataplane backpressure across the bridge: a data connector forwards each message as a request, acknowledged at
+		// home only once the far broker has taken it, so its prefetch is its credit window and a far topic that is full
+		// (its bridged messages wait in line there, DataplaneBridgeInbound) backs the stream up into this broker's topic,
+		// whose flow control slows the writers here. Control connectors carry queues, which never fill.
+		if (split && index > 0 && dataplaneBackpressure(plugin)) {
+			bridge.setAlwaysSyncSend(plugin.getConfig().getBooleanParam("broker_bridge_sync_send", true));
 		}
 		bridge.setNetworkTTL(messageTTL);
 		// Decrease a bridged consumer's priority by hop count so ActiveMQ's demand-forwarding prefers the

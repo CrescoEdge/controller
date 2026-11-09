@@ -108,6 +108,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         dataPlaneShards = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_shards", 1));
         sendLanes = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_send_lanes", 4));
+        producerLanes = io.cresco.agent.controller.communication.ActiveBroker.dataplaneBackpressure(plugin);
         // Give each shard its own dedicated broker connection (parallel sockets) rather than
         // multiplexing all shards over the single pooled session. Default on when sharding is enabled.
         parallelConnections = plugin.getConfig().getBooleanParam("dataplane_parallel_connections", dataPlaneShards > 1);
@@ -388,6 +389,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
             MessageConsumer consumer = null;
 
+            if (paced(messageListener)) {
+                if (listenerId == null) listenerId = UUID.randomUUID().toString();
+                try {
+                    consumer = ownConsumer(listenerId, getSession(), getDestination(topicType), selectorString);
+                } catch (Exception ex) {
+                    String refusal = policyRefusal(ex);
+                    if (refusal != null) throw new io.cresco.library.data.SubscriptionRefusedException(refusal);
+                    throw ex;
+                }
+            } else
             switch (topicType) {
                 case AGENT:
                     if(selectorString == null) {
@@ -438,6 +449,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             throw new io.cresco.library.data.SubscriptionRefusedException(other.getMessage());
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.addMessageListener error", ex);
+            if (paced(messageListener)) closeOwnSession(listenerId);
             return null;
         }
         return listenerId;
@@ -463,14 +475,34 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     // --- Send lanes ---
 
+    /**
+     * The lane a message is sent on: its dp_lane; without one (or with one lane), lane 0 under dataplane backpressure,
+     * else none (the pooled producer). Under backpressure every dataplane send rides a lane: a producer-only connection,
+     * which the broker holds while the topic is full -- in order, and without holding any consumer's acks, which ride the
+     * pooled connection (were they behind a held send, a topic full of their own messages would never drain).
+     */
     private int laneOf(Message message) {
-        if (sendLanes <= 1) return -1;
+        int none = producerLanes ? 0 : -1;
+        if (sendLanes <= 1) return none;
         try {
-            if (!message.propertyExists("dp_lane")) return -1;
+            if (!message.propertyExists("dp_lane")) return none;
             return Math.floorMod(message.getIntProperty("dp_lane"), sendLanes);
         } catch (Exception e) {
-            return -1;
+            return none;
         }
+    }
+
+    /** Under dataplane backpressure every send rides a lane (see laneOf). */
+    private final boolean producerLanes;
+
+    /**
+     * The URI of a lane's connection: an in-JVM one (vm://) runs the broker's work in the sending thread (async=false),
+     * so a full topic holds that thread; asynchronously, up to 2000 messages per connection (8 GB at 4 MiB) would queue
+     * in the pipe first, outside every memory limit.
+     */
+    static String laneUri(String uri) {
+        if (uri == null || !uri.startsWith("vm://") || uri.contains("async=")) return uri;
+        return uri + (uri.contains("?") ? "&" : "?") + "async=false";
     }
 
     private MessageProducer laneProducer(TopicType topicType, int lane) {
@@ -484,7 +516,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             try {
                 ActiveMQSession s = laneSessions.get(lane);
                 if (s == null || s.isClosed()) {
-                    s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                    s = controllerEngine.getActiveClient().createDedicatedSession(laneUri(URI), false, Session.AUTO_ACKNOWLEDGE);
                     if (s == null) return null;
                     laneSessions.put(lane, s);
                     logger.info("Opened dataplane send lane " + lane + " (dedicated connection)");
@@ -666,7 +698,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         try {
             int key = Math.floorMod(shard, dataPlaneShards);
             ActiveMQSession s = getShardSession(key);
-            MessageConsumer consumer = shardConsumer(s, topicType, selectorString, key);
+            MessageConsumer consumer;
+            if (paced(messageListener)) {
+                if (listenerId == null) listenerId = UUID.randomUUID().toString();
+                consumer = ownConsumer(listenerId, s, s == null ? null : s.createTopic(shardedTopicName(topicType, key)), selectorString);
+            } else {
+                consumer = shardConsumer(s, topicType, selectorString, key);
+            }
             if (consumer != null) {
                 consumer.setMessageListener(messageListener);
                 if (listenerId == null) listenerId = UUID.randomUUID().toString();
@@ -709,7 +747,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         int n = 0;
         for (DataPlanePersistantInstance i : mine) {
             try {
-                MessageConsumer c = shardConsumer(s, i.getTopicType(), i.getSelectorString(), key);
+                MessageConsumer c = paced(i.getMessageListener())
+                        ? ownConsumer(i.getListenerId(), s, s.createTopic(shardedTopicName(i.getTopicType(), key)), i.getSelectorString())
+                        : shardConsumer(s, i.getTopicType(), i.getSelectorString(), key);
                 if (c == null) continue;
                 c.setMessageListener(i.getMessageListener());
                 MessageConsumer old;
@@ -719,7 +759,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     old = removed ? null : messageConsumerMap.put(i.getListenerId(), c);
                 }
                 // JMS close blocks on the broker: never under lockMessage, which every send and listener change takes
-                if (removed) { try { c.close(); } catch (Exception ignore) { } continue; }
+                if (removed) { try { c.close(); } catch (Exception ignore) { } closeOwnSession(i.getListenerId()); continue; }
                 if (old != null) try { old.close(); } catch (Exception ignore) { }
                 n++;
             } catch (Exception ex) {
@@ -907,6 +947,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.error("DataPlaneServiceImpl.updateConnections reset activeMQSession error", ex);
         }
 
+        for (String id : new ArrayList<>(ownSessions.keySet())) closeOwnSession(id);   // they ride the old connection
+
         //clean existing listeners
         synchronized (lockMessage) {
             //get all keys
@@ -953,6 +995,50 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     }
 
+    // --- Paced listeners (backpressure) ---
+
+    /** The JMS session of each paced listener, by listener id: its own, so a wait in it holds back only its messages. */
+    private final Map<String, ActiveMQSession> ownSessions = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Does {@code l} (or the listener it wraps) pace its stream by blocking in onMessage? */
+    static boolean paced(MessageListener l) {
+        return StreamSequence.unwrap(l) instanceof io.cresco.library.data.PacedListener;
+    }
+
+    /**
+     * A consumer for paced listener {@code listenerId} on a session of its own, on the connection of {@code base} (the
+     * session it would otherwise share: the node's dataplane session, or its shard's). Null when there is no session.
+     * A paced listener blocks in onMessage while its consumer cannot keep up; on the shared session that would hold back
+     * every other listener of the node, and stopping the consumer instead (ActiveMQMessageConsumer.stop/start) lets a
+     * message dispatched while it restarts overtake the ones it held: out of order.
+     */
+    private MessageConsumer ownConsumer(String listenerId, ActiveMQSession base, Destination dest, String selector) throws JMSException {
+        if (base == null || dest == null) return null;
+        ActiveMQSession own = (ActiveMQSession) base.getConnection().createSession(false, Session.AUTO_ACKNOWLEDGE);
+        try {
+            MessageConsumer c = (selector == null) ? own.createConsumer(dest) : own.createConsumer(dest, selector);
+            ActiveMQSession old = ownSessions.put(listenerId, own);
+            if (old != null && old != own) closeQuietly(old);
+            return c;
+        } catch (JMSException | RuntimeException e) {
+            closeQuietly(own);
+            throw e;
+        }
+    }
+
+    /** Close a paced listener's own session (its consumer is closed already): off this thread, as it waits for a dispatch
+     *  in progress, and a paced listener may be waiting for its consumer to read. */
+    private void closeOwnSession(String listenerId) {
+        ActiveMQSession own = listenerId == null ? null : ownSessions.remove(listenerId);
+        if (own != null) closeQuietly(own);
+    }
+
+    private static void closeQuietly(ActiveMQSession s) {
+        Thread t = new Thread(() -> { try { s.close(); } catch (Exception ignore) { } }, "dataplane-paced-session-close");
+        t.setDaemon(true);
+        t.start();
+    }
+
     public void removeMessageListener(String listenerId) {
 	    try {
 	        // Take the consumer OUT of the map under the lock, then close it OUTSIDE. consumer.close()
@@ -974,6 +1060,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             } catch (JMSException e) {
                 logger.error("Failed to close message listener [{}]", listenerId);
             }
+            closeOwnSession(listenerId);
         } catch (Exception e) {
 	        logger.error("removeMessageListener('{}'): {}", listenerId, e.getMessage());
             logger.error("DataPlaneServiceImpl.removeMessageListener error", e);

@@ -1,6 +1,7 @@
 package io.cresco.agent.data;
 
 import jakarta.jms.Message;
+import org.apache.activemq.command.ActiveMQBytesMessage;
 import org.apache.activemq.command.ActiveMQTextMessage;
 import org.junit.jupiter.api.Test;
 
@@ -68,5 +69,40 @@ class StreamSequenceTest {
         l.onMessage(restarted);
         assertFalse(got.get(1).propertyExists(StreamSequence.GAP), "a restarted writer starts again");
         assertEquals(before, StreamSequence.GAPS.get());
+    }
+
+    /**
+     * The first binary frame after a gap reached the subscriber EMPTY: the gap was written with the JMS setter, which on an
+     * ActiveMQBytesMessage moves the body into the message's write buffer first, so its reader saw zero bytes (wsapi sent
+     * a 0-byte frame). The mark must leave the body as it came.
+     */
+    @Test
+    void theGapMarkLeavesABinaryFramesBodyIntact() throws Exception {
+        StreamSequence seq = new StreamSequence();
+        List<ActiveMQBytesMessage> sent = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            ActiveMQBytesMessage m = new ActiveMQBytesMessage();
+            m.setStringProperty("cresco_caller", "api:t/bob");
+            m.setStringProperty("stream_name", "u:bob:s");
+            seq.number(m);
+            m.writeBytes(new byte[]{(byte) i, 1, 2, 3, 4, 5, 6, 7});
+            sent.add(m);
+        }
+        List<Message> got = new ArrayList<>();
+        jakarta.jms.MessageListener l = StreamSequence.detecting(got::add);
+        for (int i : new int[]{0, 3}) {                       // 1 and 2 lost on the way
+            ActiveMQBytesMessage received = (ActiveMQBytesMessage) sent.get(i).copy();
+            received.setReadOnlyBody(true);
+            received.setReadOnlyProperties(true);             // as a consumer hands it to its listener
+            l.onMessage(received);
+        }
+        ActiveMQBytesMessage after = (ActiveMQBytesMessage) got.get(1);
+        assertEquals(2, after.getLongProperty(StreamSequence.GAP));
+        assertEquals(8, after.getBodyLength(), "the body survived the gap mark");
+        byte[] body = new byte[8];
+        assertEquals(8, after.readBytes(body));
+        assertEquals(3, body[0]);
+        assertThrows(jakarta.jms.MessageNotWriteableException.class, () -> after.setStringProperty("x", "y"),
+                "its properties stay read-only for the listener");
     }
 }

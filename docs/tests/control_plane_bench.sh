@@ -90,6 +90,15 @@ finally:
 print("ready" if ok else "not-ready")
 EOF
 }
+# A node's message signatures verify at another node only once its certificate has gone up and the trust bundle has come
+# down on the pings (agent -> region -> global, agent_ping_interval 5 s per hop): an RPC from the global to b1 before then
+# is refused at b1 ("the signer's credential does not verify here", fail closed) and b1's answer is refused at the global.
+# So ask the nodes only once the global lists both agents and two ping rounds have passed: no refusal at startup.
+for _ in $(seq 1 60); do
+  "$PY" "$HERE/dgx/gate_probe.py" count --port "$WS0" --key "$KEY" --pin "$(pin)" --require glob/a1 --require rgr/b1 >/dev/null 2>&1 && break
+  sleep 3
+done
+sleep "${TRUST_SETTLE_S:-15}"
 for _ in $(seq 1 60); do [ "$(ready 2>/dev/null)" = ready ] && break; sleep 3; done
 [ "$(ready 2>/dev/null)" = ready ] || { echo "FATAL: the fabric did not answer (see $WORK/logs)"; exit 2; }
 sleep 10    # registrations and first exports settle

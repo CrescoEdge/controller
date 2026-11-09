@@ -255,14 +255,25 @@ is refused for its caller.
   `plugin_signing_truststore` (`JarSignatures.verify`). The cache names a jar by its own hash; a hash the caller
   supplies is advisory. `plugindownload` fetches only http(s) URLs into a plain file name.
 - **Logging.** A plugin sets the log level of its own loggers (`<pluginid>:...`) only.
-- **Dataplane loss is never silent.** The broker still drops the oldest messages a slow topic subscriber has not taken
-  (its pending limit protects the other subscribers and the broker's memory), and counts every drop
-  (`dataplane.broker.discarded`, logged). Every message of a stream (one carrying `stream_name`) is numbered by its
-  writer's controller per (writer, `stream_name`, `type`) in `cresco_seq`; the subscriber's controller checks the
-  numbers, counts what is missing in `dataplane.stream.gap`, and marks the first message after a gap with `cresco_gap`
-  = how many messages of the stream that subscriber did not get. A subscriber joining mid-stream, and a writer that
-  restarts (back to 1), are not gaps. A consumer that needs completeness reads `cresco_gap` (or `cresco_seq`) and
-  recovers or reports; nothing in the stream path blocks a writer for a slow reader.
+- **Dataplane: backpressure, and loss is never silent.** A topic subscriber that falls behind -- a wsapi client that reads
+  slower than its stream, an agent behind a slow link, a bridge -- keeps every message: what it has not taken counts
+  against the topic's memory limit (`activemq_topic_memory_limit`, 256 MiB per topic per broker), and once that is full
+  producer flow control slows the topic's writers to what its slowest subscriber takes (`dataplane_backpressure`,
+  default on). Order is kept: dataplane sends ride producer-only connections without a producer window (send lanes; a
+  parked send would let the next one overtake it, and acks behind a held send could deadlock), in-JVM ones in the
+  sending thread; bridged messages wait in line at the receiving broker (bounded by
+  `broker_bridge_flow_control_wait_ms`, 10 s, after which the bridge delivers past the limit rather than deadlock with a
+  broker full of its own traffic, `DataplaneBridgeInbound.OVERFLOWS`); wsapi's consumers wait on JMS sessions of their
+  own and publish client frames off the event loop. A WebSocket consumer that reads nothing for
+  `wsapi_dataplane_stall_close_ms` (30 s) while its stream waits is closed with status 1013 (`wsapi.dataplane.egress.stalled`).
+  Every message of a stream (one carrying `stream_name`) is numbered by its writer's controller per (writer,
+  `stream_name`, `type`) in `cresco_seq`; the subscriber's controller checks the numbers, counts what is missing in
+  `dataplane.stream.gap`, and marks the first message after a gap with `cresco_gap` = how many messages of the stream
+  that subscriber did not get -- a loss that cannot be avoided (a node or link that dies with messages on the way, a
+  subscriber cut off, or `dataplane_backpressure=false`, where the broker discards the oldest messages of a subscriber
+  past its pending limit and counts them, `dataplane.broker.discarded`). A subscriber joining mid-stream, and a writer
+  that restarts (back to 1), are not gaps. Note that one slow subscriber slows every writer of its topic on that broker
+  (the dataplane topics are shared by streams), so wsapi closes a reader that stops.
 - **Plugin data is kept.** A plugin's data directory (`plugin-data/<pluginid>`) is never deleted when the plugin stops
   (every graceful agent shutdown stops every plugin) nor when it is removed: `pluginremove` deletes it only with
   `purge_data=true` from an `admin` caller, and logs where the kept data is otherwise. Data of plugins no longer
@@ -327,7 +338,7 @@ are installed (section 5), and that signature is the boundary. Inside it the con
 | plugin data | deleted on every stop and remove of a runtime plugin | kept; `purge_data=true` (admin) on `pluginremove`; `plugin_data_retention_days` sweep (default off) |
 | `listagents` | no tenant | `tenant_id` per agent (verified) |
 | jar signatures | judged now | judged at a trusted RFC 3161 timestamp when present |
-| stream messages | lost silently to a slow subscriber | `cresco_seq` on every stream message, `cresco_gap` after a loss, `dataplane.stream.gap` |
+| stream messages | lost silently to a slow subscriber | kept: the writers are slowed (backpressure, in order); `cresco_seq` on every stream message, `cresco_gap` after an unavoidable loss, `dataplane.stream.gap` |
 | AgentService | one shared instance | one per bundle (service factory); never the controller's own instance |
 | `setinodestatus` (global) | any tenant's infra | infra/admin of the global's tenant or a superuser tenant |
 | `agent_disable` naming only a region, or a plugin without its agent | deleted region / plugin rows | refused |
