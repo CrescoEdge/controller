@@ -30,6 +30,17 @@ bash "$TOOL" init "$PKI" --days 30 >/dev/null && bash "$TOOL" region "$PKI" t1 r
 # plugin signing is mandatory in production: the anchors network-installed jars are signed to (none is installed here)
 openssl req -x509 -newkey rsa:3072 -sha384 -days 10 -nodes -keyout "$WORK/codesign.key" -out "$WORK/codesign.pem" \
   -subj "/O=t1/CN=test code signing (made at test time)" >/dev/null 2>&1 && chmod 600 "$WORK/codesign.key" "$WORK/codesign.pem"
+# production runs FIPS approved-only (the agent's CryptoBoot), whose keystores are BCFKS: each node's PKCS#12 keystore is
+# converted once, offline, with the agent jar (an agent without that tool keeps the PKCS#12 file)
+ks() { # pki node dir -> the keystore a node uses (converted when the agent can)
+  local n="$1"
+  if java -jar "$JAR" --crypto convert-keystore "$n/node.p12" "$n/node.p12.pass" "$n/node.bcfks.new" >/dev/null 2>&1; then
+    mv -f "$n/node.bcfks.new" "$n/node.bcfks"; echo "$n/node.bcfks"
+  else
+    echo "$n/node.p12"
+  fi
+}
+for n in "$PKI"/nodes/*; do ks "$n" > "$n/keystore.path"; done
 # the probe is an API user of tenant t1: a client certificate from the PKI (wsapi in production takes nothing else)
 export CRESCO_TLS_CLIENT_CERT="$PKI/api/t1_probe/api.p12"; CRESCO_TLS_CLIENT_KEY_PASSWORD="$(cat "$PKI/api/t1_probe/api.p12.pass")"
 export CRESCO_TLS_CLIENT_KEY_PASSWORD
@@ -38,7 +49,7 @@ PIDS="$WORK/pids"; : > "$PIDS"
 launch() { # name region agent flags [append]
   local d="$WORK/nodes/$1" n="$PKI/nodes/$2_$3"; mkdir -p "$d"
   local id="-Dsecurity_profile=production -Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce -Dregionname=$2 -Dagentname=$3"
-  id="$id -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem"
+  id="$id -Didentity_keystore=$(cat "$n/keystore.path") -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem"
   id="$id -Drevocation_file=$PKI/revocations.pem -Didentity_keystore_reload_seconds=5"
   id="$id -Dplugin_signing_truststore=$WORK/codesign.pem -Dwsapi_client_ca=$n/trust-anchors.pem"
   echo "$2 $3 $4" > "$WORK/args.$1"
@@ -96,7 +107,7 @@ ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo 1)" "a stream cros
 echo "### renewal: the operator re-issues rgr/rc (NEW key) and its keystore is replaced in place"
 B1C='mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b1'
 b1before=$(cnt region "$B1C"); rcb=$(cnt global 'Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc')
-bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 20 >/dev/null
+bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 20 >/dev/null && ks "$PKI/nodes/rgr_rc" > "$PKI/nodes/rgr_rc/keystore.path"
 for _ in $(seq 1 20); do grep -q "Pre-provisioned identity RELOADED" "$WORK/logs/region.log" && break; sleep 1; done
 ck "$(has region 'Pre-provisioned identity RELOADED: .* with a NEW key')" "the region reloaded its replaced keystore (a new key) without a restart"
 sleep 15
@@ -111,10 +122,11 @@ echo "  the region's broker presents certificate serial ${served:-none}; the re-
 ck "$( [ -n "$served" ] && [ "$served" = "$want" ] && echo 1)" "the region's broker presents the RE-ISSUED certificate at a new handshake (no restart)"
 
 echo "### a node with a certificate from ANOTHER PKI tries to join region rgr"
-OTHER="$WORK/other-pki"; bash "$TOOL" init "$OTHER" --days 30 >/dev/null && bash "$TOOL" node "$OTHER" t1 rgr b9 --days 10 >/dev/null
+OTHER="$WORK/other-pki"; bash "$TOOL" init "$OTHER" --days 30 >/dev/null && bash "$TOOL" node "$OTHER" t1 rgr b9 --days 10 >/dev/null \
+  && ks "$OTHER/nodes/rgr_b9" > "$OTHER/nodes/rgr_b9/keystore.path"
 d="$WORK/nodes/b9"; mkdir -p "$d"; n="$OTHER/nodes/rgr_b9"
 ( cd "$d" && exec java $COMMON $SEC -Dsecurity_profile=production -Dbroker_security_enabled=true -Dtenant_id=t1 -Dregionname=rgr -Dagentname=b9 \
-  -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
+  -Didentity_keystore=$(cat "$n/keystore.path") -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
   -Dplugin_signing_truststore=$WORK/codesign.pem \
   -Dis_agent=true -Dregional_controller_host=127.0.0.1 -Dregional_controller_port=$((P0+15)) -Dnetdiscoveryport=$((P0+45)) -Denable_wsapi=false -jar "$JAR" ) \
   > "$WORK/logs/b9.log" 2>&1 < /dev/null &
@@ -128,7 +140,7 @@ echo "### a production node configured with a discovery secret refuses to start"
 d="$WORK/nodes/s1"; mkdir -p "$d"; n="$PKI/nodes/rgr_b1"
 openssl rand -hex 16 > "$WORK/leftover.secret"; chmod 600 "$WORK/leftover.secret"     # a leftover from a standard fabric
 ( cd "$d" && exec java $COMMON -Dsecurity_profile=production -Dtenant_id=t1 -Dregionname=rgr -Dagentname=b1 -Ddiscovery_secret_agent_file=$WORK/leftover.secret \
-  -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
+  -Didentity_keystore=$(cat "$n/keystore.path") -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
   -Dplugin_signing_truststore=$WORK/codesign.pem -Dis_agent=true -Dnetdiscoveryport=$((P0+55)) -Denable_wsapi=false -jar "$JAR" ) \
   > "$WORK/logs/s1.log" 2>&1 < /dev/null &
 sp=$!; echo $sp >> "$PIDS"; for _ in $(seq 1 30); do kill -0 $sp 2>/dev/null || break; sleep 1; done; kill $sp 2>/dev/null
