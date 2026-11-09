@@ -9,9 +9,11 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Data loss on the dataplane is never silent. The broker drops the oldest messages a slow topic subscriber has not
- * taken (its pending limit protects every other subscriber and the broker's memory); that stays, but every drop is now
- * counted at the broker ({@code DiscardAccounting}) and visible to the subscriber that lost messages:
+ * Data loss on the dataplane is never silent. A slow topic subscriber does not lose messages (dataplane backpressure:
+ * the topic's writers are slowed instead, see ActiveBroker); a loss that cannot be avoided -- a node or a link that dies
+ * with messages on its way, a subscriber cut off, or dataplane_backpressure=false, where the broker discards the oldest
+ * messages of a subscriber past its pending limit (counted at the broker, {@code DiscardAccounting}) -- is visible to
+ * the subscriber that lost messages:
  *
  * <ul>
  *   <li>the writer's controller numbers every message of a stream -- one carrying {@code stream_name} -- per
@@ -67,6 +69,11 @@ public final class StreamSequence {
         return new Detector(listener);
     }
 
+    /** The listener {@code l} wraps (a gap-detecting one), or {@code l} itself. */
+    static MessageListener unwrap(MessageListener l) {
+        return (l instanceof Detector) ? ((Detector) l).delegate : l;
+    }
+
     /** Per subscription: the last number seen of each stream. */
     static final class Detector implements MessageListener {
         private final MessageListener delegate;
@@ -90,10 +97,7 @@ public final class StreamSequence {
                         long missing = (prev == null || seq <= prev) ? 0 : seq - prev - 1;
                         if (missing > 0) {
                             GAPS.addAndGet(missing);
-                            if (m instanceof org.apache.activemq.command.ActiveMQMessage) {
-                                ((org.apache.activemq.command.ActiveMQMessage) m).setReadOnlyProperties(false);
-                            }
-                            m.setLongProperty(GAP, missing);
+                            markGap(m, missing);
                         }
                     }
                 }
@@ -104,5 +108,23 @@ public final class StreamSequence {
         }
 
         @Override public String toString() { return "gap-detecting " + delegate; }
+
+        /**
+         * Write {@link #GAP} onto a RECEIVED message without touching its body. Not through the JMS setters: on an
+         * ActiveMQBytesMessage (every binary dataplane frame) setObjectProperty first moves the body into the message's
+         * write buffer, so its reader then saw an empty body -- the first frame after every gap reached the subscriber
+         * with no payload (wsapi sent a 0-byte frame). The property map of the message is set directly instead.
+         */
+        static void markGap(Message m, long missing) throws JMSException {
+            if (m instanceof org.apache.activemq.command.ActiveMQMessage) {
+                try {
+                    ((org.apache.activemq.command.ActiveMQMessage) m).setProperty(GAP, missing);
+                    return;
+                } catch (java.io.IOException e) {
+                    throw new JMSException("cannot mark the gap: " + e.getMessage());
+                }
+            }
+            m.setLongProperty(GAP, missing);
+        }
     }
 }
