@@ -24,6 +24,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -117,9 +118,18 @@ public final class MsgSigning {
 
     // ---- verification caches (bounded)
     private final ConcurrentHashMap<String, Resolved> credCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Long> seen = new ConcurrentHashMap<>();
+    /**
+     * The signatures seen, in three generations of {@code msg_signature_max_age_ms} each: a signature is remembered for two
+     * to three max-ages after it arrived, longer than it can be accepted (its signing time is within one max-age of the
+     * receiver's clock either way). Rotating a generation drops a whole map: no scan, O(1) per message.
+     */
+    private volatile Set<String> seenNow = ConcurrentHashMap.newKeySet(), seenBefore = ConcurrentHashMap.newKeySet(),
+            seenEarlier = ConcurrentHashMap.newKeySet();
+    private volatile long seenSince = System.currentTimeMillis();
+    /** At most this many signatures per generation; a busier generation is rotated early (logged: the window shortens). */
+    static final int SEEN_GENERATION_MAX = 1_000_000;
     private final AtomicLong signedCount = new AtomicLong(), verifiedCount = new AtomicLong(), refusedCount = new AtomicLong();
-    private volatile long lastRefusalLog, lastSeenSweep;
+    private volatile long lastRefusalLog, lastEarlyRotationLog;
 
     private final ThreadLocal<MessageDigest> sha256 = ThreadLocal.withInitial(() -> {
         try { return MessageDigest.getInstance("SHA-256"); } catch (Exception e) { throw new IllegalStateException(e); }
@@ -430,14 +440,27 @@ public final class MsgSigning {
         }
     }
 
-    /** Has this signature not been seen in the last max-age window? (bounded: at most 500k remembered) */
-    private boolean fresh(byte[] sig, long now) {
+    /** Has this signature not been seen while it could be accepted? O(1): three set lookups, one insert. */
+    boolean fresh(byte[] sig, long now) {
         String d = Base64.getEncoder().encodeToString(sha256.get().digest(sig));
-        if (now - lastSeenSweep > 30_000L || seen.size() > 500_000) {
-            lastSeenSweep = now;
-            seen.entrySet().removeIf(e -> e.getValue() < now - 2 * maxAgeMs);
+        if (now - seenSince >= maxAgeMs || now < seenSince || seenNow.size() >= SEEN_GENERATION_MAX) rotateSeen(now);
+        if (seenBefore.contains(d) || seenEarlier.contains(d)) return false;
+        return seenNow.add(d);
+    }
+
+    private synchronized void rotateSeen(long now) {
+        boolean due = now - seenSince >= maxAgeMs || now < seenSince;
+        if (!due && seenNow.size() < SEEN_GENERATION_MAX) return;            // another thread rotated meanwhile
+        if (!due && now - lastEarlyRotationLog > 60_000L) {
+            lastEarlyRotationLog = now;
+            ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info)
+                    .warn("MESSAGE SIGNATURE: more than " + SEEN_GENERATION_MAX + " signed messages in " + (now - seenSince) / 1000
+                            + " s: the replay memory rotates early (a replay older than that is caught only by its age)");
         }
-        return seen.putIfAbsent(d, now) == null;
+        seenEarlier = seenBefore;
+        seenBefore = seenNow;
+        seenNow = ConcurrentHashMap.newKeySet();
+        seenSince = now;
     }
 
     private PeerTrustRegistry peers() {

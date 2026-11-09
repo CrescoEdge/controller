@@ -211,4 +211,18 @@ class MsgSigningTest {
                 signPerS, 1000.0 / signPerS, verifyPerS, 1000.0 / verifyPerS);
         assertTrue(signPerS > 20 && verifyPerS > 100);
     }
+
+    /** The replay memory is three generations of one max-age each: a signature is caught for at least two max-ages, no scan. */
+    @Test
+    void theReplayMemoryRotatesWithoutScanning() {
+        MsgSigning ms = rA.msgSigning();
+        long t0 = System.currentTimeMillis() + 1000, age = 300_000L;      // msg_signature_max_age_ms default
+        byte[] sig = new byte[64];
+        new java.security.SecureRandom().nextBytes(sig);
+        assertTrue(ms.fresh(sig, t0), "a new signature");
+        assertFalse(ms.fresh(sig, t0 + 1), "the same signature again");
+        assertFalse(ms.fresh(sig, t0 + age + 1), "one max-age later (its generation rotated once)");
+        assertFalse(ms.fresh(sig, t0 + 2 * age + 2), "two max-ages later: still caught (an accepted signature is at most two old)");
+        assertTrue(ms.fresh(sig, t0 + 3 * age + 3), "three max-ages later it is forgotten (its age refuses it long before)");
+    }
 }
