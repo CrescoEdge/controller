@@ -112,7 +112,7 @@ def main():
             r_hi = get(R[b], "scale", hi, "control_plane", "targets", "agent", "concurrent", "8", "msg_per_s")
             if None not in (p_lo, p_hi, r_lo, r_hi):
                 flat = p_hi <= 1.25 * p_lo and r_hi >= 0.8 * r_lo
-                rows.append(["per-op cost flat %s->%s (%s)" % (lo, hi, b), "", "", "", "PASS" if flat else "FAIL"])
+                rows.append(["per-op cost flat %s->%s (%s)" % (lo, hi, b)] + [""] * len(builds) + ["PASS" if flat else "FAIL"])
                 if not flat:
                     fails.append("per-op cost %s: p50 %s->%s ms, rate %s->%s" % (b, p_lo, p_hi, r_lo, r_hi))
     row("log ERROR lines", {b: get(R[b], "logs", "error_lines") for b in builds})
