@@ -31,8 +31,12 @@ trap stopall EXIT
 waitport() { for _ in $(seq 1 90); do nc -z 127.0.0.1 "$1" 2>/dev/null && return 0; sleep 2; done; return 1; }
 cpu() { ps -o time= -p "$(cat "$WORK/pid.$1")" 2>/dev/null | awk -F'[:.]' '{ if (NF==3) print $1*60+$2; else print $1*3600+$2*60+$3 }'; }
 pin() { local f; f=$(find "$WORK/nodes/global/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1); [ -n "$f" ] && head -1 "$f" | tr -d '[:space:]'; }
-count() { "$PY" "$HERE/fleet_agents.py" --port "$WS0" --key "$KEY" --pin "$(pin)" | "$PY" -c 'import json,sys
-d=json.loads(sys.stdin.read() or "{}"); print(len([a for a in d.get("agents", []) if a.split("/")[1].startswith("s")]))' 2>/dev/null || echo 0; }
+count() { # agents s1..sN the global lists (0 when it cannot be asked)
+  local n; n=$("$PY" "$HERE/fleet_agents.py" --port "$WS0" --key "$KEY" --pin "$(pin)" 2>/dev/null | "$PY" -c 'import json,sys
+try: d=json.loads(sys.stdin.read() or "{}")
+except ValueError: d={}
+print(len([a for a in d.get("agents", []) if a.split("/")[1].startswith("s")]))' 2>/dev/null)
+  case "$n" in ''|*[!0-9]*) echo 0;; *) echo "$n";; esac; }
 
 launch global 1024m "-Dis_global=true -Dregionname=glob -Dagentname=gc -Dnetdiscoveryport=$((P0+5)) -Dbroker_port=$((P0+10)) -Ddiscovery_port=$((P0+10)) -Denable_wsapi=true -Dwsapi_port=$WS0"
 waitport "$WS0" || { echo "FATAL: the global did not come up"; exit 2; }
