@@ -51,7 +51,10 @@ launch() { # name region agent flags
   local d="$WORK/nodes/$1" id=""; mkdir -p "$d"
   if [ "${LEGACY:-0}" = 0 ] && [ "$MODE" = production ]; then
     local n="$PKI/nodes/$2_$3"
-    id="-Dsecurity_profile=production -Dtenant_id=t1 -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass"
+    # FIPS approved-only keystores are BCFKS: converted with the agent jar (an agent without that tool keeps the PKCS#12 file)
+    local store="$n/node.p12"
+    java -jar "$JAR" --crypto convert-keystore "$n/node.p12" "$n/node.p12.pass" "$n/node.bcfks" >/dev/null 2>&1 && store="$n/node.bcfks"
+    id="-Dsecurity_profile=production -Dtenant_id=t1 -Didentity_keystore=$store -Didentity_keystore_password_file=$n/node.p12.pass"
     id="$id -Dtrust_anchors=$n/trust-anchors.pem -Drevocation_file=$PKI/revocations.pem -Dplugin_signing_truststore=$WORK/codesign.pem"
     id="$id -Dwsapi_client_ca=$n/trust-anchors.pem"
   fi
