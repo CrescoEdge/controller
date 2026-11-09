@@ -158,6 +158,9 @@ class JarTimestampTest {
         Path foreign = sign(jar("c.jar"), "/foreign", "foreign-stamp.jar");
         assertNotNull(JarSignatures.verify(stamped, trust), "valid now, timestamped");
         assertNotNull(JarSignatures.verify(plain, trust), "valid now, no timestamp");
+        // the providers-only verifier (security_profile=production) decides the same
+        assertNotNull(JarSignatures.verifyCms(stamped, trust), "valid now, timestamped (CMS)");
+        assertNotNull(JarSignatures.verifyCms(plain, trust), "valid now, no timestamp (CMS)");
 
         long wait = signerNotAfter - System.currentTimeMillis() + 1_500;
         if (wait > 0) Thread.sleep(wait);
@@ -168,5 +171,10 @@ class JarTimestampTest {
                 "without a timestamp an expired signer is refused");
         assertThrows(JarSignatures.Rejected.class, () -> JarSignatures.verify(foreign, trust),
                 "a timestamp from an untrusted authority vouches for nothing");
+        assertNotNull(JarSignatures.verifyCms(stamped, trust), "a trusted timestamp vouches the jar was signed in time (CMS)");
+        assertThrows(JarSignatures.Rejected.class, () -> JarSignatures.verifyCms(plain, trust),
+                "without a timestamp an expired signer is refused (CMS)");
+        assertThrows(JarSignatures.Rejected.class, () -> JarSignatures.verifyCms(foreign, trust),
+                "a timestamp from an untrusted authority vouches for nothing (CMS)");
     }
 }
