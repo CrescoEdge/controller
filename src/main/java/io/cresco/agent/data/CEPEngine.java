@@ -93,15 +93,14 @@ public class CEPEngine {
     }
 
     public boolean removeCEP(String cepId) {
-        boolean isRemoved = false;
+        // out of the map under the lock, shut down outside it: a Siddhi runtime's shutdown may block, and every CEP
+        // input looks its instance up under this lock (getCEPInstance)
+        CEPInstance removed;
         synchronized (lockCEP) {
-            if(cepMap.containsKey(cepId)) {
-                cepMap.get(cepId).shutdown();
-            }
-            cepMap.remove(cepId);
-            isRemoved = true;
+            removed = cepMap.remove(cepId);
         }
-        return isRemoved;
+        if (removed != null) removed.shutdown();
+        return true;
     }
 
     public void shutdown() {

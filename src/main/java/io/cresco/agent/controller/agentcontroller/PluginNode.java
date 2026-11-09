@@ -12,27 +12,29 @@ import java.util.*;
 
 public class PluginNode {
 
-    private DBInterfaceImpl gdb;
-    private PluginBuilder plugin;
-    private Gson gson;
+    // Read with no lock by every delivery (PluginAdmin.msgIn: active, pluginService) and every send (bundleRunsPlugin:
+    // bundleID) while other threads start, update and remove the plugin: what never changes is final, the rest volatile.
+    private final DBInterfaceImpl gdb;
+    private final PluginBuilder plugin;
+    private final Gson gson;
 
     //private Logger logger =
-    private String pluginID;
-    private String name;
-    private String version;
-    private String MD5;
-    private String jarPath;
-    private boolean active = false;
-    private int status_code = 3;
-    private String status_desc = "Plugin Configuration Created";
-    private long watchdog_ts = 0;
-    private int watchdog_period = 0;
-    private long runtime = 0;
-    private long bundleID;
+    private final String pluginID;
+    private final String name;
+    private final String version;
+    private final String MD5;
+    private final String jarPath;
+    private volatile boolean active = false;
+    private volatile int status_code = 3;
+    private volatile String status_desc = "Plugin Configuration Created";
+    private volatile long watchdog_ts = 0;
+    private volatile int watchdog_period = 0;
+    private volatile long runtime = 0;
+    private final long bundleID;
 
-    private PluginService pluginService;
-    private Map<String,Object> configMap;
-    private List<gEdge> edgeList;
+    private volatile PluginService pluginService;
+    private final Map<String,Object> configMap;
+    private final List<gEdge> edgeList;
 
     //private String inode_id;
     //private String resource_id;
@@ -205,7 +207,12 @@ public class PluginNode {
 
     public void setPluginService(PluginService pluginService) {
         this.pluginService = pluginService;
-        this.active = true;
+        this.active = true;          // after the service: a reader that sees active sees the service
+    }
+
+    /** The plugin is being removed: nothing more is delivered to it (PluginAdmin.msgIn). */
+    public void deactivate() {
+        this.active = false;
     }
 
     /*

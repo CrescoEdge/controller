@@ -50,30 +50,20 @@ public class AgentProducer {
     private class ClearProducerTask extends TimerTask {
         public void run() {
             logger.trace("Running ClearProducerTask cleanup...");
-            List<String> keysToRemove = new ArrayList<>();
-            synchronized (producerWorkers) { // Synchronize access for iteration
-                for (Entry<String, ActiveProducerWorker> entry : producerWorkers.entrySet()) {
-                    ActiveProducerWorker apw = entry.getValue();
-                    logger.trace("Checking worker [{}] for queue [{}], current isActive flag: {}", apw.toString(), entry.getKey(), apw.isActive);
-
-                    if (apw.isActive) {
-                        apw.isActive = false; // Reset flag for next cycle, worker stays if it was active
-                        logger.trace("Worker for queue [{}] was active, resetting flag for next check.", entry.getKey());
-                    } else {
-                        // Worker was not marked active in the last cycle, implies it wasn't used or failed.
-                        logger.info("Worker for queue [{}] was not active in the last cycle. Shutting it down.", entry.getKey());
-                        if (apw.shutdown()) { // shutdown() now returns boolean
-                            keysToRemove.add(entry.getKey());
-                        } else {
-                            logger.warn("Failed to cleanly shutdown inactive worker for queue [{}]. Will still remove from map.", entry.getKey());
-                            keysToRemove.add(entry.getKey()); // Remove even if shutdown had issues to prevent using a broken worker
-                        }
+            // no lock: the map is concurrent. A worker idle for a cycle leaves the map (that worker only: one made since
+            // for the same queue stays) and is closed outside any lock -- a JMS close may block on the broker, and every
+            // send looks its worker up in this map.
+            for (Entry<String, ActiveProducerWorker> entry : producerWorkers.entrySet()) {
+                ActiveProducerWorker apw = entry.getValue();
+                logger.trace("Checking worker [{}] for queue [{}], current isActive flag: {}", apw.toString(), entry.getKey(), apw.isActive);
+                if (apw.isActive) {
+                    apw.isActive = false; // Reset flag for next cycle, worker stays if it was active
+                    logger.trace("Worker for queue [{}] was active, resetting flag for next check.", entry.getKey());
+                } else if (producerWorkers.remove(entry.getKey(), apw)) {
+                    logger.info("Worker for queue [{}] was not active in the last cycle. Shutting it down.", entry.getKey());
+                    if (!apw.shutdown()) {
+                        logger.warn("Failed to cleanly shutdown inactive worker for queue [{}] (removed from the map).", entry.getKey());
                     }
-                }
-                // Remove outside the loop to avoid ConcurrentModificationException
-                for (String key : keysToRemove) {
-                    producerWorkers.remove(key);
-                    logger.info("Removed inactive worker for queue [{}] from producerWorkers map.", key);
                 }
             }
             logger.trace("ClearProducerTask cleanup finished. Active workers: {}", producerWorkers.size());
@@ -151,22 +141,20 @@ public class AgentProducer {
         if (failedUri == null) return;
         boolean baseUriFailed = failedUri.equals(this.baseURI);
         int removed = 0;
-        synchronized (producerWorkers) { // Synchronize for safe iteration and modification
-            List<String> keys = new ArrayList<>(producerWorkers.keySet());
-            for (String key : keys) {
-                ActiveProducerWorker worker = producerWorkers.get(key); // Get before removing
-                if (worker == null) continue;
-                boolean workerUriFailed = failedUri.equals(worker.getConnectionURI());
-                if (!workerUriFailed && !baseUriFailed) continue;
-                if (baseUriFailed) {
-                    logger.warn("Shutting down and removing worker for destination [{}] due to base connection failure on [{}]", key, failedUri);
-                } else {
-                    logger.warn("Shutting down and removing worker for destination [{}]: its own connection failed on [{}]", key, failedUri);
-                }
-                worker.shutdown();
-                producerWorkers.remove(key); // Explicitly remove after shutdown
-                removed++;
+        // no lock (the map is concurrent): each worker leaves the map first, then is closed outside any lock
+        for (Entry<String, ActiveProducerWorker> e : producerWorkers.entrySet()) {
+            String key = e.getKey();
+            ActiveProducerWorker worker = e.getValue();
+            boolean workerUriFailed = failedUri.equals(worker.getConnectionURI());
+            if (!workerUriFailed && !baseUriFailed) continue;
+            if (!producerWorkers.remove(key, worker)) continue;
+            if (baseUriFailed) {
+                logger.warn("Shutting down and removing worker for destination [{}] due to base connection failure on [{}]", key, failedUri);
+            } else {
+                logger.warn("Shutting down and removing worker for destination [{}]: its own connection failed on [{}]", key, failedUri);
             }
+            worker.shutdown();
+            removed++;
         }
         logger.info("Invalidated {} worker(s) for failed URI [{}] (base URI [{}])", removed, failedUri, this.baseURI);
     }
@@ -232,30 +220,38 @@ public class AgentProducer {
 
                 // Get or create worker
                 final String workerKey = dstPath;
-                apw = producerWorkers.computeIfAbsent(workerKey, key -> {
-                    // Variables from the enclosing scope used in a lambda must be final or effectively final.
-                    // 'attempt' and 'MAX_SEND_RETRIES_CONFIG' can be used if they are not reassigned
-                    // or if their values from the specific iteration are passed correctly.
-                    // Here, using effectivelyFinalAttempt and MAX_SEND_RETRIES_CONFIG (which is final by declaration)
-                    logger.info("No existing worker for [{}]. Attempting to create new worker (Overall Send Attempt {}/{})", key, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
+                // get or create the worker. A new worker opens a JMS session and producer (a round trip to the broker):
+                // made outside the map's lock (computeIfAbsent would hold a bin of the map, and every send to a queue
+                // in that bin, across it); two threads racing for a new queue keep one worker and close the other
+                apw = producerWorkers.get(workerKey);
+                if (apw == null) {
+                    logger.info("No existing worker for [{}]. Attempting to create new worker (Overall Send Attempt {}/{})", workerKey, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
+                    ActiveProducerWorker made = null;
                     try {
-                        ActiveProducerWorker newWorker = new ActiveProducerWorker(controllerEngine, key, baseURI);
-                        if (newWorker.isActive) {
-                            logger.info("Successfully created and cached new worker for [{}]", key);
-                            return newWorker;
-                        } else {
-                            logger.error("Failed to initialize new ActiveProducerWorker for [{}]. Returning null for computeIfAbsent.", key);
-                            return null;
-                        }
+                        made = new ActiveProducerWorker(controllerEngine, workerKey, baseURI);
                     } catch (Exception e) {
-                        logger.error("Exception during ActiveProducerWorker creation for key [{}]: {}", key, e.getMessage(), e);
-                        return null;
+                        logger.error("Exception during ActiveProducerWorker creation for key [{}]: {}", workerKey, e.getMessage(), e);
                     }
-                });
+                    if (made != null && !made.isActive) {
+                        logger.error("Failed to initialize new ActiveProducerWorker for [{}].", workerKey);
+                        made.shutdown();
+                        made = null;
+                    }
+                    if (made != null) {
+                        ActiveProducerWorker other = producerWorkers.putIfAbsent(workerKey, made);
+                        if (other != null) {
+                            made.shutdown();                // another send made one first: use that one
+                            apw = other;
+                        } else {
+                            logger.info("Successfully created and cached new worker for [{}]", workerKey);
+                            apw = made;
+                        }
+                    }
+                }
 
 
                 if (apw == null) {
-                    logger.error("Failed to get or create a valid worker for destination [{}] (Attempt {}/{}) after computeIfAbsent.", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
+                    logger.error("Failed to get or create a valid worker for destination [{}] (Attempt {}/{}).", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
                 } else {
                     apw.isActive = true;
 
@@ -272,12 +268,9 @@ public class AgentProducer {
                             break;
                         } catch (JMSException jmse) {
                             logger.error("JMSException during sendMessage via worker for [{}] (Attempt {}/{}): {}", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG, jmse.getMessage());
-                            synchronized (producerWorkers) {
-                                if (producerWorkers.get(workerKey) == apw) {
-                                    logger.warn("Removing failed worker for [{}] from map due to JMSException.", workerKey);
-                                    apw.shutdown();
-                                    producerWorkers.remove(workerKey);
-                                }
+                            if (producerWorkers.remove(workerKey, apw)) {
+                                logger.warn("Removing failed worker for [{}] from map due to JMSException.", workerKey);
+                                apw.shutdown();
                             }
                         }
                     }
@@ -285,12 +278,9 @@ public class AgentProducer {
             } catch (Exception ex) {
                 logger.error("Unexpected Exception in AgentProducer.sendMessage for [{}] (Attempt {}/{}): {}", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG, ex.getMessage(), ex);
                 if (apw != null) {
-                    synchronized (producerWorkers) {
-                        if (producerWorkers.get(dstPath) == apw) {
-                            logger.warn("Removing worker for [{}] due to unexpected exception.", dstPath);
-                            apw.shutdown();
-                            producerWorkers.remove(dstPath);
-                        }
+                    if (producerWorkers.remove(dstPath, apw)) {
+                        logger.warn("Removing worker for [{}] due to unexpected exception.", dstPath);
+                        apw.shutdown();
                     }
                 }
             }
