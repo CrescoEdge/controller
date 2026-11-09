@@ -80,6 +80,7 @@ public class CLoggerImpl implements CLogger {
     }
 
     public void error(String logMessage, Object ... params) {
+        if (!wanted(Level.Error)) return;           // nobody takes it: no formatting (the arguments' toString neither)
         error(replaceBrackets(logMessage, params));
     }
 
@@ -88,6 +89,7 @@ public class CLoggerImpl implements CLogger {
     }
 
     public void warn(String logMessage, Object ... params) {
+        if (!wanted(Level.Warn)) return;           // nobody takes it: no formatting (the arguments' toString neither)
         warn(replaceBrackets(logMessage, params));
     }
 
@@ -96,6 +98,7 @@ public class CLoggerImpl implements CLogger {
     }
 
     public void info(String logMessage, Object ... params) {
+        if (!wanted(Level.Info)) return;           // nobody takes it: no formatting (the arguments' toString neither)
         info(replaceBrackets(logMessage, params));
     }
 
@@ -104,12 +107,14 @@ public class CLoggerImpl implements CLogger {
     }
 
     public void debug(String logMessage, Object ... params) {
+        if (!wanted(Level.Debug)) return;           // nobody takes it: no formatting (the arguments' toString neither)
         debug(replaceBrackets(logMessage, params));
     }
 
     public void trace(String logMessage) { log(logMessage, Level.Trace); }
 
     public void trace(String logMessage, Object ... params) {
+        if (!wanted(Level.Trace)) return;           // nobody takes it: no formatting (the arguments' toString neither)
         trace(replaceBrackets(logMessage, params));
     }
 
@@ -122,6 +127,7 @@ public class CLoggerImpl implements CLogger {
     public void trace(String logMessage, Throwable throwable) { log(logMessage, Level.Trace, throwable); }
 
     public void log(String messageBody, Level level, Throwable throwable) {
+        if (!wanted(level)) return;
 
         // Every bundle logs through here: a secret-looking name=value (a broker URI carrying
         // activemq_client_transport_options such as keyStorePassword=..., in a message or in an
@@ -162,6 +168,7 @@ public class CLoggerImpl implements CLogger {
     }
 
     public void log(String messageBody, Level level) {
+        if (!wanted(level)) return;            // a disabled level (hot-path trace and debug lines) builds nothing
 
         if (willEmit(level)) messageBody = ConfigRedaction.redactText(messageBody);   // see log(String, Level, Throwable)
 
@@ -200,6 +207,16 @@ public class CLoggerImpl implements CLogger {
             // best-effort dataplane mirror; primary sink already handled the message
         }
 
+    }
+
+    /**
+     * True when a line of this level goes anywhere: the backend logs it ({@link #willEmit}), or a log-stream session is
+     * open (the dataplane mirror applies its own levels). A line nobody takes is neither formatted nor built.
+     */
+    private boolean wanted(Level level) {
+        if (willEmit(level)) return true;
+        io.cresco.agent.data.DataPlaneLogger d = dataPlaneLogger;
+        return d != null && d.active();
     }
 
     /** True when the SLF4J backend logs this level, or the backend is dead and the stderr failsafe will. */

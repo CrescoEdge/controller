@@ -45,9 +45,16 @@ public class DataPlaneLogger {
 
         synchronized (lockMap) {
             loggerEnabledMap.clear();
+            active = false;
         }
 
     }
+
+    /** Some log-stream session is open (read on every log call, without the lock). */
+    private volatile boolean active;
+
+    /** Whether any log-stream session is open: a log line below the backend's level is wanted only then. */
+    public boolean active() { return active; }
 
     public void setIsEnabled(String sessionId, boolean isEnabledSet) {
         synchronized (lockMap) {
@@ -59,6 +66,7 @@ public class DataPlaneLogger {
                 loggerEnabledMap.remove(sessionId);
                 loggerMap.remove(sessionId);
             }
+            active = !loggerEnabledMap.isEmpty();
         }
     }
 

@@ -10,7 +10,6 @@ import io.cresco.library.security.CrescoIdentity;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
@@ -356,39 +355,85 @@ public final class MsgSigning {
                 && !Caller.RESERVED_PARAMS.contains(key);
     }
 
-    /** The bytes a signature covers (length-prefixed, parameters in key order; a parameter without a value is absent). */
+    /**
+     * The bytes a signature covers (length-prefixed, parameters in key order; a parameter without a value is absent): the
+     * version, the type and the source header, then the number of covered parameters and each one's key and value -- every
+     * string as a big-endian int length (-1 for null) and its UTF-8 bytes. Built on every message signed, MAC'd or checked,
+     * so without a sorted map or a stream: the same bytes as before (CanonicalFormTest holds it to the reference).
+     */
     static byte[] canonical(MsgEvent m) {
-        try {
-            ByteArrayOutputStream bo = new ByteArrayOutputStream(512);
-            DataOutputStream o = new DataOutputStream(bo);
-            str(o, VERSION);
-            str(o, m.getMsgType() == null ? null : m.getMsgType().name());
-            str(o, m.getSrcRegion());
-            str(o, m.getSrcAgent());
-            str(o, m.getSrcPlugin());
-            TreeMap<String, String> p = new TreeMap<>();
-            if (m.getParams() != null) {
-                for (Map.Entry<String, String> e : m.getParams().entrySet()) {
-                    if (e.getValue() != null && covered(e.getKey())) p.put(e.getKey(), e.getValue());
+        Map<String, String> params = m.getParams();
+        String[] kv = new String[params == null ? 0 : 2 * params.size()];
+        int n = 0;
+        if (params != null) {
+            for (Map.Entry<String, String> e : params.entrySet()) {
+                String v = e.getValue();
+                if (v != null && covered(e.getKey()) && 2 * n + 1 < kv.length) {
+                    kv[2 * n] = e.getKey();
+                    kv[2 * n + 1] = v;
+                    n++;
                 }
             }
-            o.writeInt(p.size());
-            for (Map.Entry<String, String> e : p.entrySet()) {
-                str(o, e.getKey());
-                str(o, e.getValue());
+        }
+        sortPairs(kv, n);
+        Bytes o = new Bytes(256 + 64 * n);
+        o.str(VERSION);
+        o.str(m.getMsgType() == null ? null : m.getMsgType().name());
+        o.str(m.getSrcRegion());
+        o.str(m.getSrcAgent());
+        o.str(m.getSrcPlugin());
+        o.writeInt(n);
+        for (int i = 0; i < n; i++) {
+            o.str(kv[2 * i]);
+            o.str(kv[2 * i + 1]);
+        }
+        return o.toByteArray();
+    }
+
+    /** Sort the first {@code n} (key, value) pairs of {@code kv} by key (String order, as a TreeMap); keys are unique. */
+    private static void sortPairs(String[] kv, int n) {
+        for (int i = 1; i < n; i++) {                        // insertion sort: a message has a few dozen parameters
+            String k = kv[2 * i], v = kv[2 * i + 1];
+            int j = i - 1;
+            while (j >= 0 && kv[2 * j].compareTo(k) > 0) {
+                kv[2 * j + 2] = kv[2 * j];
+                kv[2 * j + 3] = kv[2 * j + 1];
+                j--;
             }
-            o.flush();
-            return bo.toByteArray();
-        } catch (IOException e) {
-            throw new IllegalStateException(e);
+            kv[2 * j + 2] = k;
+            kv[2 * j + 3] = v;
         }
     }
 
-    private static void str(DataOutputStream o, String s) throws IOException {
-        if (s == null) { o.writeInt(-1); return; }
-        byte[] b = s.getBytes(StandardCharsets.UTF_8);
-        o.writeInt(b.length);
-        o.write(b);
+    /** A growable byte buffer writing what DataOutputStream would: big-endian ints, length-prefixed UTF-8 strings. */
+    private static final class Bytes {
+        private byte[] b;
+        private int len;
+
+        Bytes(int capacity) { b = new byte[Math.max(64, capacity)]; }
+
+        private void room(int more) {
+            if (len + more > b.length) b = java.util.Arrays.copyOf(b, Math.max(b.length * 2, len + more));
+        }
+
+        void writeInt(int v) {
+            room(4);
+            b[len++] = (byte) (v >>> 24);
+            b[len++] = (byte) (v >>> 16);
+            b[len++] = (byte) (v >>> 8);
+            b[len++] = (byte) v;
+        }
+
+        void str(String s) {
+            if (s == null) { writeInt(-1); return; }
+            byte[] u = s.getBytes(StandardCharsets.UTF_8);
+            writeInt(u.length);
+            room(u.length);
+            System.arraycopy(u, 0, b, len, u.length);
+            len += u.length;
+        }
+
+        byte[] toByteArray() { return java.util.Arrays.copyOf(b, len); }
     }
 
     // ================================================================ the recipient
@@ -621,8 +666,18 @@ public final class MsgSigning {
     }
 
     private String selfName() {
-        return ce.tenant() + "/" + ce.cstate.getRegion() + "/" + ce.cstate.getAgent();
+        String t = ce.tenant(), r = ce.cstate.getRegion(), a = ce.cstate.getAgent();
+        String[] c = selfNameCache;                  // built anew only when the node's name changes
+        if (c != null && java.util.Objects.equals(c[0], t) && java.util.Objects.equals(c[1], r) && java.util.Objects.equals(c[2], a)) {
+            return c[3];
+        }
+        String name = t + "/" + r + "/" + a;
+        selfNameCache = new String[]{t, r, a, name};
+        return name;
     }
+
+    /** tenant, region, agent and the name built of them, as one value. */
+    private volatile String[] selfNameCache;
 
     private PrivateKey ownKey() throws Exception {
         return ce.getCertificateManager().identityPrivateKey();

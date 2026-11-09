@@ -334,8 +334,20 @@ public final class SecuritySettings {
 
     /** {@code broker_superuser_tenants}: tenants whose infra and admin act across tenants (default {@code cresco-system}). */
     public static java.util.Set<String> superuserTenants(Config config) {
-        return csv(config == null ? null : config.getStringParam("broker_superuser_tenants", "cresco-system"));
+        String raw = config == null ? null : config.getStringParam("broker_superuser_tenants", "cresco-system");
+        // read on every message checked (MsgSigning.verify): parsed again only when the setting changes
+        Object[] last = lastSuperuser;
+        if (last != null && java.util.Objects.equals(last[0], raw)) {
+            @SuppressWarnings("unchecked") java.util.Set<String> parsed = (java.util.Set<String>) last[1];
+            return parsed;
+        }
+        java.util.Set<String> parsed = java.util.Collections.unmodifiableSet(csv(raw));
+        lastSuperuser = new Object[]{raw, parsed};
+        return parsed;
     }
+
+    /** The last {@code broker_superuser_tenants} value read and its parsed set. */
+    private static volatile Object[] lastSuperuser;
 
     // ------------------------------------------------------------------ verified callers (phase 3)
 

@@ -182,8 +182,8 @@ public class AppScheduler implements IncomingApp {
                     gNode node_to = nodeMap.get(edge.node_to);
                     gNode node_from = nodeMap.get(edge.node_from);
 
-                    logger.debug("NODE_TO PARAMS: " + io.cresco.agent.controller.communication.ParamLog.names(node_to.params));
-                    logger.debug("NODE_FROM PARAMS: " + io.cresco.agent.controller.communication.ParamLog.names(node_from.params));
+                    logger.debug("NODE_TO PARAMS: {}", io.cresco.agent.controller.communication.ParamLog.namesOf(node_to.params));
+                    logger.debug("NODE_FROM PARAMS: {}", io.cresco.agent.controller.communication.ParamLog.namesOf(node_from.params));
 
                     String ntRegion = node_to.params.get("location_region");
                     String ntAgent = node_to.params.get("location_agent");

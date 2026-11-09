@@ -64,7 +64,7 @@ public class ResourceScheduler implements IncomingResource {
                     logger.debug("Scheduling agentcontroller on region=" + region + " agent=" + agent);
                     MsgEvent me = pluginAddFor(ce);
 
-                    logger.debug("pluginadd message: " + io.cresco.agent.controller.communication.ParamLog.describe(me));
+                    logger.debug("pluginadd message: {}", io.cresco.agent.controller.communication.ParamLog.of(me));
 
                     //new Thread(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me)).start();
                     addPluginExecutor.execute(new PollAddPlugin(controllerEngine,resource_id, inode_id,region,agent, me));

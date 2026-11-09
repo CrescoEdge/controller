@@ -43,8 +43,8 @@ def pct(xs, p):
     return xs[min(len(xs) - 1, max(0, int(round(p / 100.0 * (len(xs) - 1)))))]
 
 
-def serial(c, region, agent, n):
-    for _ in range(min(20, n)):          # warm up (connections, JIT, caches)
+def serial(c, region, agent, n, warmup=500):
+    for _ in range(warmup):              # warm up (connections, JIT -- C2 compiles a path after thousands of calls -- caches)
         call(c, region, agent)
     lat, errors = [], 0
     for _ in range(n):
@@ -104,6 +104,7 @@ def main():
     ap.add_argument("--pin", default="")
     ap.add_argument("--target", action="append", default=[], help="name=region/agent (repeatable)")
     ap.add_argument("--n", type=int, default=300)
+    ap.add_argument("--warmup", type=int, default=500, help="calls to each target before the serial measurement")
     ap.add_argument("--threads", default="1,8,32")
     ap.add_argument("--seconds", type=float, default=15.0)
     a = ap.parse_args()
@@ -113,7 +114,7 @@ def main():
         for t in a.target:
             name, path = t.split("=", 1)
             region, agent = path.split("/", 1)
-            r = {"serial": serial(c, region, agent, a.n), "concurrent": {}}
+            r = {"serial": serial(c, region, agent, a.n, a.warmup), "concurrent": {}}
             for th in [int(x) for x in a.threads.split(",") if x.strip()]:
                 r["concurrent"][str(th)] = concurrent(a, region, agent, th, a.seconds)
             out["targets"][name] = r

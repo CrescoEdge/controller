@@ -398,7 +398,7 @@ public class AgentExecutor implements Executor {
             }
 
             ce.setCompressedParam("agentslist",gson.toJson(controllerEngine.getGDB().getAgentList(actionRegionAgents)));
-            logger.trace("list agents return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list agents return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());

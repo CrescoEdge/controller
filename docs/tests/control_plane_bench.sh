@@ -71,7 +71,10 @@ launch region rgr rc "-Dis_region=true -Dglobal_controller_host=127.0.0.1 -Dglob
 waitport $((P0+20)) || { echo "FATAL: the region did not come up"; exit 2; }
 launch a1 glob a1 "-Dis_agent=true -Dregional_controller_host=127.0.0.1 -Dregional_controller_port=$((P0+5)) -Dnetdiscoveryport=$((P0+25)) -Denable_wsapi=false"
 launch b1 rgr b1 "-Dis_agent=true -Dregional_controller_host=127.0.0.1 -Dregional_controller_port=$((P0+15)) -Dnetdiscoveryport=$((P0+35)) -Denable_wsapi=false"
-pin() { local f; f=$(find "$WORK/nodes/global/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1); [ -n "$f" ] && head -1 "$f" | tr -d '[:space:]'; }
+# the wsapi certificate's fingerprint: its ws.fingerprint file, or (an earlier build writes none) the live certificate's
+pin() { local f; f=$(find "$WORK/nodes/global/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1)
+  if [ -n "$f" ]; then head -1 "$f" | tr -d '[:space:]'
+  else openssl s_client -connect "127.0.0.1:$WS0" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2; fi; }
 ready() { "$PY" - "$WS0" "$KEY" "$(pin)" <<'EOF'
 import sys
 from pycrescolib.clientlib import clientlib
