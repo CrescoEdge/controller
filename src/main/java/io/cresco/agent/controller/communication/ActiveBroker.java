@@ -1096,30 +1096,53 @@ public class ActiveBroker {
         List<Map<String, String>> returnBridgedRegions = new ArrayList<>();
 
         try {
-            // Process destinations from the main broker
-            ActiveMQDestination[] destinations = getBrokerDestinations();
-            if (destinations != null) {
-                for (ActiveMQDestination destination : destinations) {
-                    if (destination.isQueue()) {
-
-                        if (!broker.getBroker().getDestinationMap().get(destination).getConsumers().isEmpty()) {
-                            String physicalName = destination.getPhysicalName();
-                            String[] pathParts = physicalName.split("_");
-                            if (pathParts.length == 2) {
-                                Map<String, String> regionMap = new HashMap<>();
-                                regionMap.put("region_id", pathParts[0]);
-                                regionMap.put("agent_id", pathParts[1]);
-                                returnBridgedRegions.add(regionMap);
-                            }
-                        }
-                    }
-                }
-            }
-
+            // the controllers reached over a broker bridge: the inboxes on this broker that a BRIDGE consumes (a network
+            // subscription carries the remote controller's demand), by their raw <region>_<agent> name. A directly attached
+            // agent consumes its inbox itself -- it is not a region -- and a tenant-namespaced inbox (T.<tenant>.<region>_<agent>)
+            // is read past its prefix: split as it was, it named a "region" T.<tenant>.<region> that the global then asked
+            // for its agents, a request its own agent could only bounce (listregions hung on a global with an attached agent)
+            returnBridgedRegions = bridgedRegionsOf(broker.getBroker());
         } catch (Exception ex) {
             logger.error("Error during broker connection reconciliation: " + ex.getMessage());
         }
         return returnBridgedRegions;
+    }
+
+    /** The bridged controllers of {@code regionBroker} (see {@link #getBridgedRegions}): region_id and agent_id each. */
+    static List<Map<String, String>> bridgedRegionsOf(org.apache.activemq.broker.Broker regionBroker) {
+        List<Map<String, String>> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Map.Entry<ActiveMQDestination, org.apache.activemq.broker.region.Destination> e : regionBroker.getDestinationMap().entrySet()) {
+            ActiveMQDestination destination = e.getKey();
+            if (!destination.isQueue() || e.getValue() == null) continue;
+            boolean bridged = false;
+            for (org.apache.activemq.broker.region.Subscription sub : e.getValue().getConsumers()) {
+                if (sub.getConsumerInfo() != null && sub.getConsumerInfo().isNetworkSubscription()) { bridged = true; break; }
+            }
+            if (!bridged) continue;
+            String raw = bridgedInboxPath(destination.getPhysicalName());
+            if (raw == null || !seen.add(raw)) continue;
+            String[] pathParts = raw.split("_");
+            Map<String, String> regionMap = new HashMap<>();
+            regionMap.put("region_id", pathParts[0]);
+            regionMap.put("agent_id", pathParts[1]);
+            out.add(regionMap);
+        }
+        return out;
+    }
+
+    /** The raw {@code <region>_<agent>} of an inbox queue (tenant-namespaced or not), when it names a valid node; else null. */
+    static String bridgedInboxPath(String physicalName) {
+        if (physicalName == null) return null;
+        String raw = physicalName;
+        if (io.cresco.library.security.TenantNamespace.isNamespaced(raw)) {
+            String tenant = io.cresco.library.security.TenantNamespace.tenantOf(raw);
+            if (tenant == null || !CrescoNames.isValidTenant(tenant)) return null;      // not the T.*. wildcard either
+            raw = raw.substring(io.cresco.library.security.TenantNamespace.MARKER.length() + 1 + tenant.length() + 1);
+        }
+        String[] parts = raw.split("_");
+        if (parts.length != 2 || !CrescoNames.isValid(parts[0]) || !CrescoNames.isValid(parts[1])) return null;
+        return raw;
     }
 
 
