@@ -35,6 +35,7 @@ class MsgBatchSigningTest {
     private static ControllerEngine node(String region, String agent, boolean regional, Map<String, Object> extra) throws Exception {
         Map<String, Object> cfg = new HashMap<>(extra);
         cfg.put("broker_security_enabled", "true");
+        cfg.put("msg_signing_sessions", "false");                    // signatures only here (MsgSessionTest: session keys)
         ControllerEngine e = TlsTestSupport.engine(region, agent, cfg);
         ((TlsTestSupport.State) e.cstate).regional = regional;
         return e;
@@ -152,7 +153,7 @@ class MsgBatchSigningTest {
         }
         // b1 says so on everything it signs
         MsgEvent hello = sent(b1, a1, "hello");
-        assertEquals("2", hello.getParam(MsgSigning.VERSION_PARAM));
+        assertTrue(hello.getParam(MsgSigning.CAPS).contains("batch"));
         assertTrue(a1.msgSigning().verify(hello, plugin(b1), false).ok());
 
         long before = a1.msgSigning().batchedSignedCount();
@@ -211,7 +212,7 @@ class MsgBatchSigningTest {
     @Test
     void aNodeWithoutBatchSignaturesNeverAdvertisesThemAndIsNeverSentOne() throws Exception {
         MsgEvent fromOld = sent(old, a1, "from an older build");
-        assertNull(fromOld.getParam(MsgSigning.VERSION_PARAM), "msg_signing_batch=false advertised batch signatures");
+        assertFalse(String.valueOf(fromOld.getParam(MsgSigning.CAPS)).contains("batch"), "msg_signing_batch=false advertised batch signatures");
         assertTrue(a1.msgSigning().verify(fromOld, plugin(old), false).ok());
         for (MsgEvent m : burst(a1, old, 24)) {
             assertNull(m.getParam(MsgBatchSigner.TREE), "a batch signature to a node that cannot read one");
