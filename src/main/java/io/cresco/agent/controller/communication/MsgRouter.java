@@ -70,11 +70,14 @@ public class MsgRouter {
     private static final long READY_POLL_MS = 50L;
 
     private void forwardToLocalAgent(MsgEvent rm) {
+        // D4: a message off the wire not verified on arrival (it was re-addressed to this node on the way) is verified now
+        if (!controllerEngine.admitDeferred(rm)) return;
         // PluginBuilder.msgIn -> the engine's AgentExecutor: both set once at construction, never replaced
         controllerEngine.getPluginBuilder().msgIn(rm);
     }
 
     private void forwardToLocalPlugin(MsgEvent rm) {
+        if (!controllerEngine.admitDeferred(rm)) return;
         io.cresco.agent.controller.agentcontroller.PluginAdmin admin = controllerEngine.getPluginAdmin();
         if (admin == null) {
             unavailable(rm, Hop.LOCAL_PLUGIN, "plugin admin not available");
@@ -297,6 +300,25 @@ public class MsgRouter {
             }
             return true;
         } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    /**
+     * {@code rm} failed its authentication (D4, MsgSigning): an RPC request is answered {@code 401 unauthenticated} through
+     * the normal reply path, anything else is dropped (MsgSigning logged why). False when the reply could not be sent.
+     */
+    public static boolean answerUnauthenticated(PluginBuilder plugin, MsgEvent rm, String why) {
+        try {
+            if (isRpcRequest(rm)) {
+                MsgSigning.clear(rm);
+                rm.setParam("status_code", "401");
+                rm.setParam("status_desc", "unauthenticated: " + why);
+                rm.setReturn();
+                plugin.msgOut(rm);
+            }
+            return true;
+        } catch (Exception e) {
             return false;
         }
     }

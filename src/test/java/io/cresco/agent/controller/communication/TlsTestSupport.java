@@ -159,6 +159,10 @@ public final class TlsTestSupport {
         @Override public String getRegion() { return region; }
         @Override public String getAgent() { return agent; }
         @Override public String getAgentPath() { return region + "_" + agent; }
+        /** This node's region controller (an agent's parent), when a test sets it. */
+        public volatile String parentRegion, parentAgent;
+        @Override public String getRegionalRegion() { return parentRegion; }
+        @Override public String getRegionalAgent() { return parentAgent; }
     }
 
     /** A test node's controller state (agent, not regional). */

@@ -348,6 +348,7 @@ public class RegionalExecutor implements Executor {
             // controller comes back here addressed to this node): hand it to the waiting call, never run it again
             String ownCallId = incoming.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
             if (ownCallId != null && ControllerTiers.isReply(incoming)) {
+                if (!controllerEngine.admitDeferred(incoming)) return;
                 plugin.receiveRPC(ownCallId, incoming);
                 return;
             }
@@ -362,6 +363,11 @@ public class RegionalExecutor implements Executor {
                 return;
             }
             boolean runsHere = !ControllerTiers.targetsGlobal(incoming) || controllerEngine.cstate.isGlobalController();
+            // D4: what runs here was verified as addressed to this node -- on arrival, or now when this node did not check it
+            // then (it was re-addressed here on the way); what this region only carries on to its global is checked there
+            if (runsHere && !controllerEngine.admitDeferred(incoming)) {
+                return;
+            }
             if (runsHere && !admitted(incoming, ControllerTiers.targetsGlobal(incoming))) {
                 return;
             }

@@ -69,8 +69,10 @@ discovery_auth=compat
 discovery_compat_until=2026-12-15      # an ISO date (end of that day, UTC) or instant, at most 90 days ahead
 ```
 
-Every boot logs `WARNING: UPGRADE WINDOW OPEN until ...`. Without `discovery_compat_until` (or with one more than 90 days
-ahead) compat is ignored, and an ERROR says so. When the date passes the window closes by itself (no restart): legacy
+Every boot logs `WARNING: UPGRADE WINDOW OPEN until ...` at ERROR level, and it is repeated every hour while the window is
+open. Without `discovery_compat_until` (or with one more than 90 days ahead) compat is ignored, and an ERROR says so. The
+window is decided when the node starts: a date more than 90 days ahead stays ignored for good -- it does not open by
+itself as the date comes nearer; a restart within 90 days of it opens it. When the date passes the window closes by itself (no restart): legacy
 exchanges, unsigned messages and `agent:` registrations are refused from then on, and every boot logs that the window has
 closed until the two settings are removed. The window is not available under `security_profile=production`.
 

@@ -1,5 +1,7 @@
 package io.cresco.agent.controller.communication;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
@@ -19,12 +21,12 @@ import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.X509EncodedKeySpec;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -37,27 +39,36 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><b>What is signed.</b> The type, the source header and every parameter except those infrastructure rewrites in
  * transit: {@code routepath-*}, {@code linkcost-*}, {@code srcroute*}, {@code ttl}, the broker's caller stamp
- * ({@code cresco_caller*}, including the alias) and the signature itself. The destination header is not signed
- * ({@code region_alias} and the controller tiers rewrite it). The origin's caller is signed as a copy
- * ({@code cresco_sig_caller*}) next to the signer ({@code cresco_sig_by}), its credential ({@code cresco_sig_cred}) and
- * the signing time ({@code cresco_sig_ts}); {@code cresco_tenant} is set when the message is stamped, so it is signed.
+ * ({@code cresco_caller*}, including the alias) and the signature itself. The destination header is not signed (the
+ * controller tiers, source routes and {@code region_alias} rewrite it), but the RECIPIENT is ({@value #TO}): the node -- and
+ * plugin -- the message is for, as the origin's router decided it (after the controller tiers; the last waypoint of a
+ * source route); {@code ^<region>/<agent>} for a global function an agent hands its region controller to carry to its
+ * global. A receiver refuses a message that does not name it (or its former address, {@code region_alias}): a message
+ * signed for one node is never accepted by another. The origin's caller is signed as a copy ({@code cresco_sig_caller*})
+ * next to the signer ({@code cresco_sig_by}), its credential ({@code cresco_sig_cred}) and the signing time
+ * ({@code cresco_sig_ts}); {@code cresco_tenant} is set when the message is stamped, so it is signed.
  *
  * <p><b>Who signed.</b> A controller (region or global) signs with its leaf certificate as its credential; an agent with
- * an <i>attestation</i> its region controller issued (its tenant, region, name and public key, valid
- * {@code msg_signing_attestation_hours}, default 24) once it holds one, and with its certificate before. A receiver
- * resolves a credential, in this order: a certificate that verifies HERE as its name (a peer bound here, or under a
- * recorded region CA); a certificate whose key is the one the <i>trust bundle</i> lists for that controller; an
- * attestation signed by a controller the trust bundle lists for the attested region (or by this node). The trust bundle
- * is the list of region and global controller keys: the global builds it from the certificates its regions present on
- * their pings, signs it, and sends it down on its pongs; each region re-signs what it verified for its agents, as
- * revocation lists travel (RevocationSync). A revoked key never verifies. Credentials are verified once and cached, so a
- * message costs one hash, one map lookup and one signature check: O(1) in the size of the fleet.
+ * an <i>attestation</i> its region controller issued (its tenant, region, name, public key and the certificates its key
+ * stands on, by reference; valid {@code msg_signing_attestation_hours}, default 24) once it holds one, and with its
+ * certificate before. A receiver resolves a credential, in this order: a certificate that verifies HERE as its name (a
+ * peer bound here, or under a recorded region CA, or the operator's PKI); a certificate whose key is the one the <i>trust
+ * bundle</i> lists for that controller; an attestation signed by a controller the trust bundle lists for the attested
+ * region (or by this node). The trust bundle is the list of region and global controller keys (with the certificates
+ * behind them, by reference): the global builds it from the certificates its regions present on their pings, signs it, and
+ * sends it down on its pongs; each region re-signs what it verified for its agents. Credentials are verified once and
+ * cached (bounded); on EVERY message the signer, the certificates behind it and an attestation's issuer are checked against
+ * this node's revocations as they stand: a revoked key, a tombstoned name, and with a PKI the operator's
+ * {@code revocation_file} (key, certificate, CRL serial, an out-of-date CRL) refuse it at once. A message costs one hash,
+ * a few map lookups and one signature check (or one HMAC): O(1) in the size of the fleet.
  *
  * <p><b>What the receiver does.</b> With {@code broker_security_enabled}: an unsigned message, or one whose signature,
- * credential, age ({@code msg_signature_max_age_ms}, default 5 min, either way) or freshness (a signature seen before)
- * fails, is refused (an RPC request is answered 401). The signer must be the node of the signed caller (or, for an API
- * user, a node of the user's tenant -- any tenant's for a superuser tenant), and the broker's stamp, when there is one,
- * must be that caller: a bridge that stripped a stamp it could not vouch for no longer cuts the origin's word.
+ * credential, recipient, age ({@code msg_signature_max_age_ms}, default 5 min, either way) or freshness (a signature seen
+ * before) fails, is refused (an RPC request is answered 401). The signer must be the node of the signed caller (or, for an
+ * API user, a node of the user's tenant -- any tenant's for a superuser tenant), and the broker's stamp, when there is one,
+ * must be that caller: a bridge that stripped a stamp it could not vouch for no longer cuts the origin's word. A message
+ * this node did not check on arrival (it was not addressed to it, or it carries it on as a relay) is checked when it is
+ * dispatched here, whatever re-addressed it ({@link #verifyIfDeferred}).
  *
  * <p><b>Direct links.</b> A signature is what carries the origin's word past relays. Where there is no relay -- a message
  * between a node and its own parent or child (an agent and its region or global controller, a region and its global) --
@@ -69,7 +80,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * when ITS broker attests it first hand from the very node whose word the stamp is -- a controller trusts its own broker's
  * attestation; an agent trusts its parent's broker only for the parent's own messages -- so an origin that misjudges a
  * route is refused, never trusted. Each side offers this on the pings ({@link #P_DIRECT_OK}): an origin sends unsigned only
- * to a parent or child that said it accepts it (a node of an earlier hardened build is always sent signatures).
+ * to a parent or child that said it accepts it, and only a message whose recipient is that parent or child.
  */
 public final class MsgSigning {
 
@@ -82,6 +93,10 @@ public final class MsgSigning {
     public static final String SIG = "cresco_sig", BY = "cresco_sig_by", TS = "cresco_sig_ts", CRED = "cresco_sig_cred",
             PENDING = "cresco_sig_pending", S_CALLER = "cresco_sig_caller", S_TENANT = "cresco_sig_caller_tenant",
             S_ROLES = "cresco_sig_caller_roles";
+    /** The signed recipient: {@code <region>/<agent>/<plugin>} (plugin empty for the node itself), or {@code ^<region>/<agent>}. */
+    public static final String TO = "cresco_sig_to";
+    /** On a message off the wire this node did not verify on arrival (never on the wire: every receiver removes it). */
+    public static final String DEFERRED = "cresco_sig_deferred";
 
     /** Ping/pong parameters: a child's certificate and what it holds; the parent's attestation and trust bundle. */
     static final String P_CERT = "sig_cert", P_ATT_EXP = "sig_att_exp", P_ATT = "sig_att", P_BUNDLE_HAVE = "sig_bundle_have",
@@ -94,7 +109,7 @@ public final class MsgSigning {
     static final long DIRECT_OFFER_MS = 60_000L;
     static final int DIRECT_CHILDREN_MAX = 200_000;
 
-    private static final String VERSION = "cresco-msg-v1";
+    private static final String VERSION = "cresco-msg-v2";
     private static final Gson GSON = new Gson();
 
     private final ControllerEngine ce;
@@ -111,48 +126,49 @@ public final class MsgSigning {
     private final int batchThreads;
     private volatile MsgBatchSigner batcher;
     /** What the nodes (region_agent) this node authenticated a message from read ({@link #CAPS}): bounded. */
-    private final com.google.common.cache.Cache<String, Integer> peerCaps =
-            com.google.common.cache.CacheBuilder.newBuilder().maximumSize(BATCH_PEERS_MAX).build();
+    private final Cache<String, Integer> peerCaps = CacheBuilder.newBuilder().maximumSize(BATCH_PEERS_MAX).build();
     /** {@code msg_signing_sessions} (default true): end-to-end session keys with the nodes that read them. */
     private final boolean sessionsOn;
     private final MsgSessions sessions;
     private final String ownCaps;
     private volatile boolean sessionsBroken;
     private final AtomicLong macSent = new AtomicLong(), macVerified = new AtomicLong(), sessionsMade = new AtomicLong();
-    /** Batch root signatures verified here (digest of signature and key fingerprint): one key operation per batch. */
-    private final ConcurrentHashMap<String, Boolean> batchVerified = new ConcurrentHashMap<>();
+    /** Batch root signatures verified here (digest of signature, key, root and count): one key operation per batch. Bounded LRU. */
+    private final Cache<String, Boolean> batchVerified = CacheBuilder.newBuilder().maximumSize(BATCH_VERIFIED_MAX)
+            .expireAfterWrite(Duration.ofMinutes(15)).build();
     static final int BATCH_PEERS_MAX = 200_000, BATCH_VERIFIED_MAX = 50_000;
     private final AtomicLong batchedSigned = new AtomicLong();
     private final long maxAgeMs;
     private final long attestationMs;
 
     // ---- this node's credential
+    private volatile X509Certificate ownCertLeaf;
     private volatile String ownCertB64;
     private volatile String ownAttestation;
     private volatile long ownAttestationExp;
+    /** This node's former region (region_alias), read once: a message for its former address is for it. */
+    private volatile String alias;
+    private volatile boolean aliasRead;
 
-    // ---- the trust bundle this node holds: region/agent -> entry (key fingerprint, tenant, public key)
+    // ---- the trust bundle this node holds: region/agent -> entry (key fingerprint, tenant, public key, certificates)
     private final ConcurrentHashMap<String, BundleEntry> bundle = new ConcurrentHashMap<>();
     private volatile String heldBundleDigest = "";
     // ---- at a global: the region controllers' certificates learned from their pings
     private final ConcurrentHashMap<String, BundleEntry> childControllers = new ConcurrentHashMap<>();
-    private volatile String servedBundle, servedDigest = "";
-    private volatile String servedVersionKey = "";
+    /** Bumped on every change of what this node serves its children: a ping costs O(1) and takes no lock. */
+    private final AtomicLong bundleVersion = new AtomicLong(1);
+    private final Object servedLock = new Object();
+    private volatile Served served;
 
-    // ---- verification caches (bounded)
-    private final ConcurrentHashMap<String, Resolved> credCache = new ConcurrentHashMap<>();
-    /**
-     * The signatures seen, in three generations of {@code msg_signature_max_age_ms} each: a signature is remembered for two
-     * to three max-ages after it arrived, longer than it can be accepted (its signing time is within one max-age of the
-     * receiver's clock either way). Rotating a generation drops a whole map: no scan, O(1) per message.
-     */
-    private volatile Set<String> seenNow = ConcurrentHashMap.newKeySet(), seenBefore = ConcurrentHashMap.newKeySet(),
-            seenEarlier = ConcurrentHashMap.newKeySet();
-    private volatile long seenSince = System.currentTimeMillis();
-    /** At most this many signatures per generation; a busier generation is rotated early (logged: the window shortens). */
-    static final int SEEN_GENERATION_MAX = 1_000_000;
+    // ---- verification state (bounded)
+    /** Credentials verified here: digest -> signer. Bounded LRU ({@code msg_signing_credentials_max}); never cleared wholesale but on a revocation. */
+    private final Cache<String, Signer> credCache;
+    private final ReplayMemory replay;
     private final AtomicLong signedCount = new AtomicLong(), verifiedCount = new AtomicLong(), refusedCount = new AtomicLong();
-    private volatile long lastRefusalLog, lastEarlyRotationLog;
+    private volatile long lastRefusalLog;
+    /** CA certificate references, shared by every signer that stands on them (a region's agents share their CAs'). */
+    private final Cache<PeerTrustRegistry.CertRef, PeerTrustRegistry.CertRef> refInterner =
+            CacheBuilder.newBuilder().maximumSize(10_000).build();
 
     private final ThreadLocal<MessageDigest> sha256 = ThreadLocal.withInitial(() -> {
         try { return MessageDigest.getInstance("SHA-256"); } catch (Exception e) { throw new IllegalStateException(e); }
@@ -160,13 +176,15 @@ public final class MsgSigning {
 
     static final class BundleEntry {
         String t, r, a, k, role;            // tenant, region, agent, public key (X.509 SPKI, base64), global|region
+        List<PeerTrustRegistry.CertRef> refs; // the certificates the key stands on, leaf first
         transient PublicKey key;
         transient String fp;
         transient long keepUntil;           // a region keeps an entry its global dropped for a grace period
+        transient X509Certificate cert;     // at a global: the certificate the region presented
     }
 
     private static final class SignedBundle {
-        int v = 1;
+        int v = 2;
         String issuer, tenant;
         long issued;
         List<BundleEntry> entries;
@@ -174,18 +192,48 @@ public final class MsgSigning {
     }
 
     private static final class Attestation {
-        int v = 1;
+        int v = 2;
         String t, r, a, k, iss;
         long exp;
+        List<PeerTrustRegistry.CertRef> refs;
         String sig;
     }
 
-    private static final class Resolved {
-        final CrescoIdentity id;
+    /** What this node serves its children: one signed bundle per version of its content. */
+    private static final class Served {
+        final long version, validUntil;
+        final X509Certificate own;
+        final String contentKey, json, digest, wire;
+        Served(long version, long validUntil, X509Certificate own, String contentKey, String json, String digest, String wire) {
+            this.version = version; this.validUntil = validUntil; this.own = own; this.contentKey = contentKey;
+            this.json = json; this.digest = digest; this.wire = wire;
+        }
+    }
+
+    /**
+     * Who authenticated a message: the identity its credential verified as, its key, the certificates behind it and (an
+     * attestation) its issuer's. What this node re-checks against its revocations on every message.
+     */
+    static final class Signer {
+        final String tenant, region, agent, name;
         final PublicKey key;
         final String fp;
-        final long until;
-        Resolved(CrescoIdentity id, PublicKey key, String fp, long until) { this.id = id; this.key = key; this.fp = fp; this.until = until; }
+        final List<PeerTrustRegistry.CertRef> refs;
+        final String issuer, issuerFp;      // an attestation's issuing controller (region/agent) and its key; else null
+        final List<PeerTrustRegistry.CertRef> issuerRefs;
+        /** The credential's own end (an attestation's expiry, a certificate's notAfter); a cache entry is re-verified hourly. */
+        final long expires;
+        /** This node's own key: nothing to re-check. */
+        final boolean self;
+
+        Signer(String tenant, String region, String agent, PublicKey key, String fp, List<PeerTrustRegistry.CertRef> refs,
+               String issuer, String issuerFp, List<PeerTrustRegistry.CertRef> issuerRefs, long expires, boolean self) {
+            this.tenant = tenant; this.region = region; this.agent = agent; this.name = tenant + "/" + region + "/" + agent;
+            this.key = key; this.fp = fp; this.refs = refs; this.issuer = issuer; this.issuerFp = issuerFp;
+            this.issuerRefs = issuerRefs; this.expires = expires; this.self = self;
+        }
+
+        String node() { return region + "_" + agent; }
     }
 
     public MsgSigning(ControllerEngine ce) {
@@ -200,10 +248,15 @@ public final class MsgSigning {
         this.batchThreads = Math.max(1, c.getIntegerParam("msg_signing_threads",
                 Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors() / 2))));
         this.sessionsOn = c.getBooleanParam("msg_signing_sessions", true);
-        this.sessions = sessionsOn ? new MsgSessions(Math.max(120L, c.getLongParam("msg_signing_session_seconds", 3600L)) * 1000L) : null;
+        this.sessions = sessionsOn ? new MsgSessions(Math.max(120L, c.getLongParam("msg_signing_session_seconds", 3600L)) * 1000L,
+                (int) Math.min(Integer.MAX_VALUE, Math.max(1L, c.getLongParam("msg_signing_sessions_max", (long) MsgSessions.DEFAULT_MAX_PEERS)))) : null;
         String caps = batch ? "batch" : "";
         if (sessionsOn) caps = caps.isEmpty() ? "session" : caps + ",session";
         this.ownCaps = caps.isEmpty() ? null : caps;
+        this.credCache = CacheBuilder.newBuilder()
+                .maximumSize(Math.max(1L, c.getLongParam("msg_signing_credentials_max", 100_000L)))
+                .expireAfterWrite(Duration.ofHours(1)).build();
+        this.replay = new ReplayMemory(maxAgeMs, Math.max(4096L, c.getLongParam("msg_replay_memory_max", 4_000_000L)), this::warn);
     }
 
     /** Messages sent and accepted under a session key, sessions made (diagnostics, tests). */
@@ -225,12 +278,8 @@ public final class MsgSigning {
     }
 
     private boolean peerReads(String node, int cap) {
-        Integer c = peerCaps.getIfPresent(node);
+        Integer c = node == null ? null : peerCaps.getIfPresent(node);
         return c != null && (c & cap) != 0;
-    }
-
-    private static String dstNode(MsgEvent m) {
-        return m.getDstRegion() == null || m.getDstAgent() == null ? null : m.getDstRegion() + "_" + m.getDstAgent();
     }
 
     private void sessionsFailed(Throwable e) {
@@ -268,28 +317,27 @@ public final class MsgSigning {
         return b;
     }
 
-    /** Is {@code m}'s destination a node that understands batch signatures? */
-    private boolean batchTo(MsgEvent m) {
-        String node = dstNode(m);
-        return batch && node != null && peerReads(node, CAP_BATCH);
-    }
-
     /** Messages sent unsigned over a direct link, and accepted so (diagnostics, tests). */
     public long directSentCount() { return directSent.get(); }
     public long directAcceptedCount() { return directAccepted.get(); }
 
     /**
-     * Is {@code m} addressed to this node's parent or one of its children over their direct link, which said it accepts
-     * unsigned messages attested first hand by the broker? (O(1): one comparison, one map lookup.)
+     * Is {@code m}, whose recipient is {@code to}, for this node's parent or one of its children over their direct link, which
+     * said it accepts unsigned messages attested first hand by the broker? Only when the recipient is that very node (not a
+     * node beyond it, not a source route). O(1): one comparison, one map lookup.
      */
-    boolean directTo(MsgEvent m) {
-        if (!direct || m.getDstRegion() == null || m.getDstAgent() == null) return false;
+    boolean directTo(MsgEvent m, String to) {
+        if (!direct || to == null || to.startsWith("^") || m.getParam(MsgRouter.SRCROUTE) != null
+                || m.getDstRegion() == null || m.getDstAgent() == null) return false;
         String dst = m.getDstRegion() + "_" + m.getDstAgent();
+        if (!to.startsWith(m.getDstRegion() + "/" + m.getDstAgent() + "/")) return false;
         long now = System.currentTimeMillis();
         if (dst.equals(directParent) && now < directParentUntil) return true;
         Long until = directChildren.get(dst);
         return until != null && now < until;
     }
+
+    boolean directTo(MsgEvent m) { return directTo(m, recipient(m)); }
 
     /** Signing and verification are on (security on and not turned off with {@code msg_signing_required=false}). */
     public boolean required() { return required; }
@@ -304,7 +352,7 @@ public final class MsgSigning {
     static boolean covered(String key) {
         return key != null && !key.startsWith("routepath-") && !key.startsWith("linkcost-") && !key.startsWith("srcroute")
                 && !key.equals("ttl") && !key.equals(SIG) && !key.equals(PENDING) && !key.equals(MsgBatchSigner.TREE)
-                && !key.equals(MsgSessions.MAC)
+                && !key.equals(MsgSessions.MAC) && !key.equals(DEFERRED) && !key.equals(DIRECT)
                 && !Caller.RESERVED_PARAMS.contains(key);
     }
 
@@ -343,6 +391,110 @@ public final class MsgSigning {
         o.write(b);
     }
 
+    // ================================================================ the recipient
+
+    /**
+     * Where {@code m} is delivered: {region, agent, plugin (null for the node)} -- the last waypoint of a source route (and
+     * the plugin saved for it), else its destination; null when it names none.
+     */
+    static String[] effectiveDestination(MsgEvent m) {
+        String route = m.getParam(MsgRouter.SRCROUTE);
+        if (route != null && !route.trim().isEmpty()) {
+            String last = null;
+            for (String h : route.split(";")) {
+                h = h.trim();
+                if (!h.isEmpty()) last = h;
+            }
+            int c = last == null ? -1 : last.indexOf(',');
+            if (c <= 0 || c >= last.length() - 1) return null;
+            String p = m.getParam(MsgRouter.SRCROUTE_DST_PLUGIN);
+            return new String[]{last.substring(0, c), last.substring(c + 1), p == null || p.isEmpty() ? null : p};
+        }
+        if (m.getDstRegion() == null || m.getDstAgent() == null) return null;
+        return new String[]{m.getDstRegion(), m.getDstAgent(), m.getDstPlugin() == null || m.getDstPlugin().isEmpty() ? null : m.getDstPlugin()};
+    }
+
+    /**
+     * The recipient this node signs on {@code m}, which it originates and sends now (its router has decided the tier and any
+     * source route): {@code <region>/<agent>/<plugin>}; for a function of the global that an agent hands its region
+     * controller to carry on ({@link ControllerTiers#targetsGlobal}), {@code ^<region>/<agent>}: "the global above this
+     * region controller". Null when the message names no destination.
+     */
+    String recipient(MsgEvent m) {
+        String[] d = effectiveDestination(m);
+        if (d == null) return null;
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        if (cs != null && !cs.isRegionalController() && m.getParam(MsgRouter.SRCROUTE) == null && ControllerTiers.targetsGlobal(m)
+                && d[0].equals(cs.getRegionalRegion()) && d[1].equals(cs.getRegionalAgent())) {
+            return "^" + d[0] + "/" + d[1];
+        }
+        return d[0] + "/" + d[1] + "/" + (d[2] == null ? "" : d[2]);
+    }
+
+    /** The node (region_agent) of a plain recipient; null for {@code ^...} or a malformed one. */
+    static String recipientNode(String to) {
+        if (to == null || to.startsWith("^")) return null;
+        int a = to.indexOf('/'), b = a < 0 ? -1 : to.indexOf('/', a + 1);
+        return a <= 0 || b <= a + 1 ? null : to.substring(0, a) + "_" + to.substring(a + 1, b);
+    }
+
+    private String alias() {
+        if (!aliasRead) {
+            io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+            if (cs == null) return null;
+            alias = RegionAlias.of(ce.getPluginBuilder(), cs.isGlobalController());
+            aliasRead = true;
+        }
+        return alias;
+    }
+
+    /** Why {@code m}, signed for {@code to}, is not for this node, or null. */
+    String recipientRefusal(String to, MsgEvent m) {
+        if (to == null) return "a message that names no recipient (" + TO + ")";
+        String region = ce.cstate.getRegion(), agent = ce.cstate.getAgent();
+        if (to.startsWith("^")) {
+            String rest = to.substring(1);
+            int s = rest.indexOf('/');
+            if (s <= 0 || s >= rest.length() - 1) return "a malformed recipient " + to;
+            String r = rest.substring(0, s), a = rest.substring(s + 1);
+            if (!ce.cstate.isGlobalController()) return "a message for the global above " + rest + ", and this node is not a global";
+            if (!(r.equals(region) && a.equals(agent)) && !childControllers.containsKey(r + "/" + a)) {
+                return "a message for the global above " + rest + ", which is not a region controller of this global";
+            }
+            return null;
+        }
+        int a1 = to.indexOf('/'), a2 = a1 < 0 ? -1 : to.indexOf('/', a1 + 1);
+        if (a1 <= 0 || a2 <= a1 + 1) return "a malformed recipient " + to;
+        String r = to.substring(0, a1), a = to.substring(a1 + 1, a2), p = to.substring(a2 + 1);
+        if (!a.equals(agent) || !(r.equals(region) || r.equals(alias()))) {
+            return "a message signed for " + r + "/" + a + ", not for this node (" + region + "/" + agent + ")";
+        }
+        String[] d = effectiveDestination(m);
+        String delivered = d == null ? null : d[2];
+        if (!(p.isEmpty() ? delivered == null : p.equals(delivered))) {
+            return "a message signed for " + (p.isEmpty() ? "this node's controller" : "plugin " + p) + ", delivered to "
+                    + (delivered == null ? "its controller" : "plugin " + delivered);
+        }
+        return null;
+    }
+
+    /**
+     * Does this node only carry {@code m} on (it is addressed here, but its recipient is beyond: a source route's waypoint,
+     * or a region controller carrying an agent's global function to its global)? Such a message is not checked on arrival;
+     * it is checked wherever it is dispatched ({@link #verifyIfDeferred}).
+     */
+    public boolean relayOnly(MsgEvent m) {
+        if (!required || m == null) return false;
+        String to = m.getParam(TO);
+        String region = ce.cstate.getRegion(), agent = ce.cstate.getAgent();
+        if (to != null && to.startsWith("^") && !ce.cstate.isGlobalController() && to.equals("^" + region + "/" + agent)) return true;
+        if (m.getParam(MsgRouter.SRCROUTE) != null) {
+            String[] d = effectiveDestination(m);
+            return d != null && !(d[1].equals(agent) && (d[0].equals(region) || d[0].equals(alias())));
+        }
+        return false;
+    }
+
     // ================================================================ origin side
 
     /**
@@ -362,7 +514,7 @@ public final class MsgSigning {
     }
 
     /** What a node writes to authenticate a message it originates. */
-    private static final String[] AUTH_PARAMS = {SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, CAPS, MsgBatchSigner.TREE,
+    private static final String[] AUTH_PARAMS = {SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, CAPS, TO, MsgBatchSigner.TREE,
             MsgSessions.SID, MsgSessions.MAC, MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.HELD, MsgSessions.INC};
 
     /** Remove every signature parameter. */
@@ -371,6 +523,7 @@ public final class MsgSigning {
         for (String k : AUTH_PARAMS) m.removeParam(k);
         m.removeParam(PENDING);
         m.removeParam(DIRECT);
+        m.removeParam(DEFERRED);
     }
 
     /** A message off the wire never asks THIS node to sign it: only this node's own stamping points do. */
@@ -378,17 +531,25 @@ public final class MsgSigning {
         if (m != null && m.getParams() != null) {
             m.removeParam(PENDING);
             m.removeParam(DIRECT);               // a sender's word that it is the origin counts only as its broker attests it
+            m.removeParam(DEFERRED);             // what this node checked is its own record, never a sender's
         }
     }
 
     /** As a message this node originated leaves it (AgentProducer): sign it. Relayed messages carry their origin's signature. */
     public void signIfPending(MsgEvent m) {
-        if (m == null || m.getParams() == null || m.getParam(PENDING) == null) return;
+        if (m == null || m.getParams() == null) return;
+        m.removeParam(DEFERRED);                 // this node's own note: never on the wire
+        if (m.getParam(PENDING) == null) return;
         m.removeParam(PENDING);
         if (!required) return;
         Caller c = Caller.fromMsgEvent(m);
         if (c == null || c.isAnonymous()) return;
-        if (directTo(m)) {
+        String to = recipient(m);
+        if (to == null) {
+            refusal("a message this node sends names no destination (" + m.getMsgType() + " " + m.getParam("action") + "): it goes unsigned");
+            return;
+        }
+        if (directTo(m, to)) {
             // a direct link: the receiver's broker attests this node first hand (CallerStamps.P_DIRECT); no signature
             m.setParam(DIRECT, ce.cstate.getRegion() + "_" + ce.cstate.getAgent());
             if (directSent.incrementAndGet() == 1) info("direct links ON: messages to this node's parent and children that accept them"
@@ -397,6 +558,7 @@ public final class MsgSigning {
             return;
         }
         try {
+            m.setParam(TO, to);
             m.setParam(S_CALLER, c.getPrincipal());
             m.setParam(S_TENANT, c.getTenant());
             m.setParam(S_ROLES, c.getRolesCsv());
@@ -405,20 +567,21 @@ public final class MsgSigning {
             m.setParam(TS, Long.toString(now));
             String caps = sessionsBroken ? (batch ? "batch" : null) : ownCaps;
             if (caps != null) m.setParam(CAPS, caps);
-            String node = dstNode(m);
+            // the peer of sessions and batch signatures is the recipient (never a relay, nor the region carrying a ^ message)
+            String node = recipientNode(to);
             if (sessions != null && !sessionsBroken) m.setParam(MsgSessions.INC, sessions.incarnation);
             if (sessions != null && !sessionsBroken && node != null) {
-                // what this node says to the peer about their session; then a MAC under it, or a signature and an offer
-                String held = sessions.heldWith(node), ack = sessions.ackFor(node);
-                if (held != null) m.setParam(MsgSessions.HELD, held);
-                if (ack != null) m.setParam(MsgSessions.KX_ACK, ack);
+                // what this node says to the peer about their session; then a MAC under it -- unless the message carries an
+                // offer or an answer, which ride signed messages (their sender's current credential)
                 try {
-                    if (peerReads(node, CAP_SESSION)) {
-                        String kx = sessions.offerFor(node, now);
-                        if (kx != null) m.setParam(MsgSessions.KX, kx);
-                    }
                     MsgSessions.Session ss = sessions.usable(node, now);
-                    if (ss != null) {
+                    String held = sessions.heldWith(node);
+                    if (held != null) m.setParam(MsgSessions.HELD, held);
+                    String ack = sessions.ackFor(node, now, ss != null);
+                    if (ack != null) m.setParam(MsgSessions.KX_ACK, ack);
+                    String kx = peerReads(node, CAP_SESSION) ? sessions.offerFor(node, now, ss != null) : null;
+                    if (kx != null) m.setParam(MsgSessions.KX, kx);
+                    if (ss != null && kx == null && ack == null) {
                         m.setParam(MsgSessions.SID, ss.sid);
                         m.setParam(MsgSessions.MAC, Base64.getEncoder().encodeToString(MsgSessions.mac(ss.key, selfName(), canonical(m))));
                         if (macSent.incrementAndGet() == 1) info("session keys ON: messages to the nodes this node holds a session with"
@@ -430,11 +593,11 @@ public final class MsgSigning {
                     // a provider may refuse (a FIPS module raises Errors): this node stays with signatures
                     if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
                     sessionsFailed(e);
-                    for (String k : new String[]{MsgSessions.KX, MsgSessions.SID, MsgSessions.MAC}) m.removeParam(k);
+                    for (String k : new String[]{MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.SID, MsgSessions.MAC}) m.removeParam(k);
                 }
             }
             m.setParam(CRED, credential());
-            if (batchTo(m)) {
+            if (batch && node != null && peerReads(node, CAP_BATCH)) {
                 // shares the private-key operation with the messages being signed at the same moment (alone: a single one)
                 MsgBatchSigner.Signed bs = batcher().sign(canonical(m));
                 m.setParam(SIG, bs.sig);
@@ -449,7 +612,7 @@ public final class MsgSigning {
                 m.setParam(SIG, Base64.getEncoder().encodeToString(s.sign()));
             }
             if (signedCount.incrementAndGet() == 1) info("message signatures ON: this node signs what it originates (first: "
-                    + m.getMsgType() + " " + m.getParam("action") + " as " + c + ", credential " + m.getParam(CRED).substring(0, 4) + ")");
+                    + m.getMsgType() + " " + m.getParam("action") + " as " + c + " for " + to + ", credential " + m.getParam(CRED).substring(0, 4) + ")");
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             for (String k : AUTH_PARAMS) m.removeParam(k);
@@ -467,8 +630,12 @@ public final class MsgSigning {
 
     private String ownCert() throws Exception {
         X509Certificate leaf = ce.getCertificateManager().getPublicCertificate()[0];
-        String b = Base64.getEncoder().encodeToString(leaf.getEncoded());
-        ownCertB64 = b;
+        String b = ownCertB64;
+        if (leaf != ownCertLeaf || b == null) {
+            b = Base64.getEncoder().encodeToString(leaf.getEncoded());
+            ownCertB64 = b;
+            ownCertLeaf = leaf;
+        }
         return b;
     }
 
@@ -498,6 +665,31 @@ public final class MsgSigning {
         return verify(m, fromBroker, legacyAdmitted, null);
     }
 
+    /** Note on {@code m} (off the wire) that this node did not verify it on arrival: it is verified where it is dispatched. */
+    public void deferred(MsgEvent m) {
+        if (required && m != null && m.getParams() != null) m.setParam(DEFERRED, "1");
+    }
+
+    /**
+     * Before {@code m} is dispatched on this node: a message off the wire this node did not verify on arrival (it was not
+     * addressed here, or only carried on) is verified now, as addressed to this node -- whatever re-addressed it on the way
+     * (the controller tiers, a source route). Null when there was nothing to verify (an in-JVM message, or one verified on
+     * arrival); else the verdict (its caller re-stamped when the broker's stamp was stripped on the way).
+     */
+    public Verdict verifyIfDeferred(MsgEvent m, boolean legacyAdmitted) {
+        if (m == null || m.getParams() == null || m.getParam(DEFERRED) == null) return null;
+        m.removeParam(DEFERRED);
+        if (!required) return null;
+        Caller fromBroker = Caller.fromMsgEvent(m);
+        if (fromBroker != null && fromBroker.isAnonymous()) fromBroker = null;
+        String aliasParam = m.getParam(Caller.PARAM_ALIAS);
+        Verdict v = verify(m, fromBroker, legacyAdmitted, null);
+        if (v.ok() && v.caller != null && !v.caller.equals(fromBroker)) {
+            CallerStamps.stamp(m, v.caller, aliasParam == null || aliasParam.isEmpty() ? null : aliasParam);
+        }
+        return v;
+    }
+
     /**
      * As above; {@code firstHand}: the node the receiving broker attests delivered this message first hand as its origin
      * ({@link CallerStamps#P_DIRECT}, as the consumer trusts it: its own broker's, or its parent's broker for the parent's
@@ -520,37 +712,43 @@ public final class MsgSigning {
                     + firstHand) + ")");
         }
         try {
-            String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS);
+            String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS), to = m.getParam(TO);
             if (by == null || ts == null || (macB64 == null && cred == null)) return refuse("a signature without its signer, credential or time");
             long t = Long.parseLong(ts), now = System.currentTimeMillis();
             if (Math.abs(now - t) > maxAgeMs) {
                 return refuse("a signature made " + (now - t) / 1000 + " s from now (msg_signature_max_age_ms=" + maxAgeMs + ")");
             }
-            MsgSessions.Session ss = null;
+            // the recipient first: a message signed for another node is refused before any key operation
+            String notMine = recipientRefusal(to, m);
+            if (notMine != null) return refuse(notMine + " (from " + by + ")");
+            MsgSessions.Found under = null;
+            Signer who;
             if (macB64 != null) {
-                ss = sessions == null ? null : sessions.bySid(m.getParam(MsgSessions.SID));
-                if (ss == null) return refuse("a message under a session key this node does not hold (from " + by
+                String peerNode = nodeOf(by);
+                under = sessions == null || peerNode == null ? null : sessions.lookup(peerNode, by, m.getParam(MsgSessions.SID));
+                if (under == null) return refuse("a message under a session key this node does not hold (from " + by
                         + ": this node restarted or the session ended; its sender returns to signatures)");
-                if (now > ss.expires) return refuse("a message under an ended session key (" + by + ")");
-                if (!ss.peer.equals(by)) return refuse("the session key of " + ss.peer + " used by " + by);
-                cred = ss.cred;
+                if (now > under.session.expires) return refuse("a message under an ended session key (" + by + ")");
+                who = under.peer.signer;
+                if (who == null) return refuse("a message under a session key whose peer no longer verifies (" + by + ")");
+            } else {
+                String[] why = new String[1];
+                who = resolve(cred, why);
+                if (who == null) return refuse("the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")");
             }
-            Resolved who = resolve(cred);
-            if (who == null) {
-                if (ss != null) sessions.drop(ss);
-                return refuse("the signer's credential does not verify here (" + by + ")");
+            if (!who.name.equals(by)) return refuse("signed by " + who.name + ", which is not the declared signer " + by);
+            String revoked = signerRefusal(who, now);
+            if (revoked != null) {
+                if (under != null) sessions.dropPeer(under.peer.node);
+                return refuse("the signer " + by + " is refused: " + revoked);
             }
-            String name = who.id.getTenant() + "/" + who.id.getRegion() + "/" + who.id.getAgent();
-            if (!name.equals(by)) return refuse("signed by " + name + ", which is not the declared signer " + by);
-            if (peers().isRevokedKey(who.fp)) {
-                if (ss != null) sessions.drop(ss);
-                return refuse("the signer's key is revoked (" + by + ")");
+            if (to.startsWith("^") && !to.startsWith("^" + who.region + "/")) {
+                return refuse("a message for the global above " + to.substring(1) + ", signed by " + by + " of another region");
             }
             byte[] replayKey;
-            if (ss != null) {
-                if (!who.fp.equals(ss.fp)) return refuse("the session key of " + by + " is bound to another key");
+            if (under != null) {
                 byte[] mac = Base64.getDecoder().decode(macB64);
-                if (!MessageDigest.isEqual(mac, MsgSessions.mac(ss.key, by, canonical(m)))) {
+                if (!MessageDigest.isEqual(mac, MsgSessions.mac(under.session.key, by, canonical(m)))) {
                     return refuse("the session MAC does not verify (" + by + ")");
                 }
                 replayKey = mac;
@@ -566,12 +764,11 @@ public final class MsgSigning {
                     if (root == null) return refuse("a malformed batch signature path (" + by + ")");
                     String cacheKey = Base64.getEncoder().encodeToString(sha256.get().digest(sig)) + "|" + who.fp + "|"
                             + Base64.getEncoder().encodeToString(root) + "|" + count[0];
-                    if (!batchVerified.containsKey(cacheKey)) {
+                    if (batchVerified.getIfPresent(cacheKey) == null) {
                         Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
                         s.initVerify(who.key);
                         s.update(MsgBatchSigner.signedBytes(root, count[0]));
                         if (!s.verify(sig)) return refuse("the batch signature does not verify (" + by + ")");
-                        if (batchVerified.size() >= BATCH_VERIFIED_MAX) batchVerified.clear();
                         batchVerified.put(cacheKey, Boolean.TRUE);
                     }
                     replayKey = java.nio.ByteBuffer.allocate(sig.length + leaf.length).put(sig).put(leaf).array();
@@ -584,21 +781,28 @@ public final class MsgSigning {
             }
             Caller signed = Caller.parse(m.getParam(S_CALLER), m.getParam(S_TENANT), m.getParam(S_ROLES));
             if (signed == null || signed.isAnonymous()) return refuse("no signed caller");
-            String vouch = vouchRefusal(who.id, signed, ce.getPluginBuilder() == null ? java.util.Set.of()
-                    : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig()));
+            String vouch = vouchRefusal(CrescoIdentity.of(who.tenant, who.region, who.agent, null), signed,
+                    ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig()));
             if (vouch != null) return refuse(vouch);
             if (fromBroker != null && !fromBroker.equals(signed)) {
                 return refuse("the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
-            if (!fresh(replayKey, now)) return refuse("a signature seen before (a replay) from " + by);
-            String peerNode = who.id.getRegion() + "_" + who.id.getAgent();
+            switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now)) {
+                case FRESH: break;
+                case REPLAY: return refuse("a signature seen before (a replay) from " + by);
+                case TOO_OLD: return refuse("a message signed " + (now - t) / 1000 + " s ago while the replay memory is full (from " + by + ")");
+                case FULL: return refuse("a message while the replay memory is full (from " + by + ")");
+                default: return refuse("a message signed at a time this node's clock went back past (from " + by + ")");
+            }
+            String peerNode = who.node();
             int caps = parseCaps(m.getParam(CAPS));
             Integer had = peerCaps.getIfPresent(peerNode);
             if (had == null || had != caps) peerCaps.put(peerNode, caps);
-            if (sessions != null && !sessionsBroken) {
+            if (sessions != null && !sessionsBroken && !to.startsWith("^")) {
                 try {
-                    String changed = sessions.received(selfName(), by, peerNode, m.getParam(MsgSessions.INC), cred, who.fp,
-                            m.getParam(MsgSessions.KX), m.getParam(MsgSessions.KX_ACK), m.getParam(MsgSessions.HELD), now);
+                    String changed = sessions.received(selfName(), by, peerNode, m.getParam(MsgSessions.INC), who,
+                            m.getParam(MsgSessions.KX), m.getParam(MsgSessions.KX_ACK), m.getParam(MsgSessions.HELD),
+                            under == null ? null : under.session.sid, under == null, now);
                     if (changed != null && !changed.equals("lost") && sessionsMade.incrementAndGet() == 1) {
                         info("session keys ON: this node agreed a session key with " + by + " (" + changed + ")");
                     }
@@ -607,15 +811,48 @@ public final class MsgSigning {
                     sessionsFailed(e);
                 }
             }
-            if (ss != null && macVerified.incrementAndGet() == 1) info("session keys ON: this node accepts messages under a session"
+            if (under != null && macVerified.incrementAndGet() == 1) info("session keys ON: this node accepts messages under a session"
                     + " key it holds (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + by + ")");
             if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
-                    + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + ")");
+                    + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + " for " + to + ")");
             return new Verdict(signed, null);
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             return refuse("an unreadable signature (" + e.getClass().getSimpleName() + ")");
         }
+    }
+
+    /** {@code tenant/region/agent} -> {@code region_agent}, or null. */
+    private static String nodeOf(String by) {
+        int a = by.indexOf('/'), b = a < 0 ? -1 : by.indexOf('/', a + 1);
+        return a <= 0 || b <= a + 1 || b == by.length() - 1 ? null : by.substring(a + 1, b) + "_" + by.substring(b + 1);
+    }
+
+    /**
+     * Why {@code who} may not sign here NOW, or null: its credential's end passed, its key (or an attestation issuer's) is
+     * revoked here, its name (or the issuer's) is tombstoned, or a certificate behind it is out of its validity or revoked
+     * by the operator's {@code revocation_file} (with a PKI). Lock-free, O(path).
+     */
+    String signerRefusal(Signer who, long now) {
+        if (who.self) return null;
+        if (now > who.expires) return "its credential ended " + new java.util.Date(who.expires);
+        PeerTrustRegistry reg = peers();
+        if (reg.isRevokedKey(who.fp)) return "its key is revoked";
+        String why = reg.nameRefusal(who.region, who.agent);
+        if (why != null) return why;
+        why = reg.refsRefusal(who.refs, who.region, now);
+        if (why != null) return why;
+        if (who.issuer != null) {
+            int s = who.issuer.indexOf('/');
+            String ir = who.issuer.substring(0, s), ia = who.issuer.substring(s + 1);
+            if (ir.equals(ce.cstate.getRegion()) && ia.equals(ce.cstate.getAgent())) return null;      // this node attested it
+            if (reg.isRevokedKey(who.issuerFp)) return "its attestation's issuer " + who.issuer + " has a revoked key";
+            why = reg.nameRefusal(ir, ia);
+            if (why != null) return "its attestation's issuer: " + why;
+            why = reg.refsRefusal(who.issuerRefs, ir, now);
+            if (why != null) return "its attestation's issuer " + who.issuer + ": " + why;
+        }
+        return null;
     }
 
     /** May node {@code signer} sign for {@code c}? Its own controller and plugins; an API user of its tenant (any, superuser). */
@@ -646,103 +883,129 @@ public final class MsgSigning {
         } catch (RuntimeException ignore) { }
     }
 
+    private void warn(String line) {
+        try {
+            ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info).warn(line);
+        } catch (RuntimeException ignore) { }
+    }
+
     private void refusal(String why) {
         long now = System.currentTimeMillis();
         if (now - lastRefusalLog > 10_000L) {
             lastRefusalLog = now;
-            ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info)
-                    .warn("MESSAGE SIGNATURE: REFUSED " + why + " (" + refusedCount.get() + " refused so far; logged at most every 10 s)");
+            warn("MESSAGE SIGNATURE: REFUSED " + why + " (" + refusedCount.get() + " refused so far; logged at most every 10 s)");
         }
     }
 
-    /** Has this signature not been seen while it could be accepted? O(1): three set lookups, one insert. */
-    boolean fresh(byte[] sig, long now) {
-        String d = Base64.getEncoder().encodeToString(sha256.get().digest(sig));
-        if (now - seenSince >= maxAgeMs || now < seenSince || seenNow.size() >= SEEN_GENERATION_MAX) rotateSeen(now);
-        if (seenBefore.contains(d) || seenEarlier.contains(d)) return false;
-        return seenNow.add(d);
-    }
+    /** Credentials held verified (diagnostics, tests). */
+    long credentialsCached() { credCache.cleanUp(); return credCache.size(); }
 
-    private synchronized void rotateSeen(long now) {
-        boolean due = now - seenSince >= maxAgeMs || now < seenSince;
-        if (!due && seenNow.size() < SEEN_GENERATION_MAX) return;            // another thread rotated meanwhile
-        if (!due && now - lastEarlyRotationLog > 60_000L) {
-            lastEarlyRotationLog = now;
-            ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info)
-                    .warn("MESSAGE SIGNATURE: more than " + SEEN_GENERATION_MAX + " signed messages in " + (now - seenSince) / 1000
-                            + " s: the replay memory rotates early (a replay older than that is caught only by its age)");
-        }
-        seenEarlier = seenBefore;
-        seenBefore = seenNow;
-        seenNow = ConcurrentHashMap.newKeySet();
-        seenSince = now;
+    /** Entries in the replay memory (diagnostics, tests). */
+    long replayMemorySize() { return replay.size(); }
+
+    /** Record an authenticator in the replay memory as {@link #verify} does (tests). */
+    ReplayMemory.Result remember(byte[] authenticator, long signedAt, long now) {
+        return replay.record(ReplayMemory.digest64(sha256.get().digest(authenticator)), signedAt, now);
     }
 
     private PeerTrustRegistry peers() {
         return ce.getCertificateManager().getPeerTrust();
     }
 
-    /** A credential, verified once and cached (bounded) until its own expiry or an hour. */
-    private Resolved resolve(String cred) throws Exception {
+    /** A credential, verified once and cached (bounded) until its own end or an hour; {@code why[0]} when it does not verify. */
+    private Signer resolve(String cred, String[] why) throws Exception {
         String k = Base64.getEncoder().encodeToString(sha256.get().digest(cred.getBytes(StandardCharsets.UTF_8)));
         long now = System.currentTimeMillis();
-        Resolved r = credCache.get(k);
-        if (r != null && r.until > now) return r;
-        r = cred.startsWith("cert:") ? resolveCert(cred.substring(5), now) : cred.startsWith("att:") ? resolveAttestation(cred.substring(4), now) : null;
+        Signer r = credCache.getIfPresent(k);
+        if (r != null && r.expires > now) return r;
+        r = cred.startsWith("cert:") ? resolveCert(cred.substring(5), now, why)
+                : cred.startsWith("att:") ? resolveAttestation(cred.substring(4), now, why) : null;
         if (r == null) return null;
-        if (credCache.size() > 20_000) credCache.clear();
         credCache.put(k, r);
         return r;
     }
 
-    private Resolved resolveCert(String b64, long now) throws Exception {
+    private Signer resolveCert(String b64, long now, String[] why) throws Exception {
         X509Certificate leaf = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(b64)));
-        if (now > leaf.getNotAfter().getTime()) return null;
+        if (now > leaf.getNotAfter().getTime()) { why[0] = "an expired certificate"; return null; }
         String fp = PeerTrustRegistry.fingerprint(leaf.getPublicKey().getEncoded());
-        long until = Math.min(leaf.getNotAfter().getTime(), now + 3_600_000L);
+        long until = leaf.getNotAfter().getTime();
         X509Certificate[] own = ce.getCertificateManager().getPublicCertificate();
         if (own != null && own.length > 0 && own[0].getPublicKey().equals(leaf.getPublicKey())) {
-            return new Resolved(CrescoIdentity.of(ce.tenant(), ce.cstate.getRegion(), ce.cstate.getAgent(), null), leaf.getPublicKey(), fp, until);
+            return new Signer(ce.tenant(), ce.cstate.getRegion(), ce.cstate.getAgent(), leaf.getPublicKey(), fp, List.of(), null, null,
+                    null, until, true);
         }
-        CrescoIdentity id = peers().verifiedIdentity(new X509Certificate[]{leaf});
-        if (id != null) return new Resolved(id, leaf.getPublicKey(), fp, until);
+        String[] idWhy = new String[1];
+        CrescoIdentity id = peers().verifiedIdentity(new X509Certificate[]{leaf}, idWhy);
+        if (id != null) {
+            return new Signer(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), fp, intern(peers().pathRefs(new X509Certificate[]{leaf})),
+                    null, null, null, until, false);
+        }
         CrescoIdentity named = CrescoNames.identityOf(leaf);
-        if (named == null) return null;
+        if (named == null) { why[0] = idWhy[0]; return null; }
+        // a controller this node cannot verify itself: the trust bundle's word for its key -- never over this node's own
+        // revocations, which signerRefusal applies to the certificate presented and to the bundle's, on every message
         BundleEntry e = bundleEntry(named.getRegion(), named.getAgent());
         if (e != null && fp.equals(e.fp) && named.getTenant().equals(e.t)) {
-            return new Resolved(CrescoIdentity.of(e.t, e.r, e.a, null), e.key, fp, until);
+            List<PeerTrustRegistry.CertRef> refs = new ArrayList<>();
+            refs.add(PeerTrustRegistry.CertRef.of(leaf));
+            if (e.refs != null) refs.addAll(e.refs);
+            return new Signer(e.t, e.r, e.a, e.key, fp, intern(refs), null, null, null, until, false);
         }
+        why[0] = idWhy[0];
         return null;
     }
 
-    private Resolved resolveAttestation(String json, long now) throws Exception {
+    private Signer resolveAttestation(String json, long now, String[] why) throws Exception {
         Attestation a = GSON.fromJson(json, Attestation.class);
-        if (a == null || a.v != 1 || a.t == null || a.r == null || a.a == null || a.k == null || a.iss == null || a.sig == null) return null;
-        if (now > a.exp) return null;
+        if (a == null || a.v != 2 || a.t == null || a.r == null || a.a == null || a.k == null || a.iss == null || a.sig == null
+                || a.refs == null || a.refs.isEmpty()) { why[0] = "a malformed attestation"; return null; }
+        for (PeerTrustRegistry.CertRef r : a.refs) if (r == null || !r.wellFormed()) { why[0] = "a malformed attestation"; return null; }
+        if (now > a.exp) { why[0] = "an expired attestation"; return null; }
         String[] iss = a.iss.split("/", -1);
-        if (iss.length != 2 || !iss[0].equals(a.r)) return null;              // a region's controller attests its own agents only
+        if (iss.length != 2 || !iss[0].equals(a.r)) { why[0] = "an attestation by another region's controller"; return null; }
         PublicKey issuerKey;
         String issuerTenant;
+        List<PeerTrustRegistry.CertRef> issuerRefs;
         if (iss[0].equals(ce.cstate.getRegion()) && iss[1].equals(ce.cstate.getAgent())) {
             issuerKey = ce.getCertificateManager().getPublicCertificate()[0].getPublicKey();
             issuerTenant = ce.tenant();
+            issuerRefs = List.of();
         } else {
             BundleEntry e = bundleEntry(iss[0], iss[1]);
-            if (e == null) return null;
+            if (e == null) { why[0] = "its issuer " + a.iss + " is not in the trust bundle here"; return null; }
             issuerKey = e.key;
             issuerTenant = e.t;
+            issuerRefs = e.refs == null ? List.of() : e.refs;
         }
-        if (peers().isRevokedKey(PeerTrustRegistry.fingerprint(issuerKey.getEncoded()))) return null;
         // a region controller attests its own tenant's agents, unless it is a superuser tenant's (a multi-tenant region)
-        if (!issuerTenant.equals(a.t) && !SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig()).contains(issuerTenant)) return null;
+        if (!issuerTenant.equals(a.t) && !SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig()).contains(issuerTenant)) {
+            why[0] = "an attestation of tenant " + a.t + " by a controller of tenant " + issuerTenant;
+            return null;
+        }
         Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(issuerKey.getAlgorithm()));
         s.initVerify(issuerKey);
         s.update(attestationBytes(a));
-        if (!s.verify(Base64.getDecoder().decode(a.sig))) return null;
+        if (!s.verify(Base64.getDecoder().decode(a.sig))) { why[0] = "the attestation's signature does not verify"; return null; }
         PublicKey key = KeyFactory.getInstance(keyAlg(a.k)).generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(a.k)));
-        return new Resolved(CrescoIdentity.of(a.t, a.r, a.a, null), key, PeerTrustRegistry.fingerprint(key.getEncoded()),
-                Math.min(a.exp, now + 3_600_000L));
+        String fp = PeerTrustRegistry.fingerprint(key.getEncoded());
+        if (!fp.equals(a.refs.get(0).k)) { why[0] = "an attestation whose certificate is not of its key"; return null; }
+        return new Signer(a.t, a.r, a.a, key, fp, intern(a.refs), a.iss, PeerTrustRegistry.fingerprint(issuerKey.getEncoded()),
+                issuerRefs, a.exp, false);
+    }
+
+    /** {@code refs} with its CA certificates (all but the leaf) shared with every other signer standing on them. */
+    private List<PeerTrustRegistry.CertRef> intern(List<PeerTrustRegistry.CertRef> refs) {
+        if (refs == null || refs.isEmpty()) return List.of();
+        PeerTrustRegistry.CertRef[] out = new PeerTrustRegistry.CertRef[refs.size()];
+        out[0] = refs.get(0);
+        for (int i = 1; i < out.length; i++) {
+            PeerTrustRegistry.CertRef r = refs.get(i);
+            PeerTrustRegistry.CertRef had = refInterner.asMap().putIfAbsent(r, r);
+            out[i] = had == null ? r : had;
+        }
+        return List.of(out);
     }
 
     private static String keyAlg(String spkiB64) {
@@ -755,8 +1018,15 @@ public final class MsgSigning {
         }
     }
 
+    private static String refsCanonical(List<PeerTrustRegistry.CertRef> refs) {
+        StringBuilder b = new StringBuilder();
+        b.append(refs == null ? 0 : refs.size());
+        if (refs != null) for (PeerTrustRegistry.CertRef r : refs) b.append('\n').append(r == null ? "-" : r.canonical());
+        return b.toString();
+    }
+
     private static byte[] attestationBytes(Attestation a) {
-        return ("cresco-attestation-v1\n" + a.t + "\n" + a.r + "\n" + a.a + "\n" + a.k + "\n" + a.exp + "\n" + a.iss)
+        return ("cresco-attestation-v2\n" + a.t + "\n" + a.r + "\n" + a.a + "\n" + a.k + "\n" + a.exp + "\n" + a.iss + "\n" + refsCanonical(a.refs))
                 .getBytes(StandardCharsets.UTF_8);
     }
 
@@ -767,6 +1037,50 @@ public final class MsgSigning {
         if (e == null) return null;
         if (e.keepUntil > 0 && e.keepUntil < System.currentTimeMillis()) return null;
         return e;
+    }
+
+    // ================================================================ revocations
+
+    /**
+     * A revocation came in force here (an operator's revocation_file reload, a revoked key, a merged revocation list): every
+     * credential is verified anew, the sessions of a signer now refused are dropped, a trust-bundle entry whose certificate
+     * the PKI or this node's revocations now refuse is dropped (a global's: re-verified; and the bundle travels down without
+     * it). What arrives after is checked against the new state in any case ({@link #signerRefusal}, on every message).
+     */
+    public void onRevocations() {
+        if (!required) return;
+        long now = System.currentTimeMillis();
+        credCache.invalidateAll();
+        batchVerified.invalidateAll();
+        int sessionsDropped = sessions == null ? 0 : sessions.dropWhere(p -> {
+            Signer s = p.signer;
+            return s == null || signerRefusal(s, now) != null;
+        });
+        int dropped = 0;
+        PeerTrustRegistry reg = peers();
+        for (Map.Entry<String, BundleEntry> en : childControllers.entrySet()) {
+            BundleEntry e = en.getValue();
+            String[] why = new String[1];
+            boolean bad = e.cert == null || reg.verifiedIdentity(new X509Certificate[]{e.cert}, why) == null;
+            if (bad && childControllers.remove(en.getKey(), e)) {
+                dropped++;
+                warn("trust bundle: DROPPED region controller " + en.getKey() + " (" + (why[0] == null ? "no certificate" : why[0]) + ")");
+            }
+        }
+        for (Map.Entry<String, BundleEntry> en : bundle.entrySet()) {
+            BundleEntry e = en.getValue();
+            String why = reg.isRevokedKey(e.fp) ? "its key is revoked" : reg.nameRefusal(e.r, e.a);
+            if (why == null) why = reg.refsRefusal(e.refs, e.r, now);
+            if (why != null && bundle.remove(en.getKey(), e)) {
+                dropped++;
+                warn("trust bundle: DROPPED controller " + en.getKey() + " (" + why + ")");
+            }
+        }
+        if (dropped > 0) bundleChanged();
+        if (sessionsDropped > 0 || dropped > 0) {
+            info("revocations in force: " + sessionsDropped + " peer session(s) and " + dropped + " trust-bundle entr"
+                    + (dropped == 1 ? "y" : "ies") + " dropped; every credential is verified anew");
+        }
     }
 
     // ================================================================ trust bundle and attestations on the pings
@@ -785,7 +1099,8 @@ public final class MsgSigning {
     /**
      * In a parent's ping handler (the ping becomes the pong): learn the child's key from the certificate it presents -- it
      * must verify HERE as the ping's verified caller -- then attest an agent child ({@code childIsRegion} false) or record a
-     * region child in the bundle (true, at the global), and send the bundle down when the child holds another.
+     * region child in the bundle (true, at the global), and send the bundle down when the child holds another. O(1) apart
+     * from the child's own certificate (one cached verification): the bundle is rebuilt only when it changed.
      */
     public void onPingAtParent(MsgEvent msg, boolean childIsRegion) {
         String certB64 = msg.getParam(P_CERT), have = msg.getParam(P_BUNDLE_HAVE), attExp = msg.getParam(P_ATT_EXP);
@@ -817,24 +1132,32 @@ public final class MsgSigning {
                     // the role this very certificate carries (pre-provisioned), never one remembered for the name
                     String role = peers().boundRole(id.getRegion(), id.getAgent(), new X509Certificate[]{leaf});
                     if (PeerTrustRegistry.ROLE_CONTROLLER.equals(role) || ce.speaksForRegion(caller)) {
-                        BundleEntry e = entry(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), "region");
-                        BundleEntry prev = childControllers.put(e.r + "/" + e.a, e);
-                        if (prev == null || !prev.fp.equals(e.fp)) servedVersionKey = "";     // the bundle changed
+                        String n = id.getRegion() + "/" + id.getAgent();
+                        BundleEntry prev = childControllers.get(n);
+                        if (prev == null || prev.cert == null || !prev.cert.equals(leaf)) {
+                            BundleEntry e = entry(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), "region",
+                                    intern(peers().pathRefs(new X509Certificate[]{leaf})));
+                            e.cert = leaf;
+                            childControllers.put(n, e);
+                            if (prev == null || !prev.fp.equals(e.fp) || !java.util.Objects.equals(prev.refs, e.refs)) bundleChanged();
+                        }
                     }
                 } else if (same && id.getRegion().equals(ce.cstate.getRegion())) {
                     long exp = 0;
                     try { exp = attExp == null ? 0 : Long.parseLong(attExp); } catch (NumberFormatException ignore) { }
-                    if (exp < System.currentTimeMillis() + attestationMs / 3) msg.setParam(P_ATT, attest(id, leaf.getPublicKey()));
+                    if (exp < System.currentTimeMillis() + attestationMs / 3) {
+                        msg.setParam(P_ATT, attest(id, leaf.getPublicKey(), peers().pathRefs(new X509Certificate[]{leaf})));
+                    }
                 }
             }
-            String served = servedBundle();
-            if (served != null && !servedDigest.equals(have)) msg.setCompressedParam(P_BUNDLE, served);
+            Served s = served();
+            if (s != null && !s.digest.equals(have)) msg.setParam(P_BUNDLE, s.wire);
         } catch (Exception e) {
             refusal("ping of " + msg.getSrcRegion() + "/" + msg.getSrcAgent() + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
-    private String attest(CrescoIdentity id, PublicKey key) throws Exception {
+    private String attest(CrescoIdentity id, PublicKey key, List<PeerTrustRegistry.CertRef> refs) throws Exception {
         Attestation a = new Attestation();
         a.t = id.getTenant();
         a.r = id.getRegion();
@@ -842,6 +1165,7 @@ public final class MsgSigning {
         a.k = Base64.getEncoder().encodeToString(key.getEncoded());
         a.exp = System.currentTimeMillis() + attestationMs;
         a.iss = ce.cstate.getRegion() + "/" + ce.cstate.getAgent();
+        a.refs = refs;
         a.sig = Base64.getEncoder().encodeToString(ce.getCertificateManager().signWithIdentity(attestationBytes(a)));
         return GSON.toJson(a);
     }
@@ -859,8 +1183,8 @@ public final class MsgSigning {
             if (att != null) {
                 Attestation a = GSON.fromJson(att, Attestation.class);
                 PublicKey own = ce.getCertificateManager().getPublicCertificate()[0].getPublicKey();
-                if (a != null && a.k != null && a.iss != null && a.iss.equals(parentRegion + "/" + parentAgent)
-                        && a.r.equals(ce.cstate.getRegion()) && a.a.equals(ce.cstate.getAgent())
+                if (a != null && a.v == 2 && a.k != null && a.iss != null && a.iss.equals(parentRegion + "/" + parentAgent)
+                        && ce.cstate.getRegion().equals(a.r) && ce.cstate.getAgent().equals(a.a) && a.refs != null && !a.refs.isEmpty()
                         && a.k.equals(Base64.getEncoder().encodeToString(own.getEncoded())) && a.exp > System.currentTimeMillis()) {
                     ownAttestation = att;
                     ownAttestationExp = a.exp;
@@ -876,7 +1200,7 @@ public final class MsgSigning {
     /** Adopt a bundle signed by this node's parent (its certificate verifies here as the parent); unknown names are kept a while. */
     void acceptBundle(String json, String parentRegion, String parentAgent) throws Exception {
         SignedBundle sb = GSON.fromJson(json, SignedBundle.class);
-        if (sb == null || sb.v != 1 || sb.entries == null || sb.cert == null || sb.sig == null || sb.issuer == null) return;
+        if (sb == null || sb.v != 2 || sb.entries == null || sb.cert == null || sb.sig == null || sb.issuer == null) return;
         if (!sb.issuer.equals(parentRegion + "/" + parentAgent)) return;
         X509Certificate leaf = (X509Certificate) CertificateFactory.getInstance("X.509")
                 .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(sb.cert)));
@@ -896,8 +1220,12 @@ public final class MsgSigning {
         long grace = Math.max(0L, ce.getPluginBuilder().getConfig().getLongParam("msg_signing_bundle_grace_ms", 900_000L));
         Map<String, BundleEntry> next = new LinkedHashMap<>();
         for (BundleEntry e : sb.entries) {
-            BundleEntry x = entry(e.t, e.r, e.a, decodeKey(e.k), e.role);
-            if (x != null) next.put(x.r + "/" + x.a, x);
+            if (e == null || e.refs == null || e.refs.isEmpty()) continue;
+            boolean ok = true;
+            for (PeerTrustRegistry.CertRef r : e.refs) ok &= r != null && r.wellFormed();
+            if (!ok) continue;
+            BundleEntry x = entry(e.t, e.r, e.a, decodeKey(e.k), e.role, intern(e.refs));
+            if (x != null && x.fp.equals(e.refs.get(0).k)) next.put(x.r + "/" + x.a, x);
         }
         for (Map.Entry<String, BundleEntry> old : bundle.entrySet()) {
             if (next.containsKey(old.getKey())) continue;
@@ -905,20 +1233,21 @@ public final class MsgSigning {
             if (o.keepUntil == 0) o.keepUntil = now + grace;
             if (o.keepUntil > now) next.put(old.getKey(), o);
         }
-        bundle.clear();
+        // in place, never emptied: a message checked meanwhile sees the old entry or the new one
         bundle.putAll(next);
+        bundle.keySet().removeIf(k -> !next.containsKey(k));
         heldBundleDigest = digest(json);
-        servedVersionKey = "";
+        bundleChanged();
     }
 
     private static PublicKey decodeKey(String b64) throws Exception {
         return KeyFactory.getInstance(keyAlg(b64)).generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(b64)));
     }
 
-    private static BundleEntry entry(String t, String r, String a, PublicKey key, String role) {
+    private static BundleEntry entry(String t, String r, String a, PublicKey key, String role, List<PeerTrustRegistry.CertRef> refs) {
         if (t == null || r == null || a == null || key == null) return null;
         BundleEntry e = new BundleEntry();
-        e.t = t; e.r = r; e.a = a; e.role = role;
+        e.t = t; e.r = r; e.a = a; e.role = role; e.refs = refs;
         e.k = Base64.getEncoder().encodeToString(key.getEncoded());
         e.key = key;
         e.fp = PeerTrustRegistry.fingerprint(key.getEncoded());
@@ -926,8 +1255,11 @@ public final class MsgSigning {
     }
 
     private static byte[] bundleBytes(SignedBundle sb) {
-        StringBuilder b = new StringBuilder("cresco-trust-bundle-v1\n").append(sb.issuer).append('\n').append(sb.tenant).append('\n').append(sb.issued);
-        for (BundleEntry e : sb.entries) b.append('\n').append(e.t).append('|').append(e.r).append('|').append(e.a).append('|').append(e.k).append('|').append(e.role);
+        StringBuilder b = new StringBuilder("cresco-trust-bundle-v2\n").append(sb.issuer).append('\n').append(sb.tenant).append('\n').append(sb.issued);
+        for (BundleEntry e : sb.entries) {
+            b.append('\n').append(e.t).append('|').append(e.r).append('|').append(e.a).append('|').append(e.k).append('|').append(e.role)
+                    .append('|').append(refsCanonical(e.refs).replace('\n', ';'));
+        }
         return b.toString().getBytes(StandardCharsets.UTF_8);
     }
 
@@ -935,35 +1267,78 @@ public final class MsgSigning {
         return Base64.getEncoder().encodeToString(sha256.get().digest(s.getBytes(StandardCharsets.UTF_8)));
     }
 
+    /** What this node serves its children changed: the next ping rebuilds it (once). */
+    void bundleChanged() {
+        bundleVersion.incrementAndGet();
+    }
+
     /**
      * The bundle this node serves its children, signed by this node: its own entry, what its global sent it (a region), and
-     * the region controllers that presented a verified certificate on their pings (a global). Re-signed only when it changes.
+     * the region controllers that presented a verified certificate on their pings (a global). The current version is
+     * returned with no lock and no work (a volatile read and two comparisons); it is rebuilt -- and re-signed only when its
+     * content changed -- after a change ({@link #bundleChanged}), when an entry kept for its grace period ends, or when this
+     * node's own certificate changed.
      */
-    synchronized String servedBundle() throws Exception {
-        TreeMap<String, BundleEntry> all = new TreeMap<>();
+    private Served served() throws Exception {
         long now = System.currentTimeMillis();
-        for (BundleEntry e : bundle.values()) if (e.keepUntil == 0 || e.keepUntil > now) all.put(e.r + "/" + e.a, e);
-        for (BundleEntry e : childControllers.values()) all.put(e.r + "/" + e.a, e);
-        X509Certificate[] own = ce.getCertificateManager().getPublicCertificate();
-        BundleEntry self = entry(ce.tenant(), ce.cstate.getRegion(), ce.cstate.getAgent(), own[0].getPublicKey(),
-                ce.cstate.isGlobalController() ? "global" : "region");
-        all.put(self.r + "/" + self.a, self);
-        StringBuilder kb = new StringBuilder();
-        for (BundleEntry e : all.values()) kb.append(e.t).append('/').append(e.r).append('/').append(e.a).append('/').append(e.fp).append(';');
-        String key = digest(kb.toString());
-        if (key.equals(servedVersionKey) && servedBundle != null) return servedBundle;
-        SignedBundle sb = new SignedBundle();
-        sb.issuer = ce.cstate.getRegion() + "/" + ce.cstate.getAgent();
-        sb.tenant = ce.tenant();
-        sb.issued = System.currentTimeMillis();
-        sb.entries = new ArrayList<>(all.values());
-        sb.cert = Base64.getEncoder().encodeToString(own[0].getEncoded());
-        sb.sig = Base64.getEncoder().encodeToString(ce.getCertificateManager().signWithIdentity(bundleBytes(sb)));
-        String json = GSON.toJson(sb);
-        servedBundle = json;
-        servedDigest = digest(json);
-        servedVersionKey = key;
-        return json;
+        X509Certificate own = ce.getCertificateManager().getPublicCertificate()[0];
+        Served s = served;
+        if (s != null && s.version == bundleVersion.get() && now < s.validUntil && s.own == own) return s;
+        synchronized (servedLock) {
+            s = served;
+            long v = bundleVersion.get();
+            if (s != null && s.version == v && now < s.validUntil && s.own == own) return s;
+            TreeMap<String, BundleEntry> all = new TreeMap<>();
+            long validUntil = Long.MAX_VALUE;
+            for (BundleEntry e : bundle.values()) {
+                if (e.keepUntil == 0 || e.keepUntil > now) {
+                    all.put(e.r + "/" + e.a, e);
+                    if (e.keepUntil > 0) validUntil = Math.min(validUntil, e.keepUntil);
+                }
+            }
+            for (BundleEntry e : childControllers.values()) all.put(e.r + "/" + e.a, e);
+            X509Certificate[] chain = ce.getCertificateManager().getPublicCertificate();
+            BundleEntry self = entry(ce.tenant(), ce.cstate.getRegion(), ce.cstate.getAgent(), own.getPublicKey(),
+                    ce.cstate.isGlobalController() ? "global" : "region", intern(peers().pathRefs(chain)));
+            all.put(self.r + "/" + self.a, self);
+            StringBuilder kb = new StringBuilder();
+            for (BundleEntry e : all.values()) {
+                kb.append(e.t).append('/').append(e.r).append('/').append(e.a).append('/').append(e.fp).append('/').append(e.role)
+                        .append('/').append(refsCanonical(e.refs)).append(';');
+            }
+            String key = digest(kb.toString());
+            Served next;
+            if (s != null && key.equals(s.contentKey)) {
+                next = new Served(v, validUntil, own, key, s.json, s.digest, s.wire);         // the same content: not re-signed
+            } else {
+                SignedBundle sb = new SignedBundle();
+                sb.issuer = ce.cstate.getRegion() + "/" + ce.cstate.getAgent();
+                sb.tenant = ce.tenant();
+                sb.issued = now;
+                sb.entries = new ArrayList<>(all.values());
+                sb.cert = Base64.getEncoder().encodeToString(own.getEncoded());
+                sb.sig = Base64.getEncoder().encodeToString(ce.getCertificateManager().signWithIdentity(bundleBytes(sb)));
+                String json = GSON.toJson(sb);
+                next = new Served(v, validUntil, own, key, json, digest(json), gzipBase64(json));
+            }
+            served = next;
+            return next;
+        }
+    }
+
+    /** As {@link MsgEvent#setCompressedParam} encodes a value (gzip, base64): made once per version, sent to every child. */
+    private static String gzipBase64(String s) throws IOException {
+        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+        try (java.util.zip.GZIPOutputStream gz = new java.util.zip.GZIPOutputStream(bo)) {
+            gz.write(s.getBytes(StandardCharsets.UTF_8));
+        }
+        return Base64.getEncoder().encodeToString(bo.toByteArray());
+    }
+
+    /** The signed bundle this node serves (tests). */
+    String servedBundle() throws Exception {
+        Served s = served();
+        return s == null ? null : s.json;
     }
 
     /** Trust-bundle size held (tests, diagnostics). */

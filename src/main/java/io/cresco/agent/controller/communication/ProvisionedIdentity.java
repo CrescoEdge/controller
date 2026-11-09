@@ -697,6 +697,26 @@ public final class ProvisionedIdentity {
             return null;
         }
 
+        /**
+         * As {@link #refusal(X509Certificate[], long)} for one certificate known only by reference (a message signer's, from
+         * its attestation or trust-bundle entry): its key ({@code keyFp}), its SHA-256 ({@code certFp}), its issuer's DN and
+         * {@code <issuer DN>|<serial hex>}. O(1): a few set lookups.
+         */
+        public String refusal(String keyFp, String certFp, String issuerDn, String issuerSerial, long now) {
+            if (isEmpty() && nextUpdates.isEmpty()) return null;
+            Long next = issuerDn == null || nextUpdates.isEmpty() ? null : nextUpdates.get(issuerDn);
+            if (next != null && now > next + graceMs) {
+                return "the CRL of its issuer '" + issuerDn + "' is out of date (nextUpdate " + new Date(next) + "): its revocation"
+                        + " status is unknown until revocation_file is refreshed";
+            }
+            if (keyFp != null && keys.contains(keyFp)) return "its key " + PeerIdentity.shortFp(keyFp) + " is listed";
+            if (certFp != null && certs.contains(certFp)) return "the certificate " + PeerIdentity.shortFp(certFp) + " is listed";
+            if (issuerSerial != null && serials.contains(issuerSerial)) {
+                return "serial " + issuerSerial.substring(issuerSerial.lastIndexOf('|') + 1) + " of '" + issuerDn + "' is on its CRL";
+            }
+            return null;
+        }
+
         public String summary() { return keys.size() + " key(s), " + certs.size() + " certificate(s), " + names.size() + " name(s), "
                 + serials.size() + " CRL serial(s) from " + crls + " CRL(s)"
                 + (nextUpdates.isEmpty() ? "" : ", next CRL update due " + new Date(earliestNextUpdate())); }
