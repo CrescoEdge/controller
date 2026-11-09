@@ -34,8 +34,10 @@ What the broker and the peer trust registry use is the leaf's subject, read stri
   responder without it;
 - **the global** controller: also the SAN URI `cresco:role:global` (issued by the root, or a CA whose roles include
   `global`). A node configured `is_global` refuses to start without it; ONLY a node holding it answers GLOBAL discovery, and a
-  region accepts as its global (its parent) only a responder whose certificate carries it. Every region holds
-  `discovery_secret_global` (it needs it to join), so the secret alone never says which controller is the global;
+  region accepts as its global (its parent) only a responder whose certificate carries it (under the standard profile every
+  region also holds `discovery_secret_global`, so the secret never says which controller is the global; under
+  `security_profile=production` discovery uses no secret at all: each side signs the exchange with its provisioned key and
+  its chain verifies to the anchors -- `production-deployment.md`, "Discovery in production");
 - **API user** (wsapi): SAN URIs `cresco:api:<tenant>/<user>` and `cresco:role:<admin|user>`, subject `CN=<user>, O=<tenant>`
   (no `OU`, so it can never name a node);
 - **CA scope (fail closed)**: every CA on a path -- the anchor included -- must allow the leaf's tenant, region and roles.
@@ -69,11 +71,22 @@ keystore. There is no fallback.
   certificate, CRL serial or name is refused at TLS, at the broker and in discovery, and the broker closes live connections
   that hold it) and the signed revocation lists controllers exchange (`caller-authorization.md` section 9). Revoking a name
   (`peer_identity_revoke=<region>/<agent>`, the operator file) reserves it: a rebind token (`<region>/<agent>=<new key
-  fingerprint>`) lifts that once the PKI issued a new certificate.
+  fingerprint>`) lifts that once the PKI issued a new certificate -- and only for a chain the PKI accepts in full (judged
+  first: a refused chain never spends the token).
+- **CRL freshness and order.** A CRL must carry a nextUpdate and a CRL number (the tool's do). Past its nextUpdate (plus
+  `revocation_crl_grace_seconds`, default 0) the revocation status of its CA's certificates is unknown, and they are refused
+  until `revocation_file` is refreshed (`cresco-pki.sh crl`): the `identity` alarm is CRITICAL then, and WARN in the CRL's
+  last week. CRL numbers only go up: the highest in force per CA is recorded (`crl-numbers` in the identity directory); a file
+  whose CRL of a trusted CA is older, or missing, is refused at reload (the current revocations stay in force) and at start
+  (`REFUSING TO START ... went BACKWARDS`).
 - **Renewal** is the operator's: replace the keystore file (atomically, e.g. write and rename -- the tool does). The node
   reloads it within `identity_keystore_reload_seconds` WITHOUT dropping a connection: the next handshake presents the new
   chain and key. A replacement that does not validate is refused (CRITICAL) and the node keeps its identity. Trust anchors
-  and the revocation file are reloaded the same way.
+  and the revocation file are reloaded the same way. A reload is atomic: the four files are read as one set (one that
+  changes while it is read is taken at the next check), everything is validated and built aside, and then the anchors and
+  revocations, the trust store and the chain with its key are put in force without ever a half-loaded state (an empty trust
+  store, a new chain with the old key); a handshake gets one chain and key pair whatever is reloaded meanwhile. The role a
+  peer has is the one its presented certificate carries, never one remembered for its name.
 - **Expiry is alarmed** by the `identity` health check: WARN within the certificate's renewal window (a third of its
   lifetime, or `identity_renew_before_days` if longer, at most half), CRITICAL in its last tenth or last week, and when
   expired.
