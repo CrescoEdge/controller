@@ -35,20 +35,34 @@ A controller with `security_profile=production` **refuses to start** (exit 78) a
 | `security_regional_ca=true` | no certificates issued to nodes that join with a shared secret |
 | `peer_identity_rebind`, `public_key_trusted_fingerprints` | trust comes from `trust_anchors` only; a re-keyed node is re-provisioned, not rebound |
 | `cresco_service_key`, `broker_security_secret`, `keystorepwd`, `truststorepwd`, `plugin_signing_truststore_password` (and their `_file` forms) | passwords are for debug and testing only |
-| `-Ddiscovery_secret_*`, `-Ddb_password` on the command line | secrets come from `<name>_file` (owner-only) or `CRESCO_<NAME>` |
+| `discovery_secret_agent`, `discovery_secret_region`, `discovery_secret_global` (inline, `_file` or `CRESCO_` form) | discovery is the PKI's: no shared secret is used or accepted |
+| `-Ddb_password` on the command line | secrets come from `<name>_file` (owner-only) or `CRESCO_<NAME>` |
 
-Plugins see the profile through `AgentService.getSecurityProfile()` and enforce their side (wsapi: no password logins).
+Plugins read the profile through `PluginBuilder.getSecurityProfile()` (the controller's answer, from
+`AgentService.getSecurityProfile()`; `PRODUCTION` when the controller cannot be asked) and enforce their side (wsapi: no
+password logins). A plugin never reads `security_profile` from its own configuration.
 
 ### Discovery in production
 
-Discovery is authenticated by the PKI: each side presents its operator-issued chain, which must verify to
-`trust_anchors` (the identity comes from the certificate's subject and its `cresco:node:` SAN; controllers carry
-`cresco:role:controller`), and nothing is issued, enrolled or pinned on first use. The discovery secrets stay as an
-explicit **second, admission layer** on top of it: the authenticated exchange (discovery v2) is still keyed by them, so a
-host without the fabric's secret cannot even start an exchange. In production at least one discovery secret is required
-and every one comes from an owner-only `<name>_file` (or `CRESCO_<NAME>` in the environment); one given inline (`-D`) is
-refused at start. A leaked discovery secret alone admits nothing: without a certificate that chains to the anchors the
-exchange fails.
+Discovery is authenticated by the operator's PKI alone; **no shared discovery secret is configured, used or accepted**
+(one set is refused at start: a leftover is named, not silently ignored). The exchange has the same four messages as the
+standard profile's discovery v2 -- HELLO, CHALLENGE, PROOF, RESULT, over fresh nonces from both sides -- but each side
+*signs* the transcript with its provisioned identity key (the key its leaf carries) instead of keying a MAC with a secret:
+
+- the joiner's whole chain must verify to `trust_anchors` as what it claims (name, role, validity, revocation, the
+  region's CA scope) **before** the responder signs anything for it;
+- the responder's chain must verify the same way as the controller it answered as (a GLOBAL answer only from the
+  certificate carrying `cresco:role:global`), and its signature (over both nonces, both identities, both chains and its
+  broker port) must verify under its leaf, before the joiner answers;
+- the joiner's signature must verify under the leaf it presented: a copied (public) chain without its key gets nothing,
+  and a replayed or altered exchange fails (the transcript covers the other side's fresh nonce);
+- nothing is issued, enrolled or pinned on first use: the PKI decides at every exchange and every TLS handshake.
+
+Locators (the UDP broadcast and the first TCP probe, which only find a controller) carry no secret either: a production
+controller answers a PKI locator with its region, name and broker port (what its TLS certificate shows anyway) and
+nothing else, and does not answer a secret-keyed locator or a legacy exchange (`Discovery: REFUSED ... authenticated by the
+operator's PKI only` once per address). A production node and a standard-profile node never complete a discovery
+exchange with each other. The live proof is `docs/tests/provisioned_live_test.sh` (a production mesh, no secret).
 
 ## 2. Issuing a fabric's certificates offline
 
@@ -102,9 +116,6 @@ identity_keystore_password_file=/etc/cresco/node.p12.pass
 trust_anchors=/etc/cresco/trust-anchors.pem
 plugin_signing_truststore=/etc/cresco/codesign-anchors.pem
 revocation_file=/etc/cresco/revoked.crl                  # optional
-discovery_secret_agent_file=/etc/cresco/discovery_agent   # owner-only files, if discovery is used to locate peers
-discovery_secret_region_file=/etc/cresco/discovery_region
-discovery_secret_global_file=/etc/cresco/discovery_global
 file_access_roots=/srv/cresco/shared                      # only where getfiledata/getfileinfo are wanted
 ```
 
@@ -161,6 +172,6 @@ stores BCFKS). `trust_anchors`, `revocation_file` and a PEM `plugin_signing_trus
 
 - Start-up: no `REFUSING TO START` line; `security profile production` is reported by `AgentService.getSecurityProfile()`;
   `crypto: FIPS 140-3 approved-only mode: ... MD5 refused` (section 6).
-- `message signatures ON` lines, `Broker mutual-TLS ENABLED`, and `Peer identity verified` for each bridge and broker
-  connection.
+- `discovery (PKI): authenticated <TYPE> exchange with <region>/<agent>` for each join, `message signatures ON` lines,
+  `Broker mutual-TLS ENABLED`, and `Peer identity verified` for each bridge and broker connection.
 - A plugin jar that is not signed to `plugin_signing_truststore` is refused (`REFUSED to install`).

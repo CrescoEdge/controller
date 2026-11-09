@@ -363,6 +363,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
+        if (access == TenantPolicy.Access.WRITE && legacyRawInboxWrite(id, name)) return;
         TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
@@ -371,6 +372,27 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         } else if (logAllow) {
             logger.info("ALLOW " + access + " '" + name + "' : " + d.reason);
         }
+    }
+
+    private volatile java.util.function.BooleanSupplier upgradeWindow = () -> false;
+
+    /** Is the upgrade window open on this node (docs/upgrade-1.3-secure-defaults.md section 3)? Set by the controller. */
+    public void setUpgradeWindow(java.util.function.BooleanSupplier open) {
+        this.upgradeWindow = open == null ? () -> false : open;
+    }
+
+    /**
+     * The upgrade window: a verified node of this broker's region may write this broker's controller's RAW inbox
+     * ({@code <region>_<agent>}), as nodes of an earlier build (no tenant namespacing) do, whatever its tenant -- in a
+     * multi-tenant region the controller is of a superuser tenant, and an earlier build wrote there across tenants. It
+     * grants nothing else: the controller consumes that inbox only while the window is open and judges every message
+     * there by its verified caller (a node without stamping has membership only; see LegacyNodes).
+     */
+    boolean legacyRawInboxWrite(CrescoIdentity id, String name) {
+        CrescoIdentity own = ownIdentity;
+        if (id == null || own == null || name == null || !id.getRegion().equals(own.getRegion())) return false;
+        if (!name.equals(own.getRegion() + "_" + own.getAgent())) return false;
+        return upgradeWindow.getAsBoolean();
     }
 
     // ---- MessageAuthorizationPolicy: recipient-bound dataplane messages (StreamRecipientPolicy) ----

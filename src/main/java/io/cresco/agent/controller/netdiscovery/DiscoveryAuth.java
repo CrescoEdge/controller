@@ -46,6 +46,9 @@ import java.util.Map;
  * a certificate or the port fails (the transcript), and neither side records a name, pin, bridge peer or enrollment
  * before the other side has proven itself. The leaf each side presents must name the identity it claims.
  *
+ * <p>Under {@code security_profile=production} the same exchange runs on the operator's PKI instead of a secret
+ * ({@link #AUTH_PKI}): signatures by both sides' provisioned identity keys, chains verified to the trust anchors.
+ *
  * <p>Modes ({@code discovery_auth}): {@code v2} (default) speaks and accepts only this exchange for certificate trust;
  * {@code compat} also accepts and falls back to the legacy single-message exchange (constant validator, replayable)
  * for peers that are not upgraded -- for a rolling upgrade only.
@@ -90,6 +93,60 @@ public final class DiscoveryAuth {
         public String rcert;
         /** CHALLENGE, optional: an operator-signed controller rebind statement (RebindStatement; signed on its own, not MAC'd). */
         public String rebind;
+        /** {@link #AUTH_PKI}: the PKI exchange (security_profile=production), {@code mac} carries signatures; absent: the secret's MACs. */
+        public String auth;
+    }
+
+    /**
+     * The PKI exchange (security_profile=production). The same four messages and the same transcript, but no discovery
+     * secret at all: S1, C and S2 are signatures, each by the sender's provisioned identity key (the key its leaf carries),
+     * under labels of their own ({@code pki-S1}, {@code pki-C}, {@code pki-S2}), and each side's whole chain must verify to
+     * the operator's trust anchors (role, name, validity, revocation) before its signature is checked. Fresh nonces in the
+     * transcript make every signature single-use; nothing is recorded before the peer's signature verifies.
+     */
+    public static final String AUTH_PKI = "pki";
+    /** The locator validator of the PKI exchange: locators carry no secret (they only locate; the exchange authenticates). */
+    public static final String PKI_LOCATOR = "pki";
+
+    /** What a MAC or a PKI signature covers: the label, a zero byte, the transcript, then each extra length-prefixed. */
+    static byte[] authBytes(String label, byte[] transcript, String... extra) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(transcript.length + 64);
+        out.writeBytes(label.getBytes(StandardCharsets.UTF_8));
+        out.write(0);
+        out.writeBytes(transcript);
+        for (String e : extra) {
+            byte[] b = (e == null ? "" : e).getBytes(StandardCharsets.UTF_8);
+            out.writeBytes(ByteBuffer.allocate(4).putInt(b.length).array());
+            out.writeBytes(b);
+        }
+        return out.toByteArray();
+    }
+
+    /** The PKI exchange: {@code key}'s signature over {@link #authBytes}, base64. */
+    static String sign(java.security.PrivateKey key, String label, byte[] transcript, String... extra) {
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(
+                    io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(key.getAlgorithm()));
+            s.initSign(key);
+            s.update(authBytes(label, transcript, extra));
+            return Base64.getEncoder().encodeToString(s.sign());
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot sign the discovery exchange: " + e.getMessage(), e);
+        }
+    }
+
+    /** The PKI exchange: does {@code sigB64} verify under {@code key} over {@link #authBytes}? */
+    static boolean verify(java.security.PublicKey key, String sigB64, String label, byte[] transcript, String... extra) {
+        if (key == null || sigB64 == null) return false;
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(
+                    io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(key.getAlgorithm()));
+            s.initVerify(key);
+            s.update(authBytes(label, transcript, extra));
+            return s.verify(Base64.getDecoder().decode(sigB64));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** Derived keys, by (purpose, secret digest): bounded, so secrets that come and go cannot grow it without limit. */
@@ -180,15 +237,7 @@ public final class DiscoveryAuth {
         try {
             Mac m = Mac.getInstance("HmacSHA384");
             m.init(new SecretKeySpec(key, "HmacSHA384"));
-            m.update(label.getBytes(StandardCharsets.UTF_8));
-            m.update((byte) 0);
-            m.update(transcript);
-            for (String e : extra) {
-                byte[] b = (e == null ? "" : e).getBytes(StandardCharsets.UTF_8);
-                m.update(ByteBuffer.allocate(4).putInt(b.length).array());
-                m.update(b);
-            }
-            return Base64.getEncoder().encodeToString(m.doFinal());
+            return Base64.getEncoder().encodeToString(m.doFinal(authBytes(label, transcript, extra)));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

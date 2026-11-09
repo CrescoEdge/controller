@@ -28,6 +28,13 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     private final java.util.concurrent.atomic.AtomicBoolean legacyPeer;
     private DiscoveryAuth.Msg hello, challenge;
     private boolean done;
+    /** The locator or certify in the earlier builds' format (the upgrade window's fallback to a responder not upgraded). */
+    private boolean legacyFormat;
+
+    TCPDiscoveryStaticHandler legacyFormat(boolean legacy) {
+        this.legacyFormat = legacy;
+        return this;
+    }
 
     public TCPDiscoveryStaticHandler(ControllerEngine controllerEngine, List<DiscoveryNode> discoveredList, DiscoveryType disType, String hostAddress, int discoveryPort, boolean sendCert) {
         this(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, false, null);
@@ -169,7 +176,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
             sme = new MsgEvent(MsgEvent.Type.DISCOVER, this.plugin.getRegion(), this.plugin.getAgent(), this.plugin.getPluginID(), "Discovery request.");
 
 
-            DiscoveryNode discoveryNode = discoveryProcessor.generateBroadCastDiscovery(disType, sendCert);
+            DiscoveryNode discoveryNode = discoveryProcessor.generateBroadCastDiscovery(disType, sendCert, legacyFormat);
 
             if(discoveryNode != null) {
                 sme.setCompressedParam("discovery_node", gson.toJson(discoveryNode));

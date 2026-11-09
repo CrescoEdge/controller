@@ -39,18 +39,28 @@ public class TCPDiscoveryStatic {
 
     public List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, Boolean sendCert) throws Exception  {
         if (!Boolean.TRUE.equals(sendCert)) {
-            return discover(disType, discoveryTimeout, hostAddress, discoveryPort, false, false, null);
+            List<DiscoveryNode> found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, false, false, null, false);
+            if ((found == null || found.isEmpty()) && DiscoveryAuth.Mode.of(plugin.getConfig()) == DiscoveryAuth.Mode.COMPAT
+                    && disType == DiscoveryType.AGENT) {
+                // the upgrade window: a responder that is not upgraded answers only an earlier build's locator
+                found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, false, false, null, true);
+                if (found != null && !found.isEmpty()) {
+                    logger.warn("Discovery: " + hostAddress + ":" + discoveryPort + " answered only the LEGACY locator (it is not"
+                            + " upgraded); using it because the upgrade window is open");
+                }
+            }
+            return found;
         }
         // certificate exchanges are discovery v2 (mutually authenticated, replay-proof); a responder that only speaks
         // the legacy exchange is used only with discovery_auth=compat
         java.util.concurrent.atomic.AtomicBoolean legacyPeer = new java.util.concurrent.atomic.AtomicBoolean();
-        List<DiscoveryNode> found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, true, legacyPeer);
+        List<DiscoveryNode> found = discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, true, legacyPeer, false);
         if (legacyPeer.get()) {
             DiscoveryAuth.Mode mode = DiscoveryAuth.Mode.of(plugin.getConfig());
             if (mode == DiscoveryAuth.Mode.COMPAT && disType == DiscoveryType.AGENT) {
                 logger.warn("Discovery: " + hostAddress + ":" + discoveryPort + " speaks only the LEGACY certificate exchange;"
                         + " using it because discovery_auth=compat (upgrade that node, then remove compat)");
-                return discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, false, null);
+                return discover(disType, discoveryTimeout, hostAddress, discoveryPort, true, false, null, true);
             }
             logger.error("Discovery: " + hostAddress + ":" + discoveryPort + " speaks only the legacy, unauthenticated certificate"
                     + " exchange; refusing it. Upgrade that node, or set discovery_auth=compat on this one during the upgrade");
@@ -59,7 +69,7 @@ public class TCPDiscoveryStatic {
     }
 
     private List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, boolean sendCert,
-                                         boolean v2, java.util.concurrent.atomic.AtomicBoolean legacyPeer) throws Exception {
+                                         boolean v2, java.util.concurrent.atomic.AtomicBoolean legacyPeer, boolean legacyFormat) throws Exception {
         // Configure SSL.
 
         final List<DiscoveryNode> discoveredList = new ArrayList<>();
@@ -105,7 +115,8 @@ public class TCPDiscoveryStatic {
                                 */
                                 // String-only decoding: a responder (or anyone answering in its place) is unauthenticated
                                 DiscoveryWire.install(p);
-                                p.addLast(new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, v2, legacyPeer));
+                                p.addLast(new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, v2, legacyPeer)
+                                        .legacyFormat(legacyFormat));
                             }
                         });
 

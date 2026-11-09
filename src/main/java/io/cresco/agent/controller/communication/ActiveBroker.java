@@ -382,6 +382,8 @@ public class ActiveBroker {
 						if (cs == null || !region.equals(cs.getRegion()) || controllerEngine.getGDB() == null) return null;
 						return controllerEngine.getGDB().recordedRegionAlias(region, agent);
 					});
+					// the upgrade window: nodes of an earlier build of this region write this controller's raw inbox
+					authz.setUpgradeWindow(controllerEngine::legacyNodesAdmitted);
 					brokerPlugins.add(authz);
 					logger.info("Cresco broker security ENABLED — tenant authorization plugin installed");
 					// Recipient-bound dataplane messages (cresco_to) reach only their recipient's connection; set on the

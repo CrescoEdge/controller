@@ -96,8 +96,10 @@ public final class SecuritySettings {
     static final java.util.List<String> PASSWORD_PARAMS = java.util.Arrays.asList(
             "cresco_service_key", "broker_security_secret", "keystorepwd", "truststorepwd", "plugin_signing_truststore_password");
     /** Secrets that must come from a {@code _file} (or {@code CRESCO_} environment) source in production, never inline. */
-    static final java.util.List<String> FILE_ONLY_SECRETS = java.util.Arrays.asList(
-            "discovery_secret_agent", "discovery_secret_region", "discovery_secret_global", "db_password");
+    static final java.util.List<String> FILE_ONLY_SECRETS = java.util.Arrays.asList("db_password");
+    /** The shared discovery secrets: the standard profile's discovery; never used in production (the PKI's discovery). */
+    static final java.util.List<String> DISCOVERY_SECRETS = java.util.Arrays.asList(
+            "discovery_secret_agent", "discovery_secret_region", "discovery_secret_global");
 
     /**
      * Why the profile forbids this node's start, one line per problem (empty: it may start). An unknown
@@ -151,17 +153,15 @@ public final class SecuritySettings {
                 out.add(pre + k + " is a password, which production does not allow (debug and testing only)");
             }
         }
-        // discovery in production: identity is the PKI's (each side's chain verifies to trust_anchors; nothing is issued,
-        // enrolled or pinned on first use); the discovery secrets stay as an explicit admission layer on top of it --
-        // required, and only from owner-only files or the environment
-        boolean anyDiscoverySecret = false;
-        for (String k : new String[]{"discovery_secret_agent", "discovery_secret_region", "discovery_secret_global"}) {
+        // discovery in production is the PKI's alone: both sides sign the exchange with their provisioned identity keys and
+        // their chains verify to trust_anchors (role, name, validity, revocation); nothing is issued, enrolled or pinned on
+        // first use, and no shared discovery secret is used or accepted -- one configured is a leftover, refused by name
+        for (String k : DISCOVERY_SECRETS) {
             String v = c.getStringParam(k);
-            if (v != null && !v.isEmpty()) anyDiscoverySecret = true;
-        }
-        if (!anyDiscoverySecret) {
-            out.add(pre + "no discovery secret is configured: production discovery is authenticated by the PKI AND admitted by"
-                    + " the discovery secrets (discovery_secret_agent/region/global, from <name>_file or CRESCO_<NAME>)");
+            if ((v != null && !v.isEmpty()) || System.getProperty(k) != null) {
+                out.add(pre + k + " is set: production discovery is authenticated by the operator's PKI only, no discovery"
+                        + " secret is used or accepted (remove " + k + ", its _file and CRESCO_" + k.toUpperCase(java.util.Locale.ROOT) + ")");
+            }
         }
         for (String k : FILE_ONLY_SECRETS) {
             if (System.getProperty(k) != null) {
