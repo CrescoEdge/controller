@@ -1016,6 +1016,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         if (base == null || dest == null) return null;
         ActiveMQSession own = (ActiveMQSession) base.getConnection().createSession(false, Session.AUTO_ACKNOWLEDGE);
         try {
+            // A small prefetch: while the listener waits, what its consumer has prefetched waits with it, at the agent and
+            // outside every memory limit -- the topic default (100) is 400 MiB of 4 MiB frames, and as much latency for
+            // the frames behind it. The broker keeps the rest (the topic's memory limit), and the listener's own budget
+            // (wsapi's 32 MiB) covers the link.
+            int prefetch = Math.max(1, plugin.getConfig().getIntegerParam("dataplane_paced_prefetch", 16));
+            if (dest instanceof org.apache.activemq.command.ActiveMQTopic) {
+                dest = new org.apache.activemq.command.ActiveMQTopic(((org.apache.activemq.command.ActiveMQTopic) dest).getPhysicalName()
+                        + "?consumer.prefetchSize=" + prefetch);
+            }
             MessageConsumer c = (selector == null) ? own.createConsumer(dest) : own.createConsumer(dest, selector);
             ActiveMQSession old = ownSessions.put(listenerId, own);
             if (old != null && old != own) closeQuietly(old);
