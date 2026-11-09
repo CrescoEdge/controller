@@ -346,6 +346,9 @@ public class GlobalExecutor implements Executor {
 
                 String remoteRegion = connectedRegions.get("region_id");
                 String remoteAgent =  connectedRegions.get("agent_id");
+                // never address a request to something that is not a node name (it could only bounce)
+                if (!io.cresco.agent.controller.communication.CrescoNames.isValid(remoteRegion)
+                        || !io.cresco.agent.controller.communication.CrescoNames.isValid(remoteAgent)) continue;
 
                 // self = same region AND same agent; a dynamic-mesh bridge back to a
                 // federated region is not a new region — skip both (a federated region is
