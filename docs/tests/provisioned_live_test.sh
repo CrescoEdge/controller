@@ -111,7 +111,8 @@ B1C='mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr
 RCB='ActiveMQ NIO Worker.*Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc'
 b1before=$(cnt region "$B1C"); rcb=$(cnt global "$RCB")
 bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 20 >/dev/null && ks "$PKI/nodes/rgr_rc" > "$PKI/nodes/rgr_rc/keystore.path"
-for _ in $(seq 1 20); do grep -q "Pre-provisioned identity RELOADED" "$WORK/logs/region.log" && break; sleep 1; done
+# (the tool also re-copies trust-anchors.pem, which may make a first reload with the same key: wait for the new key)
+for _ in $(seq 1 40); do grep -qE "Pre-provisioned identity RELOADED: .* with a NEW key" "$WORK/logs/region.log" && break; sleep 1; done
 ck "$(has region 'Pre-provisioned identity RELOADED: .* with a NEW key')" "the region reloaded its replaced keystore (a new key) without a restart"
 sleep 15
 ck "$( [ "$(cnt region "$B1C")" = "$b1before" ] && [ "$(cnt global "$RCB")" = "$rcb" ] && echo 1)" "no connection was dropped by the reload (b1 and the region's bridges stayed up)"
