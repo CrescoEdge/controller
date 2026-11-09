@@ -120,11 +120,14 @@ EOF
 
   # ---- 2. dataplane across hosts (a1 on H4 -> b1 on H3), Python client through wsapi
   local AP BP; AP=$(fp "$H4" "$AW"); BP=$(fp "$H3" "$BW")
+  # warm-up (JIT, connections, TLS sessions): one untimed run first
+  on "$H4" "$PY" "$PERF" --host 127.0.0.1 --port $AW --fingerprint "$AP" --rx-host "$H3" --rx-port $BW --rx-fingerprint "$BP" \
+      ${KEY:+--key $KEY} --messages 500 --size 262144 --settle 120 --stream "gate-$B-warmup" >/dev/null 2>&1
   local dp="{" first=1 size flows rep
   for size in 262144 4194304; do
     local msgs=$([ "$size" = 262144 ] && echo "${DP_MSGS_256K:-2000}" || echo "${DP_MSGS_4M:-150}")
     for flows in 1 4; do
-      for rep in 1 2; do
+      for rep in 1 2 3; do
         local at; at=$(( $(date +%s) + 8 ))
         local res; res=$(on "$H4" bash -c "
           for f in \$(seq 1 $flows); do
