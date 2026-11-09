@@ -67,7 +67,12 @@ EOF
     done >> "$RD/pki.log" 2>&1 || { log "FATAL pki agents"; return 1; }
     bash "$PKI_TOOL" crl "$PKI" >> "$RD/pki.log" 2>&1
     # FIPS approved-only keystores are BCFKS, converted with the candidate's own tool, 16 at a time
-    ls -d "$PKI"/nodes/*/ | xargs -P 16 -I{} sh -c "\"$J\" -jar \"$JAR\" --crypto convert-keystore {}node.p12 {}node.p12.pass {}node.bcfks >/dev/null 2>&1"
+    local n c=0
+    for n in "$PKI"/nodes/*/; do
+      "$J" -jar "$JAR" --crypto convert-keystore "${n}node.p12" "${n}node.p12.pass" "${n}node.bcfks" >/dev/null 2>&1 &
+      c=$((c + 1)); [ $((c % 16)) = 0 ] && wait
+    done; wait
+    for n in "$PKI"/nodes/*/; do [ -f "${n}node.bcfks" ] || { log "FATAL keystore conversion: $n"; return 1; }; done
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -sha384 -days 3 -nodes -keyout "$RD/codesign.key" -out "$RD/codesign.pem" \
       -subj "/O=t1/CN=gate code signing" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" >/dev/null 2>&1
     export CRESCO_TLS_CLIENT_CERT="$PKI/api/t1_bench/api.p12"
@@ -177,7 +182,12 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
     local s; s=$("$PY" - "$step" "$listed" "$t_all" "$g0" "$g1" "$g2" "$r0" "$r1" "$r2" "${STEADY_S:-60}" "${storm:-null}" "${cps:-null}" <<'EOF'
 import json, sys
 step, listed, t_all = int(sys.argv[1]), int(sys.argv[2] or 0), sys.argv[3]
-g0, g1, g2, r0, r1, r2 = (json.loads(x) for x in sys.argv[4:10])
+def js(x):
+    try:
+        return json.loads(x)
+    except ValueError:
+        return {"error": "unreadable: %s" % x[:80]}
+g0, g1, g2, r0, r1, r2 = (js(x) for x in sys.argv[4:10])
 steady = float(sys.argv[10])
 def node(a, b, c):
     try:
@@ -186,8 +196,8 @@ def node(a, b, c):
     except Exception as e:
         return {"error": str(e)}
 print(json.dumps({"agents": step, "listed": listed, "all_listed_after_s": None if t_all == "null" else float(t_all),
-                  "global": node(g0, g1, g2), "region": node(r0, r1, r2), "global_probe_during_storm": json.loads(sys.argv[11]),
-                  "control_plane": json.loads(sys.argv[12])}))
+                  "global": node(g0, g1, g2), "region": node(r0, r1, r2), "global_probe_during_storm": js(sys.argv[11]),
+                  "control_plane": js(sys.argv[12])}))
 EOF
 )
     [ $sfirst = 1 ] || sc="$sc,"; sfirst=0; sc="$sc\"$step\": $s"
