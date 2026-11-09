@@ -73,6 +73,8 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MsgSigning {
 
+    /** On every signed message: this signer understands batch signatures ({@link MsgBatchSigner}); under the signature. */
+    public static final String VERSION_PARAM = "cresco_sig_v";
     public static final String SIG = "cresco_sig", BY = "cresco_sig_by", TS = "cresco_sig_ts", CRED = "cresco_sig_cred",
             PENDING = "cresco_sig_pending", S_CALLER = "cresco_sig_caller", S_TENANT = "cresco_sig_caller_tenant",
             S_ROLES = "cresco_sig_caller_roles";
@@ -100,6 +102,16 @@ public final class MsgSigning {
     private volatile long directParentUntil;
     private final ConcurrentHashMap<String, Long> directChildren = new ConcurrentHashMap<>();
     private final AtomicLong directSent = new AtomicLong(), directAccepted = new AtomicLong();
+    /** {@code msg_signing_batch} (default true): batch signatures to the nodes that understand them. */
+    private final boolean batch;
+    private final int batchThreads;
+    private volatile MsgBatchSigner batcher;
+    /** The nodes (region_agent) this node verified a batch-capable signed message from: they are sent batch signatures. */
+    private final ConcurrentHashMap<String, Boolean> batchPeers = new ConcurrentHashMap<>();
+    /** Batch root signatures verified here (digest of signature and key fingerprint): one key operation per batch. */
+    private final ConcurrentHashMap<String, Boolean> batchVerified = new ConcurrentHashMap<>();
+    static final int BATCH_PEERS_MAX = 200_000, BATCH_VERIFIED_MAX = 50_000;
+    private final AtomicLong batchedSigned = new AtomicLong();
     private final long maxAgeMs;
     private final long attestationMs;
 
@@ -173,6 +185,42 @@ public final class MsgSigning {
         this.maxAgeMs = Math.max(10_000L, c.getLongParam("msg_signature_max_age_ms", 300_000L));
         this.attestationMs = Math.max(1L, c.getLongParam("msg_signing_attestation_hours", 24L)) * 3_600_000L;
         this.direct = c.getBooleanParam("msg_signing_direct", true);
+        this.batch = c.getBooleanParam("msg_signing_batch", true);
+        this.batchThreads = Math.max(1, c.getIntegerParam("msg_signing_threads",
+                Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors() / 2))));
+    }
+
+    /** Stop the batch signing workers (the controller is stopping). */
+    public void close() {
+        MsgBatchSigner b = batcher;
+        if (b != null) b.close();
+    }
+
+    /** Messages signed in a shared batch (diagnostics, tests). */
+    public long batchedSignedCount() { return batchedSigned.get(); }
+
+    private MsgBatchSigner batcher() {
+        MsgBatchSigner b = batcher;
+        if (b == null) {
+            synchronized (this) {
+                b = batcher;
+                if (b == null) {
+                    b = new MsgBatchSigner(data -> {
+                        Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(ownKey().getAlgorithm()));
+                        s.initSign(ownKey());
+                        s.update(data);
+                        return s.sign();
+                    }, batchThreads, "cresco-msg-signer");
+                    batcher = b;
+                }
+            }
+        }
+        return b;
+    }
+
+    /** Is {@code m}'s destination a node that understands batch signatures? */
+    private boolean batchTo(MsgEvent m) {
+        return batch && m.getDstRegion() != null && m.getDstAgent() != null && batchPeers.containsKey(m.getDstRegion() + "_" + m.getDstAgent());
     }
 
     /** Messages sent unsigned over a direct link, and accepted so (diagnostics, tests). */
@@ -204,7 +252,8 @@ public final class MsgSigning {
     /** Is {@code key} covered by the signature? Not what infrastructure writes in transit, nor the signature itself. */
     static boolean covered(String key) {
         return key != null && !key.startsWith("routepath-") && !key.startsWith("linkcost-") && !key.startsWith("srcroute")
-                && !key.equals("ttl") && !key.equals(SIG) && !key.equals(PENDING) && !Caller.RESERVED_PARAMS.contains(key);
+                && !key.equals("ttl") && !key.equals(SIG) && !key.equals(PENDING) && !key.equals(MsgBatchSigner.TREE)
+                && !Caller.RESERVED_PARAMS.contains(key);
     }
 
     /** The bytes a signature covers (length-prefixed, parameters in key order; a parameter without a value is absent). */
@@ -263,7 +312,7 @@ public final class MsgSigning {
     /** Remove every signature parameter. */
     public static void clear(MsgEvent m) {
         if (m == null || m.getParams() == null) return;
-        for (String k : new String[]{SIG, BY, TS, CRED, PENDING, S_CALLER, S_TENANT, S_ROLES, DIRECT}) m.removeParam(k);
+        for (String k : new String[]{SIG, BY, TS, CRED, PENDING, S_CALLER, S_TENANT, S_ROLES, DIRECT, VERSION_PARAM, MsgBatchSigner.TREE}) m.removeParam(k);
     }
 
     /** A message off the wire never asks THIS node to sign it: only this node's own stamping points do. */
@@ -296,14 +345,25 @@ public final class MsgSigning {
             m.setParam(BY, selfName());
             m.setParam(TS, Long.toString(System.currentTimeMillis()));
             m.setParam(CRED, credential());
-            Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(ownKey().getAlgorithm()));
-            s.initSign(ownKey());
-            s.update(canonical(m));
-            m.setParam(SIG, Base64.getEncoder().encodeToString(s.sign()));
+            if (batch) m.setParam(VERSION_PARAM, "2");
+            if (batchTo(m)) {
+                // shares the private-key operation with the messages being signed at the same moment (alone: a single one)
+                MsgBatchSigner.Signed bs = batcher().sign(canonical(m));
+                m.setParam(SIG, bs.sig);
+                if (bs.tree != null) {
+                    m.setParam(MsgBatchSigner.TREE, bs.tree);
+                    batchedSigned.incrementAndGet();
+                }
+            } else {
+                Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(ownKey().getAlgorithm()));
+                s.initSign(ownKey());
+                s.update(canonical(m));
+                m.setParam(SIG, Base64.getEncoder().encodeToString(s.sign()));
+            }
             if (signedCount.incrementAndGet() == 1) info("message signatures ON: this node signs what it originates (first: "
                     + m.getMsgType() + " " + m.getParam("action") + " as " + c + ", credential " + m.getParam(CRED).substring(0, 4) + ")");
         } catch (Exception e) {
-            for (String k : new String[]{SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES}) m.removeParam(k);
+            for (String k : new String[]{SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, VERSION_PARAM, MsgBatchSigner.TREE}) m.removeParam(k);
             refusal("cannot sign a message this node sends (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "): it goes unsigned and is refused");
         }
     }
@@ -382,10 +442,31 @@ public final class MsgSigning {
             if (!name.equals(by)) return refuse("signed by " + name + ", which is not the declared signer " + by);
             if (peers().isRevokedKey(who.fp)) return refuse("the signer's key is revoked (" + by + ")");
             byte[] sig = Base64.getDecoder().decode(sigB64);
-            Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
-            s.initVerify(who.key);
-            s.update(canonical(m));
-            if (!s.verify(sig)) return refuse("the signature does not verify (" + by + ")");
+            String tree = m.getParam(MsgBatchSigner.TREE);
+            byte[] replayKey = sig;
+            if (tree != null) {
+                // a batch signature: this message's own leaf leads to the signed root; the root's signature once per batch
+                byte[] leaf = MsgBatchSigner.leaf(canonical(m));
+                int[] count = new int[1];
+                byte[] root = MsgBatchSigner.root(leaf, tree, count);
+                if (root == null) return refuse("a malformed batch signature path (" + by + ")");
+                String cacheKey = Base64.getEncoder().encodeToString(sha256.get().digest(sig)) + "|" + who.fp + "|"
+                        + Base64.getEncoder().encodeToString(root) + "|" + count[0];
+                if (!batchVerified.containsKey(cacheKey)) {
+                    Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
+                    s.initVerify(who.key);
+                    s.update(MsgBatchSigner.signedBytes(root, count[0]));
+                    if (!s.verify(sig)) return refuse("the batch signature does not verify (" + by + ")");
+                    if (batchVerified.size() >= BATCH_VERIFIED_MAX) batchVerified.clear();
+                    batchVerified.put(cacheKey, Boolean.TRUE);
+                }
+                replayKey = java.nio.ByteBuffer.allocate(sig.length + leaf.length).put(sig).put(leaf).array();
+            } else {
+                Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
+                s.initVerify(who.key);
+                s.update(canonical(m));
+                if (!s.verify(sig)) return refuse("the signature does not verify (" + by + ")");
+            }
             Caller signed = Caller.parse(m.getParam(S_CALLER), m.getParam(S_TENANT), m.getParam(S_ROLES));
             if (signed == null || signed.isAnonymous()) return refuse("no signed caller");
             String vouch = vouchRefusal(who.id, signed, ce.getPluginBuilder() == null ? java.util.Set.of()
@@ -394,7 +475,10 @@ public final class MsgSigning {
             if (fromBroker != null && !fromBroker.equals(signed)) {
                 return refuse("the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
-            if (!fresh(sig, now)) return refuse("a signature seen before (a replay) from " + by);
+            if (!fresh(replayKey, now)) return refuse("a signature seen before (a replay) from " + by);
+            if (batch && "2".equals(m.getParam(VERSION_PARAM)) && batchPeers.size() < BATCH_PEERS_MAX) {
+                batchPeers.putIfAbsent(who.id.getRegion() + "_" + who.id.getAgent(), Boolean.TRUE);
+            }
             if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
                     + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + ")");
             return new Verdict(signed, null);
