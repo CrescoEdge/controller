@@ -566,10 +566,9 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   (then cached) and keeps signature and leaf in its replay memory, so a replayed, altered or re-pathed message is refused
   like any other. A message alone in its batch -- whenever the node is not busy -- gets an ordinary signature, so no
   latency is added; up to 256 share one under load (`msg_signing_threads` workers, default half the cores, 2 to 8). Every
-  signed message says its signer reads batch signatures (`cresco_sig_v=2`, signed), and a node sends them only to a node
-  it verified such a message from, so a node of an earlier build is always sent single signatures
-  (`msg_signing_batch=false` turns them off). Every signed message says what its signer reads (`cresco_sig_caps`:
-  `batch`, `session`; signed).
+  authenticated message says what its sender reads (`cresco_sig_caps`: `batch`, `session`; under its signature or MAC),
+  and a node sends batch signatures only to a node it verified a message listing `batch` from, so a node of an earlier
+  build is always sent single signatures (`msg_signing_batch=false` turns them off).
 - **Session keys (end to end, past the relays).** Two nodes that talk across relays agree once on a key only they hold,
   then authenticate each message with an HMAC-SHA-384 under it (`cresco_sig_sid`, `cresco_sig_mac`; about 15 us to
   check) instead of a signature (2 ms to make), and the credential (2.2 KB) no longer travels. The agreement rides on
