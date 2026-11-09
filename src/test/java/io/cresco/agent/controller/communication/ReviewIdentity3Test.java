@@ -45,7 +45,7 @@ class ReviewIdentity3Test {
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(0));
         b.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
         X509Certificate cert = new JcaX509CertificateConverter().getCertificate(
-                b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(issuer.kp.getPrivate())));
+                b.build(new JcaContentSignerBuilder("SHA384withRSA").build(issuer.kp.getPrivate())));
         X509Certificate[] above = new X509Certificate[issuer.above.length + 1];
         above[0] = issuer.cert;
         System.arraycopy(issuer.above, 0, above, 1, issuer.above.length);

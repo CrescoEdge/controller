@@ -483,7 +483,7 @@ class ReviewIdentityRevocationTest {
         KeyPair rootKp = TlsTestSupport.rsa();
         org.bouncycastle.asn1.x500.X500Name rn = new org.bouncycastle.asn1.x500.X500Name("CN=rootCA-self");
         long now = System.currentTimeMillis();
-        org.bouncycastle.operator.ContentSigner s = new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(rootKp.getPrivate());
+        org.bouncycastle.operator.ContentSigner s = new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").build(rootKp.getPrivate());
         X509Certificate root = new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(
                 new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(rn, java.math.BigInteger.ONE, new Date(now - 60_000), new Date(now + validMs), rn, rootKp.getPublic())
                         .addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, new org.bouncycastle.asn1.x509.BasicConstraints(true)).build(s));

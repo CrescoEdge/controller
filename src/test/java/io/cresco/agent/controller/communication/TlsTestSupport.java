@@ -44,12 +44,11 @@ public final class TlsTestSupport {
     private TlsTestSupport() { }
 
     public static void provider() {
-        if (Security.getProvider("BC") == null) Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
     }
 
     public static KeyPair rsa() throws Exception {
         provider();
-        KeyPairGenerator g = KeyPairGenerator.getInstance("RSA", "BC");
+        KeyPairGenerator g = KeyPairGenerator.getInstance("RSA");
         g.initialize(2048, new SecureRandom());
         return g.generateKeyPair();
     }
@@ -89,7 +88,7 @@ public final class TlsTestSupport {
                 new Date(now - 60_000L), new Date(now + 86_400_000L), subject, key);
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(ca));
         b.addExtension(Extension.keyUsage, true, new KeyUsage(ca ? (KeyUsage.keyCertSign | KeyUsage.cRLSign) : (KeyUsage.digitalSignature | KeyUsage.keyEncipherment)));
-        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(signer)));
+        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").build(signer)));
     }
 
     static KeyManager[] keyManagers(PrivateKey key, X509Certificate[] chain) throws Exception {

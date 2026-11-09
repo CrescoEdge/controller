@@ -271,7 +271,7 @@ class IdentityLifecycleTest {
             org.bouncycastle.asn1.x500.X500Name n = new org.bouncycastle.asn1.x500.X500Name("CN=x");
             return new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(
                     new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(n, java.math.BigInteger.ONE, new Date(notBefore), new Date(notAfter), n, kp.getPublic())
-                            .build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(kp.getPrivate())));
+                            .build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").build(kp.getPrivate())));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

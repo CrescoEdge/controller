@@ -68,14 +68,12 @@ public class CertificateManager {
         if (ProvisionedIdentity.enabled(plugin.getConfig())) {
             // a PRE-PROVISIONED node: its identity and the fabric's anchors come from the operator's PKI; nothing is generated,
             // enrolled or learned on first use. A provisioning that cannot be used stops the controller (never a fallback).
-            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
             initProvisioned();
             logger.info("CertificateManager Init (pre-provisioned): " + (System.currentTimeMillis() - startTime) + " ms");
             return;
         }
         try {
 
-            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
             // how far certificates are backdated: the clock lag every certificate tolerates (P4)
             CertValidity.setBackdateHours(plugin.getConfig().getIntegerParam("identity_cert_backdate_hours", 24));
             peerTrust = openPeerTrust();
@@ -212,7 +210,6 @@ public class CertificateManager {
     public static String provisioningRefusal(io.cresco.library.plugin.Config config) {
         if (!ProvisionedIdentity.enabled(config)) return null;
         try {
-            Security.addProvider(new org.bouncycastle.jce.provider.BouncyCastleProvider());
             Path ta = ProvisionedIdentity.path(config, "trust_anchors");
             ProvisionedIdentity.Revocations rev = readOperatorRevocations(config, ProvisionedIdentity.readAnchors(ta));
             ProvisionedIdentity p = ProvisionedIdentity.load(config, rev);
@@ -1327,7 +1324,7 @@ public class CertificateManager {
             // every signature suite below is the crypto policy's choice (SHA384withRSA under the default cnsa1);
             // certificates are made before the node holds the fabric policy, so CrescoCrypto uses the effective one
             X509Certificate rootCA = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).
                             build(rootCAKeyPair.getPrivate()))); // private key of signing authority , here it is self signed
 
 
@@ -1341,7 +1338,7 @@ public class CertificateManager {
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(true));
             X509Certificate intermedCA = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).
                             build(rootCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by rootCA
 
             //create end user cert signed by Intermediate CA
@@ -1376,7 +1373,7 @@ public class CertificateManager {
             builder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
             builder.addExtension(Extension.basicConstraints, false, new BasicConstraints(false));
             X509Certificate endUserCert = new JcaX509CertificateConverter().getCertificate(builder
-                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").
+                    .build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).
                             build(intermedCAKeyPair.getPrivate())));// private key of signing authority , here it is signed by intermedCA
 
 
@@ -1409,7 +1406,7 @@ public class CertificateManager {
     }
 
     private KeyPair generateKeyPair() throws NoSuchAlgorithmException, NoSuchProviderException {
-        KeyPairGenerator kpGen = KeyPairGenerator.getInstance("RSA", "BC");
+        KeyPairGenerator kpGen = KeyPairGenerator.getInstance("RSA");
         kpGen.initialize(keySize, new SecureRandom());
         return kpGen.generateKeyPair();
     }
