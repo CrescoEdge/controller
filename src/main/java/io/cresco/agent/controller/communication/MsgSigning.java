@@ -491,7 +491,8 @@ public final class MsgSigning {
                 boolean same = id != null && id.getTenant().equals(caller.getTenant()) && id.getRegion().equals(caller.getRegion())
                         && id.getAgent().equals(caller.getAgent());
                 if (same && childIsRegion) {
-                    String role = peers().boundRole(id.getRegion(), id.getAgent(), leaf.getPublicKey());
+                    // the role this very certificate carries (pre-provisioned), never one remembered for the name
+                    String role = peers().boundRole(id.getRegion(), id.getAgent(), new X509Certificate[]{leaf});
                     if (PeerTrustRegistry.ROLE_CONTROLLER.equals(role) || ce.speaksForRegion(caller)) {
                         BundleEntry e = entry(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), "region");
                         BundleEntry prev = childControllers.put(e.r + "/" + e.a, e);

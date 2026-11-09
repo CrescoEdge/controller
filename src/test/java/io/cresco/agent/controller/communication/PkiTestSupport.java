@@ -147,6 +147,22 @@ public final class PkiTestSupport {
         return file;
     }
 
+    /**
+     * A PEM CRL from {@code issuer} listing {@code revoked} serials: {@code number} its CRL number (null: none), and
+     * {@code nextUpdate} (null: none).
+     */
+    public static String crl(Ca issuer, BigInteger number, Date thisUpdate, Date nextUpdate, BigInteger... revoked) throws Exception {
+        org.bouncycastle.cert.X509v2CRLBuilder b = new org.bouncycastle.cert.X509v2CRLBuilder(
+                X500Name.getInstance(issuer.cert.getSubjectX500Principal().getEncoded()), thisUpdate);
+        if (nextUpdate != null) b.setNextUpdate(nextUpdate);
+        for (BigInteger r : revoked) b.addCRLEntry(r, thisUpdate, org.bouncycastle.asn1.x509.CRLReason.keyCompromise);
+        if (number != null) b.addExtension(Extension.cRLNumber, false, new org.bouncycastle.asn1.x509.CRLNumber(number));
+        java.security.cert.X509CRL crl = new org.bouncycastle.cert.jcajce.JcaX509CRLConverter()
+                .getCRL(b.build(new JcaContentSignerBuilder("SHA384withRSA").build(issuer.kp.getPrivate())));
+        return "-----BEGIN X509 CRL-----\n" + Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII)).encodeToString(crl.getEncoded())
+                + "\n-----END X509 CRL-----\n";
+    }
+
     static void ownerOnly(Path p) throws Exception {
         try { Files.setPosixFilePermissions(p, PosixFilePermissions.fromString("rw-------")); } catch (UnsupportedOperationException ignore) { }
     }

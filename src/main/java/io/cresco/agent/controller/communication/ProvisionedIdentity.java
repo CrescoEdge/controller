@@ -454,15 +454,33 @@ public final class ProvisionedIdentity {
     public static final class Revocations {
         final Set<String> keys = new HashSet<>(), certs = new HashSet<>(), names = new HashSet<>();
         final Set<String> serials = new HashSet<>();               // <issuer DN>|<serial hex>
+        /**
+         * Per CRL issuer (its DN): the newest CRL's nextUpdate and CRL number. A CRL past its nextUpdate (plus the grace) makes
+         * the revocation status of that issuer's certificates unknown: they are refused (fail closed) until the file is
+         * refreshed. CRL numbers only go up ({@link #rollbackRefusal}): an older CRL put back cannot un-revoke anything.
+         */
+        final java.util.Map<String, Long> nextUpdates = new java.util.HashMap<>();
+        final java.util.Map<String, java.math.BigInteger> numbers = new java.util.HashMap<>();
+        /** The DNs of every CA this file's CRLs may come from (the anchors, and CA certificates in the file that chain to them). */
+        final Set<String> caNames = new HashSet<>();
         final long mtime;
         final int crls;
+        final long graceMs;
 
-        private Revocations(long mtime, int crls) { this.mtime = mtime; this.crls = crls; }
+        private Revocations(long mtime, int crls, long graceMs) { this.mtime = mtime; this.crls = crls; this.graceMs = graceMs; }
 
-        static final Revocations NONE = new Revocations(-1, 0);
+        static final Revocations NONE = new Revocations(-1, 0, 0);
 
-        /** Parse {@code file}; CRLs must be signed by a CA in {@code cas}. */
+        /** Parse {@code file}; CRLs must be signed by a CA in {@code cas}; no grace past a CRL's nextUpdate. */
         public static Revocations read(Path file, Collection<X509Certificate> cas) throws ProvisioningException {
+            return read(file, cas, 0);
+        }
+
+        /**
+         * Parse {@code file}; CRLs must be signed by a CA in {@code cas}, carry a nextUpdate and a CRL number (RFC 5280: both
+         * are required of a conforming CRL issuer), and are honoured until {@code graceMs} past their nextUpdate.
+         */
+        public static Revocations read(Path file, Collection<X509Certificate> cas, long graceMs) throws ProvisioningException {
             if (file == null) return NONE;
             String text;
             try {
@@ -504,7 +522,8 @@ public final class ProvisionedIdentity {
             }
             int crlCount = 0;
             Revocations r;
-            try { r = new Revocations(mtime(file), 0); } catch (IOException e) { throw new ProvisioningException(e.getMessage()); }
+            try { r = new Revocations(mtime(file), 0, graceMs); } catch (IOException e) { throw new ProvisioningException(e.getMessage()); }
+            for (X509Certificate ca : issuers) r.caNames.add(ca.getSubjectX500Principal().getName());
             StringBuilder deny = new StringBuilder();
             int i = 0;
             while (i < text.length()) {
@@ -527,6 +546,21 @@ public final class ProvisionedIdentity {
                 }
                 if (!signed) throw new ProvisioningException("revocation_file " + file + ": a CRL from '" + crl.getIssuerX500Principal().getName()
                         + "' is not signed by a trust anchor, nor by a CA certificate in the file that chains to one");
+                String issuerDn = crl.getIssuerX500Principal().getName();
+                if (crl.getNextUpdate() == null) {
+                    throw new ProvisioningException("revocation_file " + file + ": the CRL from '" + issuerDn + "' has no nextUpdate, so its"
+                            + " freshness cannot be judged (an issuer must set it; cresco-pki.sh crl --days N does)");
+                }
+                java.math.BigInteger number = crlNumber(crl);
+                if (number == null) {
+                    throw new ProvisioningException("revocation_file " + file + ": the CRL from '" + issuerDn + "' has no CRL number, so an"
+                            + " older CRL could not be told from a newer one (an issuer must set it; cresco-pki.sh crl does)");
+                }
+                java.math.BigInteger had = r.numbers.get(issuerDn);
+                if (had == null || number.compareTo(had) > 0) {
+                    r.numbers.put(issuerDn, number);
+                    r.nextUpdates.put(issuerDn, crl.getNextUpdate().getTime());
+                }
                 if (crl.getRevokedCertificates() != null) {
                     for (X509CRLEntry entry : crl.getRevokedCertificates()) {
                         r.serials.add(crl.getIssuerX500Principal().getName() + "|" + entry.getSerialNumber().toString(16));
@@ -548,9 +582,77 @@ public final class ProvisionedIdentity {
                 else throw new ProvisioningException("revocation_file " + file + ": unknown entry '" + t + "' (key:<sha-256>, cert:<sha-256>,"
                             + " name:<region>/<agent>, or a PEM CRL)");
             }
-            Revocations out = new Revocations(r.mtime, crlCount);
+            Revocations out = new Revocations(r.mtime, crlCount, graceMs);
             out.keys.addAll(r.keys); out.certs.addAll(r.certs); out.names.addAll(r.names); out.serials.addAll(r.serials);
+            out.nextUpdates.putAll(r.nextUpdates); out.numbers.putAll(r.numbers); out.caNames.addAll(r.caNames);
             return out;
+        }
+
+        /** The CRL number extension (2.5.29.20: an OCTET STRING wrapping a DER INTEGER), or null when absent or unreadable. */
+        static java.math.BigInteger crlNumber(X509CRL crl) {
+            byte[] ext = crl.getExtensionValue("2.5.29.20");
+            if (ext == null) return null;
+            try {
+                byte[] inner = derContents(ext, 0, (byte) 0x04);
+                if (inner == null) return null;
+                byte[] integer = derContents(inner, 0, (byte) 0x02);
+                return integer == null || integer.length == 0 ? null : new java.math.BigInteger(integer);
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
+
+        /** The contents of the DER element of {@code tag} at {@code off} of {@code b} (definite lengths only), or null. */
+        private static byte[] derContents(byte[] b, int off, byte tag) {
+            if (b.length < off + 2 || b[off] != tag) return null;
+            int len = b[off + 1] & 0xff, p = off + 2;
+            if (len > 0x80) {
+                int n = len & 0x7f;
+                if (n > 4 || b.length < p + n) return null;
+                len = 0;
+                for (int i = 0; i < n; i++) len = (len << 8) | (b[p++] & 0xff);
+            } else if (len == 0x80) {
+                return null;
+            }
+            if (len < 0 || b.length < p + len) return null;
+            return java.util.Arrays.copyOfRange(b, p, p + len);
+        }
+
+        /** The CRL issuers (DN) whose newest CRL is past its nextUpdate plus the grace at {@code now}: what is refused for it. */
+        public java.util.List<String> staleIssuers(long now) {
+            java.util.List<String> out = new ArrayList<>();
+            for (java.util.Map.Entry<String, Long> e : nextUpdates.entrySet()) if (now > e.getValue() + graceMs) out.add(e.getKey());
+            return out;
+        }
+
+        /** The earliest nextUpdate of this file's CRLs (ms), or -1 when it holds none. */
+        public long earliestNextUpdate() {
+            long m = -1;
+            for (long v : nextUpdates.values()) if (m < 0 || v < m) m = v;
+            return m;
+        }
+
+        /** The CRL number per issuer DN (what rollback protection records). */
+        public java.util.Map<String, java.math.BigInteger> crlNumbers() { return java.util.Collections.unmodifiableMap(numbers); }
+
+        /**
+         * Why this file may NOT replace revocations whose highest CRL numbers were {@code recorded} (issuer DN -> number), or
+         * null: a CRL number went down (an older CRL put back), or the CRL of an issuer that is still trusted is gone (that
+         * would un-revoke every serial it listed). An issuer no longer trusted at all (retired from the anchors) may go.
+         */
+        public String rollbackRefusal(java.util.Map<String, java.math.BigInteger> recorded) {
+            if (recorded == null) return null;
+            for (java.util.Map.Entry<String, java.math.BigInteger> e : recorded.entrySet()) {
+                java.math.BigInteger now = numbers.get(e.getKey());
+                if (now == null) {
+                    if (caNames.contains(e.getKey())) return "the CRL of '" + e.getKey() + "' (number " + e.getValue() + " was in force) is"
+                            + " missing from revocation_file: removing it would un-revoke what it lists";
+                } else if (now.compareTo(e.getValue()) < 0) {
+                    return "the CRL of '" + e.getKey() + "' went BACKWARDS: number " + now + " replaces " + e.getValue() + " (an older CRL"
+                            + " put back would un-revoke what the newer one listed)";
+                }
+            }
+            return null;
         }
 
         private static boolean hex64(String s) { return s.matches("[0-9a-f]{64}"); }
@@ -559,10 +661,24 @@ public final class ProvisionedIdentity {
 
         /** Why the operator's file revokes some certificate of {@code chain}, or null. */
         public String refusal(X509Certificate[] chain) {
-            if (chain == null || isEmpty()) return null;
+            return refusal(chain, System.currentTimeMillis());
+        }
+
+        /**
+         * As above at {@code now}: also a certificate whose issuer's CRL in this file is out of date (past its nextUpdate plus
+         * the grace) -- its revocation status is unknown, so it is refused until the file is refreshed (fail closed).
+         */
+        public String refusal(X509Certificate[] chain, long now) {
+            if (chain == null || (isEmpty() && nextUpdates.isEmpty())) return null;
             for (int i = 0; i < chain.length; i++) {
                 X509Certificate c = chain[i];
                 if (c == null) continue;
+                Long next = nextUpdates.isEmpty() ? null : nextUpdates.get(c.getIssuerX500Principal().getName());
+                if (next != null && now > next + graceMs) {
+                    return "the CRL of its issuer '" + c.getIssuerX500Principal().getName() + "' is out of date (nextUpdate "
+                            + new Date(next) + "): its revocation status is unknown until revocation_file is refreshed"
+                            + (i > 0 ? " (an issuer)" : "");
+                }
                 String kfp = PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded());
                 if (keys.contains(kfp)) return "its key " + PeerIdentity.shortFp(kfp) + " is listed" + (i > 0 ? " (an issuer)" : "");
                 try {
@@ -582,6 +698,7 @@ public final class ProvisionedIdentity {
         }
 
         public String summary() { return keys.size() + " key(s), " + certs.size() + " certificate(s), " + names.size() + " name(s), "
-                + serials.size() + " CRL serial(s) from " + crls + " CRL(s)"; }
+                + serials.size() + " CRL serial(s) from " + crls + " CRL(s)"
+                + (nextUpdates.isEmpty() ? "" : ", next CRL update due " + new Date(earliestNextUpdate())); }
     }
 }

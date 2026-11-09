@@ -328,7 +328,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (sc == null) return true;                                   // broker-internal context
         if (!sc.certificate) return allowUnverifiedBridges;            // no client certificate: unverifiable -> not exempt
         if (peerMode != PeerIdentity.Mode.ENFORCE) return true;
-        if (peers.isBridgePeer(sc.identity)) {
+        if (peers.isBridgePeer(sc.identity, sc.leaf)) {
             peers.touchBridgePeer(sc.identity);
             return true;
         }
@@ -685,7 +685,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             // is refused outright with a clear reason instead of merely losing the exemption.
             if (context.isNetworkConnection()) {
                 if (sc.certificate) {
-                    if (peers.isBridgePeer(sc.identity)) {
+                    if (peers.isBridgePeer(sc.identity, sc.leaf)) {
                         logger.info("Broker bridge from verified controller " + sc.identity);
                     } else if (peerMode == PeerIdentity.Mode.ENFORCE) {
                         logger.error("BRIDGE REFUSED: a connection claiming to be a broker bridge presented " + sc.identity

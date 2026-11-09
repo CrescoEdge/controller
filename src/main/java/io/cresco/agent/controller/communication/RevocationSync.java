@@ -269,7 +269,8 @@ public final class RevocationSync {
             why[0] = "issued by " + v.region + "/" + v.agent + ", not " + region + "/" + agent;
             return null;
         }
-        String role = ce.getCertificateManager().getPeerTrust().boundRole(v.region, v.agent, signer[0].getPublicKey());
+        // the role the signer's own certificate carries (pre-provisioned), never one remembered for the name
+        String role = ce.getCertificateManager().getPeerTrust().boundRole(v.region, v.agent, signer);
         if (!requireBinding && (role == null || PeerTrustRegistry.ROLE_CONTROLLER.equals(role))) return v;
         if (!PeerTrustRegistry.ROLE_CONTROLLER.equals(role)) {
             why[0] = v.region + "/" + v.agent + " is not a controller bound here by its key (" + (role == null ? "not bound" : "bound as " + role)
@@ -351,10 +352,13 @@ public final class RevocationSync {
             String myEpoch = reg.revocationEpoch();
             if (ack != null && epochOf(ack).equals(myEpoch) && seqOf(ack) > reg.ownRevocationSeq()) {
                 // the parent acknowledged positions of this epoch this node never made: its registry went back in time
-                reg.rollbackSuspected("the parent " + parentRegion + "/" + parentAgent + " acknowledged position " + seqOf(ack)
+                boolean renewed = reg.rollbackSuspected("the parent " + parentRegion + "/" + parentAgent + " acknowledged position " + seqOf(ack)
                         + " of this node's own revocation list, which has only " + reg.ownRevocationSeq() + " (restored from an older copy?)");
                 myEpoch = reg.revocationEpoch();
                 st.lastSentFrom = st.lastSentTo = -1;
+                // no new epoch (one was made within the hour): the acknowledgement is not of this list as it is -- trusting it
+                // would mark positions this node writes next as delivered; send the whole list again instead
+                if (!renewed) ack = null;
             }
             if (ack != null && epochOf(ack).equals(myEpoch)) {
                 st.ackedEpoch = myEpoch;
@@ -375,7 +379,9 @@ public final class RevocationSync {
             if (v.from > st.parentSeq) return;                                         // a gap: ask again from what we hold
             reg.mergeRevocations(v.entries, "revocation list of " + parentRegion + "/" + parentAgent, null, true);
             st.parentEpoch = v.epoch;
-            st.parentSeq = Math.max(st.parentSeq, v.to);
+            // a whole list (from the start) that ends before what this node held of it: the parent's list is shorter than it was
+            // (it went back in time within the hour after a new epoch): hold what it serves now, so its next positions arrive
+            st.parentSeq = (v.from == 0 && v.to < st.parentSeq) ? v.to : Math.max(st.parentSeq, v.to);
         } catch (Exception ignore) { }
     }
 
@@ -428,9 +434,12 @@ public final class RevocationSync {
                 if (pinger != null && have != null && have.indexOf('.') > 0 && epochOf(have).equals(reg.revocationEpoch())
                         && seqOf(have) > reg.revocationSeq()) {
                     // a verified child holds more of this epoch than this node does: this registry went back in time
-                    reg.rollbackSuspected(pinger + " holds position " + seqOf(have) + " of this node's revocation list, which has only "
-                            + reg.revocationSeq() + " (the registry was restored from an older copy?)");
+                    boolean renewed = reg.rollbackSuspected(pinger + " holds position " + seqOf(have) + " of this node's revocation list, which"
+                            + " has only " + reg.revocationSeq() + " (the registry was restored from an older copy?)");
                     msg.setParam(EPOCH, reg.revocationEpoch());
+                    // no new epoch (one was made within the hour): what the child says it holds is not of this list as it is --
+                    // serve the whole list, so the positions this node writes next are not skipped as already held
+                    if (!renewed) have = null;
                 }
                 String delta = parentDelta(ce, reg, have);
                 if (delta != null) msg.setCompressedParam(PARENT_LIST, delta);

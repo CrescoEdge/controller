@@ -367,13 +367,17 @@ public final class PeerTrustRegistry {
 
     /**
      * A peer reports that this node's list (or its own list as acknowledged) went further, in this epoch, than this node
-     * holds: the registry went back in time (a whole data directory restored). Starts a new epoch, at most once an hour.
+     * holds: the registry went back in time (a whole data directory restored). Starts a new epoch, at most once an hour (a
+     * new epoch is a durable write, and a peer must not be able to make one at every ping). Returns whether it did: when it did
+     * not, the caller must not trust what the peer reported for this epoch (it would skip positions this node writes next) --
+     * it exchanges the lists from the start instead.
      */
-    public void rollbackSuspected(String why) {
+    public boolean rollbackSuspected(String why) {
         long now = System.currentTimeMillis();
-        if (now - lastReactiveEpoch < 3_600_000L) return;
+        if (now - lastReactiveEpoch < 3_600_000L) return false;
         lastReactiveEpoch = now;
         synchronized (writeLock) { newEpoch(why); }
+        return true;
     }
 
     private PeerTrustRegistry(Path file) {
@@ -864,6 +868,28 @@ public final class PeerTrustRegistry {
         return b != null && b.key.equals(fingerprint(key.getEncoded())) ? b.role : null;
     }
 
+    /**
+     * The role of {@code region/agent} as THIS chain carries it ({@code chain} as presented -- verified by the caller with
+     * {@link #verifiedIdentity}): pre-provisioned, the PKI's role in that very certificate (SAN cresco:role:controller),
+     * never a role remembered for the name from another certificate; otherwise the role bound to the chain's key.
+     */
+    public String boundRole(String region, String agent, X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return null;
+        if (pki == null) return boundRole(region, agent, chain[0].getPublicKey());
+        Binding own = identities.get(name(region, agent));
+        String fp = fingerprint(chain[0].getPublicKey().getEncoded());
+        if (own != null && ROLE_SELF.equals(own.role)) return own.key.equals(fp) ? ROLE_SELF : null;
+        return pkiRoleOf(region, agent, chain[0]);
+    }
+
+    /** Pre-provisioned: the role {@code leaf} itself carries for {@code region/agent} (it names them, is not revoked), or null. */
+    private String pkiRoleOf(String region, String agent, X509Certificate leaf) {
+        CrescoIdentity id = leaf == null ? null : CrescoNames.identityOf(leaf);
+        if (id == null || !id.getRegion().equals(region) || !id.getAgent().equals(agent)) return null;
+        if (tombs.containsKey(name(region, agent)) || isRevokedFor(fingerprint(leaf.getPublicKey().getEncoded()), region)) return null;
+        return ProvisionedIdentity.isController(leaf) ? ROLE_CONTROLLER : ROLE_AGENT;
+    }
+
     /** The role {@code region/agent} is bound with here (when its tenant is {@code tenant}), or null. Lock-free. */
     public String roleOf(String tenant, String region, String agent) {
         if (pki != null) {
@@ -1037,8 +1063,16 @@ public final class PeerTrustRegistry {
         try { leaf.checkValidity(); } catch (Exception e) { why[0] = "the certificate is not valid now (" + e.getMessage() + ")"; return null; }
         String n = name(id.getRegion(), id.getAgent());
         Tomb tomb = tombs.get(n);
-        if (tomb != null && !(pki != null && liftTombByRebind(n, fp))) { why[0] = tombText(n, tomb); return null; }
         Pki p = pki;
+        if (tomb != null) {
+            if (p == null) { why[0] = tombText(n, tomb); return null; }
+            // pre-provisioned: an operator rebind lifts the tombstone (a one-shot, recorded act) only for a chain the PKI accepts
+            // in full -- judged FIRST, so a chain that would be refused (unanchored, out of scope, revoked, a stale CRL) never
+            // consumes the rebind or lifts anything
+            String bad = pkiRefusal(p, chain);
+            if (bad != null) { why[0] = bad; return null; }
+            if (!liftTombByRebind(n, fp)) { why[0] = tombText(n, tomb); return null; }
+        }
         if (p != null) {
             // pre-provisioned: the operator's PKI decides (this node's own identity is its own, from the same PKI)
             return pkiVerify(p, chain, id, fp, why);
@@ -1173,6 +1207,19 @@ public final class PeerTrustRegistry {
     }
 
     /** Is {@code id} a recorded bridge peer (not revoked, not expired)? Lock-free; no I/O. */
+    /**
+     * May the connection of {@code id}, which presented {@code leaf} (verified at connect), bridge? Pre-provisioned, by the
+     * role in THAT certificate -- never by a role remembered for the name from another connection's certificate; otherwise as
+     * {@link #isBridgePeer(CrescoIdentity)}.
+     */
+    public boolean isBridgePeer(CrescoIdentity id, X509Certificate leaf) {
+        if (pki == null) return isBridgePeer(id);
+        if (id == null || leaf == null || !CrescoNames.isValid(id.getRegion()) || !CrescoNames.isValid(id.getAgent())) return false;
+        CrescoIdentity named = CrescoNames.identityOf(leaf);
+        if (named == null || !named.getTenant().equals(id.getTenant())) return false;
+        return ROLE_CONTROLLER.equals(pkiRoleOf(id.getRegion(), id.getAgent(), leaf));
+    }
+
     public boolean isBridgePeer(CrescoIdentity id) {
         if (id == null || !CrescoNames.isValid(id.getRegion()) || !CrescoNames.isValid(id.getAgent())) return false;
         if (pki != null) {
@@ -1720,10 +1767,8 @@ public final class PeerTrustRegistry {
 
     /** PKI verification of {@code chain} (revocations, tombstones and validity were checked by the caller). */
     private CrescoIdentity pkiVerify(Pki p, X509Certificate[] chain, CrescoIdentity id, String fp, String[] why) {
-        String r = p.rev.refusal(chain);
-        if (r != null) { why[0] = "the certificate is REVOKED by the operator (" + r + ")"; return null; }
-        String v = pkiCheck(p, chain);
-        if (v != null) { why[0] = "the certificate " + v; return null; }
+        String bad = pkiRefusal(p, chain);
+        if (bad != null) { why[0] = bad; return null; }
         String n = name(id.getRegion(), id.getAgent());
         String role = ProvisionedIdentity.isController(chain[0]) ? ROLE_CONTROLLER : ROLE_AGENT;
         PkiSeen prev = pkiSeen.get(n);
@@ -1732,6 +1777,14 @@ public final class PeerTrustRegistry {
             if (prev != null || pkiSeen.size() < PKI_SEEN_MAX) pkiSeen.put(n, new PkiSeen(id.getTenant(), role, fp, now));
         }
         return id;
+    }
+
+    /** Why the PKI refuses {@code chain} (the operator's revocations, the path to the anchors and its scopes), or null. */
+    private String pkiRefusal(Pki p, X509Certificate[] chain) {
+        String r = p.rev.refusal(chain);
+        if (r != null) return "the certificate is REVOKED by the operator (" + r + ")";
+        String v = pkiCheck(p, chain);
+        return v == null ? null : "the certificate " + v;
     }
 
     /** Pre-provisioned: what PKI verification learned of {@code region/agent} (tenant matching), or null. */

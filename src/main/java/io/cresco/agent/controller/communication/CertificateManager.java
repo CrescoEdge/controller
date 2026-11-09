@@ -34,7 +34,7 @@ import java.util.UUID;
 public class CertificateManager {
 
     private KeyStore keyStore;
-    private KeyStore trustStore;
+    private volatile KeyStore trustStore;
     private char[] keyStorePassword;
     private String keyStoreFilePath;
     private char[] trustStorePassword;
@@ -186,6 +186,14 @@ public class CertificateManager {
     private volatile ProvisionedIdentity.Revocations operatorRevocations = ProvisionedIdentity.Revocations.NONE;
     /** The node's private key as last loaded (a provisioned keystore can be replaced at run time). */
     private volatile PrivateKey currentIdentityKey;
+    /**
+     * Pre-provisioned: the chain and key in force, published together (one volatile write) so nothing -- a TLS handshake,
+     * a signature -- ever pairs a reloaded chain with the previous key or the reverse. Null on a node that makes its own.
+     */
+    private volatile NodeIdentityKeyManager.Identity presented;
+    /** A self-made identity's chain as last presented (its key is the keystore's, which renewal keeps). */
+    private volatile NodeIdentityKeyManager.Identity selfMade;
+    private static final java.util.concurrent.atomic.AtomicLong IDENTITY_GEN = new java.util.concurrent.atomic.AtomicLong();
     private volatile String provisionedAlarm;
     private volatile boolean provisionedAlarmCritical;
     private java.util.concurrent.ScheduledExecutorService provisionedWatcher;
@@ -252,7 +260,9 @@ public class CertificateManager {
                                                                           java.util.Collection<X509Certificate> cas)
             throws ProvisionedIdentity.ProvisioningException {
         String f = config.getStringParam("revocation_file");
-        return (f == null || f.isBlank()) ? ProvisionedIdentity.Revocations.NONE : ProvisionedIdentity.Revocations.read(Paths.get(f.trim()), cas);
+        long grace = Math.max(0L, config.getLongParam("revocation_crl_grace_seconds", 0L)) * 1000L;
+        return (f == null || f.isBlank()) ? ProvisionedIdentity.Revocations.NONE
+                : ProvisionedIdentity.Revocations.read(Paths.get(f.trim()), cas, grace);
     }
 
     /**
@@ -325,14 +335,14 @@ public class CertificateManager {
             keyStoreAlias = controllerEngine.cstate.getAgentPath();
             if (keyStoreAlias == null) keyStoreAlias = p.identity.getRegion() + "_" + p.identity.getAgent();
             keyStorePassword = UUID.randomUUID().toString().toCharArray();
+            String rollback = rev.rollbackRefusal(recordedCrlNumbers());
+            if (rollback != null) throw new ProvisionedIdentity.ProvisioningException("revocation_file: " + rollback);
             keyStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
             keyStore.load(null, null);
-            trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
-            trustStore.load(null, null);
-            installProvisioned(p, anchors);
-            operatorRevocations = rev;
+            KeyStore trust = anchorStore(anchors);
             peerTrust = openPeerTrust();
-            peerTrust.setPki(anchors, rev);
+            publishProvisioned(p, anchors, rev, trust);
+            recordCrlNumbers(rev);
             bindOwnIdentity();
             provisioned = p;
             logger.info("PRE-PROVISIONED identity " + p.identity + (p.controller ? " (controller)" : "") + " from " + plugin.getConfig().getStringParam("identity_keystore")
@@ -349,15 +359,30 @@ public class CertificateManager {
         }
     }
 
-    /** Put {@code p}'s key and chain in the key store and {@code anchors} (only) in the trust store. */
-    private synchronized void installProvisioned(ProvisionedIdentity p, java.util.List<X509Certificate> anchors) throws Exception {
+    /** A new trust store holding {@code anchors} only (built aside: the one in force is never emptied or half-filled). */
+    private static KeyStore anchorStore(java.util.List<X509Certificate> anchors) throws Exception {
+        KeyStore ts = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+        ts.load(null, null);
+        for (X509Certificate a : anchors) ts.setCertificateEntry("anchor#" + certFingerprint(a), a);
+        return ts;
+    }
+
+    /**
+     * Put a provisioning in force: everything was read, validated and built beforehand ({@code p}, {@code anchors},
+     * {@code rev}, {@code trust}), so this only publishes -- the registry's anchors and revocations first (one write: the
+     * strictest view takes effect at once), then the trust store (a reference swap), then the chain and key together (one
+     * write). No reader ever sees a half-loaded state: an empty trust store, a chain without its key, new anchors with an old
+     * revocation list.
+     */
+    private synchronized void publishProvisioned(ProvisionedIdentity p, java.util.List<X509Certificate> anchors,
+                                                 ProvisionedIdentity.Revocations rev, KeyStore trust) throws Exception {
+        if (peerTrust != null) peerTrust.setPki(anchors, rev);
+        operatorRevocations = rev;
+        this.trustStore = trust;
+        presented = new NodeIdentityKeyManager.Identity(p.chain.clone(), p.key, IDENTITY_GEN.incrementAndGet());
         storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, p.key, p.chain);
         this.chain = p.chain;
         this.currentIdentityKey = p.key;
-        synchronized (trustStore) {
-            for (String alias : java.util.Collections.list(trustStore.aliases())) trustStore.deleteEntry(alias);
-            for (X509Certificate a : anchors) trustStore.setCertificateEntry("anchor#" + certFingerprint(a), a);
-        }
     }
 
     /**
@@ -414,16 +439,25 @@ public class CertificateManager {
             }
             if (provisionedAlarm != null && provisionedAlarm.startsWith(EXPOSED)) setProvisionedAlarm(null, false);
             if (!idChanged && !revChanged) { checkProvisionedExpiry(); return false; }
+            // one consistent set of files: read them all, then check none changed while they were read (the operator replaces
+            // the keystore and its password file, or the anchors and the CRL, one after the other); else wait for the next tick
+            long[] before = provisionedMtimes(ks, pw, ta, rp);
             java.util.List<X509Certificate> anchors = ProvisionedIdentity.readAnchors(ta);
             ProvisionedIdentity.Revocations rev = readOperatorRevocations(cfg, anchors);
             ProvisionedIdentity p = ProvisionedIdentity.load(cfg, rev);
+            if (!java.util.Arrays.equals(before, provisionedMtimes(ks, pw, ta, rp))) {
+                logger.info("Pre-provisioned identity files changed while they were read: loading them at the next check");
+                return false;
+            }
             if (!p.identity.equals(cur.identity)) {
                 throw new ProvisionedIdentity.ProvisioningException("the new keystore names " + p.identity + ", not this node's " + cur.identity);
             }
+            String rollback = rev.rollbackRefusal(recordedCrlNumbers());
+            if (rollback != null) throw new ProvisionedIdentity.ProvisioningException("revocation_file: " + rollback);
             boolean newKey = !p.chain[0].getPublicKey().equals(cur.chain[0].getPublicKey());
-            installProvisioned(p, anchors);
-            operatorRevocations = rev;
-            peerTrust.setPki(anchors, rev);
+            KeyStore trust = anchorStore(anchors);
+            publishProvisioned(p, anchors, rev, trust);
+            recordCrlNumbers(rev);
             if (newKey) bindOwnIdentity();
             provisioned = p;
             changed = true;
@@ -442,9 +476,86 @@ public class CertificateManager {
         return changed;
     }
 
+    private static long[] provisionedMtimes(Path ks, Path pw, Path ta, Path rp) {
+        long[] out = new long[4];
+        Path[] ps = {ks, pw, ta, rp};
+        for (int i = 0; i < ps.length; i++) {
+            try { out[i] = ps[i] == null || !Files.exists(ps[i]) ? -1 : ProvisionedIdentity.mtime(ps[i]); } catch (Exception e) { out[i] = -2; }
+        }
+        return out;
+    }
+
+    /** Rollback protection of the operator's CRLs: the highest CRL number put in force per issuer, in the identity directory. */
+    private Path crlNumbersFile() {
+        return identityDir().resolve("crl-numbers");
+    }
+
+    /** The CRL numbers recorded (issuer DN -> number); empty when none were. An unreadable record fails closed. */
+    java.util.Map<String, java.math.BigInteger> recordedCrlNumbers() throws ProvisionedIdentity.ProvisioningException {
+        java.util.Map<String, java.math.BigInteger> out = new java.util.HashMap<>();
+        Path f = crlNumbersFile();
+        if (!Files.exists(f)) return out;
+        try {
+            for (String line : Files.readAllLines(f, java.nio.charset.StandardCharsets.UTF_8)) {
+                if (line.isBlank() || line.startsWith("#")) continue;
+                int tab = line.indexOf('\t');
+                if (tab <= 0) throw new IOException("a malformed line");
+                out.put(line.substring(tab + 1), new java.math.BigInteger(line.substring(0, tab).trim()));
+            }
+        } catch (Exception e) {
+            throw new ProvisionedIdentity.ProvisioningException("the CRL rollback record " + f + " is unreadable (" + e.getMessage()
+                    + "); restore it, or remove it only if every CRL in revocation_file is the newest its CA issued");
+        }
+        return out;
+    }
+
+    /** Record the CRL numbers now in force (never lower than recorded; an issuer no longer trusted at all is dropped). */
+    private void recordCrlNumbers(ProvisionedIdentity.Revocations rev) {
+        try {
+            java.util.Map<String, java.math.BigInteger> had = recordedCrlNumbers();
+            java.util.Map<String, java.math.BigInteger> next = new java.util.TreeMap<>();
+            for (java.util.Map.Entry<String, java.math.BigInteger> e : had.entrySet()) {
+                if (rev.caNames.contains(e.getKey()) || rev.numbers.containsKey(e.getKey())) next.put(e.getKey(), e.getValue());
+            }
+            for (java.util.Map.Entry<String, java.math.BigInteger> e : rev.numbers.entrySet()) next.merge(e.getKey(), e.getValue(), java.math.BigInteger::max);
+            if (next.equals(new java.util.TreeMap<>(had))) return;
+            StringBuilder b = new StringBuilder("# highest CRL number in force per issuer (rollback protection); number<TAB>issuer\n");
+            for (java.util.Map.Entry<String, java.math.BigInteger> e : next.entrySet()) b.append(e.getValue()).append('\t').append(e.getKey()).append('\n');
+            Files.createDirectories(crlNumbersFile().getParent());
+            PeerTrustRegistry.writeAtomically(crlNumbersFile(), b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            logger.error("Could not record the CRL numbers in force (" + e.getMessage() + "): rollback protection holds only until restart");
+        }
+    }
+
+    /** The operator's CRLs: CRITICAL once one is out of date (its CA's certificates are refused), WARN in its last week. */
+    private void checkCrlFreshness() {
+        ProvisionedIdentity.Revocations rev = operatorRevocations;
+        if (rev == null || rev.nextUpdates.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        java.util.List<String> stale = rev.staleIssuers(now);
+        long next = rev.earliestNextUpdate();
+        String text = !stale.isEmpty() ? "the operator's CRL of " + stale + " is OUT OF DATE: certificates of that CA are refused until "
+                + plugin.getConfig().getStringParam("revocation_file") + " is refreshed (cresco-pki.sh crl)"
+                : next > 0 && next - now < 7 * 24 * 3600_000L ? "the operator's CRL is due for refresh by " + new java.util.Date(next)
+                + " (after that, certificates of its CA are refused): refresh " + plugin.getConfig().getStringParam("revocation_file") : null;
+        long gap = !stale.isEmpty() ? 600_000L : 3_600_000L;
+        if (text != null && (!text.equals(lastCrlAlarm) || now - lastCrlAlarmAt > gap)) {
+            lastCrlAlarm = text;
+            lastCrlAlarmAt = now;
+            if (!stale.isEmpty()) logger.error("IDENTITY: " + text); else logger.warn("IDENTITY: " + text);
+        } else if (text == null) {
+            lastCrlAlarm = null;
+        }
+    }
+
+    private volatile String lastCrlAlarm;
+    private volatile long lastCrlAlarmAt;
+
     private void checkProvisionedExpiry() {
         ProvisionedIdentity p = provisioned;
         if (p == null) return;
+        checkCrlFreshness();
         if (provisionedAlarm != null && (provisionedAlarm.startsWith("the replaced") || provisionedAlarm.startsWith(EXPOSED))) return;   // stands until fixed
         long now = System.currentTimeMillis(), na = p.chain[0].getNotAfter().getTime();
         long life = intendedLife(p.chain[0].getNotBefore().getTime(), na), left = na - now;
@@ -685,6 +796,8 @@ public class CertificateManager {
      * when the leaf's public key changes (renewal keeps the key). For per-message signing (MsgSigning).
      */
     public PrivateKey identityPrivateKey() throws Exception {
+        NodeIdentityKeyManager.Identity pi = presented;
+        if (pi != null) return pi.key;
         X509Certificate[] c = getPublicCertificate();
         java.security.PublicKey pub = (c == null || c.length == 0) ? null : c[0].getPublicKey();
         PrivateKey k = identityKeyCache;
@@ -697,7 +810,8 @@ public class CertificateManager {
 
     /** Sign {@code data} with this node's identity key (the key its leaf certificate carries). */
     public byte[] signWithIdentity(byte[] data) throws Exception {
-        PrivateKey k = (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
+        NodeIdentityKeyManager.Identity pi = presented;
+        PrivateKey k = pi != null ? pi.key : (PrivateKey) keyStore.getKey(keyStoreAlias, keyStorePassword);
         Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(k.getAlgorithm()));
         s.initSign(k);
         s.update(data);
@@ -768,7 +882,10 @@ public class CertificateManager {
     }
 
     private void writeStore(Path store, String alias, PrivateKey key, X509Certificate[] certs) throws Exception {
-        char[] pw = storePassword(store);
+        writeStore(store, alias, key, certs, storePassword(store));
+    }
+
+    private void writeStore(Path store, String alias, PrivateKey key, X509Certificate[] certs, char[] pw) throws Exception {
         KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         ks.load(null, null);
         ks.setKeyEntry(alias, key, pw, certs);
@@ -783,7 +900,11 @@ public class CertificateManager {
         if (!Files.exists(store.resolveSibling(store.getFileName() + ".pass"))) {
             throw new IOException("its password file " + store.getFileName() + ".pass is missing");
         }
-        char[] pw = storePassword(store);
+        return readStore(store, alias, storePassword(store));
+    }
+
+    private Object[] readStore(Path store, String alias, char[] pw) throws Exception {
+        if (!Files.exists(store)) return null;
         KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
         try (FileInputStream in = new FileInputStream(store.toFile())) {
             ks.load(in, pw);
@@ -1284,8 +1405,8 @@ public class CertificateManager {
     }
 
     public X509Certificate[] getPublicCertificate() {
-        //X509Certificate[] certs = new X509Certificate[1];
-        //certs[0] = chain[0];
+        NodeIdentityKeyManager.Identity pi = presented;
+        if (pi != null) return pi.chain;
         return chain;
         //return certs;
     }
@@ -1510,6 +1631,20 @@ public class CertificateManager {
         }
     }
 
+    /** The identity the key managers present now: the provisioned pair, else the current self-made chain (keystore key). */
+    NodeIdentityKeyManager.Identity presentedIdentity() {
+        NodeIdentityKeyManager.Identity p = presented;
+        if (p != null) return p;
+        X509Certificate[] c = chain;
+        NodeIdentityKeyManager.Identity s = selfMade;
+        if (c == null) return null;
+        if (s == null || s.chain != c) {
+            s = new NodeIdentityKeyManager.Identity(c, null, IDENTITY_GEN.incrementAndGet());
+            selfMade = s;
+        }
+        return s;
+    }
+
     public KeyManager[] getKeyManagers() {
         KeyManager[] keyManagers = null;
         try {
@@ -1523,7 +1658,8 @@ public class CertificateManager {
                     // the CURRENT chain: a connection factory made before a renewal or re-enrollment presents the new leaf
                     // when it reconnects (same key), not the snapshot it was made with
                     keyManagers[i] = new NodeIdentityKeyManager((X509KeyManager) keyManagers[i], () -> keyStoreAlias)
-                            .withCurrentChain(() -> chain).withCurrentKey(() -> currentIdentityKey);
+                            .withCurrentChain(() -> chain).withCurrentKey(() -> currentIdentityKey)
+                            .withCurrentIdentity(this::presentedIdentity);
                 }
             }
         } catch(Exception ex) {
@@ -1717,10 +1853,46 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         return identityDir().resolve("region-ca.p12");
     }
 
+    /** {@code region_ca_password_file}: the operator's owner-only file whose first line encrypts the region CA's key at rest. */
+    static final String REGION_CA_PASSWORD_FILE = "region_ca_password_file";
+
+    /**
+     * The password the region CA's store is encrypted with: the first line of {@code region_ca_password_file} (owner-only,
+     * kept where the operator keeps secrets: a mounted secret, another volume), or null when it is not set -- then the
+     * store's own random password beside it (region-ca.p12.pass), which protects the key no better than the file permissions
+     * of that one directory, and is WARNed about.
+     */
+    private char[] operatorRegionCaPassword() throws Exception {
+        String f = plugin.getConfig().getStringParam(REGION_CA_PASSWORD_FILE);
+        if (f == null || f.isBlank()) return null;
+        Path p = Paths.get(f.trim());
+        ProvisionedIdentity.checkFile(p, true, REGION_CA_PASSWORD_FILE);
+        String line = Files.readAllLines(p, java.nio.charset.StandardCharsets.UTF_8).stream().findFirst().orElse("").trim();
+        if (line.length() < 16) throw new IOException(REGION_CA_PASSWORD_FILE + " " + p + " holds fewer than 16 characters");
+        return line.toCharArray();
+    }
+
+    private volatile boolean regionCaPlainWarned;
+
     private void saveRegionCA() {
         if (!plugin.getConfig().getBooleanParam("node_identity_persist", true)) return;
         try {
-            writeStore(regionCaStore(), "region-ca", regionCA.caPrivateKey(), regionCA.caChain());
+            char[] op = operatorRegionCaPassword();
+            Path store = regionCaStore(), sibling = store.resolveSibling(store.getFileName() + ".pass");
+            if (op != null) {
+                writeStore(store, "region-ca", regionCA.caPrivateKey(), regionCA.caChain(), op);
+                // the key is now encrypted under the operator's password: the password that sat beside it goes
+                if (Files.deleteIfExists(sibling)) logger.info("The region CA's key is encrypted under " + REGION_CA_PASSWORD_FILE
+                        + "; its former password file " + sibling + " was removed");
+            } else {
+                writeStore(store, "region-ca", regionCA.caPrivateKey(), regionCA.caChain());
+                if (!regionCaPlainWarned) {
+                    regionCaPlainWarned = true;
+                    logger.warn("WARNING: the region CA's private key is encrypted only under the random password beside it ("
+                            + sibling.getFileName() + "): set " + REGION_CA_PASSWORD_FILE + " (an owner-only file kept elsewhere) to"
+                            + " encrypt it at rest");
+                }
+            }
         } catch (Exception ex) {
             logger.error("Could not save the region CA (a restart will make a new one, which peers that recorded this CA refuse): " + ex.getMessage());
         }
@@ -1750,7 +1922,24 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 || peerTrust.ownCaRecorded(region);
         String failure;
         try {
-            Object[] kc = readStore(store, "region-ca");
+            char[] op = operatorRegionCaPassword();
+            Path sibling = store.resolveSibling(store.getFileName() + ".pass");
+            Object[] kc;
+            boolean migrate = false;
+            if (op == null) {
+                kc = readStore(store, "region-ca");
+            } else {
+                try {
+                    kc = readStore(store, "region-ca", op);
+                } catch (Exception wrongPassword) {
+                    // a store made before region_ca_password_file was set: open it with its own password once, re-encrypt it
+                    if (!Files.exists(sibling)) throw new IOException("it does not open with " + REGION_CA_PASSWORD_FILE + " ("
+                            + wrongPassword.getMessage() + ")");
+                    kc = readStore(store, "region-ca");
+                    migrate = kc != null;
+                }
+            }
+
             if (kc == null) {
                 if (!existed) return null;                           // a first start: the CA is made now
                 failure = Files.exists(store) ? store + " holds no region CA key and chain"
@@ -1764,11 +1953,23 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 } else {
                     logger.info("Loaded the persisted region CA for region " + region);
                     RegionCA ca = RegionCA.restore(c[1], new KeyPair(c[0].getPublicKey(), (PrivateKey) kc[0]), c[0]);
+                    if (migrate) {
+                        regionCA = ca;
+                        saveRegionCA();
+                        logger.warn("The region CA's key was RE-ENCRYPTED under " + REGION_CA_PASSWORD_FILE + " (it was under the"
+                                + " password beside it, which is removed)");
+                    }
                     if (chainNeedsRenewal(c, System.currentTimeMillis(), renewBeforeMs())) {
                         logger.warn("The persisted region CA for region " + region + " " + validityText(c) + "; renewing it with the same key");
                         ca = ca.renewed(keySize, YEARS_VALID);
                         regionCA = ca;
                         saveRegionCA();
+                    }
+                    if (op == null && !regionCaPlainWarned) {
+                        regionCaPlainWarned = true;
+                        logger.warn("WARNING: the region CA's private key is encrypted only under the random password beside it ("
+                                + sibling.getFileName() + "): set " + REGION_CA_PASSWORD_FILE + " (an owner-only file kept elsewhere) to"
+                                + " encrypt it at rest");
                     }
                     return ca;
                 }
