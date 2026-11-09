@@ -35,15 +35,17 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * The probe trusts any broker certificate: it judges the brokers' authorization, not the client's verification.
  * Usage: java -cp &lt;activemq-client, hawtbuf, jakarta.jms-api, slf4j api&gt; PeerIdentityRecipientProbe.java
- *        &lt;global-broker-port&gt; &lt;a1 node dir&gt; &lt;region-broker-port&gt; &lt;b1 node dir&gt; &lt;topic&gt; &lt;to&gt; &lt;tenant&gt; &lt;messages&gt;
+ *        &lt;global-broker-port&gt; &lt;a1 node dir or node.p12&gt; &lt;region-broker-port&gt; &lt;b1 node dir or node.p12&gt; &lt;topic&gt;
+ *        &lt;to&gt; &lt;tenant&gt; &lt;messages&gt;
  *        [&lt;stream name&gt;]
  * Prints one JSON line; exit 0 when the receiver got every frame and the spy none, and the named subscription was refused.
  */
 public class PeerIdentityRecipientProbe {
 
-    static Connection connect(int port, Path nodeDir) throws Exception {
-        Path store = nodeDir.resolve("cresco-data/security/node-identity.p12");
-        char[] pw = Files.readString(store.resolveSibling("node-identity.p12.pass")).trim().toCharArray();
+    /** {@code identity}: a node directory (its self-made security/node-identity.p12) or a provisioned node.p12 (password beside it). */
+    static Connection connect(int port, Path identity) throws Exception {
+        Path store = Files.isRegularFile(identity) ? identity : identity.resolve("cresco-data/security/node-identity.p12");
+        char[] pw = Files.readString(store.resolveSibling(store.getFileName() + ".pass")).trim().toCharArray();
         KeyStore ks = KeyStore.getInstance("PKCS12");
         try (FileInputStream in = new FileInputStream(store.toFile())) { ks.load(in, pw); }
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());

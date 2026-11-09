@@ -4,10 +4,12 @@
 #   global glob/gc (THE global: --global, by the root)  agent glob/a1 (issued by the root)
 #   region rgr/rc  (controller, issued by region CA rgr) agent rgr/b1  (issued by region CA rgr)
 #
-# every identity made beforehand by tools/cresco-pki.sh. Checks: the mesh comes up with NO enrollment, generation or
-# first-use binding; a keystore replaced in place (a renewal, new key) is reloaded without dropping a connection and is
-# presented at the next handshake; a node whose certificate comes from another PKI is refused; a node the operator revokes
-# is closed and refused, and does not start again.
+# every identity made beforehand by tools/cresco-pki.sh, and NO shared secret anywhere (no discovery secret, no service key:
+# discovery runs on the PKI, API clients present certificates). Checks: the mesh comes up with NO enrollment, generation or
+# first-use binding, over the PKI discovery exchange; messages are signed (direct links attested first hand); a node
+# configured with a discovery secret refuses to start; a keystore replaced in place (a renewal, new key) is reloaded
+# without dropping a connection and is presented at the next handshake; a node whose certificate comes from another PKI is
+# refused; a node the operator revokes is closed and refused, and does not start again.
 #
 # Usage: provisioned_live_test.sh <agent.jar> <workdir> <python-with-pycrescolib>
 #   PORT0 (default 33000) and WS0 (default 8482) move the port block. Starts and stops only its own JVMs.
@@ -16,22 +18,29 @@ JAR="$1"; WORK="$2"; PY="$3"; shift 3
 HERE="$(cd "$(dirname "$0")" && pwd)"; TOOL="$HERE/../../tools/cresco-pki.sh"
 P0="${PORT0:-33000}"; WS0="${WS0:-8482}"
 rm -rf "$WORK"; mkdir -p "$WORK/logs"
-rnd() { "$PY" -c 'import secrets; print(secrets.token_hex(16))'; }
-KEY="$(rnd)"
-SEC="-Ddiscovery_secret_global=$(rnd) -Ddiscovery_secret_region=$(rnd) -Ddiscovery_secret_agent=$(rnd) -Dcresco_service_key=$KEY"
+SEC=""          # production: no discovery secret, no service key
 COMMON="-Djava.net.preferIPv4Stack=true -Xmx1024M -Droot_log_level=INFO -Denable_console=false -Denable_dashboard=false"
 PKI="$WORK/pki"
 echo "### the operator's PKI (offline): root, region CA rgr, two controllers, two agents"
 bash "$TOOL" init "$PKI" --days 30 >/dev/null && bash "$TOOL" region "$PKI" t1 rgr --days 30 >/dev/null \
   && bash "$TOOL" node "$PKI" t1 glob gc --global --days 10 >/dev/null && bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 10 >/dev/null \
   && bash "$TOOL" node "$PKI" t1 glob a1 --days 10 >/dev/null && bash "$TOOL" node "$PKI" t1 rgr b1 --days 10 >/dev/null \
+  && bash "$TOOL" api "$PKI" t1 probe admin --days 10 >/dev/null \
   && bash "$TOOL" crl "$PKI" >/dev/null || { echo "FATAL: the PKI tool failed"; exit 2; }
+# plugin signing is mandatory in production: the anchors network-installed jars are signed to (none is installed here)
+openssl req -x509 -newkey rsa:3072 -sha384 -days 10 -nodes -keyout "$WORK/codesign.key" -out "$WORK/codesign.pem" \
+  -subj "/O=t1/CN=test code signing (made at test time)" >/dev/null 2>&1 && chmod 600 "$WORK/codesign.key" "$WORK/codesign.pem"
+# the probe is an API user of tenant t1: a client certificate from the PKI (wsapi in production takes nothing else)
+export CRESCO_TLS_CLIENT_CERT="$PKI/api/t1_probe/api.p12"; CRESCO_TLS_CLIENT_KEY_PASSWORD="$(cat "$PKI/api/t1_probe/api.p12.pass")"
+export CRESCO_TLS_CLIENT_KEY_PASSWORD
+KEY=
 PIDS="$WORK/pids"; : > "$PIDS"
 launch() { # name region agent flags [append]
   local d="$WORK/nodes/$1" n="$PKI/nodes/$2_$3"; mkdir -p "$d"
   local id="-Dsecurity_profile=production -Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce -Dregionname=$2 -Dagentname=$3"
   id="$id -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem"
   id="$id -Drevocation_file=$PKI/revocations.pem -Didentity_keystore_reload_seconds=5"
+  id="$id -Dplugin_signing_truststore=$WORK/codesign.pem -Dwsapi_client_ca=$n/trust-anchors.pem"
   echo "$2 $3 $4" > "$WORK/args.$1"
   if [ "${5:-}" = append ]; then ( cd "$d" && exec java $COMMON $SEC $id $4 -jar "$JAR" ) >> "$WORK/logs/$1.log" 2>&1 < /dev/null &
   else ( cd "$d" && exec java $COMMON $SEC $id $4 -jar "$JAR" ) > "$WORK/logs/$1.log" 2>&1 < /dev/null & fi
@@ -67,6 +76,14 @@ ck "$(has b1 'Peer identity verified: broker connection .* is region=rgr, agent=
 ck "$(has global 'Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc')" "the global admitted the region's bridge (a controller of the PKI)"
 ck "$(has region 'mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b1')" "the region identified b1 by its PKI certificate"
 ck "$(has global 'mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=glob, agent=a1')" "the global identified a1 by its PKI certificate"
+ck "$(has global 'discovery \(PKI\): authenticated GLOBAL exchange with rgr/rc')" "the region joined the global over the PKI discovery exchange (no secret)"
+ck "$(has b1 'discovery \(PKI\): authenticated AGENT exchange with rgr/rc')" "b1 joined its region over the PKI discovery exchange"
+ck "$(has a1 'discovery \(PKI\): authenticated AGENT exchange with glob/gc')" "a1 joined the global over the PKI discovery exchange"
+for n in global region a1 b1; do
+  ck "$(none $n 'discovery v2: authenticated|LEGACY')" "$n: no secret-keyed or legacy discovery exchange"
+  ck "$(has $n 'message signatures ON: this node signs')" "$n: signs the messages it originates past its direct links"
+done
+ck "$(has region 'direct links ON: this node accepts unsigned messages its broker attests')" "the region accepts its direct children's messages first hand (no signature)"
 pin() { local f; f=$(find "$WORK/nodes/$1/cresco-data/plugin-data" -name ws.fingerprint 2>/dev/null | head -1); [ -n "$f" ] && head -1 "$f" | tr -d '[:space:]'; }
 probe() {
   PYTHONPATH="${PYCRESCOLIB_PATH:-}${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$HERE/peer_identity_dataplane.py" --tx-port "$WS0" --rx-port $((WS0+2)) \
@@ -98,13 +115,24 @@ OTHER="$WORK/other-pki"; bash "$TOOL" init "$OTHER" --days 30 >/dev/null && bash
 d="$WORK/nodes/b9"; mkdir -p "$d"; n="$OTHER/nodes/rgr_b9"
 ( cd "$d" && exec java $COMMON $SEC -Dsecurity_profile=production -Dbroker_security_enabled=true -Dtenant_id=t1 -Dregionname=rgr -Dagentname=b9 \
   -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
+  -Dplugin_signing_truststore=$WORK/codesign.pem \
   -Dis_agent=true -Dregional_controller_host=127.0.0.1 -Dregional_controller_port=$((P0+15)) -Dnetdiscoveryport=$((P0+45)) -Denable_wsapi=false -jar "$JAR" ) \
   > "$WORK/logs/b9.log" 2>&1 < /dev/null &
 echo $! >> "$PIDS"; echo $! > "$WORK/pid.b9"
-for _ in $(seq 1 45); do grep -q "REFUSED rgr/b9" "$WORK/logs/region.log" && break; sleep 2; done
-ck "$(has region 'REFUSED rgr/b9: .*(does not validate to the fabric.s trust anchors|chain)')" "the region refused rgr/b9: its certificate is not of the fabric's PKI"
+for _ in $(seq 1 45); do grep -qE "REFUSED (rgr/b9|the hello of rgr/b9)" "$WORK/logs/region.log" && break; sleep 2; done
+ck "$(has region 'REFUSED (rgr/b9|the hello of rgr/b9 from [^:]*): .*(does not validate to the fabric.s trust anchors|chain)')" "the region refused rgr/b9: its certificate is not of the fabric's PKI"
 ck "$(none region 'mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b9')" "rgr/b9 was never identified"
 stopnode b9
+
+echo "### a production node configured with a discovery secret refuses to start"
+d="$WORK/nodes/s1"; mkdir -p "$d"; n="$PKI/nodes/rgr_b1"
+openssl rand -hex 16 > "$WORK/leftover.secret"; chmod 600 "$WORK/leftover.secret"     # a leftover from a standard fabric
+( cd "$d" && exec java $COMMON -Dsecurity_profile=production -Dtenant_id=t1 -Dregionname=rgr -Dagentname=b1 -Ddiscovery_secret_agent_file=$WORK/leftover.secret \
+  -Didentity_keystore=$n/node.p12 -Didentity_keystore_password_file=$n/node.p12.pass -Dtrust_anchors=$n/trust-anchors.pem \
+  -Dplugin_signing_truststore=$WORK/codesign.pem -Dis_agent=true -Dnetdiscoveryport=$((P0+55)) -Denable_wsapi=false -jar "$JAR" ) \
+  > "$WORK/logs/s1.log" 2>&1 < /dev/null &
+sp=$!; echo $sp >> "$PIDS"; for _ in $(seq 1 30); do kill -0 $sp 2>/dev/null || break; sleep 1; done; kill $sp 2>/dev/null
+ck "$(has s1 'REFUSING TO START: .*discovery_secret_agent is set: production discovery is authenticated by the operator.s PKI only')" "a production node with a discovery secret refuses to start, naming it"
 
 echo "### the operator revokes rgr/b1 (tool revoke + crl; every node reads the shared revocation file)"
 bash "$TOOL" revoke "$PKI" "$PKI/nodes/rgr_b1/node.pem" >/dev/null && bash "$TOOL" crl "$PKI" >/dev/null

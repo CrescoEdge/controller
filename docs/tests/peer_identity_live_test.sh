@@ -15,6 +15,9 @@
 #   JDK 21 java on PATH; its classpath is taken from the agent jar under test).
 #   PYCRESCOLIB_PATH, when set, is put first on the probe's PYTHONPATH (to test a pycrescolib checkout).
 #   PORT0 (default 33000) and WS0 (default 8482) move the port block. Set REGIONAL_CA=1 to run under the regional CA.
+#   PROVISIONED=1 runs every node on an identity pre-provisioned by tools/cresco-pki.sh (identity_keystore, the standard
+#   profile: discovery stays the secret-keyed v2 exchange; production is provisioned_live_test.sh), agents configured with
+#   their regions (their certificates name them).
 #   RESTART_DRILL=1 (default) then restarts the global and then the region (same data directories) and checks, from the
 #   restarted SERVER's log, that agents are readmitted by certificate on failover before any rediscovery; that every
 #   bridge failover handshake that was made was admitted before any rediscovery (a bridge monitor may rebuild its group
@@ -38,6 +41,21 @@ else
   TENANT=t1; SECURITY="-Dbroker_security_enabled=true -Dtenant_id=t1 -Dpeer_identity_mode=enforce"
 fi
 [ "${REGIONAL_CA:-0}" = "1" ] && SECURITY="$SECURITY -Dsecurity_regional_ca=true"
+if [ "${PROVISIONED:-0}" = "1" ]; then
+  PKI="$WORK/pki"; TOOL="$HERE/../../tools/cresco-pki.sh"; AGENT_REGIONS=1
+  { bash "$TOOL" init "$PKI" --days 30 && bash "$TOOL" region "$PKI" "$TENANT" rgr --days 30 \
+    && bash "$TOOL" node "$PKI" "$TENANT" glob gc --global --days 10 && bash "$TOOL" node "$PKI" "$TENANT" rgr rc --controller --days 10 \
+    && bash "$TOOL" node "$PKI" "$TENANT" glob a1 --days 10 && bash "$TOOL" node "$PKI" "$TENANT" rgr b1 --days 10 \
+    && bash "$TOOL" crl "$PKI"; } > "$WORK/pki.log" 2>&1 || { echo "FATAL: the PKI tool failed"; exit 2; }
+fi
+# the provisioned identity of harness node $1 (global, region, a1, b1), when PROVISIONED=1
+ident() {
+  [ "${PROVISIONED:-0}" = "1" ] || return 0
+  local n; case "$1" in global) n=glob_gc;; region) n=rgr_rc;; a1) n=glob_a1;; b1) n=rgr_b1;; esac
+  echo "-Didentity_keystore=$PKI/nodes/$n/node.p12 -Didentity_keystore_password_file=$PKI/nodes/$n/node.p12.pass -Dtrust_anchors=$PKI/nodes/$n/trust-anchors.pem -Drevocation_file=$PKI/revocations.pem"
+}
+# the broker identity the recipient probe opens connections with: the node's own store (self-made), or its provisioned one
+idstore() { if [ "${PROVISIONED:-0}" = "1" ]; then case "$1" in a1) echo "$PKI/nodes/glob_a1/node.p12";; b1) echo "$PKI/nodes/rgr_b1/node.p12";; esac; else echo "$WORK/nodes/$1"; fi; }
 COMMON="-Djava.net.preferIPv4Stack=true -Xmx1024M -Droot_log_level=INFO -Denable_console=false -Denable_dashboard=false"
 PIDS="$WORK/pids"; : > "$PIDS"
 
@@ -45,9 +63,9 @@ launch() { # name flags [append]
   local d="$WORK/nodes/$1"; mkdir -p "$d"
   echo "$2" > "$WORK/flags.$1"
   if [ "${3:-}" = "append" ]; then
-    ( cd "$d" && exec java $COMMON $SECURITY $SEC $2 $EXTRA -jar "$JAR" ) >> "$WORK/logs/$1.log" 2>&1 < /dev/null &
+    ( cd "$d" && exec java $COMMON $SECURITY $SEC $(ident "$1") $2 $EXTRA -jar "$JAR" ) >> "$WORK/logs/$1.log" 2>&1 < /dev/null &
   else
-    ( cd "$d" && exec java $COMMON $SECURITY $SEC $2 $EXTRA -jar "$JAR" ) > "$WORK/logs/$1.log" 2>&1 < /dev/null &
+    ( cd "$d" && exec java $COMMON $SECURITY $SEC $(ident "$1") $2 $EXTRA -jar "$JAR" ) > "$WORK/logs/$1.log" 2>&1 < /dev/null &
   fi
   echo $! >> "$PIDS"; echo $! > "$WORK/pid.$1"
 }
@@ -95,7 +113,7 @@ probe() {
     --bound-stream "$s" --ready-file "$WORK/probe.ready" --done-file "$WORK/probe.done" > "$WORK/probe.py.json" 2> "$WORK/probe.py.err" &
   local pp=$!
   for _ in $(seq 1 150); do [ -f "$WORK/probe.ready" ] && break; kill -0 "$pp" 2>/dev/null || break; sleep 1; done
-  java -cp "$(probe_cp)" "$HERE/PeerIdentityRecipientProbe.java" $((P0+10)) "$WORK/nodes/a1" $((P0+20)) "$WORK/nodes/b1" \
+  java -cp "$(probe_cp)" "$HERE/PeerIdentityRecipientProbe.java" $((P0+10)) "$(idstore a1)" $((P0+20)) "$(idstore b1)" \
     "T.$TENANT.global.event" rgr_b1 "$TENANT" 200 "$s" > "$WORK/probe.java.json" 2> "$WORK/probe.java.err"
   touch "$WORK/probe.done"; wait "$pp"
   "$PY" -c 'import json,sys
