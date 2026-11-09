@@ -463,7 +463,7 @@ public class GlobalExecutor implements Executor {
             Map<String,List<Map<String,String>>> queryMap = getRegions();
             String mapString = gson.toJson(queryMap);
             ce.setCompressedParam("regionslist",mapString);
-            logger.trace("list regions return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list regions return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
 
         }
         catch(Exception ex) {
@@ -528,7 +528,7 @@ public class GlobalExecutor implements Executor {
             Map<String,List<Map<String,String>>> agentMap = getAgents(actionRegionAgents);
 
             ce.setCompressedParam("agentslist",gson.toJson(agentMap));
-            logger.trace("list agents return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list agents return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -567,7 +567,7 @@ public class GlobalExecutor implements Executor {
             }
             //ce.setParam("pluginslist",controllerEngine.getGDB().getPluginList(actionRegionPlugins, actionAgentPlugins));
             ce.setCompressedParam("pluginslist",controllerEngine.getGDB().getPluginList(actionRegionPlugins, actionAgentPlugins));
-            logger.trace("list plugins return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list plugins return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -587,7 +587,7 @@ public class GlobalExecutor implements Executor {
             }
 
             ce.setCompressedParam("pluginsbytypelist",controllerEngine.getGDB().getPluginListByType(actionPluginTypeId,actionpluginTypeValue));
-            logger.trace("list plugins by type return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list plugins by type return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -600,7 +600,7 @@ public class GlobalExecutor implements Executor {
         try {
 
             ce.setCompressedParam("listrepoinstances",controllerEngine.getGDB().getPluginListByType("pluginname","io.cresco.repo"));
-            logger.trace("list repos : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list repos : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -612,7 +612,7 @@ public class GlobalExecutor implements Executor {
         try {
 
             ce.setCompressedParam("listpluginsrepo",controllerEngine.getGDB().getPluginListRepo());
-            logger.trace("list plugins in repos : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list plugins in repos : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -719,7 +719,7 @@ public class GlobalExecutor implements Executor {
             // secret values never leave in a reply; the agent keeps them for its own restarts
             ce.setCompressedParam("plugininfo", io.cresco.agent.db.ConfigRedaction.redactJson(
                     controllerEngine.getGDB().getPluginInfo(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin"))));
-            logger.trace("plugins info return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("plugins info return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -731,7 +731,7 @@ public class GlobalExecutor implements Executor {
     private MsgEvent pluginKPI(MsgEvent ce) {
         try {
             ce.setCompressedParam("pluginkpi", controllerEngine.getPerfControllerMonitor().getIsAttachedMetrics(ce.getParam("action_region"), ce.getParam("action_agent"), ce.getParam("action_plugin")));
-            logger.trace("plugins KPI return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("plugins KPI return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -755,7 +755,7 @@ public class GlobalExecutor implements Executor {
                 actionRegionResourceInfo = ce.getParam("action_region");
             }
             ce.setParam("netresourceinfo",controllerEngine.getGDB().getResourceInfo(actionRegionResourceInfo, actionAgentResourceInfo));
-            logger.trace("list plugins return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list plugins return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
             */
         }
         catch(Exception ex) {
@@ -862,7 +862,7 @@ public class GlobalExecutor implements Executor {
             }
 
             ce.setCompressedParam("pipelineinfo",controllerEngine.getGDB().getPipelineInfo(actionPipeline));
-            logger.trace("list pipeline return : " + io.cresco.agent.controller.communication.ParamLog.describe(ce));
+            logger.trace("list pipeline return : {}", io.cresco.agent.controller.communication.ParamLog.of(ce));
         }
         catch(Exception ex) {
             ce.setParam("error", ex.getMessage());
@@ -1117,7 +1117,7 @@ public class GlobalExecutor implements Executor {
     private MsgEvent globalEnable(MsgEvent ce) {
         try {
             logger.debug("CONFIG : AGENTDISCOVER ADD: Region:" + ce.getSrcRegion() + " Agent:" + ce.getSrcAgent());
-            logger.trace("Message Body [" + io.cresco.agent.controller.communication.ParamLog.describe(ce) + "]");
+            logger.trace("Message Body [{}]", io.cresco.agent.controller.communication.ParamLog.of(ce));
             controllerEngine.getGDB().nodeUpdate(ce);
 
 

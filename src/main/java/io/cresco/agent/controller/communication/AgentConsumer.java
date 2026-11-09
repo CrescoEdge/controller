@@ -179,6 +179,11 @@ public class AgentConsumer {
 
 						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
 						if(me != null) {
+							// Gson reads the parameters into a tree map (every getParam a string-comparing search, and a
+							// message's checks read dozens); a hash map holds the same entries
+							if (me.getParams() != null && !(me.getParams() instanceof java.util.HashMap)) {
+								me.setParams(new java.util.HashMap<>(me.getParams()));
+							}
 							// gfs#26: addressed to this node's former address (region_alias): it is for this node
 							RegionAlias.normalize(me, aliasRegion, plugin.getRegion(), plugin.getAgent());
 							// the verified caller comes from the properties the broker checked, never from the body
@@ -242,13 +247,13 @@ public class AgentConsumer {
 
 								if (callId != null) {
 									isMyRPC = true;
-									logger.trace("RPC Text Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(me));
+									logger.trace("RPC Text Message: {}", io.cresco.agent.controller.communication.ParamLog.of(me));
 									plugin.receiveRPC(callId, me);
 								}
 							}
 
 							if(!isMyRPC) {
-								logger.trace("Text Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(me));
+								logger.trace("Text Message: {}", io.cresco.agent.controller.communication.ParamLog.of(me));
 								//create new thread service for incoming messages
 								controllerEngine.msgInThreaded(me);
 							}

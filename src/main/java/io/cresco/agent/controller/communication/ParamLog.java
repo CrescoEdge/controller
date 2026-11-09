@@ -82,14 +82,35 @@ public final class ParamLog {
         return describe(m);
     }
 
+    private static final java.util.regex.Pattern ACTION = java.util.regex.Pattern.compile("[A-Za-z0-9_.-]+");
+    private static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile("[A-Za-z0-9_.:@/-]+");
+
     /** An action name is a short token; anything else is logged by its size only. */
     private static String safeAction(String a) {
         if (a == null) return "null";
-        return a.length() <= 64 && a.matches("[A-Za-z0-9_.-]+") ? a : "(" + a.length() + " chars)";
+        return a.length() <= 64 && ACTION.matcher(a).matches() ? a : "(" + a.length() + " chars)";
     }
 
     private static String safeName(String k) {
         if (k == null) return "null";
-        return k.length() <= 128 && k.matches("[A-Za-z0-9_.:@/-]+") ? k : "(" + k.length() + " chars)";
+        return k.length() <= 128 && NAME.matcher(k).matches() ? k : "(" + k.length() + " chars)";
+    }
+
+    /**
+     * {@link #describe} when, and only if, a log line is actually written: for a debug or trace line on a message's
+     * path, {@code logger.trace("... {}", ParamLog.of(m))}. Described eagerly, every message paid for a line that was
+     * never written (a fifth of a controller's CPU per message on the control plane).
+     */
+    public static Object of(MsgEvent m) {
+        return new Object() {
+            @Override public String toString() { return describe(m); }
+        };
+    }
+
+    /** {@link #names} when, and only if, a log line is actually written (see {@link #of}). */
+    public static Object namesOf(Map<String, ?> p) {
+        return new Object() {
+            @Override public String toString() { return names(p); }
+        };
     }
 }

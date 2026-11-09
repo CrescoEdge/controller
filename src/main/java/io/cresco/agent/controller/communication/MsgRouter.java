@@ -350,14 +350,14 @@ public class MsgRouter {
     }
 
     private void forwardToLocalGlobal(MsgEvent rm) {
-        logger.debug("forwardToLocalGlobal() " + io.cresco.agent.controller.communication.ParamLog.describe(rm));
+        logger.debug("forwardToLocalGlobal() {}", io.cresco.agent.controller.communication.ParamLog.of(rm));
         forwardToLocalRegion(rm);
     }
 
     private void forwardToRemoteGlobal(MsgEvent rm) {
         // an ordinary relay hop toward the global's region (every message for a region_alias address in that region
         // takes it, gfs#26): logged at ERROR with its params it flooded the log thousands of times a minute
-        logger.trace("forwardToRemoteGlobal() {}", io.cresco.agent.controller.communication.ParamLog.describe(rm));
+        logger.trace("forwardToRemoteGlobal() {}", io.cresco.agent.controller.communication.ParamLog.of(rm));
         forwardToRemoteRegion(rm);
     }
 
@@ -440,7 +440,7 @@ public class MsgRouter {
                 Hop hop = tierStep.hop != null ? tierStep.hop
                         : decide(routePath, rm, plugin.getRegion(), plugin.getAgent(), plugin.getPluginID());
                 logger.debug("route rp=" + routePath + " -> " + hop);
-                logger.trace(io.cresco.agent.controller.communication.ParamLog.describe(rm));
+                logger.trace("{}", io.cresco.agent.controller.communication.ParamLog.of(rm));
 
                 switch (hop) {
                     case LOCAL_AGENT:                forwardToLocalAgent(rm); break;
