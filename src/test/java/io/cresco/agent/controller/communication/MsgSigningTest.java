@@ -104,8 +104,12 @@ class MsgSigningTest {
         MsgEvent m = sent(a1, plugin(a1), b1);
         MsgSigning.Verdict at = b1.msgSigning().verify(m, plugin(a1), false);
         assertTrue(at.ok(), at.refusal);
+        // to its own region: a direct link (offered on the pings), so unsigned -- accepted only as the region's broker
+        // attests it first hand from a1 (DirectLinkTest)
         MsgEvent n = sent(a1, plugin(a1), rA);
-        assertTrue(rA.msgSigning().verify(n, plugin(a1), false).ok());
+        assertNull(n.getParam(MsgSigning.SIG), "a direct-link message was signed");
+        assertTrue(rA.msgSigning().verify(n, plugin(a1), false, io.cresco.library.security.CrescoIdentity.of("t1", "rgA", "a1", null)).ok());
+        assertFalse(rA.msgSigning().verify(n, plugin(a1), false).ok(), "an unsigned message was accepted without the first-hand attestation");
         MsgEvent toGlobal = sent(a1, plugin(a1), g);
         assertTrue(g.msgSigning().verify(toGlobal, plugin(a1), false).ok(), "the global verifies an agent's attestation by its region's key");
     }

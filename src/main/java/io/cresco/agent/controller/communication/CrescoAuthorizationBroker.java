@@ -905,15 +905,22 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     void stampCaller(ConnectionContext ctx, CrescoSecurityContext sc, Message m) throws java.io.IOException {
         if (isForwarder(ctx, sc)) {
             bridgeScope(ctx, sc, m);
+            // forwarded over a verified bridge: first hand only from the bridge's own controller (its own messages)
+            boolean internal = ctx == null || ctx.getConnector() == null;
+            attestDirect(m, internal ? null : bridgePeerOf(ctx, sc));
             return;
         }
-        if (sc != null && sc.localController) return;
+        if (sc != null && sc.localController) {
+            attestDirect(m, ownIdentity);                     // this controller's own messages (it also relays others')
+            return;
+        }
         Object raw = m.getProperty(CallerStamps.P_CALLER);
         CrescoIdentity id = (sc != null && sc.verified && !isVm(ctx)) ? sc.identity : null;
         userWriter(m, id);
         if (id == null) {
             if (raw != null && !"".equals(raw)) forged(m, null, raw, "a connection without a verified node identity");
             setCaller(m, null);
+            attestDirect(m, null);
             return;
         }
         if (raw == null) {
@@ -922,10 +929,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     "agent:" + id.getTenant() + "/" + id.getRegion() + "/" + id.getAgent(), id.getTenant(), io.cresco.library.security.Caller.ROLE_USER);
             setCaller(m, legacy);
             nodeAlias(m, id, legacy);
+            attestDirect(m, null);                            // a node without stamping signs nothing either: the window's rules
             return;
         }
         if ("".equals(raw)) {
             setCaller(m, null);
+            attestDirect(m, null);
             return;
         }
         Object t = m.getProperty(CallerStamps.P_TENANT), r = m.getProperty(CallerStamps.P_ROLES);
@@ -935,10 +944,30 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (why != null) {
             forged(m, id, raw, why);
             setCaller(m, null);
+            attestDirect(m, null);
             return;
         }
         setCaller(m, declared);
         nodeAlias(m, id, declared);
+        attestDirect(m, id);
+    }
+
+    /**
+     * {@link CallerStamps#P_DIRECT}, which only THIS broker writes (whatever a sender put there is replaced at every hop):
+     * the node that delivered the message here -- {@code deliverer}: a verified network node, this controller, or the
+     * verified controller at the other end of a bridge -- when it says it is the message's origin ({@link
+     * CallerStamps#P_ORIGIN} names it) and the message still carries a stamp. A consumer of this broker reads it as "the
+     * stamp came first hand from that node" ({@link MsgSigning}: an unsigned message is accepted only so). Otherwise empty.
+     */
+    private void attestDirect(Message m, CrescoIdentity deliverer) throws java.io.IOException {
+        Object origin = m.getProperty(CallerStamps.P_ORIGIN), caller = m.getProperty(CallerStamps.P_CALLER);
+        String d = "";
+        if (deliverer != null && origin instanceof String && caller instanceof String && !((String) caller).isEmpty()
+                && origin.equals(deliverer.getRegion() + "_" + deliverer.getAgent())) {
+            d = deliverer.getTenant() + "/" + deliverer.getRegion() + "/" + deliverer.getAgent();
+        }
+        if (d.isEmpty() && m.getProperty(CallerStamps.P_DIRECT) == null) return;      // nothing to attest or to clear
+        m.setProperty(CallerStamps.P_DIRECT, d);
     }
 
     // ---- region aliases (GaiaKeep gfs#26): the former region a node answers at, from its own verified registration ----

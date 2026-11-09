@@ -190,7 +190,8 @@ public class AgentConsumer {
 							// D4: what is dispatched here (to this node's controller or plugins, or an RPC reply for it) must carry
 							// a valid origin signature; relays carry the message on unchecked (its destination checks it)
 							if (forThisNode(me) && controllerEngine.msgSigning().required()) {
-								MsgSigning.Verdict v = controllerEngine.msgSigning().verify(me, caller, controllerEngine.legacyNodesAdmitted());
+								MsgSigning.Verdict v = controllerEngine.msgSigning().verify(me, caller, controllerEngine.legacyNodesAdmitted(),
+										firstHand(msg, caller));
 								if (!v.ok()) {
 									refuseUnauthenticated(me, v.refusal);
 									return;
@@ -413,6 +414,30 @@ public class AgentConsumer {
 			noteLegacySender(m);
 			inbox.onMessage(m);
 		});
+	}
+
+	/**
+	 * The node that delivered {@code msg} first hand as its origin, as this consumer may trust it ({@link
+	 * CallerStamps#P_DIRECT}), or null. A controller consumes from its OWN broker (vm://), which attests whatever it took
+	 * first hand; an agent consumes from its parent's broker, whose attestation it takes only for the parent's own messages
+	 * (anything else that broker delivered came through it, a relay, and must carry its origin's signature).
+	 */
+	private io.cresco.library.security.CrescoIdentity firstHand(Message msg, io.cresco.library.security.Caller caller) {
+		io.cresco.library.security.CrescoIdentity d = CallerStamps.directOf(msg);
+		if (d == null || caller == null) return null;
+		boolean vm = uri != null && uri.startsWith("vm:");
+		if (vm) return d;
+		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+		if (cs == null) return null;
+		return trustedFirstHand(d, false, cs.getRegionalRegion(), cs.getRegionalAgent());
+	}
+
+	/** {@code d} as a consumer may trust it: on its own broker ({@code vm}) as attested; on its parent's, only the parent. */
+	static io.cresco.library.security.CrescoIdentity trustedFirstHand(io.cresco.library.security.CrescoIdentity d, boolean vm,
+																	   String parentRegion, String parentAgent) {
+		if (d == null) return null;
+		if (vm) return d;
+		return parentRegion != null && parentAgent != null && parentRegion.equals(d.getRegion()) && parentAgent.equals(d.getAgent()) ? d : null;
 	}
 
 	/**

@@ -57,6 +57,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * fails, is refused (an RPC request is answered 401). The signer must be the node of the signed caller (or, for an API
  * user, a node of the user's tenant -- any tenant's for a superuser tenant), and the broker's stamp, when there is one,
  * must be that caller: a bridge that stripped a stamp it could not vouch for no longer cuts the origin's word.
+ *
+ * <p><b>Direct links.</b> A signature is what carries the origin's word past relays. Where there is no relay -- a message
+ * between a node and its own parent or child (an agent and its region or global controller, a region and its global) --
+ * the broker the receiver consumes from already attests the origin first hand: it took the message from that node's own
+ * verified connection (mutual TLS), or from the verified bridge of that very controller, and says so in a property only it
+ * sets ({@link CallerStamps#P_DIRECT}, on the sender's word {@link CallerStamps#P_ORIGIN} that it is the origin). Such a
+ * message travels unsigned ({@code msg_signing_direct}, default true): no RSA operation for the bulk of the control plane
+ * (keepalives, registrations, region and global replies). The receiver alone decides: it accepts an unsigned message only
+ * when ITS broker attests it first hand from the very node whose word the stamp is -- a controller trusts its own broker's
+ * attestation; an agent trusts its parent's broker only for the parent's own messages -- so an origin that misjudges a
+ * route is refused, never trusted. Each side offers this on the pings ({@link #P_DIRECT_OK}): an origin sends unsigned only
+ * to a parent or child that said it accepts it (a node of an earlier hardened build is always sent signatures).
  */
 public final class MsgSigning {
 
@@ -67,12 +79,26 @@ public final class MsgSigning {
     /** Ping/pong parameters: a child's certificate and what it holds; the parent's attestation and trust bundle. */
     static final String P_CERT = "sig_cert", P_ATT_EXP = "sig_att_exp", P_ATT = "sig_att", P_BUNDLE_HAVE = "sig_bundle_have",
             P_BUNDLE = "sig_bundle";
+    /** On a ping and a pong: this node accepts unsigned messages its broker attests first hand (direct links). */
+    static final String P_DIRECT_OK = "sig_direct_ok";
+    /** On a message this node originates and sends unsigned over a direct link: its own path (copied to {@link CallerStamps#P_ORIGIN}). */
+    public static final String DIRECT = "cresco_sig_direct";
+    /** How long a parent's or child's offer of direct links holds without a new ping (pings come every few seconds). */
+    static final long DIRECT_OFFER_MS = 60_000L;
+    static final int DIRECT_CHILDREN_MAX = 200_000;
 
     private static final String VERSION = "cresco-msg-v1";
     private static final Gson GSON = new Gson();
 
     private final ControllerEngine ce;
     private final boolean required;
+    /** {@code msg_signing_direct}: send unsigned over direct links (and accept such messages); default true. */
+    private final boolean direct;
+    /** The parent this node pinged (region_agent) and until when it accepts direct messages; the children that do. */
+    private volatile String directParent;
+    private volatile long directParentUntil;
+    private final ConcurrentHashMap<String, Long> directChildren = new ConcurrentHashMap<>();
+    private final AtomicLong directSent = new AtomicLong(), directAccepted = new AtomicLong();
     private final long maxAgeMs;
     private final long attestationMs;
 
@@ -136,6 +162,24 @@ public final class MsgSigning {
                 || (SecuritySettings.brokerSecurity(c) && c.getBooleanParam("msg_signing_required", true));
         this.maxAgeMs = Math.max(10_000L, c.getLongParam("msg_signature_max_age_ms", 300_000L));
         this.attestationMs = Math.max(1L, c.getLongParam("msg_signing_attestation_hours", 24L)) * 3_600_000L;
+        this.direct = c.getBooleanParam("msg_signing_direct", true);
+    }
+
+    /** Messages sent unsigned over a direct link, and accepted so (diagnostics, tests). */
+    public long directSentCount() { return directSent.get(); }
+    public long directAcceptedCount() { return directAccepted.get(); }
+
+    /**
+     * Is {@code m} addressed to this node's parent or one of its children over their direct link, which said it accepts
+     * unsigned messages attested first hand by the broker? (O(1): one comparison, one map lookup.)
+     */
+    boolean directTo(MsgEvent m) {
+        if (!direct || m.getDstRegion() == null || m.getDstAgent() == null) return false;
+        String dst = m.getDstRegion() + "_" + m.getDstAgent();
+        long now = System.currentTimeMillis();
+        if (dst.equals(directParent) && now < directParentUntil) return true;
+        Long until = directChildren.get(dst);
+        return until != null && now < until;
     }
 
     /** Signing and verification are on (security on and not turned off with {@code msg_signing_required=false}). */
@@ -209,12 +253,15 @@ public final class MsgSigning {
     /** Remove every signature parameter. */
     public static void clear(MsgEvent m) {
         if (m == null || m.getParams() == null) return;
-        for (String k : new String[]{SIG, BY, TS, CRED, PENDING, S_CALLER, S_TENANT, S_ROLES}) m.removeParam(k);
+        for (String k : new String[]{SIG, BY, TS, CRED, PENDING, S_CALLER, S_TENANT, S_ROLES, DIRECT}) m.removeParam(k);
     }
 
     /** A message off the wire never asks THIS node to sign it: only this node's own stamping points do. */
     public static void notPending(MsgEvent m) {
-        if (m != null && m.getParams() != null) m.removeParam(PENDING);
+        if (m != null && m.getParams() != null) {
+            m.removeParam(PENDING);
+            m.removeParam(DIRECT);               // a sender's word that it is the origin counts only as its broker attests it
+        }
     }
 
     /** As a message this node originated leaves it (AgentProducer): sign it. Relayed messages carry their origin's signature. */
@@ -224,6 +271,14 @@ public final class MsgSigning {
         if (!required) return;
         Caller c = Caller.fromMsgEvent(m);
         if (c == null || c.isAnonymous()) return;
+        if (directTo(m)) {
+            // a direct link: the receiver's broker attests this node first hand (CallerStamps.P_DIRECT); no signature
+            m.setParam(DIRECT, ce.cstate.getRegion() + "_" + ce.cstate.getAgent());
+            if (directSent.incrementAndGet() == 1) info("direct links ON: messages to this node's parent and children that accept them"
+                    + " travel unsigned, attested first hand by the receiving broker (first: " + m.getMsgType() + " " + m.getParam("action")
+                    + " to " + m.getDstRegion() + "/" + m.getDstAgent() + ")");
+            return;
+        }
         try {
             m.setParam(S_CALLER, c.getPrincipal());
             m.setParam(S_TENANT, c.getTenant());
@@ -281,11 +336,28 @@ public final class MsgSigning {
      * admitted -- the upgrade window.
      */
     public Verdict verify(MsgEvent m, Caller fromBroker, boolean legacyAdmitted) {
+        return verify(m, fromBroker, legacyAdmitted, null);
+    }
+
+    /**
+     * As above; {@code firstHand}: the node the receiving broker attests delivered this message first hand as its origin
+     * ({@link CallerStamps#P_DIRECT}, as the consumer trusts it: its own broker's, or its parent's broker for the parent's
+     * own messages), or null. An unsigned message is accepted when that node may vouch for the broker's stamp
+     * ({@link #vouchRefusal}): it is the stamp's own node, or (an API user) a node of the user's tenant.
+     */
+    public Verdict verify(MsgEvent m, Caller fromBroker, boolean legacyAdmitted, CrescoIdentity firstHand) {
         if (!required) return new Verdict(fromBroker, null);
         String sigB64 = m.getParam(SIG);
         if (sigB64 == null) {
             if (legacyAdmitted && fromBroker != null && fromBroker.getKind() == Caller.Kind.AGENT) return new Verdict(fromBroker, null);
-            return refuse("an unsigned message (from " + fromBroker + ")");
+            if (direct && firstHand != null && fromBroker != null && !fromBroker.isAnonymous() && vouchRefusal(firstHand, fromBroker,
+                    ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig())) == null) {
+                if (directAccepted.incrementAndGet() == 1) info("direct links ON: this node accepts unsigned messages its broker attests"
+                        + " first hand (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + fromBroker + ")");
+                return new Verdict(fromBroker, null);
+            }
+            return refuse("an unsigned message (from " + fromBroker + (firstHand == null ? ", not delivered first hand" : ", delivered by "
+                    + firstHand) + ")");
         }
         try {
             String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS);
@@ -464,6 +536,7 @@ public final class MsgSigning {
     /** On a child's ping: this node's certificate, what it holds of the bundle and (an agent) when its attestation expires. */
     public void onChildPing(MsgEvent ping) {
         if (!required) return;
+        if (direct) ping.setParam(P_DIRECT_OK, "1");
         try {
             ping.setParam(P_CERT, ownCert());
             ping.setParam(P_BUNDLE_HAVE, heldBundleDigest);
@@ -478,12 +551,24 @@ public final class MsgSigning {
      */
     public void onPingAtParent(MsgEvent msg, boolean childIsRegion) {
         String certB64 = msg.getParam(P_CERT), have = msg.getParam(P_BUNDLE_HAVE), attExp = msg.getParam(P_ATT_EXP);
+        boolean childDirect = "1".equals(msg.getParam(P_DIRECT_OK));
         msg.removeParam(P_CERT);
         msg.removeParam(P_BUNDLE_HAVE);
         msg.removeParam(P_ATT_EXP);
+        msg.removeParam(P_DIRECT_OK);
         if (!required) return;
         try {
             Caller caller = Caller.fromMsgEvent(msg);
+            if (direct) {
+                // the child (its verified caller: a controller pinging as itself) accepts direct messages; so does this node
+                if (childDirect && caller != null && caller.getKind() == Caller.Kind.CONTROLLER) {
+                    String child = caller.getRegion() + "_" + caller.getAgent();
+                    if (directChildren.size() < DIRECT_CHILDREN_MAX || directChildren.containsKey(child)) {
+                        directChildren.put(child, System.currentTimeMillis() + DIRECT_OFFER_MS);
+                    }
+                }
+                msg.setParam(P_DIRECT_OK, "1");
+            }
             if (certB64 != null && caller != null && caller.getKind() == Caller.Kind.CONTROLLER) {
                 X509Certificate leaf = (X509Certificate) CertificateFactory.getInstance("X.509")
                         .generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certB64)));
@@ -526,6 +611,11 @@ public final class MsgSigning {
     /** On the parent's pong: keep an attestation of this node, and the parent's bundle when it verifies as the parent's. */
     public void onParentPong(MsgEvent pong, String parentRegion, String parentAgent) {
         if (!required) return;
+        if (direct && "1".equals(pong.getParam(P_DIRECT_OK)) && parentRegion != null && parentAgent != null) {
+            directParent = parentRegion + "_" + parentAgent;
+            directParentUntil = System.currentTimeMillis() + DIRECT_OFFER_MS;
+        }
+        pong.removeParam(P_DIRECT_OK);
         try {
             String att = pong.getParam(P_ATT);
             if (att != null) {
