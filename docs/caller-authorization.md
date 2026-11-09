@@ -540,14 +540,37 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   latency is added; up to 256 share one under load (`msg_signing_threads` workers, default half the cores, 2 to 8). Every
   signed message says its signer reads batch signatures (`cresco_sig_v=2`, signed), and a node sends them only to a node
   it verified such a message from, so a node of an earlier build is always sent single signatures
-  (`msg_signing_batch=false` turns them off).
-- **Cost.** One signature per message a node originates to anything but its parent or children (RSA-3072 private key:
-  about 2 ms of one core, shared by a batch under load), one hash, one map lookup and one signature check per signed message dispatched (about 0.08 ms);
-  credentials are verified once and cached. A signed message carries its signer's credential (about 2.2 KB). Direct-link
-  messages cost no cryptography beyond TLS: the bulk of the control plane (keepalives, registrations, pings, the replies of
-  regions and the global) is direct. Nothing in it grows with the size of the fleet; the trust bundle grows with the number
-  of regions and travels only when it changes. `docs/tests/control_plane_bench.sh` measures it live
-  (`ControlPlaneCostBench`, `-Dcresco.bench=true`, in one JVM).
+  (`msg_signing_batch=false` turns them off). Every signed message says what its signer reads (`cresco_sig_caps`:
+  `batch`, `session`; signed).
+- **Session keys (end to end, past the relays).** Two nodes that talk across relays agree once on a key only they hold,
+  then authenticate each message with an HMAC-SHA-384 under it (`cresco_sig_sid`, `cresco_sig_mac`; about 15 us to
+  check) instead of a signature (2 ms to make), and the credential (2.2 KB) no longer travels. The agreement rides on
+  messages already authenticated: the first node to send to a peer that reads session keys attaches an ephemeral P-384 key
+  to its signed message (`cresco_sig_kx`), the peer answers with its own on its next message (`cresco_sig_kxa`), and each
+  derives the key from the ECDH secret (SP 800-56A ephemeral-ephemeral; SP 800-56C two-step HMAC-SHA-384 key derivation
+  over both names and both public keys). A relay never sees the key, so it still cannot forge, alter or replay what it
+  carries; the receiver checks the signing time, the replay memory, the signed caller, the broker's stamp, and the
+  signer's credential and revocation on every message exactly as for a signature (a revoked key's session is dropped).
+  What a session does not give is a signature a third node could check: a MAC convinces its one receiver only, which is all
+  a MsgEvent needs. A node sends under a session only while its peer said within the last 30 s that it holds it (every
+  message to a peer names the session the sender holds with it, `cresco_sig_held`) and names its sender's incarnation
+  (`cresco_sig_inc`, random at each start): a peer that restarted names a new one, and its next message makes this node
+  return to signatures and agree anew. A message sent to a restarted node under the session it lost is refused like any
+  unauthenticated message (an RPC is answered `401`). Sessions last `msg_signing_session_seconds` (one hour) and are
+  renewed ahead of their end on the messages they carry; a node of an earlier build, or one with
+  `msg_signing_sessions=false`, never reads them and is always sent signatures. A provider that refuses any of it (a FIPS
+  module raising an error) turns session keys off on that node, logged once: it stays with signatures.
+- **Cost.** Between two nodes that talk both ways, one ECDH agreement per pair and hour, then an HMAC per message (about
+  15 us to check, 0.7 KB on the wire); otherwise one signature per message a node originates to anything but its parent
+  or children (RSA-3072 private key: about 2 ms of one core, shared by a batch under load) and one signature check per
+  message dispatched (about 0.08 ms), the signed message carrying its signer's credential (about 2.2 KB). Credentials are
+  verified once and cached. Direct-link messages cost no cryptography beyond TLS: the bulk of the control plane
+  (keepalives, registrations, pings, the replies of regions and the global) is direct. Nothing in it grows with the size
+  of the fleet (every table is a bounded cache, O(1) per message); the trust bundle grows with the number of regions and
+  travels only when it changes. `docs/tests/control_plane_bench.sh` measures it live (`ControlPlaneCostBench`,
+  `-Dcresco.bench=true`, in one JVM). Measured on one host (2026-11-09, RPCs from a client at the global to an agent of
+  another region, across its region's bridge; before hardening: p50 1.1 ms, 3948/s at 8 callers): per-message signatures
+  p50 5.9 ms, 1371/s; with session keys p50 1.4 ms, 3410/s (production, FIPS: 7.1 ms and 1094/s, now 1.8 ms and 3228/s).
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -558,6 +581,8 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_direct` | true | messages between a node and its parent or children travel unsigned, attested first hand by the receiving broker |
 | `msg_signing_batch` | true | messages signed at the same moment share one signature (a Merkle root), to nodes that read them |
 | `msg_signing_threads` | cores / 2 (2 to 8) | signing workers; each signs a batch at a time |
+| `msg_signing_sessions` | true | end-to-end session keys (HMAC under an ECDH-agreed key) with the nodes that read them |
+| `msg_signing_session_seconds` | 3600 | a session key's lifetime (renewed ahead of its end) |
 
 ## 11. Secure by default, security profiles and the upgrade (phase 4)
 

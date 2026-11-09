@@ -73,8 +73,12 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MsgSigning {
 
-    /** On every signed message: this signer understands batch signatures ({@link MsgBatchSigner}); under the signature. */
-    public static final String VERSION_PARAM = "cresco_sig_v";
+    /**
+     * On every authenticated message, under its signature or MAC: what its sender reads -- {@code batch} signatures
+     * ({@link MsgBatchSigner}), {@code session} keys ({@link MsgSessions}).
+     */
+    public static final String CAPS = "cresco_sig_caps";
+    static final int CAP_BATCH = 1, CAP_SESSION = 2;
     public static final String SIG = "cresco_sig", BY = "cresco_sig_by", TS = "cresco_sig_ts", CRED = "cresco_sig_cred",
             PENDING = "cresco_sig_pending", S_CALLER = "cresco_sig_caller", S_TENANT = "cresco_sig_caller_tenant",
             S_ROLES = "cresco_sig_caller_roles";
@@ -106,8 +110,15 @@ public final class MsgSigning {
     private final boolean batch;
     private final int batchThreads;
     private volatile MsgBatchSigner batcher;
-    /** The nodes (region_agent) this node verified a batch-capable signed message from: they are sent batch signatures. */
-    private final ConcurrentHashMap<String, Boolean> batchPeers = new ConcurrentHashMap<>();
+    /** What the nodes (region_agent) this node authenticated a message from read ({@link #CAPS}): bounded. */
+    private final com.google.common.cache.Cache<String, Integer> peerCaps =
+            com.google.common.cache.CacheBuilder.newBuilder().maximumSize(BATCH_PEERS_MAX).build();
+    /** {@code msg_signing_sessions} (default true): end-to-end session keys with the nodes that read them. */
+    private final boolean sessionsOn;
+    private final MsgSessions sessions;
+    private final String ownCaps;
+    private volatile boolean sessionsBroken;
+    private final AtomicLong macSent = new AtomicLong(), macVerified = new AtomicLong(), sessionsMade = new AtomicLong();
     /** Batch root signatures verified here (digest of signature and key fingerprint): one key operation per batch. */
     private final ConcurrentHashMap<String, Boolean> batchVerified = new ConcurrentHashMap<>();
     static final int BATCH_PEERS_MAX = 200_000, BATCH_VERIFIED_MAX = 50_000;
@@ -188,6 +199,45 @@ public final class MsgSigning {
         this.batch = c.getBooleanParam("msg_signing_batch", true);
         this.batchThreads = Math.max(1, c.getIntegerParam("msg_signing_threads",
                 Math.max(2, Math.min(8, Runtime.getRuntime().availableProcessors() / 2))));
+        this.sessionsOn = c.getBooleanParam("msg_signing_sessions", true);
+        this.sessions = sessionsOn ? new MsgSessions(Math.max(120L, c.getLongParam("msg_signing_session_seconds", 3600L)) * 1000L) : null;
+        String caps = batch ? "batch" : "";
+        if (sessionsOn) caps = caps.isEmpty() ? "session" : caps + ",session";
+        this.ownCaps = caps.isEmpty() ? null : caps;
+    }
+
+    /** Messages sent and accepted under a session key, sessions made (diagnostics, tests). */
+    public long macSentCount() { return macSent.get(); }
+    public long macVerifiedCount() { return macVerified.get(); }
+    public long sessionsMadeCount() { return sessionsMade.get(); }
+
+    /** Forget every session key and take a new incarnation (tests: as a restart does). */
+    void restartSessions() { if (sessions != null) sessions.restart(); }
+
+    private static int parseCaps(String caps) {
+        if (caps == null || caps.isEmpty()) return 0;
+        int c = 0;
+        for (String k : caps.split(",", -1)) {
+            if (k.equals("batch")) c |= CAP_BATCH;
+            else if (k.equals("session")) c |= CAP_SESSION;
+        }
+        return c;
+    }
+
+    private boolean peerReads(String node, int cap) {
+        Integer c = peerCaps.getIfPresent(node);
+        return c != null && (c & cap) != 0;
+    }
+
+    private static String dstNode(MsgEvent m) {
+        return m.getDstRegion() == null || m.getDstAgent() == null ? null : m.getDstRegion() + "_" + m.getDstAgent();
+    }
+
+    private void sessionsFailed(Throwable e) {
+        if (!sessionsBroken) {
+            sessionsBroken = true;
+            info("session keys OFF on this node (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "): messages stay signed");
+        }
     }
 
     /** Stop the batch signing workers (the controller is stopping). */
@@ -220,7 +270,8 @@ public final class MsgSigning {
 
     /** Is {@code m}'s destination a node that understands batch signatures? */
     private boolean batchTo(MsgEvent m) {
-        return batch && m.getDstRegion() != null && m.getDstAgent() != null && batchPeers.containsKey(m.getDstRegion() + "_" + m.getDstAgent());
+        String node = dstNode(m);
+        return batch && node != null && peerReads(node, CAP_BATCH);
     }
 
     /** Messages sent unsigned over a direct link, and accepted so (diagnostics, tests). */
@@ -253,6 +304,7 @@ public final class MsgSigning {
     static boolean covered(String key) {
         return key != null && !key.startsWith("routepath-") && !key.startsWith("linkcost-") && !key.startsWith("srcroute")
                 && !key.equals("ttl") && !key.equals(SIG) && !key.equals(PENDING) && !key.equals(MsgBatchSigner.TREE)
+                && !key.equals(MsgSessions.MAC)
                 && !Caller.RESERVED_PARAMS.contains(key);
     }
 
@@ -309,10 +361,16 @@ public final class MsgSigning {
         m.setParam(PENDING, "1");
     }
 
+    /** What a node writes to authenticate a message it originates. */
+    private static final String[] AUTH_PARAMS = {SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, CAPS, MsgBatchSigner.TREE,
+            MsgSessions.SID, MsgSessions.MAC, MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.HELD, MsgSessions.INC};
+
     /** Remove every signature parameter. */
     public static void clear(MsgEvent m) {
         if (m == null || m.getParams() == null) return;
-        for (String k : new String[]{SIG, BY, TS, CRED, PENDING, S_CALLER, S_TENANT, S_ROLES, DIRECT, VERSION_PARAM, MsgBatchSigner.TREE}) m.removeParam(k);
+        for (String k : AUTH_PARAMS) m.removeParam(k);
+        m.removeParam(PENDING);
+        m.removeParam(DIRECT);
     }
 
     /** A message off the wire never asks THIS node to sign it: only this node's own stamping points do. */
@@ -342,10 +400,40 @@ public final class MsgSigning {
             m.setParam(S_CALLER, c.getPrincipal());
             m.setParam(S_TENANT, c.getTenant());
             m.setParam(S_ROLES, c.getRolesCsv());
+            long now = System.currentTimeMillis();
             m.setParam(BY, selfName());
-            m.setParam(TS, Long.toString(System.currentTimeMillis()));
+            m.setParam(TS, Long.toString(now));
+            String caps = sessionsBroken ? (batch ? "batch" : null) : ownCaps;
+            if (caps != null) m.setParam(CAPS, caps);
+            String node = dstNode(m);
+            if (sessions != null && !sessionsBroken) m.setParam(MsgSessions.INC, sessions.incarnation);
+            if (sessions != null && !sessionsBroken && node != null) {
+                // what this node says to the peer about their session; then a MAC under it, or a signature and an offer
+                String held = sessions.heldWith(node), ack = sessions.ackFor(node);
+                if (held != null) m.setParam(MsgSessions.HELD, held);
+                if (ack != null) m.setParam(MsgSessions.KX_ACK, ack);
+                try {
+                    if (peerReads(node, CAP_SESSION)) {
+                        String kx = sessions.offerFor(node, now);
+                        if (kx != null) m.setParam(MsgSessions.KX, kx);
+                    }
+                    MsgSessions.Session ss = sessions.usable(node, now);
+                    if (ss != null) {
+                        m.setParam(MsgSessions.SID, ss.sid);
+                        m.setParam(MsgSessions.MAC, Base64.getEncoder().encodeToString(MsgSessions.mac(ss.key, selfName(), canonical(m))));
+                        if (macSent.incrementAndGet() == 1) info("session keys ON: messages to the nodes this node holds a session with"
+                                + " carry a MAC under it instead of a signature (first: " + m.getMsgType() + " " + m.getParam("action")
+                                + " to " + m.getDstRegion() + "/" + m.getDstAgent() + ")");
+                        return;
+                    }
+                } catch (Exception | Error e) {
+                    // a provider may refuse (a FIPS module raises Errors): this node stays with signatures
+                    if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
+                    sessionsFailed(e);
+                    for (String k : new String[]{MsgSessions.KX, MsgSessions.SID, MsgSessions.MAC}) m.removeParam(k);
+                }
+            }
             m.setParam(CRED, credential());
-            if (batch) m.setParam(VERSION_PARAM, "2");
             if (batchTo(m)) {
                 // shares the private-key operation with the messages being signed at the same moment (alone: a single one)
                 MsgBatchSigner.Signed bs = batcher().sign(canonical(m));
@@ -362,8 +450,9 @@ public final class MsgSigning {
             }
             if (signedCount.incrementAndGet() == 1) info("message signatures ON: this node signs what it originates (first: "
                     + m.getMsgType() + " " + m.getParam("action") + " as " + c + ", credential " + m.getParam(CRED).substring(0, 4) + ")");
-        } catch (Exception e) {
-            for (String k : new String[]{SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, VERSION_PARAM, MsgBatchSigner.TREE}) m.removeParam(k);
+        } catch (Exception | Error e) {
+            if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
+            for (String k : AUTH_PARAMS) m.removeParam(k);
             refusal("cannot sign a message this node sends (" + e.getClass().getSimpleName() + ": " + e.getMessage() + "): it goes unsigned and is refused");
         }
     }
@@ -418,7 +507,8 @@ public final class MsgSigning {
     public Verdict verify(MsgEvent m, Caller fromBroker, boolean legacyAdmitted, CrescoIdentity firstHand) {
         if (!required) return new Verdict(fromBroker, null);
         String sigB64 = m.getParam(SIG);
-        if (sigB64 == null) {
+        String macB64 = sigB64 == null ? m.getParam(MsgSessions.MAC) : null;
+        if (sigB64 == null && macB64 == null) {
             if (legacyAdmitted && fromBroker != null && fromBroker.getKind() == Caller.Kind.AGENT) return new Verdict(fromBroker, null);
             if (direct && firstHand != null && fromBroker != null && !fromBroker.isAnonymous() && vouchRefusal(firstHand, fromBroker,
                     ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig())) == null) {
@@ -431,41 +521,66 @@ public final class MsgSigning {
         }
         try {
             String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS);
-            if (by == null || cred == null || ts == null) return refuse("a signature without its signer, credential or time");
+            if (by == null || ts == null || (macB64 == null && cred == null)) return refuse("a signature without its signer, credential or time");
             long t = Long.parseLong(ts), now = System.currentTimeMillis();
             if (Math.abs(now - t) > maxAgeMs) {
                 return refuse("a signature made " + (now - t) / 1000 + " s from now (msg_signature_max_age_ms=" + maxAgeMs + ")");
             }
+            MsgSessions.Session ss = null;
+            if (macB64 != null) {
+                ss = sessions == null ? null : sessions.bySid(m.getParam(MsgSessions.SID));
+                if (ss == null) return refuse("a message under a session key this node does not hold (from " + by
+                        + ": this node restarted or the session ended; its sender returns to signatures)");
+                if (now > ss.expires) return refuse("a message under an ended session key (" + by + ")");
+                if (!ss.peer.equals(by)) return refuse("the session key of " + ss.peer + " used by " + by);
+                cred = ss.cred;
+            }
             Resolved who = resolve(cred);
-            if (who == null) return refuse("the signer's credential does not verify here (" + by + ")");
+            if (who == null) {
+                if (ss != null) sessions.drop(ss);
+                return refuse("the signer's credential does not verify here (" + by + ")");
+            }
             String name = who.id.getTenant() + "/" + who.id.getRegion() + "/" + who.id.getAgent();
             if (!name.equals(by)) return refuse("signed by " + name + ", which is not the declared signer " + by);
-            if (peers().isRevokedKey(who.fp)) return refuse("the signer's key is revoked (" + by + ")");
-            byte[] sig = Base64.getDecoder().decode(sigB64);
-            String tree = m.getParam(MsgBatchSigner.TREE);
-            byte[] replayKey = sig;
-            if (tree != null) {
-                // a batch signature: this message's own leaf leads to the signed root; the root's signature once per batch
-                byte[] leaf = MsgBatchSigner.leaf(canonical(m));
-                int[] count = new int[1];
-                byte[] root = MsgBatchSigner.root(leaf, tree, count);
-                if (root == null) return refuse("a malformed batch signature path (" + by + ")");
-                String cacheKey = Base64.getEncoder().encodeToString(sha256.get().digest(sig)) + "|" + who.fp + "|"
-                        + Base64.getEncoder().encodeToString(root) + "|" + count[0];
-                if (!batchVerified.containsKey(cacheKey)) {
+            if (peers().isRevokedKey(who.fp)) {
+                if (ss != null) sessions.drop(ss);
+                return refuse("the signer's key is revoked (" + by + ")");
+            }
+            byte[] replayKey;
+            if (ss != null) {
+                if (!who.fp.equals(ss.fp)) return refuse("the session key of " + by + " is bound to another key");
+                byte[] mac = Base64.getDecoder().decode(macB64);
+                if (!MessageDigest.isEqual(mac, MsgSessions.mac(ss.key, by, canonical(m)))) {
+                    return refuse("the session MAC does not verify (" + by + ")");
+                }
+                replayKey = mac;
+            } else {
+                byte[] sig = Base64.getDecoder().decode(sigB64);
+                String tree = m.getParam(MsgBatchSigner.TREE);
+                replayKey = sig;
+                if (tree != null) {
+                    // a batch signature: this message's own leaf leads to the signed root; the root's signature once per batch
+                    byte[] leaf = MsgBatchSigner.leaf(canonical(m));
+                    int[] count = new int[1];
+                    byte[] root = MsgBatchSigner.root(leaf, tree, count);
+                    if (root == null) return refuse("a malformed batch signature path (" + by + ")");
+                    String cacheKey = Base64.getEncoder().encodeToString(sha256.get().digest(sig)) + "|" + who.fp + "|"
+                            + Base64.getEncoder().encodeToString(root) + "|" + count[0];
+                    if (!batchVerified.containsKey(cacheKey)) {
+                        Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
+                        s.initVerify(who.key);
+                        s.update(MsgBatchSigner.signedBytes(root, count[0]));
+                        if (!s.verify(sig)) return refuse("the batch signature does not verify (" + by + ")");
+                        if (batchVerified.size() >= BATCH_VERIFIED_MAX) batchVerified.clear();
+                        batchVerified.put(cacheKey, Boolean.TRUE);
+                    }
+                    replayKey = java.nio.ByteBuffer.allocate(sig.length + leaf.length).put(sig).put(leaf).array();
+                } else {
                     Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
                     s.initVerify(who.key);
-                    s.update(MsgBatchSigner.signedBytes(root, count[0]));
-                    if (!s.verify(sig)) return refuse("the batch signature does not verify (" + by + ")");
-                    if (batchVerified.size() >= BATCH_VERIFIED_MAX) batchVerified.clear();
-                    batchVerified.put(cacheKey, Boolean.TRUE);
+                    s.update(canonical(m));
+                    if (!s.verify(sig)) return refuse("the signature does not verify (" + by + ")");
                 }
-                replayKey = java.nio.ByteBuffer.allocate(sig.length + leaf.length).put(sig).put(leaf).array();
-            } else {
-                Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
-                s.initVerify(who.key);
-                s.update(canonical(m));
-                if (!s.verify(sig)) return refuse("the signature does not verify (" + by + ")");
             }
             Caller signed = Caller.parse(m.getParam(S_CALLER), m.getParam(S_TENANT), m.getParam(S_ROLES));
             if (signed == null || signed.isAnonymous()) return refuse("no signed caller");
@@ -476,13 +591,29 @@ public final class MsgSigning {
                 return refuse("the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
             if (!fresh(replayKey, now)) return refuse("a signature seen before (a replay) from " + by);
-            if (batch && "2".equals(m.getParam(VERSION_PARAM)) && batchPeers.size() < BATCH_PEERS_MAX) {
-                batchPeers.putIfAbsent(who.id.getRegion() + "_" + who.id.getAgent(), Boolean.TRUE);
+            String peerNode = who.id.getRegion() + "_" + who.id.getAgent();
+            int caps = parseCaps(m.getParam(CAPS));
+            Integer had = peerCaps.getIfPresent(peerNode);
+            if (had == null || had != caps) peerCaps.put(peerNode, caps);
+            if (sessions != null && !sessionsBroken) {
+                try {
+                    String changed = sessions.received(selfName(), by, peerNode, m.getParam(MsgSessions.INC), cred, who.fp,
+                            m.getParam(MsgSessions.KX), m.getParam(MsgSessions.KX_ACK), m.getParam(MsgSessions.HELD), now);
+                    if (changed != null && !changed.equals("lost") && sessionsMade.incrementAndGet() == 1) {
+                        info("session keys ON: this node agreed a session key with " + by + " (" + changed + ")");
+                    }
+                } catch (Exception | Error e) {
+                    if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
+                    sessionsFailed(e);
+                }
             }
+            if (ss != null && macVerified.incrementAndGet() == 1) info("session keys ON: this node accepts messages under a session"
+                    + " key it holds (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + by + ")");
             if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
                     + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + ")");
             return new Verdict(signed, null);
-        } catch (Exception e) {
+        } catch (Exception | Error e) {
+            if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             return refuse("an unreadable signature (" + e.getClass().getSimpleName() + ")");
         }
     }
