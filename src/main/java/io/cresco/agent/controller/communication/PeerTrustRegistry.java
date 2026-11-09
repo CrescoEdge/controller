@@ -700,7 +700,8 @@ public final class PeerTrustRegistry {
             } else if (b != null && !b.key.equals(fp)) {
                 log.accept("Identity " + n + " REBOUND from key " + PeerIdentity.shortFp(b.key) + " to " + PeerIdentity.shortFp(fp)
                         + (token != null ? " (operator rebind '" + token + "', now consumed)"
-                        : vouched != null ? " (" + vouched + ")" : " (followed: the controller this node joined re-keyed)")
+                        : vouched != null ? " (" + vouched + ")" : ROLE_SELF.equals(role) ? " (this node's own identity was replaced)"
+                        : " (followed: the controller this node joined re-keyed)")
                         + "; the old key stays refused for " + n);
             }
             compactIfDue();

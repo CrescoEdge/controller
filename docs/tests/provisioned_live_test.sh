@@ -106,12 +106,15 @@ ck "$(echo "$PROBE" | grep -q '"plain_received": 200' && echo 1)" "a stream cros
 
 echo "### renewal: the operator re-issues rgr/rc (NEW key) and its keystore is replaced in place"
 B1C='mTLS identity bound from certificate: CrescoIdentity\{tenant=t1, region=rgr, agent=b1'
-b1before=$(cnt region "$B1C"); rcb=$(cnt global 'Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc')
+# the region's own bridges into the global arrive on the global's NIO workers (the global may also self-organize its own
+# bridge into the region at any time: that is a new connection, not a dropped one, and is not counted)
+RCB='ActiveMQ NIO Worker.*Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc'
+b1before=$(cnt region "$B1C"); rcb=$(cnt global "$RCB")
 bash "$TOOL" node "$PKI" t1 rgr rc --controller --days 20 >/dev/null && ks "$PKI/nodes/rgr_rc" > "$PKI/nodes/rgr_rc/keystore.path"
 for _ in $(seq 1 20); do grep -q "Pre-provisioned identity RELOADED" "$WORK/logs/region.log" && break; sleep 1; done
 ck "$(has region 'Pre-provisioned identity RELOADED: .* with a NEW key')" "the region reloaded its replaced keystore (a new key) without a restart"
 sleep 15
-ck "$( [ "$(cnt region "$B1C")" = "$b1before" ] && [ "$(cnt global 'Broker bridge from verified controller CrescoIdentity\{tenant=t1, region=rgr, agent=rc')" = "$rcb" ] && echo 1)" "no connection was dropped by the reload (b1 and the region's bridges stayed up)"
+ck "$( [ "$(cnt region "$B1C")" = "$b1before" ] && [ "$(cnt global "$RCB")" = "$rcb" ] && echo 1)" "no connection was dropped by the reload (b1 and the region's bridges stayed up)"
 echo "### b1 restarts: its new connection verifies the region's NEW certificate"
 stopnode b1; v0=$(cnt b1 'Peer identity verified: broker connection .* is region=rgr, agent=rc'); a=( $(cat "$WORK/args.b1") ); launch b1 "${a[0]}" "${a[1]}" "${a[*]:2}" append
 waitport $((WS0+2)); sleep 20
