@@ -530,8 +530,19 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   never trusted. Each side offers direct links on its pings and pongs (`sig_direct_ok`): a node sends unsigned only to a
   parent or child that offered them within the last minute, so a node of an earlier hardened build is always sent
   signatures.
+- **Batch signatures.** The messages a node signs at the same moment share one private-key operation: each is a leaf
+  (`SHA-384(0x00 || canonical form)`) of a Merkle tree (`SHA-384(0x01 || left || right)`), the node signs
+  `"cresco-msg-batch-v1" || 0 || count || root` and each message carries the signature and its own path to the root
+  (`cresco_sig_tree`: `<index>/<count>:<sibling>,...`, not signed: it is what leads to the signature). Each message still
+  verifies on its own -- its receiver recomputes the root from the message, checks the root's signature once per batch
+  (then cached) and keeps signature and leaf in its replay memory, so a replayed, altered or re-pathed message is refused
+  like any other. A message alone in its batch -- whenever the node is not busy -- gets an ordinary signature, so no
+  latency is added; up to 256 share one under load (`msg_signing_threads` workers, default half the cores, 2 to 8). Every
+  signed message says its signer reads batch signatures (`cresco_sig_v=2`, signed), and a node sends them only to a node
+  it verified such a message from, so a node of an earlier build is always sent single signatures
+  (`msg_signing_batch=false` turns them off).
 - **Cost.** One signature per message a node originates to anything but its parent or children (RSA-3072 private key:
-  about 2 ms of one core), one hash, one map lookup and one signature check per signed message dispatched (about 0.08 ms);
+  about 2 ms of one core, shared by a batch under load), one hash, one map lookup and one signature check per signed message dispatched (about 0.08 ms);
   credentials are verified once and cached. A signed message carries its signer's credential (about 2.2 KB). Direct-link
   messages cost no cryptography beyond TLS: the bulk of the control plane (keepalives, registrations, pings, the replies of
   regions and the global) is direct. Nothing in it grows with the size of the fleet; the trust bundle grows with the number
@@ -545,6 +556,8 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_attestation_hours` | 24 | an agent attestation's lifetime |
 | `msg_signing_bundle_grace_ms` | 900000 | how long a controller dropped from the global's bundle is still trusted |
 | `msg_signing_direct` | true | messages between a node and its parent or children travel unsigned, attested first hand by the receiving broker |
+| `msg_signing_batch` | true | messages signed at the same moment share one signature (a Merkle root), to nodes that read them |
+| `msg_signing_threads` | cores / 2 (2 to 8) | signing workers; each signs a batch at a time |
 
 ## 11. Secure by default, security profiles and the upgrade (phase 4)
 

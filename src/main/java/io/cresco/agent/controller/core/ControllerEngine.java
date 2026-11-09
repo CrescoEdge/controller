@@ -236,6 +236,8 @@ public class ControllerEngine {
                 gdb.shutdown();
             }
 
+            if (msgSigning != null) msgSigning.close();
+
             if(plugin != null) {
                 plugin.setIsActive(false);
             }
