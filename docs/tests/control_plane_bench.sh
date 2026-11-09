@@ -41,7 +41,8 @@ case "${LEGACY:-0}:$MODE" in
     openssl req -x509 -newkey rsa:3072 -sha384 -days 10 -nodes -keyout "$WORK/codesign.key" -out "$WORK/codesign.pem" \
       -subj "/O=t1/CN=bench code signing" >/dev/null 2>&1 && chmod 600 "$WORK/codesign.key" "$WORK/codesign.pem"
     SEC=""; KEY=""
-    export CRESCO_TLS_CLIENT_CERT="$PKI/api/t1_bench/api.pem" CRESCO_TLS_CLIENT_KEY="$PKI/api/t1_bench/api.key"
+    export CRESCO_TLS_CLIENT_CERT="$PKI/api/t1_bench/api.p12"; CRESCO_TLS_CLIENT_KEY_PASSWORD="$(cat "$PKI/api/t1_bench/api.p12.pass")"
+    export CRESCO_TLS_CLIENT_KEY_PASSWORD
     ;;
   *) echo "FATAL: MODE=$MODE?"; exit 2 ;;
 esac

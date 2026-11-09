@@ -88,7 +88,7 @@ def main():
     ap.add_argument("--spy-port", type=int, required=True)
     ap.add_argument("--spy2-port", type=int, default=0, help="a second spy, e.g. the global's own wsapi")
     ap.add_argument("--rx-path", required=True, help="receiver agent path <region>_<agent>")
-    ap.add_argument("--key", required=True)
+    ap.add_argument("--key", default="")
     ap.add_argument("--messages", type=int, default=200)
     ap.add_argument("--settle", type=float, default=30.0)
     ap.add_argument("--pin", action="append", default=[], help="<port>=<wsapi certificate fingerprint> (repeatable)")
@@ -102,7 +102,8 @@ def main():
     def client(port):
         # pin the wsapi certificate when its fingerprint is known (clients verify it by default)
         pin = pins.get(str(port))
-        return clientlib(a.host, port, a.key, fingerprint=pin) if pin else clientlib(a.host, port, a.key)
+        key = a.key or None             # production: no service key (the client certificate from CRESCO_TLS_CLIENT_*)
+        return clientlib(a.host, port, key, fingerprint=pin) if pin else clientlib(a.host, port, key)
 
     tx = client(a.tx_port)
     rx = client(a.rx_port)
