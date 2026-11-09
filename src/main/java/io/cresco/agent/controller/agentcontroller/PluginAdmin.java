@@ -1067,7 +1067,32 @@ public class PluginAdmin {
         return new File(agentService.getAgentDataDirectory() + "/plugin-data/" + pluginId);
     }
 
+    /** The stops under way: plugin id -> completed when that stop has ended. */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<Void>> stopsUnderWay =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * One stop of a plugin at a time: a second stop of the same plugin (an agent shutdown and a pluginremove) begins when
+     * the one under way has ended, and finds what it left (a plugin no longer running: a remove still drops its row).
+     */
     private boolean stopPlugin(String pluginId, boolean isRemove, boolean purgeData) {
+        if (pluginId == null) return stopPluginOnce(null, isRemove, purgeData);
+        while (true) {
+            java.util.concurrent.CompletableFuture<Void> mine = new java.util.concurrent.CompletableFuture<>();
+            java.util.concurrent.CompletableFuture<Void> other = stopsUnderWay.putIfAbsent(pluginId, mine);
+            if (other == null) {
+                try {
+                    return stopPluginOnce(pluginId, isRemove, purgeData);
+                } finally {
+                    stopsUnderWay.remove(pluginId, mine);
+                    mine.complete(null);
+                }
+            }
+            other.join();
+        }
+    }
+
+    private boolean stopPluginOnce(String pluginId, boolean isRemove, boolean purgeData) {
         boolean isStopped = false;
         try {
 
@@ -1079,13 +1104,22 @@ public class PluginAdmin {
             long bundleID = -1;
 
             boolean isKnown;
+            PluginService service = null;
             synchronized (lockPlugin) {
                 isKnown = pluginMap.containsKey(pluginId);
                 if (isKnown) {
-                    jarFilePath = pluginMap.get(pluginId).getJarPath();
-                    isPluginStopped = pluginMap.get(pluginId).getPluginService().isStopped();
-                    bundleID = pluginMap.get(pluginId).getBundleID();
+                    PluginNode node = pluginMap.get(pluginId);
+                    jarFilePath = node.getJarPath();
+                    service = node.getPluginService();
+                    bundleID = node.getBundleID();
                 }
+            }
+            if (isKnown) {
+                // the plugin's own stop runs OUTSIDE the plugin lock: a stop may send (every send of a plugin is checked
+                // against the plugin map under that lock, bundleRunsPlugin -- gfs announces its departure) and wait for
+                // replies (msgIn takes the lock), and the agent goes on answering (pluginlist) and delivering to its other
+                // plugins meanwhile. Until it is removed below, the stopping plugin is still in the map: it sends as itself.
+                isPluginStopped = service.isStopped();
             }
             if (!isKnown) {
                 logger.error("stopPlugin() no key found for pluginid: " + pluginId);
