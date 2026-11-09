@@ -57,11 +57,19 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     // producers/consumers ride shardSessions[shard] so shard traffic spreads across sockets/cores
     // instead of funneling through the single pooled session. Enabled with dataplane_parallel_connections.
     private boolean parallelConnections = false;
-    private final Map<Integer, ActiveMQSession> shardSessions = Collections.synchronizedMap(new HashMap<>());
-    private final Map<String, Destination> shardDestMap = Collections.synchronizedMap(new HashMap<>());
-    private final Map<String, MessageProducer> shardProducerMap = Collections.synchronizedMap(new HashMap<>());
+    // Read by every sharded send with no lock (concurrent maps). A shard's session is (re)built under that shard's own
+    // lock (shardLock), never one every send takes: before, these were synchronized maps whose monitor -- taken by every
+    // get -- was held across a new broker connection (and across producer creation and closes), so one shard rebuilding
+    // its connection stalled every send on every shard.
+    private final Map<Integer, ActiveMQSession> shardSessions = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Destination> shardDestMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, MessageProducer> shardProducerMap = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, Object> shardLocks = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, Object> laneLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
-    private String URI;
+    private Object shardLock(int key) { return shardLocks.computeIfAbsent(key, k -> new Object()); }
+
+    private volatile String URI;
 
     // Send lanes: extra dedicated connections for the UNSHARDED topics, picked by a message's int property
     // dp_lane. Topic names do not change, so every agent interoperates whatever its lane count (unlike
@@ -510,7 +518,8 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         String key = topicName + "#" + lane;
         MessageProducer p = laneProducers.get(key);
         if (p != null) return p;
-        synchronized (laneProducers) {
+        // a new lane opens a broker connection: under that lane's lock, not one every lane's first send takes
+        synchronized (laneLocks.computeIfAbsent(lane, k -> new Object())) {
             p = laneProducers.get(key);
             if (p != null) return p;
             try {
@@ -589,7 +598,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         boolean rebuilt = false;
         try {
             if (s == null || !sessionAlive(s)) {
-                // BOUNDED wait, and outside the shardSessions monitor: parking forever while
+                // BOUNDED wait, and outside the shard's lock: parking forever while
                 // holding the lock wedged every other shard's rebuild along with this one
                 int waited = 0;
                 int maxWait = plugin.getConfig().getIntegerParam("dataplane_session_wait_sec", 30);
@@ -601,19 +610,12 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     }
                     Thread.sleep(1000);
                 }
-                synchronized (shardSessions) {
+                ActiveMQSession old = null;
+                synchronized (shardLock(key)) {
                     s = shardSessions.get(key);
                     if (s == null || !sessionAlive(s)) {
                         boolean hadOne = s != null;
-                        // a closed session's dedicated connection may still be open — close it or
-                        // every shard rebuild leaks a socket
-                        if (s != null) {
-                            try {
-                                org.apache.activemq.ActiveMQConnection oldConn =
-                                        (org.apache.activemq.ActiveMQConnection) s.getConnection();
-                                if (oldConn != null && !oldConn.isClosed()) oldConn.close();
-                            } catch (Exception ignore) { }
-                        }
+                        old = s;
                         s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
                         if (s != null) {
                             shardSessions.put(key, s);
@@ -621,8 +623,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                             // producers cached on the dead session would fail (or vanish) every send: drop the shard's
                             dropShardProducers(key);
                             rebuilt = hadOne;
+                        } else if (old != null) {
+                            shardSessions.remove(key, old);
                         }
                     }
+                }
+                // a closed session's dedicated connection may still be open: close it (outside every lock: a JMS close
+                // may block on the broker) or every shard rebuild leaks a socket
+                if (old != null) {
+                    try {
+                        org.apache.activemq.ActiveMQConnection oldConn = (org.apache.activemq.ActiveMQConnection) old.getConnection();
+                        if (oldConn != null && !oldConn.isClosed()) oldConn.close();
+                    } catch (Exception ignore) { }
                 }
             }
         } catch (Exception ex) {
@@ -635,15 +647,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     /** Forget the producers (and destinations) cached for shard {@code key}: they belonged to its old session. */
     private void dropShardProducers(int key) {
         String suffix = "." + key;
-        synchronized (shardProducerMap) {
-            for (java.util.Iterator<Map.Entry<String, MessageProducer>> it = shardProducerMap.entrySet().iterator(); it.hasNext(); ) {
-                Map.Entry<String, MessageProducer> e = it.next();
-                if (!e.getKey().endsWith(suffix)) continue;
+        for (Map.Entry<String, MessageProducer> e : shardProducerMap.entrySet()) {
+            if (!e.getKey().endsWith(suffix)) continue;
+            if (shardProducerMap.remove(e.getKey(), e.getValue())) {
                 try { e.getValue().close(); } catch (Exception ignore) { }
-                it.remove();
             }
         }
-        synchronized (shardDestMap) { shardDestMap.keySet().removeIf(t -> t.endsWith(suffix)); }
+        shardDestMap.keySet().removeIf(t -> t.endsWith(suffix));
     }
 
     private Destination getShardDestination(String topicName, ActiveMQSession session) {
@@ -664,14 +674,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             ActiveMQSession s = getShardSession(shard);
             Destination d = getShardDestination(topicName, s);
             if (s != null && d != null) {
-                synchronized (shardProducerMap) {
-                    p = shardProducerMap.get(topicName);
-                    if (p == null) {
-                        p = s.createProducer(d);
-                        p.setTimeToLive(300000L);
-                        p.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
-                        shardProducerMap.put(topicName, p);
-                    }
+                // made outside any lock (a new producer is a round trip to the broker); two sends racing for a new topic
+                // keep one producer and close the other
+                MessageProducer made = s.createProducer(d);
+                made.setTimeToLive(300000L);
+                made.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+                p = shardProducerMap.putIfAbsent(topicName, made);
+                if (p == null) {
+                    p = made;
+                } else {
+                    try { made.close(); } catch (Exception ignore) { }
                 }
             }
         } catch (Exception ex) {
@@ -737,7 +749,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
     /**
      * Re-attach every recorded listener of shard {@code key} to its (new) session: their consumers died with the
-     * old connection. Called with the shard's new session, outside the shardSessions monitor.
+     * old connection. Called with the shard's new session, outside the shard's lock.
      */
     private void reattachShardListeners(int key, ActiveMQSession s) {
         List<DataPlanePersistantInstance> mine = new ArrayList<>();
@@ -871,7 +883,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 } catch (JMSException dead) {
                     // the producer's session is gone (#22): forget it, rebuild the shard's session (re-attaching
                     // its listeners), and try once more on the new one
-                    synchronized (shardProducerMap) { shardProducerMap.remove(topicName, producer); }
+                    shardProducerMap.remove(topicName, producer);
                     getShardSession(shard);
                     producer = getShardProducer(topicName, shard);
                     if (producer == null) throw dead;
@@ -921,24 +933,25 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             }
 
             // drop sharded producer/destination caches and close the dedicated shard connections
-            synchronized (shardProducerMap) {
-                for (MessageProducer p : shardProducerMap.values()) {
-                    try { if (p != null) p.close(); } catch (Exception ignore) {}
+            // each entry leaves its map first, then is closed outside every lock
+            for (Map.Entry<String, MessageProducer> e : shardProducerMap.entrySet()) {
+                if (shardProducerMap.remove(e.getKey(), e.getValue())) {
+                    try { e.getValue().close(); } catch (Exception ignore) {}
                 }
-                shardProducerMap.clear();
             }
             shardDestMap.clear();
-            synchronized (shardSessions) {
-                for (ActiveMQSession ss : shardSessions.values()) {
-                    try {
-                        if (ss != null) {
-                            jakarta.jms.Connection c = ss.getConnection();
-                            ss.close();
-                            if (c != null) c.close();
-                        }
-                    } catch (Exception ignore) {}
+            for (Integer key : new ArrayList<>(shardSessions.keySet())) {
+                ActiveMQSession ss;
+                synchronized (shardLock(key)) {           // a rebuild under way on the old URI ends first
+                    ss = shardSessions.remove(key);
                 }
-                shardSessions.clear();
+                try {
+                    if (ss != null) {
+                        jakarta.jms.Connection c = ss.getConnection();
+                        ss.close();
+                        if (c != null) c.close();
+                    }
+                } catch (Exception ignore) {}
             }
 
         } catch (Exception ex) {

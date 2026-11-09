@@ -56,7 +56,12 @@ public class PluginAdmin {
     private ServiceTracker<CoreState, CoreState> coreStateTracker;
     private static final long SERVICE_WAIT_MS = 30000L;
     private Map<String,Configuration> configMap;
-    private Map<String,PluginNode> pluginMap;
+    /**
+     * The plugins this agent runs. Read with no lock on every message in (msgIn) and every send out (bundleRunsPlugin):
+     * a ConcurrentHashMap, whose iteration is safe without a lock. {@link #lockPlugin} only serializes the compound
+     * changes (add, stop/remove); nothing holding it calls a plugin or waits.
+     */
+    private final Map<String,PluginNode> pluginMap = new java.util.concurrent.ConcurrentHashMap<>();
     private final JarIntake jarIntake;
     private Map<Long,List<String>> bundleMap;
     private Map<String,List<String>> jarRepoSyncMap;
@@ -89,7 +94,6 @@ public class PluginAdmin {
         this.gdb = gdb;
         this.gson = new Gson();
         this.configMap = Collections.synchronizedMap(new HashMap<>());
-        this.pluginMap = Collections.synchronizedMap(new HashMap<>());
         this.bundleMap = Collections.synchronizedMap(new HashMap<>());
         this.jarRepoSyncMap = Collections.synchronizedMap(new HashMap<>());
 
@@ -983,10 +987,7 @@ public class PluginAdmin {
         for (File d : dirs) {
             String id = d.getName();
             try {
-                boolean configured;
-                synchronized (lockPlugin) {
-                    configured = pluginMap.containsKey(id);
-                }
+                boolean configured = pluginMap.containsKey(id);
                 if (configured || pendingOwners.containsKey(id) || gdb.nodeExist(plugin.getRegion(), plugin.getAgent(), id)) continue;
                 if (newestChange(d.toPath()) > cutoff) continue;
                 String refused = PluginIds.purge(base.toPath(), id);
@@ -1015,12 +1016,7 @@ public class PluginAdmin {
 
     public void stopAllPlugins() {
 
-        Set<String> keys = null;
-        synchronized (lockConfig) {
-
-            //keys = pluginMap.keySet();
-            keys = pluginMap.keySet().stream().collect(Collectors.toSet());
-        }
+        Set<String> keys = new HashSet<>(pluginMap.keySet());
 
         for(String pid : keys) {
             stopPlugin(pid);
@@ -1103,22 +1099,16 @@ public class PluginAdmin {
             boolean isPluginStopped = false;
             long bundleID = -1;
 
-            boolean isKnown;
+            PluginNode stopping = pluginId == null ? null : pluginMap.get(pluginId);
+            boolean isKnown = stopping != null;
             PluginService service = null;
-            synchronized (lockPlugin) {
-                isKnown = pluginMap.containsKey(pluginId);
-                if (isKnown) {
-                    PluginNode node = pluginMap.get(pluginId);
-                    jarFilePath = node.getJarPath();
-                    service = node.getPluginService();
-                    bundleID = node.getBundleID();
-                }
-            }
             if (isKnown) {
-                // the plugin's own stop runs OUTSIDE the plugin lock: a stop may send (every send of a plugin is checked
-                // against the plugin map under that lock, bundleRunsPlugin -- gfs announces its departure) and wait for
-                // replies (msgIn takes the lock), and the agent goes on answering (pluginlist) and delivering to its other
-                // plugins meanwhile. Until it is removed below, the stopping plugin is still in the map: it sends as itself.
+                jarFilePath = stopping.getJarPath();
+                service = stopping.getPluginService();
+                bundleID = stopping.getBundleID();
+                // the plugin's own stop runs under no lock: a stop may send (bundleRunsPlugin) and wait for replies
+                // (msgIn), and the agent goes on answering (pluginlist) and delivering to its other plugins meanwhile.
+                // Until it is removed below, the stopping plugin is still in the map: it sends as itself.
                 isPluginStopped = service.isStopped();
             }
             if (!isKnown) {
@@ -1179,8 +1169,11 @@ public class PluginAdmin {
                         pluginConfig.delete();
 
                         synchronized (lockPlugin) {
-                            pluginMap.remove(pluginId);
+                            pluginMap.remove(pluginId, stopping);
                         }
+                        // a delivery that looked the plugin up before its removal and has not handed the message over
+                        // yet finds it inactive; from here on, its id is no longer owned (bundleRunsPlugin)
+                        stopping.deactivate();
                         synchronized (lockConfig) {
                             configMap.remove(pluginId);
                         }
@@ -1224,11 +1217,8 @@ public class PluginAdmin {
 
                     logger.error("pid is NULL");
 
-                    synchronized (lockPlugin) {
-                        if (pluginMap.containsKey(pluginId)) {
-                            logger.debug(pluginMap.get(pluginId).toString());
-                        }
-                    }
+                    PluginNode n = pluginMap.get(pluginId);
+                    if (n != null) logger.debug(n.toString());
 
                 }
             } else {
@@ -1313,10 +1303,9 @@ public class PluginAdmin {
         if (pluginId == null) return false;
         Long pending = pendingOwners.get(pluginId);
         if (pending != null && pending == bundleId) return true;
-        synchronized (lockPlugin) {
-            PluginNode n = pluginMap.get(pluginId);
-            return n != null && n.getBundleID() == bundleId;
-        }
+        // no lock: one read of the plugin map, on every send of every plugin
+        PluginNode n = pluginMap.get(pluginId);
+        return n != null && n.getBundleID() == bundleId;
     }
 
     /** Plugins being added: id -> bundle, from before their component can activate until they are in pluginMap. */
@@ -1325,28 +1314,29 @@ public class PluginAdmin {
     /** The plugin ids the bundle {@code bundleId} runs, sorted. */
     public java.util.SortedSet<String> pluginIdsOf(long bundleId) {
         java.util.SortedSet<String> ids = new java.util.TreeSet<>();
-        synchronized (lockPlugin) {
-            for (Map.Entry<String, PluginNode> e : pluginMap.entrySet()) {
-                if (e.getValue() != null && e.getValue().getBundleID() == bundleId) ids.add(e.getKey());
-            }
+        for (Map.Entry<String, PluginNode> e : pluginMap.entrySet()) {
+            if (e.getValue().getBundleID() == bundleId) ids.add(e.getKey());
         }
         return ids;
     }
 
+    /**
+     * Deliver {@code msg} to its plugin. No lock: the plugin's inMsg may run its handler right here (its bounded queue is
+     * full: CallerRuns) and that handler may send (bundleRunsPlugin) and wait for a reply that another thread delivers
+     * here; one plugin that is slow to take a message holds up no other plugin's messages or sends. A plugin not (or no
+     * longer) in the map gets nothing; one that is not active (not started yet, or being removed) gets nothing (logged).
+     */
     public void msgIn(MsgEvent msg) {
 
         String pluginID = msg.getDstPlugin();
-        synchronized (lockPlugin) {
-            if (pluginMap.containsKey(pluginID)) {
-
-                if(pluginMap.get(pluginID).getActive()) {
-                    pluginMap.get(pluginID).getPluginService().inMsg(msg);
-                } else {
-                    logger.error("MESSAGE SENT TO INACTIVE PLUGIN");
-                }
-            }
+        PluginNode node = pluginID == null ? null : pluginMap.get(pluginID);
+        if (node == null) return;
+        PluginService service = node.getActive() ? node.getPluginService() : null;
+        if (service != null) {
+            service.inMsg(msg);
+        } else {
+            logger.error("MESSAGE SENT TO INACTIVE PLUGIN");
         }
-
     }
 
     public String addPlugin(Map<String,Object> map) {
@@ -1562,15 +1552,15 @@ public class PluginAdmin {
                                 logger.error("Could not start!", ex);
                             }
 
-                            synchronized (lockPlugin) {
-                                if (pluginMap.containsKey(pluginID)) {
-                                    PluginService pluginService = (PluginService) context.getService(sr);
-                                    pluginMap.get(pluginID).setPluginService(pluginService);
-                                    pluginMap.get(pluginID).setStatus(statusCode, statusDesc);
-                                    pluginService.setIsActive(true);
-                                } else {
-                                    logger.error("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " elements " + pluginMap.hashCode() + " thread:" + Thread.currentThread().getName());
-                                }
+                            // no lock: the service lookup and setIsActive are the plugin's code, setStatus writes the DB
+                            PluginNode starting = pluginMap.get(pluginID);
+                            if (starting != null) {
+                                PluginService pluginService = (PluginService) context.getService(sr);
+                                starting.setPluginService(pluginService);
+                                starting.setStatus(statusCode, statusDesc);
+                                pluginService.setIsActive(true);
+                            } else {
+                                logger.error("NO PLUGIN IN PLUGIN MAP FOR THIS SERVICE : " + pluginID + " thread:" + Thread.currentThread().getName());
                             }
 
                             isStarted = true;
@@ -1597,11 +1587,7 @@ public class PluginAdmin {
 
         try {
 
-            synchronized (lockPlugin) {
-                if(pluginMap.containsKey(pluginID)) {
-                    pluginExist = true;
-                }
-            }
+            pluginExist = pluginID != null && pluginMap.containsKey(pluginID);
 
         } catch(Exception ex) {
             logger.error("pluginExist() ", ex);
@@ -1615,18 +1601,12 @@ public class PluginAdmin {
         Map<String,String> statusMap = null;
         try {
 
-            synchronized (lockPlugin) {
-                if(pluginMap.containsKey(pluginID)) {
-                    statusMap = new HashMap<>();
-                    PluginNode pluginNode = pluginMap.get(pluginID);
-                    int status_code = pluginNode.getStatus_code();
-                    String status_desc = pluginNode.getStatus_desc();
-                    boolean isActive = pluginNode.getActive();
-
-                    statusMap.put("status_code", String.valueOf(status_code));
-                    statusMap.put("status_desc", status_desc);
-                    statusMap.put("isactive", String.valueOf(isActive));
-                }
+            PluginNode pluginNode = pluginID == null ? null : pluginMap.get(pluginID);
+            if (pluginNode != null) {
+                statusMap = new HashMap<>();
+                statusMap.put("status_code", String.valueOf(pluginNode.getStatus_code()));
+                statusMap.put("status_desc", pluginNode.getStatus_desc());
+                statusMap.put("isactive", String.valueOf(pluginNode.getActive()));
             }
 
         } catch(Exception ex) {
@@ -1637,16 +1617,14 @@ public class PluginAdmin {
 
     /**
      * Snapshot of in-memory plugin health: pluginID -&gt; status_code (see {@link PluginNode}).
-     * Read from the live pluginMap under the plugin lock; feeds the "plugins" HealthCheck via
+     * Read from the live pluginMap (no lock); feeds the "plugins" HealthCheck via
      * {@code StatusAdapter.fromPluginStatusCode}.
      */
     public Map<String,Integer> getPluginStatusCodes() {
         Map<String,Integer> out = new HashMap<>();
         try {
-            synchronized (lockPlugin) {
-                for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
-                    out.put(e.getKey(), e.getValue().getStatus_code());
-                }
+            for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
+                out.put(e.getKey(), e.getValue().getStatus_code());
             }
         } catch (Exception ex) {
             logger.error("getPluginStatusCodes() ", ex);
@@ -1662,10 +1640,8 @@ public class PluginAdmin {
     public Map<String,String> getPluginNames() {
         Map<String,String> out = new HashMap<>();
         try {
-            synchronized (lockPlugin) {
-                for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
-                    out.put(e.getKey(), e.getValue().getName());
-                }
+            for (Map.Entry<String,PluginNode> e : pluginMap.entrySet()) {
+                out.put(e.getKey(), e.getValue().getName());
             }
         } catch (Exception ex) {
             logger.error("getPluginNames() ", ex);
@@ -1693,10 +1669,7 @@ public class PluginAdmin {
 
         String exportString = null;
         try {
-            List<String> pluginIds;
-            synchronized (lockPlugin) {
-                pluginIds = new ArrayList<>(pluginMap.keySet());
-            }
+            List<String> pluginIds = new ArrayList<>(pluginMap.keySet());
             exportString = redactedRows(pluginIds, gdb::getPNode);
 
         } catch(Exception ex) {
@@ -1711,10 +1684,7 @@ public class PluginAdmin {
 
         String exportString = null;
         try {
-            List<String> pluginIds;
-            synchronized (lockPlugin) {
-                pluginIds = new ArrayList<>(pluginMap.keySet());
-            }
+            List<String> pluginIds = new ArrayList<>(pluginMap.keySet());
             exportString = redactedRows(pluginIds, gdb::getPNode);
 
         } catch(Exception ex) {
