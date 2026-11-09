@@ -65,18 +65,19 @@ def main():
             row("CP %s %s callers p99 ms" % (tgt, th), {b: get(cp[b], "concurrent", th, "p99_ms") for b in builds}, "p99")
     for size, label in (("262144", "256KiB"), ("4194304", "4MiB")):
         for flows in ("1", "4"):
-            def reps(b):
+            def reps(b, mode="fire"):
                 dp = get(R[b], "dataplane") or {}
-                return [v for k, v in dp.items() if k.startswith("%s_%sf_" % (size, flows)) and v]
-            row("DP %s %s flow(s) MiB/s" % (label, flows),
-                {b: (statistics.median([r["mib_s"] for r in reps(b)]) if reps(b) else None) for b in builds}, "tput")
-            row("DP %s %s flow(s) p50 ms" % (label, flows),
-                {b: (statistics.median([r["p50_ms"] for r in reps(b)]) if reps(b) else None) for b in builds})
-            row("DP %s %s flow(s) p99 ms" % (label, flows),
-                {b: (statistics.median([r["p99_ms"] for r in reps(b)]) if reps(b) else None) for b in builds}, "p99")
+                return [v for k, v in dp.items() if k.startswith("%s_%sf_%s_" % (size, flows, mode)) and v]
+            def med(b, key, mode="fire"):
+                rs = reps(b, mode)
+                return statistics.median([r[key] for r in rs]) if rs else None
+            row("DP %s %s flow(s) MiB/s" % (label, flows), {b: med(b, "mib_s") for b in builds}, "tput")
+            row("DP %s %s flow(s) p50 ms, paced" % (label, flows), {b: med(b, "p50_ms", "paced") for b in builds})
+            row("DP %s %s flow(s) p99 ms, paced" % (label, flows), {b: med(b, "p99_ms", "paced") for b in builds}, "p99")
+            row("DP %s %s flow(s) p99 ms, flat out (queue depth)" % (label, flows), {b: med(b, "p99_ms") for b in builds})
             lost = {}
             for b in builds:
-                rs = reps(b)
+                rs = reps(b) + reps(b, "paced")
                 lost[b] = sum(r["sent"] - r["received"] + r["out_of_order"] + r["bad_size"] + r["dups"] for r in rs) if rs else None
                 if b != "old" and rs and lost[b]:
                     fails.append("DP %s %s flow(s): %s lost/damaged/reordered %d" % (label, flows, b, lost[b]))
