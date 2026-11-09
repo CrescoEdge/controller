@@ -35,6 +35,8 @@ public class AgentConsumer {
 	/** gfs#26: the consumer of the former address's inbox (region_alias, {@link RegionAlias}); null without one. */
 	private MessageConsumer aliasConsumer;
 	private String aliasRegion, aliasQueueName;
+	/** The upgrade window: the consumer of this controller's raw inbox, where nodes not yet upgraded write ({@link LegacyNodes}). */
+	private MessageConsumer legacyConsumer;
 	private Gson gson;
 	private boolean dedicatedConnection;
 	private volatile org.apache.activemq.ActiveMQConnection connection;
@@ -149,6 +151,12 @@ public class AgentConsumer {
 				logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias)",
 						aliasQueueName, aliasRegion);
 			}
+			String legacyQueue = legacyInbox(uri);
+			if (legacyQueue != null) {
+				legacyConsumer = sess.createConsumer(sess.createQueue(legacyQueue));
+				logger.warn("AgentConsumer also consumes the raw inbox [{}] during the upgrade window: nodes not yet upgraded"
+						+ " (no tenant namespacing) write there", legacyQueue);
+			}
 		} catch (JMSException | RuntimeException ex) {
 			if (dedicatedConnection) {
 				try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
@@ -175,6 +183,10 @@ public class AgentConsumer {
 							RegionAlias.normalize(me, aliasRegion, plugin.getRegion(), plugin.getAgent());
 							// the verified caller comes from the properties the broker checked, never from the body
 							io.cresco.library.security.Caller caller = CallerStamps.fromJms(me, msg, controllerEngine.securityOn());
+							// the upgrade window: an upgraded node (it speaks as its controller) is no longer a legacy node
+							if (caller != null && caller.getKind() == io.cresco.library.security.Caller.Kind.CONTROLLER) {
+								controllerEngine.legacyNodes().upgraded(caller.getRegion(), caller.getAgent());
+							}
 							// D4: what is dispatched here (to this node's controller or plugins, or an RPC reply for it) must carry
 							// a valid origin signature; relays carry the message on unchecked (its destination checks it)
 							if (forThisNode(me) && controllerEngine.msgSigning().required()) {
@@ -397,6 +409,39 @@ public class AgentConsumer {
 		};
 		consumer.setMessageListener(inbox);
 		if (aliasConsumer != null) aliasConsumer.setMessageListener(inbox);
+		if (legacyConsumer != null) legacyConsumer.setMessageListener(m -> {
+			noteLegacySender(m);
+			inbox.onMessage(m);
+		});
+	}
+
+	/**
+	 * The raw inbox this controller also consumes during the upgrade window, or null: only a controller on its own broker
+	 * (vm://, the T.*. wildcard inbox) with tenant namespacing and security on, while the window is open. Nodes of an
+	 * earlier build run without namespacing and write to the raw name; outside the window nothing is subscribed there
+	 * (and what still arrives after the window closes at run time is refused unsigned, like any legacy message).
+	 */
+	String legacyInbox(String uri) {
+		if (uri == null || !uri.startsWith("vm:") || !controllerEngine.securityOn() || !controllerEngine.legacyNodesAdmitted()
+				|| !SecuritySettings.tenantNamespacing(plugin.getConfig())) return null;
+		String raw = plugin.getRegion() + "_" + plugin.getAgent();
+		return io.cresco.library.security.TenantNamespace.wildcard(raw).equals(RXQueueName) ? raw : null;
+	}
+
+	/**
+	 * A message on the raw inbox stamped by this broker as a node without stamping ({@code agent:<tenant>/<region>/<agent>},
+	 * the node its certificate names) marks that node of this region as legacy: replies and requests to it then go to its
+	 * raw inbox ({@link LegacyNodes}).
+	 */
+	private void noteLegacySender(Message m) {
+		try {
+			io.cresco.library.security.Caller c = CallerStamps.fromJmsProperties(m);
+			if (c != null && c.getKind() == io.cresco.library.security.Caller.Kind.AGENT && plugin.getRegion().equals(c.getRegion())) {
+				controllerEngine.legacyNodes().seen(c.getRegion(), c.getAgent());
+			}
+		} catch (RuntimeException ignore) {
+			// an unreadable stamp marks nothing; the inbox refuses the message
+		}
 	}
 
 	/**
@@ -448,6 +493,8 @@ public class AgentConsumer {
 		try { if (consumer != null) consumer.close(); } catch (Exception ignore) { }
 		try { if (aliasConsumer != null) aliasConsumer.close(); } catch (Exception ignore) { }
 		aliasConsumer = null;
+		try { if (legacyConsumer != null) legacyConsumer.close(); } catch (Exception ignore) { }
+		legacyConsumer = null;
 		if (dedicatedConnection) {
 			try { if (sess != null && !sess.isClosed()) sess.close(); } catch (Exception ignore) { }
 			ActiveClient.closeConnectionFast(connection);
@@ -590,6 +637,9 @@ public class AgentConsumer {
 		}
 		try {
 			if (aliasConsumer != null) aliasConsumer.close();
+		} catch (Exception ignore) { }
+		try {
+			if (legacyConsumer != null) legacyConsumer.close();
 		} catch (Exception ignore) { }
 		try {
 			if (consumer != null) consumer.close();

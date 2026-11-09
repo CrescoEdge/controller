@@ -21,8 +21,10 @@ import java.util.Base64;
  *
  * <p>Format {@code v2:<base64(iv || AES-256-GCM ciphertext+tag)>}, a fresh 96-bit IV per message and a key derived from
  * the secret with PBKDF2-HMAC-SHA-384 -- never the same token twice. The legacy format (AES/ECB under a SHA-1-derived
- * 128-bit key: a deterministic, replayable token) is produced and accepted only with {@code discovery_auth=compat}, for a
- * rolling upgrade.
+ * 128-bit key: a deterministic, replayable token) is accepted only inside the upgrade window ({@code discovery_auth=compat}
+ * with {@code discovery_compat_until}) and produced only on purpose ({@link #encryptLegacy}): to answer an earlier build in
+ * its own format, or to reach a responder that is not upgraded. What a node sends otherwise is always the v2 format, so an
+ * upgraded node with or without the window reaches every upgraded responder.
  */
 public class DiscoveryCrypto {
     private CLogger logger;
@@ -54,13 +56,32 @@ public class DiscoveryCrypto {
         return key;
     }
 
+    /** Is {@code token} in the legacy (earlier build's) format? */
+    public static boolean isLegacyFormat(String token) {
+        return token != null && !token.startsWith(V2);
+    }
+
+    /**
+     * The legacy (replayable) validator, for an earlier build: only inside the upgrade window, else null (logged).
+     */
+    public String encryptLegacy(final String valueEnc, final String secKey) {
+        if (!legacy()) {
+            logger.error("DiscoveryCrypto: the legacy validator is produced only inside the upgrade window");
+            return null;
+        }
+        try {
+            final Cipher c = Cipher.getInstance(ALGORITHM);
+            c.init(Cipher.ENCRYPT_MODE, generateKeyFromString(secKey));
+            return Base64.getEncoder().encodeToString(c.doFinal(valueEnc.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            logger.error("DiscoveryCrypto.encryptLegacy", ex);
+            return null;
+        }
+    }
+
+    /** The v2 validator (a fresh IV every time). */
     public String encrypt(final String valueEnc, final String secKey) {
         try {
-            if (legacy()) {
-                final Cipher c = Cipher.getInstance(ALGORITHM);
-                c.init(Cipher.ENCRYPT_MODE, generateKeyFromString(secKey));
-                return Base64.getEncoder().encodeToString(c.doFinal(valueEnc.getBytes(StandardCharsets.UTF_8)));
-            }
             byte[] iv = new byte[12];
             new SecureRandom().nextBytes(iv);
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");

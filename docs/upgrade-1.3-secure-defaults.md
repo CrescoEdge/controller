@@ -39,11 +39,28 @@ explicitly for an insecure debug node.
 
 ## 3. The upgrade window
 
-Agents that are not upgraded yet (an earlier 1.3 build) stamp nothing and sign nothing. A secured broker stamps such a
-node `agent:<tenant>/<region>/<agent>` with role `user` only. During an explicit, time-bounded window those nodes keep
-their membership -- they join over the legacy discovery exchange, register, unregister, keep alive and ping for their own
-node at their region -- and nothing more: everything else they send meets the action tables as a `user`. Outside the
-window they are refused.
+Agents that are not upgraded yet (an earlier 1.3 build) stamp nothing, sign nothing and run without tenant namespacing
+(they write their controller's raw inbox `<region>_<agent>` and listen on their own). A secured broker stamps such a node
+`agent:<tenant>/<region>/<agent>` with role `user` only. During an explicit, time-bounded window those nodes keep their
+membership -- they join over the legacy discovery exchange, register, unregister, keep alive and ping for their own node at
+their region -- and nothing more: everything else they send meets the action tables as a `user`, and their dataplane use
+(e.g. the route state they publish) is refused by the broker (`DENY ... global.event` lines for them are expected).
+Outside the window they are refused.
+
+What an upgraded controller does for them while the window is open:
+
+- it also consumes its raw inbox (`AgentConsumer also consumes the raw inbox [<region>_<agent>] during the upgrade window`
+  at boot), and a node of its region may write that inbox whatever its tenant (an earlier build wrote there);
+- a message there stamped `agent:` marks its sender as an earlier build, and what the controller sends to it -- the reply to
+  its registration, health pings -- goes to its raw inbox, where it listens; once the node speaks as an upgraded node the
+  mark is gone (bounded: 100,000 nodes, 15 minutes after a node was last heard from);
+- it answers a discovery locator in the format it was asked in (an upgraded node always asks in the authenticated format,
+  so an upgraded agent finds an upgraded controller with or without the window settings);
+- an earlier build keeps no identity key across restarts, so its upgraded build presents a NEW key: the binding the legacy
+  exchange made for that agent name is replaced, once, by the key the upgraded agent proves over the authenticated
+  exchange (`Discovery: <region>/<agent> UPGRADED: the binding its earlier build made over the legacy exchange is
+  replaced ...`; the old key stays refused). A binding made by the authenticated exchange is never replaced this way, and
+  outside the window a legacy binding is like any other (an operator rebind).
 
 Open the window on every **upgraded** node they talk to (global, regions, upgraded agents):
 
@@ -62,15 +79,24 @@ closed until the two settings are removed. The window is not available under `se
 Controllers first, from the top: a parent must understand everything its children send.
 
 1. **Global.** Upgrade it with the window settings (section 3), and the same security settings every node will use.
-   Verify: it starts (no `REFUSING TO START`), logs `message signatures ON`, and `UPGRADE WINDOW OPEN`.
-2. **Regions**, one at a time, with the same window settings. Each region rejoins its global over the authenticated
-   discovery exchange (both must be upgraded: controllers never use the legacy exchange) and pins it. Verify per region:
-   `Broker bridge from verified controller ...` at the global, `registered with Global`, and that its not-yet-upgraded
-   agents re-register (`agent:` stamps in the region's log are expected during the window).
-3. **Agents**, in any order, with the window settings while the rollout lasts. An upgraded agent re-enrolls over the
-   authenticated exchange and its messages are signed from then on.
+   Verify: it starts (no `REFUSING TO START`), logs `UPGRADE WINDOW OPEN`, `AgentConsumer also consumes the raw inbox`,
+   and `Discovery: accepting the LEGACY unauthenticated certificate exchange` once its earlier-build agents rejoin; they
+   register again (`registered with Region` in their logs).
+2. **Regions**, one at a time, right after the global, with the same window settings. Each region rejoins its global over
+   the authenticated discovery exchange (both must be upgraded: controllers never use the legacy exchange, so a region of
+   the earlier build is not federated with an upgraded global until it is upgraded; its agents keep working with it) and
+   pins it. Verify per region: `Broker bridge from verified controller ...` at the global, and that its not-yet-upgraded
+   agents re-register and appear in the global's registry (`listagents`).
+3. **Agents**, in any order, one at a time or in batches. The window settings are not needed on an agent (they are
+   harmless while the window lasts). An upgraded agent joins over the authenticated exchange (`discovery v2:
+   authenticated AGENT exchange` in its log, `<region>/<agent> UPGRADED` at its controller), registers, and its messages
+   are signed from then on (`message signatures ON`).
 4. **Close the window**: once every node is upgraded, remove `discovery_auth=compat` and `discovery_compat_until` from
-   every node (or let the date pass and remove them at the next restart).
+   every node at its next restart, or let the date pass: the window then closes by itself, without a restart -- an
+   earlier-build node still running is refused from that moment (`MESSAGE SIGNATURE: REFUSED an unsigned message (from
+   agent:...)` at its controller, which stops answering it), and one that starts later is refused at discovery
+   (`Discovery: REFUSED a node of an earlier build`). A node still configured with the expired settings logs `the upgrade
+   window has CLOSED` at every boot until they are removed.
 
 A node that cannot be upgraded before the window ends is cut off when it does: upgrade it, or take it out of the fabric.
 
@@ -83,6 +109,10 @@ A node that cannot be upgraded before the window ends is cut off when it does: u
   mis-vouched messages: during the window, a legacy node's messages other than its membership; after it, any of them.
 - The peer-identity live harness (`docs/tests/peer_identity_live_test.sh`, `DEFAULTS=1`) runs a global, a region and two
   agents with no security setting at all and checks the secured fabric end to end.
+- The upgrade live harness (`docs/tests/upgrade_window_live_test.sh <upgraded agent.jar> <earlier agent.jar> <dir>
+  <python>`) proves this guide on one host: earlier-build agents join upgraded controllers in the window, are upgraded one
+  by one (with and without the window settings), the window closes by its date while an earlier-build agent still runs,
+  and the controllers restart without it.
 
 ## 6. Rolling back
 

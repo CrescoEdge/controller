@@ -763,7 +763,23 @@ public class ControllerEngine {
      * operator's upgrade window (see UpgradeWindow); outside it, never.
      */
     public boolean legacyNodesAdmitted() {
-        return io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), System.currentTimeMillis());
+        // read on hot paths (every inbound message, every broker write): the window is re-evaluated at most once a second
+        long now = System.currentTimeMillis();
+        if (now - windowCheckedAt >= 1000L || now < windowCheckedAt) {
+            windowOpen = io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), now);
+            windowCheckedAt = now;
+        }
+        return windowOpen;
+    }
+
+    private volatile long windowCheckedAt = Long.MIN_VALUE / 2;
+    private volatile boolean windowOpen;
+
+    private final io.cresco.agent.controller.communication.LegacyNodes legacyNodes = new io.cresco.agent.controller.communication.LegacyNodes();
+
+    /** The nodes of this region not upgraded yet, as heard during the upgrade window (their raw inboxes). */
+    public io.cresco.agent.controller.communication.LegacyNodes legacyNodes() {
+        return legacyNodes;
     }
 
     /**

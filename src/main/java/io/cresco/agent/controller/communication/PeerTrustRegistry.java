@@ -809,14 +809,46 @@ public final class PeerTrustRegistry {
 
     /** As {@link #pin(String, String, X509Certificate)} with a role and follow policy. */
     public String pin(String region, String agent, X509Certificate leaf, String role, boolean follow) {
+        return pin(region, agent, leaf, role, follow, "discovery");
+    }
+
+    /** As above, recording {@code source} (e.g. {@link #SOURCE_LEGACY}) on a new binding. */
+    public String pin(String region, String agent, X509Certificate leaf, String role, boolean follow, String source) {
         if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return "invalid identity name " + region + "/" + agent;
         CrescoIdentity id = CrescoNames.identityOf(leaf);
         if (id == null || !region.equals(id.getRegion()) || !agent.equals(id.getAgent())) {
             return "the certificate names " + (id == null ? "no valid Cresco identity" : ("region=" + id.getRegion() + ", agent=" + id.getAgent()))
                     + ", not region=" + region + ", agent=" + agent;
         }
-        BindResult r = bind(id.getTenant(), region, agent, leaf.getPublicKey(), "discovery", role, follow);
+        BindResult r = bind(id.getTenant(), region, agent, leaf.getPublicKey(), source, role, follow);
         return r.ok ? null : r.reason;
+    }
+
+    /** The source of a binding made by the legacy (unauthenticated, replayable) discovery exchange of the upgrade window. */
+    public static final String SOURCE_LEGACY = "legacy";
+
+    /** Is {@code region/agent} an agent bound by the legacy exchange ({@link #SOURCE_LEGACY})? Lock-free. */
+    public boolean isLegacyBinding(String region, String agent) {
+        Binding b = identities.get(name(region, agent));
+        return b != null && SOURCE_LEGACY.equals(b.source) && ROLE_AGENT.equals(b.role);
+    }
+
+    /**
+     * The upgrade window: an agent whose name was bound by the legacy exchange (an earlier build, which keeps no key across
+     * restarts) proved itself over the authenticated exchange with a new key: bind that key in place of the legacy one,
+     * logged; the old key stays refused for the name. Only for an agent binding of {@code tenant} made by the legacy exchange
+     * -- never a controller name, a strict binding, a tombstoned name or a revoked key. The caller checks the window is open.
+     */
+    public BindResult upgradeLegacy(String tenant, String region, String agent, java.security.PublicKey key) {
+        if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || key == null) {
+            return new BindResult(false, "invalid identity " + tenant + "/" + region + "/" + agent);
+        }
+        Binding b = identities.get(name(region, agent));
+        if (b == null || !SOURCE_LEGACY.equals(b.source) || !ROLE_AGENT.equals(b.role)) {
+            return new BindResult(false, name(region, agent) + " was not bound by the legacy exchange");
+        }
+        if (!b.tenant.equals(tenant)) return new BindResult(false, "tenant " + tenant + " differs from the bound tenant " + b.tenant);
+        return bind(tenant, region, agent, key, "discovery", ROLE_AGENT, false, "upgraded from the legacy exchange");
     }
 
     /** The role {@code region/agent} is bound with when its bound key is {@code key}; else null. Lock-free. */

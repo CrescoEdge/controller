@@ -150,7 +150,7 @@ class DiscoveryPeerLearningTest {
             // a legacy region join: never accepted, compat or not (it would make a bridge peer from a replayable token)
             ControllerEngine regionCtl = TlsTestSupport.engine("rgB", "rc", secrets(SECRET));
             DiscoveryNode join = new DiscoveryNode(DiscoveryType.REGION);
-            join.setCertify(legacyCrypto.encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET),
+            join.setCertify(legacyCrypto.encryptLegacy("DISCOVERY_MESSAGE_VERIFIED", SECRET),
                     regionCtl.getCertificateManager().getJsonFromCerts(regionCtl.getCertificateManager().getPublicCertificate()), "rgB", "rc");
             DiscoveryNode out = dp.processIncomingBroadCastDiscovery(join, "127.0.0.1", 32005, "127.0.0.1", 40001);
             assertTrue(out == null || out.nodeType != DiscoveryNode.NodeType.CERTIFIED, "a legacy REGION certify was certified (" + mode + ")");
@@ -158,7 +158,7 @@ class DiscoveryPeerLearningTest {
             // a legacy agent join: membership, only with compat
             ControllerEngine agent = TlsTestSupport.engine("rgG", "a7", secrets(SECRET));
             DiscoveryNode aj = new DiscoveryNode(DiscoveryType.AGENT);
-            aj.setCertify(legacyCrypto.encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET),
+            aj.setCertify(legacyCrypto.encryptLegacy("DISCOVERY_MESSAGE_VERIFIED", SECRET),
                     agent.getCertificateManager().getJsonFromCerts(agent.getCertificateManager().getPublicCertificate()), "rgG", "a7");
             DiscoveryNode aout = dp.processIncomingBroadCastDiscovery(aj, "127.0.0.1", 32005, "127.0.0.1", 40002);
             boolean certified = aout != null && aout.nodeType == DiscoveryNode.NodeType.CERTIFIED;
@@ -176,7 +176,7 @@ class DiscoveryPeerLearningTest {
         assertNull(v2.decrypt(a, "another"));
         String legacy = new DiscoveryCrypto(TlsTestSupport.engine("rgA", "x", Map.of(DiscoveryAuth.MODE_KEY, "compat",
                 "discovery_compat_until", WINDOW_END)))
-                .encrypt("DISCOVERY_MESSAGE_VERIFIED", SECRET);
+                .encryptLegacy("DISCOVERY_MESSAGE_VERIFIED", SECRET);
         assertNull(v2.decrypt(legacy, SECRET), "a legacy (replayable) validator was accepted with discovery_auth=v2");
     }
 

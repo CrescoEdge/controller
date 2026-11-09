@@ -24,8 +24,7 @@ class SecurityProfileTest {
     private static Map<String, Object> production() throws Exception {
         Path d = Files.createTempDirectory("prod-files");
         Map<String, Object> m = new HashMap<>();
-        m.put("security_profile", "production");
-        m.put("discovery_secret_agent", "from-a-file");      // SecretSources resolves <name>_file into the config
+        m.put("security_profile", "production");             // no discovery secret: production discovery is the PKI's
         for (String k : new String[]{"identity_keystore", "identity_keystore_password_file", "trust_anchors", "plugin_signing_truststore"}) {
             Path f = d.resolve(k);
             Files.writeString(f, "x");
@@ -60,10 +59,16 @@ class SecurityProfileTest {
     }
 
     @Test
-    void productionDiscoveryNeedsItsAdmissionSecret() throws Exception {
-        Map<String, Object> m = production();
-        m.remove("discovery_secret_agent");
-        assertTrue(SecuritySettings.startupRefusals(cfg(m)).stream().anyMatch(w -> w.contains("no discovery secret")));
+    void productionDiscoveryTakesNoSharedSecret() throws Exception {
+        assertTrue(SecuritySettings.startupRefusals(cfg(production())).stream().noneMatch(w -> w.contains("discovery")),
+                "production asked for a discovery secret");
+        for (String k : new String[]{"discovery_secret_agent", "discovery_secret_region", "discovery_secret_global"}) {
+            Map<String, Object> m = production();
+            m.put(k, "a-leftover-not-real");              // SecretSources resolves <name>_file into the config the same way
+            List<String> why = SecuritySettings.startupRefusals(cfg(m));
+            assertTrue(why.stream().anyMatch(w -> w.contains(k + " is set: production discovery is authenticated by the operator's PKI only")),
+                    k + " was accepted in production: " + why);
+        }
     }
 
     @Test
@@ -84,9 +89,15 @@ class SecurityProfileTest {
         }
         System.setProperty("discovery_secret_agent", "inline");
         try {
-            assertTrue(SecuritySettings.startupRefusals(cfg(production())).stream().anyMatch(w -> w.contains("-Ddiscovery_secret_agent")));
+            assertTrue(SecuritySettings.startupRefusals(cfg(production())).stream().anyMatch(w -> w.contains("discovery_secret_agent is set")));
         } finally {
             System.clearProperty("discovery_secret_agent");
+        }
+        System.setProperty("db_password", "inline");
+        try {
+            assertTrue(SecuritySettings.startupRefusals(cfg(production())).stream().anyMatch(w -> w.contains("-Ddb_password")));
+        } finally {
+            System.clearProperty("db_password");
         }
     }
 

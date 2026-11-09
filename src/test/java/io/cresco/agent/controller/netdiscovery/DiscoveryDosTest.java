@@ -169,7 +169,9 @@ class DiscoveryDosTest {
         client.setCertificateManager(new CertificateManager(client));
         DiscoveryProcessor p = new DiscoveryProcessor(client);
         DiscoveryNode plain = p.generateBroadCastDiscovery(DiscoveryType.AGENT, false);
-        DiscoveryNode certified = p.generateBroadCastDiscovery(DiscoveryType.AGENT, true);
+        // (the single-message certify is an earlier build's exchange, made only inside the upgrade window: its size is what
+        // matters here, so it is made with the v2 validator)
+        DiscoveryNode certified = p.generateBroadCastDiscovery(DiscoveryType.AGENT, true, false);
         assertNotNull(certified.discover_cert);
         // the answer carries the responder's chain too: two chains in one node
         certified.discovered_cert = certified.discover_cert;

@@ -195,7 +195,10 @@ public class AgentProducer {
                 msgTenant = localTenant;
                 sm.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, msgTenant);
             }
-            dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
+            // the upgrade window: a node of this region not upgraded yet listens on its raw inbox (LegacyNodes)
+            if (!(controllerEngine.legacyNodes().isLegacy(dstPath) && controllerEngine.legacyNodesAdmitted())) {
+                dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
+            }
         }
         // D4: a message this node originated is signed as it leaves (relays carry their origin's signature)
         controllerEngine.msgSigning().signIfPending(sm);

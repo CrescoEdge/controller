@@ -22,6 +22,7 @@ public class DiscoveryProcessor {
 		this.plugin = controllerEngine.getPluginBuilder();
 		this.logger = plugin.getLogger(DiscoveryProcessor.class.getName(), CLogger.Level.Info);
 		this.discoveryCrypto = new DiscoveryCrypto(controllerEngine);
+		this.warnedLegacy = WARNED.computeIfAbsent(controllerEngine, k -> java.util.concurrent.ConcurrentHashMap.newKeySet());
 	}
 
 	/**
@@ -33,6 +34,36 @@ public class DiscoveryProcessor {
 		if (type != DiscoveryType.GLOBAL) return true;
 		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
 		return cm == null || !cm.isProvisioned() || cm.isProvisionedGlobal();
+	}
+
+	/**
+	 * security_profile=production: discovery runs on the operator's PKI ({@link DiscoveryAuth#AUTH_PKI}) -- both sides sign
+	 * the exchange with their provisioned identity keys and their chains verify to trust_anchors -- and no discovery secret
+	 * is used or accepted. Otherwise (the standard profile, provisioned or not) the discovery secret's v2 exchange.
+	 */
+	boolean pkiDiscovery() {
+		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+		return cm != null && cm.isProvisioned() && io.cresco.agent.controller.communication.SecuritySettings.production(plugin.getConfig());
+	}
+
+	private java.security.cert.X509Certificate[] chainOf(String chainJson) {
+		return chainJson == null ? null : controllerEngine.getCertificateManager().getCertsfromJson(chainJson);
+	}
+
+	private java.security.PrivateKey ownKey() {
+		try {
+			return controllerEngine.getCertificateManager().identityPrivateKey();
+		} catch (Exception e) {
+			return null;
+		}
+	}
+
+	/** A production node meets a peer of another kind of exchange: one line per address (it retries every few seconds). */
+	private void notPki(String remote, String what) {
+		if (firstLegacyWarning("pki|" + remote)) {
+			logger.error("Discovery: REFUSED " + what + " from " + remote + ": under security_profile=production discovery is"
+					+ " authenticated by the operator's PKI only (no discovery secret is used or accepted); is that node production?");
+		}
 	}
 
 	private String getDiscoverySecret(DiscoveryNode discoveryNode) {
@@ -85,25 +116,42 @@ public class DiscoveryProcessor {
 					logger.error("processIncomingDiscoveryNode() discoveryNode.nodeType != DiscoveryNode.NodeType.BROADCAST");
 				}
 			} else {
-				if(controllerEngine.cstate.isRegionalController() && answersAs(discoveryNode.discovery_type)) {
+				if(controllerEngine.cstate.isRegionalController() && answersAs(discoveryNode.discovery_type) && pkiDiscovery()) {
+					// production: a locator carries no secret and is answered with no secret (it only locates; the PKI exchange
+					// that follows authenticates both sides); a secret-keyed locator or a legacy certify is not answered
+					if (discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVER && DiscoveryAuth.PKI_LOCATOR.equals(discoveryNode.broadcast_validator)) {
+						discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(), plugin.getAgent(),
+								controllerEngine.reachableAgents().size(), DiscoveryAuth.PKI_LOCATOR);
+						discoveryNode.discovered_broker_port = advertisedBrokerPort();
+					} else {
+						notPki(remoteAddress, "a secret-keyed " + discoveryNode.discovery_type + " " + discoveryNode.nodeType + " locator");
+						discoveryNode = null;
+					}
+				} else if(controllerEngine.cstate.isRegionalController() && answersAs(discoveryNode.discovery_type)) {
 
 					String discoverySecret = getDiscoverySecret(discoveryNode);
 
 					if(discoverySecret != null) {
 
 						String decryptedString = discoveryCrypto.decrypt(discoveryNode.broadcast_validator, discoverySecret);
+						if (decryptedString == null) legacyValidatorRefused(remoteAddress, discoveryNode.broadcast_validator);
 						if (decryptedString != null) {
 							if (decryptedString.equals(verifyMessage)) {
 
 								if(discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVER) {
-									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret));
+									// answered in the requester's format: an earlier build's (only inside the window, where decrypt accepted it), else v2
+									String answer = DiscoveryCrypto.isLegacyFormat(discoveryNode.broadcast_validator)
+											? discoveryCrypto.encryptLegacy(validateMessage, discoverySecret) : discoveryCrypto.encrypt(validateMessage, discoverySecret);
+									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), answer);
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY && !legacyCertifyAllowed(remoteAddress, discoveryNode.discovery_type)) {
 									discoveryNode = null;
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY) {
 
+									discoveryNode.legacy_exchange = true;
 									String discovered_cert = configureCertTrust(discoveryNode);
-									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encrypt(validateMessage,discoverySecret), discovered_cert);
+									if (discovered_cert == null) return null;     // refused (logged): no answer, nothing recorded
+									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encryptLegacy(validateMessage,discoverySecret), discovered_cert);
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 
 								} else {
@@ -130,6 +178,16 @@ public class DiscoveryProcessor {
 	}
 
 	public DiscoveryNode generateBroadCastDiscovery(DiscoveryType disType, boolean sendCert) {
+		return generateBroadCastDiscovery(disType, sendCert, sendCert);
+	}
+
+	/**
+	 * A locator ({@code sendCert=false}) or the earlier builds' single-message certificate exchange ({@code sendCert=true},
+	 * used only as the upgrade window's fallback to a responder that is not upgraded). {@code legacyFormat}: the validator in
+	 * the earlier builds' (replayable) format -- only inside the upgrade window; otherwise always the v2 format, which every
+	 * upgraded responder accepts with or without the window.
+	 */
+	public DiscoveryNode generateBroadCastDiscovery(DiscoveryType disType, boolean sendCert, boolean legacyFormat) {
 
 		DiscoveryNode discoveryNode = null;
 
@@ -137,55 +195,35 @@ public class DiscoveryProcessor {
 
 			discoveryNode = new DiscoveryNode(disType);
 
-			if (disType == DiscoveryType.AGENT) {
-
-				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_agent");
-				if (discoverySecret != null) {
-					if(sendCert) {
-						ownLeafForDiscovery();
-						//sme.setParam("public_cert", controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()));
-
-						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret), controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
-					} else {
-						discoveryNode.setDiscover(discoveryCrypto.encrypt(verifyMessage, discoverySecret));
-					}
-				} else {
-					logger.error("discover() Error: discovery_secret_agent = null, no agent discovery");
+			if (disType == DiscoveryType.NETWORK) {
+				return discoveryNode;
+			}
+			if (pkiDiscovery()) {
+				if (sendCert) {
+					logger.error("generateDiscovery(): the single-message certificate exchange is not used under security_profile=production");
+					return null;
 				}
-
-			} else if (disType == DiscoveryType.REGION) {
-
-				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_region");
-				if (discoverySecret != null) {
-					if(sendCert) {
-						ownLeafForDiscovery();
-						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret),controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
-					} else {
-						discoveryNode.setDiscover(discoveryCrypto.encrypt(verifyMessage, discoverySecret));
-					}
-				} else {
-					logger.error("discover() Error: discovery_secret_region = null, no region discovery");
-				}
-
-			} else if (disType == DiscoveryType.GLOBAL) {
-				String discoverySecret = plugin.getConfig().getStringParam("discovery_secret_global");
-				if (discoverySecret != null) {
-					if(sendCert) {
-						ownLeafForDiscovery();
-						discoveryNode.setCertify(discoveryCrypto.encrypt(verifyMessage, discoverySecret),controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
-					} else {
-						discoveryNode.setDiscover(discoveryCrypto.encrypt(verifyMessage, discoverySecret));
-					}
-				} else {
-					logger.error("discover() Error: discovery_secret_global = null, , no global discovery");
-				}
-
-			} else if (disType == DiscoveryType.NETWORK) {
-
-				discoveryNode = new DiscoveryNode(disType);
-
-			} else {
+				discoveryNode.setDiscover(DiscoveryAuth.PKI_LOCATOR);
+				return discoveryNode;
+			}
+			if (disType != DiscoveryType.AGENT && disType != DiscoveryType.REGION && disType != DiscoveryType.GLOBAL) {
 				logger.error("generateDiscovery() Discovery Type UNKNOWN");
+				return discoveryNode;
+			}
+			String name = disType.name().toLowerCase(java.util.Locale.ROOT);
+			String discoverySecret = getDiscoverySecret(discoveryNode);
+			if (discoverySecret == null) {
+				logger.error("discover() Error: discovery_secret_" + name + " = null, no " + name + " discovery");
+				return discoveryNode;
+			}
+			String validator = legacyFormat ? discoveryCrypto.encryptLegacy(verifyMessage, discoverySecret)
+					: discoveryCrypto.encrypt(verifyMessage, discoverySecret);
+			if (validator == null) return null;
+			if (sendCert) {
+				ownLeafForDiscovery();
+				discoveryNode.setCertify(validator, controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate()), plugin.getRegion(), plugin.getAgent());
+			} else {
+				discoveryNode.setDiscover(validator);
 			}
 		} catch (Exception ex) {
 			logger.error("generateDiscovery() Error: " + ex.getMessage());
@@ -195,6 +233,11 @@ public class DiscoveryProcessor {
 
 	public boolean  isValidatedAuthenication(DiscoveryNode discoveryNode) {
 		boolean isValidated = false;
+		if (pkiDiscovery()) {
+			// a locator answer: only a pointer (the PKI exchange that follows authenticates the responder)
+			return discoveryNode != null && discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVERED
+					&& DiscoveryAuth.PKI_LOCATOR.equals(discoveryNode.discovered_validator);
+		}
 		try {
 
 			String discoverySecret = null;
@@ -312,6 +355,17 @@ public class DiscoveryProcessor {
 	/** As above; {@code rebindStatement}: what the responder served (an operator-signed controller rebind statement), or null. */
 	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient,
 							  boolean record, String rebindStatement) {
+		return learnPeer(type, region, agent, certJson, pinLeaf, asClient, record, rebindStatement, false);
+	}
+
+	/**
+	 * As above; {@code legacyExchange}: the responder side of the legacy single-message exchange (the upgrade window), whose
+	 * binding is recorded as {@link io.cresco.agent.controller.communication.PeerTrustRegistry#SOURCE_LEGACY}. Such a binding
+	 * is the one an authenticated (v2) exchange of the same agent name may replace, once, while the window is open: the
+	 * node was upgraded, and an upgraded build has a new key (an earlier build kept none).
+	 */
+	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient,
+							  boolean record, String rebindStatement, boolean legacyExchange) {
 		try {
 			if (!io.cresco.agent.controller.communication.CrescoNames.isValid(region)
 					|| !io.cresco.agent.controller.communication.CrescoNames.isValid(agent)) {
@@ -358,7 +412,20 @@ public class DiscoveryProcessor {
 				// a joiner PINS the controller it joined (strict, as a responder pins its joiners): a different key for that name
 				// later -- an agent-secret holder answering as the controller -- is refused unless the operator authorises one
 				// rebind of it on this node
-				String why = reg.pin(region, agent, certs[0], role, false);
+				String why = reg.pin(region, agent, certs[0], role, false,
+						legacyExchange ? io.cresco.agent.controller.communication.PeerTrustRegistry.SOURCE_LEGACY : "discovery");
+				if (why != null && legacyUpgrade(type, asClient, legacyExchange, region, agent)) {
+					io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult up = reg.upgradeLegacy(
+							named == null ? myTenant : named.getTenant(), region, agent, certs[0].getPublicKey());
+					if (up.ok) {
+						logger.warn("Discovery: " + region + "/" + agent + " UPGRADED: the binding its earlier build made over the legacy"
+								+ " exchange is replaced by the key it proved over the authenticated exchange (upgrade window); the old key"
+								+ " stays refused");
+						why = null;
+					} else {
+						why = why + "; and the upgrade of its legacy binding was refused: " + up.reason;
+					}
+				}
 				if (why != null && asClient && named != null && region.equals(named.getRegion()) && agent.equals(named.getAgent())) {
 					// the controller this node joined re-keyed (re-installed): accepted without an operator action at each joiner
 					// only when the new identity is VOUCHED for -- issued by the CA this node pinned for its region, or matching an
@@ -444,7 +511,10 @@ public class DiscoveryProcessor {
 			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult free = (id == null) ? null
 					: controllerEngine.getCertificateManager().getPeerTrust().canBind(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent, c[0].getPublicKey());
-			if (free == null || !free.ok) {
+			if (free != null && !free.ok && legacyUpgrade(discoveryNode.discovery_type, false, discoveryNode.legacy_exchange,
+					discoveryNode.discover_region, discoveryNode.discover_agent)) {
+				free = null;                                    // learnPeer replaces the legacy binding (or refuses)
+			} else if (free == null || !free.ok) {
 				logger.error("Discovery REFUSED " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": "
 						+ (free == null ? "its certificate names no valid identity" : free.reason));
 				return null;
@@ -453,7 +523,7 @@ public class DiscoveryProcessor {
 		if (!regionalCa) {
 			// bind the joiner's key first (it can still be refused); only then trust its chain for TLS
 			if (!learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
-					discoveryNode.discover_cert, true, false)) {
+					discoveryNode.discover_cert, true, false, true, null, discoveryNode.legacy_exchange)) {
 				return null;
 			}
 			return configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
@@ -469,6 +539,16 @@ public class DiscoveryProcessor {
 			return null;
 		}
 		return local;
+	}
+
+	/**
+	 * May an authenticated exchange of AGENT {@code region/agent} (this node the responder) replace the binding an earlier
+	 * build of that agent made over the legacy exchange? Only inside the upgrade window, only for an agent joiner, never
+	 * from a legacy exchange itself.
+	 */
+	private boolean legacyUpgrade(DiscoveryType type, boolean asClient, boolean legacyExchange, String region, String agent) {
+		return !asClient && !legacyExchange && type == DiscoveryType.AGENT && controllerEngine.legacyNodesAdmitted()
+				&& controllerEngine.getCertificateManager().getPeerTrust().isLegacyBinding(region, agent);
 	}
 
 	private String configureCertTrust(String remoteAgentPath, String remoteCertString, DiscoveryType joinType) {
@@ -501,7 +581,10 @@ public class DiscoveryProcessor {
 		return DiscoveryAuth.Mode.of(plugin.getConfig());
 	}
 
-	private final java.util.Set<String> warnedLegacy = java.util.concurrent.ConcurrentHashMap.newKeySet();
+	/** Per controller (a processor is made per connection): the addresses already warned about. */
+	private static final java.util.Map<ControllerEngine, java.util.Set<String>> WARNED =
+			java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+	private final java.util.Set<String> warnedLegacy;
 	static final int MAX_WARNED_LEGACY = 1024;
 
 	/**
@@ -527,17 +610,37 @@ public class DiscoveryProcessor {
 			return false;
 		}
 		if (authMode() == DiscoveryAuth.Mode.COMPAT) {
-			if (firstLegacyWarning(String.valueOf(remoteAddress))) {
+			if (firstLegacyWarning("accept|" + remoteAddress)) {
 				logger.warn("Discovery: accepting the LEGACY unauthenticated certificate exchange from " + remoteAddress
 						+ " (discovery_auth=compat; upgrade that node, then remove compat)");
 			}
 			return true;
 		}
-		if (firstLegacyWarning(String.valueOf(remoteAddress))) {
+		if (firstLegacyWarning("refuse|" + remoteAddress)) {
 			logger.error("Discovery: REFUSED a legacy (replayable, unauthenticated) certificate exchange from " + remoteAddress
-					+ "; upgrade that node, or set discovery_auth=compat on this one during the upgrade");
+					+ "; upgrade that node, or open the upgrade window on this one (discovery_auth=compat with discovery_compat_until)");
 		}
 		return false;
+	}
+
+	/**
+	 * A locator whose validator is not the authenticated format (an earlier build's, which is replayable) failed to decrypt
+	 * because the upgrade window is not open here: say so once per address (an earlier build retries every few seconds).
+	 */
+	private void legacyValidatorRefused(String remoteAddress, String validator) {
+		if (DiscoveryAuth.PKI_LOCATOR.equals(validator)) {
+			if (firstLegacyWarning("pki-locator|" + remoteAddress)) {
+				logger.error("Discovery: not answering the PKI locator of a security_profile=production node at " + remoteAddress
+						+ ": this node is of the standard profile (the two never complete a discovery exchange)");
+			}
+			return;
+		}
+		if (validator == null || validator.startsWith("v2:") || authMode() == DiscoveryAuth.Mode.COMPAT) return;
+		if (firstLegacyWarning("refuse|" + remoteAddress)) {
+			logger.error("Discovery: REFUSED a node of an earlier build at " + remoteAddress + " (legacy, replayable discovery"
+					+ " validator): upgrade that node, or open the upgrade window on this one (discovery_auth=compat with"
+					+ " discovery_compat_until)");
+		}
 	}
 
 	private String secretFor(String type) {
@@ -556,8 +659,9 @@ public class DiscoveryProcessor {
 
 	/** Client: the HELLO that opens a v2 exchange of {@code type}, or null when this node has no secret for it. */
 	public DiscoveryAuth.Msg clientHello(DiscoveryType type) {
-		String secret = secretFor(type.name());
-		if (secret == null) {
+		boolean pki = pkiDiscovery();
+		String secret = pki ? null : secretFor(type.name());
+		if (!pki && secret == null) {
 			logger.error("discovery v2: no discovery secret for " + type);
 			return null;
 		}
@@ -573,6 +677,7 @@ public class DiscoveryProcessor {
 		h.creg = plugin.getRegion();
 		h.cagt = plugin.getAgent();
 		h.ccert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
+		if (pki) h.auth = DiscoveryAuth.AUTH_PKI;
 		return h;
 	}
 
@@ -587,6 +692,7 @@ public class DiscoveryProcessor {
 			logger.error("discovery v2: " + remote + " claims " + ch.sreg + "/" + ch.sagt + " but its certificate does not name it");
 			return null;
 		}
+		if (pkiDiscovery()) return clientProofPki(hello, ch, remote);
 		byte[] key = DiscoveryAuth.key(secretFor(hello.type), "handshake|" + hello.type);
 		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), false);
 		if (!DiscoveryAuth.macEquals(ch.mac, DiscoveryAuth.mac(key, "S1", t))) {
@@ -602,6 +708,41 @@ public class DiscoveryProcessor {
 	}
 
 	/**
+	 * Client, PKI exchange: the responder's whole chain verifies to the trust anchors as the controller it answered as, and
+	 * its S1 signature (over both nonces, both identities, its chain and port) verifies under its leaf key; then sign C.
+	 */
+	private DiscoveryAuth.Msg clientProofPki(DiscoveryAuth.Msg hello, DiscoveryAuth.Msg ch, String remote) {
+		if (!DiscoveryAuth.AUTH_PKI.equals(ch.auth)) {
+			notPki(remote, "a secret-keyed answer (" + ch.sreg + "/" + ch.sagt + ")");
+			return null;
+		}
+		java.security.cert.X509Certificate[] schain = chainOf(ch.scert);
+		String why = (schain == null || schain.length == 0) ? "no certificate chain"
+				: controllerEngine.getCertificateManager().provisionedResponderRefusal(schain, DiscoveryType.valueOf(hello.type), ch.sreg, ch.sagt);
+		if (why != null) {
+			logger.error("discovery (PKI): " + remote + " answering as " + ch.sreg + "/" + ch.sagt + " is REFUSED: " + why);
+			return null;
+		}
+		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), schain[0], false);
+		if (!DiscoveryAuth.verify(schain[0].getPublicKey(), ch.mac, "pki-S1", t)) {
+			logger.error("discovery (PKI): " + remote + " (claiming " + ch.sreg + "/" + ch.sagt + ") failed authentication: its signature"
+					+ " does not verify under its certificate (a replay, an altered exchange, or not the key's holder)");
+			return null;
+		}
+		java.security.PrivateKey own = ownKey();
+		if (own == null) {
+			logger.error("discovery (PKI): this node's identity key is not readable");
+			return null;
+		}
+		DiscoveryAuth.Msg p = new DiscoveryAuth.Msg();
+		p.step = "proof";
+		p.type = hello.type;
+		p.auth = DiscoveryAuth.AUTH_PKI;
+		p.mac = DiscoveryAuth.sign(own, "pki-C", DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), schain[0], true));
+		return p;
+	}
+
+	/**
 	 * Client: check the RESULT and, when it authenticates and grants, record/install what it carries. Returns the
 	 * certified responder (its authenticated identity and broker port) or null (logged).
 	 */
@@ -610,9 +751,13 @@ public class DiscoveryProcessor {
 			logger.error("discovery v2: " + remoteAddress + " sent no result");
 			return null;
 		}
-		byte[] key = DiscoveryAuth.key(secretFor(hello.type), "handshake|" + hello.type);
 		byte[] t = DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), true);
-		if (!DiscoveryAuth.macEquals(r.mac, DiscoveryAuth.mac(key, "S2", t, DiscoveryAuth.resultDigest(r)))) {
+		boolean authentic = pkiDiscovery()
+				? DiscoveryAuth.AUTH_PKI.equals(r.auth) && DiscoveryAuth.verify(leafOf(ch.scert) == null ? null : leafOf(ch.scert).getPublicKey(),
+						r.mac, "pki-S2", t, DiscoveryAuth.resultDigest(r))
+				: DiscoveryAuth.macEquals(r.mac, DiscoveryAuth.mac(DiscoveryAuth.key(secretFor(hello.type), "handshake|" + hello.type), "S2", t,
+						DiscoveryAuth.resultDigest(r)));
+		if (!authentic) {
 			logger.error("discovery v2: the result from " + remoteAddress + " failed authentication (altered or replayed)");
 			return null;
 		}
@@ -636,7 +781,7 @@ public class DiscoveryProcessor {
 			logger.error("discovery v2: could not record " + ch.sreg + "/" + ch.sagt + " (see above)");
 			return null;
 		}
-		logger.info("discovery v2: authenticated " + hello.type + " exchange with " + ch.sreg + "/" + ch.sagt + " at " + remoteAddress);
+		logger.info("discovery " + (pkiDiscovery() ? "(PKI)" : "v2") + ": authenticated " + hello.type + " exchange with " + ch.sreg + "/" + ch.sagt + " at " + remoteAddress);
 		return n;
 	}
 
@@ -644,8 +789,16 @@ public class DiscoveryProcessor {
 	public DiscoveryAuth.Msg serverChallenge(DiscoveryAuth.Msg h, String remote) {
 		DiscoveryAuth.Msg ch = new DiscoveryAuth.Msg();
 		ch.step = "challenge";
-		String secret = (h == null || h.type == null) ? null : secretFor(h.type);
-		if (h == null || !"hello".equals(h.step) || secret == null || h.nc == null || !controllerEngine.cstate.isRegionalController()) {
+		boolean pki = pkiDiscovery();
+		if (h != null && pki != DiscoveryAuth.AUTH_PKI.equals(h.auth)) {
+			if (pki) notPki(remote, "a secret-keyed hello (" + h.creg + "/" + h.cagt + ")");
+			else logger.warn("discovery v2: not answering a PKI hello from " + remote + " (" + h.creg + "/" + h.cagt + "): this node is"
+					+ " not security_profile=production");
+			return null;
+		}
+		String secret = (h == null || h.type == null || pki) ? null : secretFor(h.type);
+		if (h == null || !"hello".equals(h.step) || (secret == null && !pki) || h.type == null || h.nc == null
+				|| !controllerEngine.cstate.isRegionalController()) {
 			logger.warn("discovery v2: not answering a hello from " + remote + " (unknown type, no secret for it, or not a controller)");
 			return null;
 		}
@@ -659,6 +812,16 @@ public class DiscoveryProcessor {
 			logger.warn("discovery v2: hello from " + remote + " claims " + h.creg + "/" + h.cagt + " but its certificate does not name it");
 			return null;
 		}
+		if (pki) {
+			// the joiner's whole chain verifies to the trust anchors as what it claims BEFORE this node signs anything for it
+			java.security.cert.X509Certificate[] cchain = chainOf(h.ccert);
+			String why = (cchain == null || cchain.length == 0) ? "no certificate chain"
+					: controllerEngine.getCertificateManager().provisionedJoinerRefusal(cchain, ht, h.creg, h.cagt);
+			if (why != null) {
+				logger.error("discovery (PKI): REFUSED the hello of " + h.creg + "/" + h.cagt + " from " + remote + ": " + why);
+				return null;
+			}
+		}
 		if (plugin.getConfig().getBooleanParam("security_regional_ca", false)) controllerEngine.getCertificateManager().ensureRegionCA();
 		controllerEngine.getCertificateManager().bindOwnIdentity();      // no joiner is ever bound to this node's own name
 		ch.type = h.type;
@@ -669,6 +832,16 @@ public class DiscoveryProcessor {
 		ch.scert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 		ch.rebind = controllerEngine.getCertificateManager().controllerRebindStatement();
 		ch.sport = advertisedBrokerPort();
+		if (pki) {
+			java.security.PrivateKey own = ownKey();
+			if (own == null) {
+				logger.error("discovery (PKI): this node's identity key is not readable");
+				return null;
+			}
+			ch.auth = DiscoveryAuth.AUTH_PKI;
+			ch.mac = DiscoveryAuth.sign(own, "pki-S1", DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), false));
+			return ch;
+		}
 		byte[] key = DiscoveryAuth.key(secret, "handshake|" + h.type);
 		ch.mac = DiscoveryAuth.mac(key, "S1", DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), false));
 		return ch;
@@ -679,12 +852,18 @@ public class DiscoveryProcessor {
 		DiscoveryAuth.Msg r = new DiscoveryAuth.Msg();
 		r.step = "result";
 		r.type = h.type;
-		byte[] key = DiscoveryAuth.key(secretFor(h.type), "handshake|" + h.type);
+		boolean pki = pkiDiscovery();
+		byte[] key = pki ? null : DiscoveryAuth.key(secretFor(h.type), "handshake|" + h.type);
 		// the client's PROOF covers the whole chain it sent: a chain altered on the way fails here, before anything is recorded
 		byte[] t = DiscoveryAuth.transcript(h, ch, leafOf(h.ccert), leafOf(ch.scert), true);
-		if (p == null || !"proof".equals(p.step) || !DiscoveryAuth.macEquals(p.mac, DiscoveryAuth.mac(key, "C", t))) {
-			logger.warn("discovery v2: " + remote + " (claiming " + h.creg + "/" + h.cagt + ") failed authentication: wrong "
-					+ h.type + " secret, a replay, or an altered exchange; nothing recorded");
+		java.security.cert.X509Certificate cleaf = leafOf(h.ccert);
+		boolean authentic = p != null && "proof".equals(p.step) && (pki
+				? DiscoveryAuth.AUTH_PKI.equals(p.auth) && cleaf != null && DiscoveryAuth.verify(cleaf.getPublicKey(), p.mac, "pki-C", t)
+				: DiscoveryAuth.macEquals(p.mac, DiscoveryAuth.mac(key, "C", t)));
+		if (!authentic) {
+			logger.warn("discovery " + (pki ? "(PKI)" : "v2") + ": " + remote + " (claiming " + h.creg + "/" + h.cagt + ") failed"
+					+ " authentication: " + (pki ? "its signature does not verify under its certificate" : "wrong " + h.type + " secret")
+					+ ", a replay, or an altered exchange; nothing recorded");
 			r.ok = false;
 			r.reason = "authentication failed";
 		} else {
@@ -696,7 +875,13 @@ public class DiscoveryProcessor {
 			r.ok = local != null;
 			r.reason = r.ok ? null : "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + " (identity taken, invalid, or outside this CA's scope; see its log)";
 			r.rcert = local;
-			if (r.ok) logger.info("discovery v2: authenticated " + h.type + " exchange with " + h.creg + "/" + h.cagt + " at " + remote);
+			if (r.ok) logger.info("discovery " + (pki ? "(PKI)" : "v2") + ": authenticated " + h.type + " exchange with " + h.creg + "/" + h.cagt + " at " + remote);
+		}
+		if (pki) {
+			java.security.PrivateKey own = ownKey();
+			r.auth = DiscoveryAuth.AUTH_PKI;
+			r.mac = own == null ? null : DiscoveryAuth.sign(own, "pki-S2", t, DiscoveryAuth.resultDigest(r));
+			return r;
 		}
 		r.mac = DiscoveryAuth.mac(key, "S2", t, DiscoveryAuth.resultDigest(r));
 		return r;
