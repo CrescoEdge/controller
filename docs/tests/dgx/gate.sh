@@ -17,7 +17,8 @@
 # Usage (inside the job): gate.sh <builds...>   builds: old | std | prod
 #   GATE_JAR_OLD, GATE_JAR_NEW: agent jars; GATE_OUT: results dir (shared filesystem); GATE_PY: python with pycrescolib's
 #   dependencies; GATE_PYCRESCOLIB: pycrescolib checkout; GATE_TESTS: controller docs/tests; GATE_PERF: dataplane_perf.py;
-#   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000).
+#   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
+#   the phases; GATE_EXTRA_FLAGS is added to every node's flags (e.g. -Dactivemq_topic_memory_limit=67108864).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -88,7 +89,7 @@ EOF
     KEY="$(cat "$RD/secrets/sk")"
     [ "$B" = std ] && ident() { echo "-Dtenant_id=t1"; }
   fi
-  local LOGQ="-Droot_log_level=INFO"
+  local LOGQ="-Droot_log_level=INFO ${GATE_EXTRA_FLAGS:-}"
   echo "gc|glob|${GLOBAL_XMX:-4g}|-Dis_global=true -Dnetdiscoveryport=$((P0+5)) -Dbroker_port=$((P0+10)) -Ddiscovery_port=$((P0+10)) -Denable_wsapi=true -Dwsapi_port=$GW $LOGQ $(ident glob gc w)" > "$RD/spawn/$H1.0"
   echo "rc|rgr|${REGION_XMX:-3g}|-Dis_region=true -Dglobal_controller_host=$H1 -Dglobal_controller_port=$((P0+5)) -Dnetdiscoveryport=$((P0+15)) -Dbroker_port=$((P0+20)) -Ddiscovery_port=$((P0+20)) -Ddiscovery_port_remote=$((P0+10)) -Denable_wsapi=false $LOGQ $(ident rgr rc)" > "$RD/spawn/$H2.0.wait"
   echo "a1|glob|2g|-Dis_agent=true -Dregional_controller_host=$H1 -Dregional_controller_port=$((P0+5)) -Dnetdiscoveryport=$((P0+25)) -Denable_wsapi=true -Dwsapi_port=$AW $LOGQ $(ident glob a1 w)" > "$RD/spawn/$H4.0.wait"
@@ -113,12 +114,16 @@ EOF
   waitport "$H4" "$AW"; waitport "$H3" "$BW"; sleep 15
   log "$B: fabric up"
 
+  local PH=" ${GATE_PHASES:-cp dp scale} "
   # ---- 1. control plane, 0 light agents
+  if [[ "$PH" == *" cp "* ]]; then
   local cp; cp=$(on "$H4" "$PY" "$T/control_plane_bench.py" "${CL[@]}" --n "${CP_N:-300}" --threads 8,32 --seconds "${CP_SECONDS:-15}" \
       --target global=glob/gc --target region=rgr/rc --target agent=rgr/b1 2>/dev/null | tail -1)
   put control_plane "${cp:-null}"; log "$B: control plane $cp"
+  fi
 
   # ---- 2. dataplane across hosts (a1 on H4 -> b1 on H3), Python client through wsapi
+  if [[ "$PH" == *" dp "* ]]; then
   local AP BP; AP=$(fp "$H4" "$AW"); BP=$(fp "$H3" "$BW")
   # warm-up (JIT, connections, TLS sessions): one untimed run first
   on "$H4" "$PY" "$PERF" --host 127.0.0.1 --port $AW --fingerprint "$AP" --rx-host "$H3" --rx-port $BW --rx-fingerprint "$BP" \
@@ -127,13 +132,18 @@ EOF
   for size in 262144 4194304; do
     local msgs=$([ "$size" = 262144 ] && echo "${DP_MSGS_256K:-2000}" || echo "${DP_MSGS_4M:-150}")
     for flows in 1 4; do
-      for rep in 1 2 3; do
+      # fire: as fast as the reader takes it (throughput, loss); paced: a fixed offered load per flow (latency that is
+      # the pipeline's, not the depth of the queue a faster writer builds ahead of its reader)
+      local runs="fire:1 fire:2 fire:3 paced:1 paced:2" run mode rate n
+      for run in $runs; do
+        mode=${run%:*}; rep=${run#*:}; rate=0; n=$msgs
+        if [ "$mode" = paced ]; then rate="${DP_RATE_MIB_S:-100}"; n=$(( rate * 3 * 1048576 / size )); fi
         local at; at=$(( $(date +%s) + 8 ))
         local res; res=$(on "$H4" bash -c "
           for f in \$(seq 1 $flows); do
             '$PY' '$PERF' --host 127.0.0.1 --port $AW --fingerprint '$AP' --rx-host $H3 --rx-port $BW --rx-fingerprint '$BP' \
               ${KEY:+--key $KEY} \
-              --messages $msgs --size $size --settle 240 --start-at $at --stream gate-$B-$size-$flows-$rep-\$f 2>/dev/null | grep '^BENCH' &
+              --messages $n --size $size --rate-mib-s $rate --settle ${DP_SETTLE_S:-90} --start-at $at --stream gate-$B-$size-$flows-$mode-$rep-\$f 2>/dev/null | grep '^BENCH' &
           done; wait" | sed 's/^BENCH //' | "$PY" -c '
 import json, sys
 rs = [json.loads(l) for l in sys.stdin if l.strip()]
@@ -145,18 +155,20 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
   "bad_size": sum(r["bad_size"] for r in rs), "mib_s": round(tot / 1048576 / max(1e-6, last - first), 1),
   "p50_ms": sorted(r["p50_ms"] for r in rs)[len(rs) // 2], "p99_ms": max(r["p99_ms"] for r in rs)}))')
         [ $first = 1 ] || dp="$dp,"; first=0
-        dp="$dp\"${size}_${flows}f_r$rep\": ${res:-null}"
-        log "$B: dataplane size=$size flows=$flows rep=$rep $res"
+        dp="$dp\"${size}_${flows}f_${mode}_r$rep\": ${res:-null}"
+        log "$B: dataplane size=$size flows=$flows $mode rep=$rep $res"
       done
     done
   done
   put dataplane "$dp}"
+  fi
 
   # ---- 3. scale: light agents in steps, all hosts, alternately on the global and the region
-  local LIGHT="-Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
+  local steps_run="$STEPS"; [[ "$PH" == *" scale "* ]] || steps_run=""
+  local LIGHT="${GATE_EXTRA_FLAGS:-} -Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
   local prev=0 step sc="{" sfirst=1 i k
   local -a HS=("$H1" "$H2" "$H3" "$H4")
-  for step in $STEPS; do
+  for step in $steps_run; do
     for k in 0 1 2 3; do : > "$RD/spawn/${HS[$k]}.s$step.tmp"; done
     for i in $(seq $((prev + 1)) "$step"); do
       local reg host cp_port; host=${HS[$(( (i - 1) % 4 ))]}
