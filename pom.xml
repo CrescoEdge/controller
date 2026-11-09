@@ -20,7 +20,10 @@
         <mina.version>2.2.4</mina.version>
         <guava.version>33.7.2-jre</guava.version>
         <derby.version>10.17.1.0</derby.version>
-        <bouncycastle.version>1.85</bouncycastle.version>
+        <!-- the agent's crypto/ modules (agent pom); keep these the versions the agent carries -->
+        <bcfips.version>2.1.3</bcfips.version>
+        <bcpkix-fips.version>2.1.13</bcpkix-fips.version>
+        <bcutil-fips.version>2.1.8</bcutil-fips.version>
         <junit.jupiter.version>5.3.1</junit.jupiter.version>
         <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
     </properties>
@@ -355,32 +358,29 @@
             <version>${gson.version}</version>
         </dependency>
 
-        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcprov-jdk15on -->
+        <!-- Bouncy Castle FIPS (BC-FJA, FIPS 140-3, CMVP #4943): the X.509/ASN.1 API the controller builds certificates
+             with. provided: never embedded. A FIPS module checks its own jar, so the agent carries the unmodified jars
+             and puts them on the JVM class path (agent CryptoBoot); the system bundle exports their packages, which this
+             bundle imports (required, see Import-Package). It replaces bcprov/bcpkix/bcutil/bcmail-jdk18on, which were
+             embedded. Which provider serves crypto is the agent's choice (the JDK's, or the FIPS modules in approved-only
+             mode for security_profile=production); this code names no provider. -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcprov-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
+            <artifactId>bc-fips</artifactId>
+            <version>${bcfips.version}</version>
+            <scope>provided</scope>
         </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcpkix-jdk15on -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcpkix-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
+            <artifactId>bcpkix-fips</artifactId>
+            <version>${bcpkix-fips.version}</version>
+            <scope>provided</scope>
         </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcmail-jdk15on -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
-            <artifactId>bcmail-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
-        </dependency>
-
-        <!-- https://mvnrepository.com/artifact/org.bouncycastle/bcmail-jdk15on -->
-        <dependency>
-            <groupId>org.bouncycastle</groupId>
-            <artifactId>bcutil-jdk18on</artifactId>
-            <version>${bouncycastle.version}</version>
+            <artifactId>bcutil-fips</artifactId>
+            <version>${bcutil-fips.version}</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/joda-time/joda-time -->
@@ -468,12 +468,14 @@
                         <Bundle-Activator>io.cresco.agent.core.Activator</Bundle-Activator>
                         <!-- Was malformed: "org.osgi.service.cm.ConfigurationAdmin;*;..." (a class where a
                              package was expected). Hard requirements: framework, Config Admin, Cresco SPI;
-                             the large embedded runtime (ActiveMQ/Derby/Netty/BC) stays optional. -->
+                             the large embedded runtime (ActiveMQ/Derby/Netty) stays optional. Bouncy Castle FIPS is
+                             required: the agent's system bundle exports it (a bundle without it cannot make certificates). -->
                         <Import-Package>
                             org.osgi.framework,
                             org.osgi.framework.*,
                             org.osgi.service.cm,
                             io.cresco.library.*,
+                            org.bouncycastle.*;version="[2.1,3)",
                             *;resolution:=optional
                         </Import-Package>
                         <!-- scope=compile|runtime keeps test (junit, commons-logging) and provided jars out of the bundle -->

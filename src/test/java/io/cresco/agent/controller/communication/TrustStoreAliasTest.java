@@ -39,7 +39,7 @@ class TrustStoreAliasTest {
                 same, kp.getPublic());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(true));
         X509Certificate forged = new JcaX509CertificateConverter().getCertificate(
-                b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(kp.getPrivate())));
+                b.build(new JcaContentSignerBuilder("SHA384withRSA").build(kp.getPrivate())));
         assertEquals(1, cm.addCertificatesToTrustStore("rgB_peer", new X509Certificate[]{forged}).size());
         assertEquals(0, cm.addCertificatesToTrustStore("rgB_peer", new X509Certificate[]{forged}).size(), "the same certificate twice");
         assertDoesNotThrow(() -> cm.currentPkixTrustManager().checkClientTrusted(leaf.chain, "RSA"),

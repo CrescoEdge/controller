@@ -44,7 +44,7 @@ class IdentityRound3FixTest {
             for (int k = 0; k < uris.length; k++) g[k] = new GeneralName(GeneralName.uniformResourceIdentifier, uris[k]);
             b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(g));
         }
-        X509Certificate cert = new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC")
+        X509Certificate cert = new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA")
                 .build((issuer == null ? kp : issuer.kp).getPrivate())));
         X509Certificate[] above = issuer == null ? new X509Certificate[0] : new X509Certificate[]{issuer.cert};
         Constructor<PkiTestSupport.Ca> c = PkiTestSupport.Ca.class.getDeclaredConstructor(KeyPair.class, X509Certificate.class, X509Certificate[].class);

@@ -73,7 +73,7 @@ class CertificateIdentityTest {
                             new org.bouncycastle.asn1.x500.X500NameBuilder(org.bouncycastle.asn1.x500.style.BCStyle.INSTANCE)
                                     .addRDN(org.bouncycastle.asn1.x500.style.BCStyle.CN, new org.bouncycastle.asn1.DERUTF8String(bad)).build(),
                             kp.getPublic()).build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA")
-                            .setProvider("BC").build(kp.getPrivate())));
+                            .build(kp.getPrivate())));
             assertNull(regionCtl.getCertificateManager().issueEnrollment(
                     regionCtl.getCertificateManager().getJsonFromCerts(new X509Certificate[]{self}), DiscoveryType.AGENT),
                     "issued a certificate for the agent name '" + bad + "'");

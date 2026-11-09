@@ -17,7 +17,7 @@ A controller with `security_profile=production` **refuses to start** (exit 78) a
 
 | Required | |
 |---|---|
-| `identity_keystore` | PKCS12 file: this node's private key and its certificate chain, issued by the operator's PKI |
+| `identity_keystore` | this node's private key and its certificate chain, issued by the operator's PKI: a **BCFKS** keystore (section 6: production runs FIPS approved-only, which reads no PKCS#12; convert the PKCS#12 the PKI tool writes) |
 | `identity_keystore_password_file` | owner-only file holding that keystore's password |
 | `trust_anchors` | PEM bundle: the fabric's root CA and region CA certificates |
 | `plugin_signing_truststore` | the anchors plugin jars are signed to (a PEM bundle needs no password) |
@@ -76,7 +76,7 @@ openssl x509 -req -in a1.csr -CA rgA-ca.crt -CAkey rgA-ca.key -CAcreateserial -s
   -extfile <(printf "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=URI:cresco:node:t1/rgA/a1\n")
 # a region or global controller's leaf also carries URI:cresco:role:controller in its subjectAltName
 
-# 4. the node's keystore and its password file (owner-only), the fabric's trust anchors
+# 4. the node's keystore and its password file (owner-only), the fabric's trust anchors; then as BCFKS (section 6)
 openssl rand -hex 32 > a1.p12.pass && chmod 600 a1.p12.pass
 openssl pkcs12 -export -inkey a1.key -in a1.crt -certfile <(cat rgA-ca.crt root.crt) -name node \
   -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg SHA384 -passout file:a1.p12.pass -out a1.p12
@@ -136,9 +136,31 @@ because its chain verifies to `trust_anchors` -- never because it answered first
 Re-issuing a CA: add the new CA to `trust_anchors` on every node first, re-provision the nodes under it, then remove the
 old CA and revoke it.
 
-## 6. Checking a production node
+## 6. FIPS 140-3 approved-only mode
 
-- Start-up: no `REFUSING TO START` line; `security profile production` is reported by `AgentService.getSecurityProfile()`.
+`security_profile=production` runs the JVM in FIPS approved-only mode (the agent's `CryptoBoot`, see the agent's README):
+every JCA provider that is not a FIPS 140-3 validated module is removed, Bouncy Castle FIPS (BC-FJA 2.1, CMVP #4943)
+runs approved-only, and on Linux x86_64/aarch64 ACCP-FIPS (AWS-LC FIPS 3.0, CMVP #4816) serves its approved algorithms
+first. TLS (the broker, wsapi) is TLS 1.3 over those modules. A non-approved algorithm (MD5, DES, RC4, ChaCha20, X25519 ...)
+is refused, and a node does not start unless it is. `crypto_fips_mode=false` with this profile is refused.
+
+Keystores are BCFKS, the FIPS module's own format: a PKCS#12 file's integrity MAC derives its key with the PKCS#12 KDF,
+which FIPS does not approve, so approved-only mode cannot check one, and refuses it, saying how to convert it. Convert each
+node's keystore once, offline, with the same password (the agent jar carries the module; nothing else is needed):
+
+```sh
+java -jar agent.jar --crypto convert-keystore node.p12 node.p12.pass node.bcfks
+# identity_keystore=/etc/cresco/node.bcfks   identity_keystore_password_file=/etc/cresco/node.p12.pass
+```
+
+The code calls stay `KeyStore.getInstance("PKCS12")`: in FIPS mode that name is served by BCFKS (it loads BCFKS files and
+stores BCFKS). `trust_anchors`, `revocation_file` and a PEM `plugin_signing_truststore` are PEM and need nothing.
+`java -jar agent.jar --crypto status --fips` shows what a node will run with; `scripts/bench-crypto.sh` measures it.
+
+## 7. Checking a production node
+
+- Start-up: no `REFUSING TO START` line; `security profile production` is reported by `AgentService.getSecurityProfile()`;
+  `crypto: FIPS 140-3 approved-only mode: ... MD5 refused` (section 6).
 - `message signatures ON` lines, `Broker mutual-TLS ENABLED`, and `Peer identity verified` for each bridge and broker
   connection.
 - A plugin jar that is not signed to `plugin_signing_truststore` is refused (`REFUSED to install`).

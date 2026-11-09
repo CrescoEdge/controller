@@ -218,7 +218,7 @@ class Review4ExtraTest {
         JcaX509v3CertificateBuilder b = new JcaX509v3CertificateBuilder(new X500Name("CN=rootCA-old"), new BigInteger(64, new SecureRandom()),
                 new Date(now - 3L * 366 * DAY), new Date(now - DAY), subject, like.getPublicKey());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(signer.getPrivate())));
+        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").build(signer.getPrivate())));
     }
 
     /**

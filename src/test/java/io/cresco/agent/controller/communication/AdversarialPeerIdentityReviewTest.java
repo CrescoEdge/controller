@@ -70,7 +70,7 @@ class AdversarialPeerIdentityReviewTest {
                 new Date(now - 60_000L), new Date(now + 86_400_000L), n, kp.getPublic());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
         X509Certificate c = new JcaX509CertificateConverter().getCertificate(
-                b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(kp.getPrivate())));
+                b.build(new JcaContentSignerBuilder("SHA384withRSA").build(kp.getPrivate())));
         return new X509Certificate[]{c};
     }
 
@@ -211,7 +211,7 @@ class AdversarialPeerIdentityReviewTest {
         long now = System.currentTimeMillis();
         X509Certificate mine = new JcaX509CertificateConverter().getCertificate(new JcaX509v3CertificateBuilder(n,
                 BigInteger.ONE, new Date(now - 60_000L), new Date(now + 86_400_000L), n, kp.getPublic())
-                .build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(kp.getPrivate())));
+                .build(new JcaContentSignerBuilder("SHA384withRSA").build(kp.getPrivate())));
         String json = cm.issueEnrollment(cm.getJsonFromCerts(new X509Certificate[]{mine}), DiscoveryType.AGENT);
         assertNotNull(json);
         X509Certificate[] issued = cm.getCertsfromJson(json);

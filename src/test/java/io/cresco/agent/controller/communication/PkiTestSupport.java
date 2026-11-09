@@ -154,6 +154,6 @@ public final class PkiTestSupport {
     private static BigInteger serial() { return new BigInteger(63, new SecureRandom()).add(BigInteger.ONE); }
 
     private static X509Certificate sign(JcaX509v3CertificateBuilder b, KeyPair signer) throws Exception {
-        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(signer.getPrivate())));
+        return new JcaX509CertificateConverter().getCertificate(b.build(new JcaContentSignerBuilder("SHA384withRSA").build(signer.getPrivate())));
     }
 }

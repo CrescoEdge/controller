@@ -483,7 +483,7 @@ class IdentityRevocationFixTest {
                 new Date(notBefore), new Date(notAfter), CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null)), key);
         b.addExtension(org.bouncycastle.asn1.x509.Extension.basicConstraints, true, new org.bouncycastle.asn1.x509.BasicConstraints(false));
         X509Certificate leaf = new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter().getCertificate(
-                b.build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").setProvider("BC").build(ca.caPrivateKey())));
+                b.build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA384withRSA").build(ca.caPrivateKey())));
         X509Certificate[] caChain = ca.caChain();
         return new X509Certificate[]{leaf, caChain[0], caChain[1]};
     }

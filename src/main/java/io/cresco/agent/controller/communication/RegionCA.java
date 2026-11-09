@@ -144,7 +144,7 @@ public final class RegionCA {
     // --- helpers ---
 
     private static KeyPair keyPair(int keySize) throws Exception {
-        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA", "BC");
+        KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
         kpg.initialize(Math.max(2048, keySize));
         return kpg.generateKeyPair();
     }
@@ -163,7 +163,7 @@ public final class RegionCA {
         builder.addExtension(Extension.keyUsage, true, new KeyUsage(keyUsage));
         // the signature suite is the crypto policy's choice (SHA384withRSA under the default cnsa1)
         return new JcaX509CertificateConverter().getCertificate(
-                builder.build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).setProvider("BC").build(signingKey)));
+                builder.build(new JcaContentSignerBuilder(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm("RSA")).build(signingKey)));
     }
 
     private static String safe(String s) {
