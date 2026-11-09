@@ -17,8 +17,16 @@ run)
   LOCAL="/tmp/cresco-gate-$(id -un)-${SLURM_JOB_ID:-x}/$(basename "$RD")"
   mkdir -p "$LOCAL" "$RD/pids" "$RD/logs"; chmod 700 "$LOCAL"
   : > "$RD/pids/$H"
+  # production: a node refuses identity files below a directory that another user than itself or root owns (on the DGX
+  # /home is owned by the cluster manager's account), so each host runs from a node-local copy of the PKI and the
+  # code-signing anchor, and the flags gate.sh wrote are pointed at the copy
+  if [ -d "$RD/pki" ]; then
+    rm -rf "$LOCAL/pki"; cp -rp "$RD/pki" "$LOCAL/pki" && { [ ! -f "$RD/codesign.pem" ] || cp -p "$RD/codesign.pem" "$LOCAL/codesign.pem"; } \
+      || { echo "host $H: cannot copy the PKI to $LOCAL"; exit 1; }
+  fi
   launch() { # name region xmx flags
-    local d="$LOCAL/$1"; mkdir -p "$d"
+    local d="$LOCAL/$1" f="$4"; mkdir -p "$d"
+    if [ -d "$LOCAL/pki" ]; then f="${f//"$RD/pki/"/$LOCAL/pki/}"; f="${f//"$RD/codesign.pem"/$LOCAL/codesign.pem}"; fi
     (
       cd "$d" || exit 1
       if [ -f "$RD/secrets/sk" ]; then
@@ -27,7 +35,7 @@ run)
       fi
       # shellcheck disable=SC2086
       exec "$J" -Djava.net.preferIPv4Stack=true -Xmx"$3" -Denable_console=false -Denable_dashboard=false \
-        -Dregionname="$2" -Dagentname="$1" $4 -jar "$JAR"
+        -Dregionname="$2" -Dagentname="$1" $f -jar "$JAR"
     ) > "$RD/logs/$1.log" 2>&1 < /dev/null &
     echo "$1 $!" >> "$RD/pids/$H"
   }
