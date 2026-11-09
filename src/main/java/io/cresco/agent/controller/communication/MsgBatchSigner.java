@@ -21,8 +21,9 @@ import java.util.concurrent.LinkedBlockingQueue;
  * busy -- gets an ordinary single signature: no latency is added. The receiver verifies the root signature once per batch
  * (cached by its digest), and each message's own path; its replay memory keys each message by signature and leaf.
  *
- * <p>Only a receiver that understands batch signatures is sent one: every signed message says so ({@code cresco_sig_v=2},
- * under its signature), and a node sends batch signatures only to a node it has verified such a message from.
+ * <p>Only a receiver that understands batch signatures is sent one: every authenticated message lists what its sender reads
+ * ({@code cresco_sig_caps}, containing {@code batch}, under its signature or MAC), and a node sends batch signatures only to a
+ * node it has verified such a message from.
  */
 final class MsgBatchSigner {
 
