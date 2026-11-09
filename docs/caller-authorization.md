@@ -420,7 +420,10 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   - by the CA it pinned for that region (a region controller re-installed with its `region-ca.p12` restored);
   - by a certificate or key listed in `controller_trust_anchors`.
   Under the regional CA, back up `region-ca.p12` (and its `.pass`): restoring it on a re-installed region controller is
-  the one action (its agents verify the new controller leaf by that CA).
+  the one action (its agents verify the new controller leaf by that CA). Its private key is encrypted at rest under
+  `region_ca_password_file` (an owner-only file the operator keeps elsewhere -- a mounted secret, another volume; its first
+  line, 16 characters at least): a store made before is re-encrypted under it and the `.pass` beside it removed; without the
+  setting the key is protected only by that `.pass` and the directory's permissions, and a WARNING says so.
 - **Clocks.** Certificates are backdated `identity_cert_backdate_hours` (24; was a fixed hour), so a clock lagging less than
   that accepts a certificate issued "now". Pongs (`remote_ts`) and pings (the child's clock) are compared: a skew of half the
   backdate is WARN, the full backdate CRITICAL (`identity` health); an enrollment refused as not yet valid says the clock is
@@ -513,10 +516,27 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   signer must be the node of the signed caller -- or, for an API user, a node of the user's tenant (any tenant's from a
   superuser tenant) -- and the broker's stamp, when there is one, must be that caller. When a bridge stripped a stamp it
   could not vouch for (section 8), the origin's signed caller stands.
-- **Cost.** One signature per message a node originates (RSA-3072 private key: about 2 ms of one core), one hash, one map
-  lookup and one signature check per message dispatched (about 0.08 ms); credentials are verified once and cached. Nothing
-  in it grows with the size of the fleet; the trust bundle grows with the number of regions and travels only when it
-  changes.
+- **Direct links (no relay, no signature).** A signature carries the origin's word past relays. A message between a node
+  and its own parent or child -- an agent and its region (or global) controller, a region and its global -- crosses no
+  relay: the broker its receiver consumes from took it from that very node, over the node's verified connection or the
+  verified bridge of that very controller. That broker says so in `cresco_direct` (`<tenant>/<region>/<agent>`), which only
+  it writes (whatever a sender put there is replaced at every broker), and only when the sender declared itself the origin
+  (`cresco_origin`) and its stamp was accepted for that connection. Such a message travels unsigned
+  (`msg_signing_direct`, default true). The receiver alone decides: it accepts an unsigned message only when the broker
+  it consumes from attests it first hand from the node whose word the stamp is (that node itself, its plugins, or an API
+  user of that node's tenant). A controller trusts its own broker's attestation; an agent trusts its parent's broker only
+  for the parent's own messages -- everything else that broker delivers came through a relay and must be signed. An origin
+  that misjudges a route is refused (`MESSAGE SIGNATURE: REFUSED an unsigned message (... not delivered first hand)`),
+  never trusted. Each side offers direct links on its pings and pongs (`sig_direct_ok`): a node sends unsigned only to a
+  parent or child that offered them within the last minute, so a node of an earlier hardened build is always sent
+  signatures.
+- **Cost.** One signature per message a node originates to anything but its parent or children (RSA-3072 private key:
+  about 2 ms of one core), one hash, one map lookup and one signature check per signed message dispatched (about 0.08 ms);
+  credentials are verified once and cached. A signed message carries its signer's credential (about 2.2 KB). Direct-link
+  messages cost no cryptography beyond TLS: the bulk of the control plane (keepalives, registrations, pings, the replies of
+  regions and the global) is direct. Nothing in it grows with the size of the fleet; the trust bundle grows with the number
+  of regions and travels only when it changes. `docs/tests/control_plane_bench.sh` measures it live
+  (`ControlPlaneCostBench`, `-Dcresco.bench=true`, in one JVM).
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -524,6 +544,7 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signature_max_age_ms` | 300000 | the signing time's tolerance either way (clock skew included) |
 | `msg_signing_attestation_hours` | 24 | an agent attestation's lifetime |
 | `msg_signing_bundle_grace_ms` | 900000 | how long a controller dropped from the global's bundle is still trusted |
+| `msg_signing_direct` | true | messages between a node and its parent or children travel unsigned, attested first hand by the receiving broker |
 
 ## 11. Secure by default, security profiles and the upgrade (phase 4)
 

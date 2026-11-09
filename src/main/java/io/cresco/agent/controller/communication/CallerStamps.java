@@ -29,6 +29,12 @@ public final class CallerStamps {
 
     /** JMS property names: the same as the reserved MsgEvent parameters. */
     public static final String P_CALLER = Caller.PARAM_CALLER, P_TENANT = Caller.PARAM_TENANT, P_ROLES = Caller.PARAM_ROLES;
+    /**
+     * Direct links ({@link MsgSigning}): {@code cresco_origin}, the sender's word that it originated the message (its
+     * {@code <region>_<agent>}), and {@code cresco_direct}, written only by the broker that took the message from that very
+     * node's verified connection or bridge ({@code <tenant>/<region>/<agent>}), replaced at every broker.
+     */
+    public static final String P_ORIGIN = "cresco_origin", P_DIRECT = "cresco_direct";
 
     /** Strip whatever {@code msg} carries in the reserved parameters and stamp {@code caller} (null: leave it unstamped). */
     public static void stamp(MsgEvent msg, Caller caller) {
@@ -119,6 +125,26 @@ public final class CallerStamps {
         toJms(msg == null ? null : Caller.fromMsgEvent(msg), jms);
         String alias = msg == null ? null : Caller.regionAliasOf(msg);
         if (alias != null) jms.setStringProperty(P_ALIAS, alias);
+        // a message this node originated and sends unsigned over a direct link (MsgSigning.DIRECT): its broker attests it
+        String origin = msg == null ? null : msg.getParam(MsgSigning.DIRECT);
+        jms.setStringProperty(P_ORIGIN, origin == null ? "" : origin);
+    }
+
+    /**
+     * The node the broker this message was consumed from attests delivered it first hand as its origin
+     * ({@link #P_DIRECT}), or null.
+     */
+    public static io.cresco.library.security.CrescoIdentity directOf(Message jms) {
+        try {
+            String d = jms == null ? null : jms.getStringProperty(P_DIRECT);
+            if (d == null || d.isEmpty()) return null;
+            String[] p = d.split("/", -1);
+            if (p.length != 3) return null;
+            io.cresco.library.security.CrescoIdentity id = io.cresco.library.security.CrescoIdentity.of(p[0], p[1], p[2], null);
+            return CrescoNames.isValid(id) ? id : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /** Write {@code caller} (null: none, declared as an empty caller) as the JMS properties of {@code jms}. */
