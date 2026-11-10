@@ -385,6 +385,8 @@ public class RegionalExecutor implements Executor {
                 }
             } else if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
                 MsgEvent retMsg = null;
+                // only a request is answered (see PluginBuilder): never a message that merely carries is_rpc
+                final boolean rpcRequest = MsgRouter.isRpcRequest(incoming);
                 switch (incoming.getMsgType().toString().toUpperCase()) {
                     case "CONFIG":
                         retMsg = executeCONFIG(incoming);
@@ -412,7 +414,7 @@ public class RegionalExecutor implements Executor {
                         break;
                 }
 
-                if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
+                if ((retMsg != null) && rpcRequest) {
                     retMsg.setReturn();
                     String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +
                             plugin.getAgent() + "-" + plugin.getPluginID()));
@@ -497,7 +499,7 @@ public class RegionalExecutor implements Executor {
                 if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
 
                     MsgEvent retMsg = null;
-
+                    final boolean rpcRequest = MsgRouter.isRpcRequest(incoming);
 
                     switch (incoming.getMsgType().toString().toUpperCase()) {
                         case "CONFIG":
@@ -527,7 +529,7 @@ public class RegionalExecutor implements Executor {
                             break;
                     }
 
-                    if ((retMsg != null) && (retMsg.getParams().containsKey("is_rpc"))) {
+                    if ((retMsg != null) && rpcRequest) {
                         retMsg.setReturn();
                         //pick up RPC from local agent
                         String callId = retMsg.getParam(("callId-" + plugin.getRegion() + "-" +

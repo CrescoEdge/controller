@@ -898,34 +898,39 @@ public class MsgRouter {
         }
     }
 
+    /** A message is dropped once it was routed more than this many times (its {@code ttl} counts them): a loop. */
+    static final int TTL_MAX = 10;
+
     private MsgEvent getTTL(MsgEvent rm) {
-
-        boolean isValid = true;
-        try {
-            if (rm.getParam("ttl") != null) {
-                int ttlCount = Integer.valueOf(rm.getParam("ttl"));
-
-                if (ttlCount > 10) {
-                    logger.error("**Controller : MsgRoute : High Loop Count**");
-                    logger.error("MsgType=" + rm.getMsgType().toString());
-                    logger.error("params=" + io.cresco.agent.controller.communication.ParamLog.describe(rm));
-                    isValid = false;
-                }
-
-                ttlCount++;
-                rm.setParam("ttl", String.valueOf(ttlCount));
-            } else {
-                rm.setParam("ttl", "0");
-            }
-        } catch (Exception ex) {
-            isValid = false;
-        }
-        if(isValid) {
-            return rm;
-        } else {
+        Integer next = nextTtl(rm.getParam("ttl"));
+        if (next == null) {
+            // one line: the count a sender wrote is not signed (it changes at every hop), so anyone on the way can end a
+            // message here -- but none can make it live longer than TTL_MAX routings
+            logger.error("route: dropped a message routed more than " + TTL_MAX + " times or with a ttl outside 0.." + TTL_MAX
+                    + " (ttl=" + rm.getParam("ttl") + "): type=" + rm.getMsgType() + " action=" + rm.getParam("action")
+                    + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
+                    + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin());
             return null;
         }
+        rm.setParam("ttl", String.valueOf(next));
+        return rm;
+    }
 
+    /**
+     * The {@code ttl} a message leaves this router with, or null when it is dropped: absent, it starts at 0; a count from 0
+     * to {@link #TTL_MAX} goes up by one; anything else ends the message here -- a count past the limit (a loop), and a
+     * count no router writes (negative, or not a number: a sender that wrote -2,000,000,000 would otherwise be routed two
+     * billion times before the limit).
+     */
+    static Integer nextTtl(String ttl) {
+        if (ttl == null) return 0;
+        int count;
+        try {
+            count = Integer.parseInt(ttl.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return count < 0 || count > TTL_MAX ? null : count + 1;
     }
 
     /*
