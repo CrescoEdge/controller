@@ -1109,7 +1109,9 @@ public class PluginAdmin {
                 // the plugin's own stop runs under no lock: a stop may send (bundleRunsPlugin) and wait for replies
                 // (msgIn), and the agent goes on answering (pluginlist) and delivering to its other plugins meanwhile.
                 // Until it is removed below, the stopping plugin is still in the map: it sends as itself.
-                isPluginStopped = service.isStopped();
+                // a plugin whose start never completed has no service: there is nothing of its own to stop, and it must
+                // still be removable (it used to fail here on a null, so it could be neither removed nor added again)
+                isPluginStopped = service == null || service.isStopped();
             }
             if (!isKnown) {
                 logger.error("stopPlugin() no key found for pluginid: " + pluginId);
@@ -1417,8 +1419,8 @@ public class PluginAdmin {
 
                             } else {
                                 logger.error("Could not start bundle Id " + bundleID + " pluginName " + map.get("pluginname") + " no bundle " + map.get("jarfile"));
-                                logger.error("Remove configuration! --  bundle Id " + bundleID + " pluginName " + map.get("pluginName") + " no bundle " + map.get("jarFile"));
-
+                                // the configuration made for it goes with it: left behind, the id could never be added again
+                                removeConfig(pluginID);
                             }
                         } else {
                             logger.info("Could not create config pluginName " + map.get("pluginname") + " for jar " + map.get("jarfile"));
@@ -1458,16 +1460,44 @@ public class PluginAdmin {
 
     }
 
+    /** Delete the configuration of {@code pluginId}, if this agent holds one (an add that did not come to a plugin). */
+    private void removeConfig(String pluginId) {
+        Configuration configuration;
+        synchronized (lockConfig) {
+            configuration = configMap.remove(pluginId);
+        }
+        if (configuration != null) {
+            try {
+                configuration.delete();
+            } catch (Exception ex) {
+                logger.error("removeConfig() " + pluginId + ": " + ex.getMessage());
+            }
+        }
+    }
+
     public boolean addConfig(String pluginId, Map<String,Object> map) {
         boolean isAdded = false;
         try {
 
-            boolean isEmpty = false;
-
-            while (!isEmpty) {
-
+            // a plugin id is configured once: a second add of an id this agent already holds (a client's retry after
+            // its timeout, a pipeline resubmitted, a retry after a failed start) is refused. It used to wait here for
+            // the id to become free in a loop with no sleep and no end: one thread at 100% CPU for good, for each.
+            // An add that follows a stop of the same id (a restart) waits for that stop, a bounded time.
+            java.util.concurrent.CompletableFuture<Void> stop = stopsUnderWay.get(pluginId);
+            if (stop != null) {
+                try {
+                    stop.get(60, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (java.util.concurrent.TimeoutException stillStopping) {
+                    logger.error("addConfig REFUSED: plugin id " + pluginId + " is still being stopped after 60 s");
+                    return false;
+                }
+            }
+            {
                 synchronized (lockConfig) {
-                    if (!configMap.containsKey(pluginId)) {
+                    if (configMap.containsKey(pluginId)) {
+                        logger.error("addConfig REFUSED: plugin id " + pluginId + " is already configured on this agent"
+                                + " (remove it first, or add under another id)");
+                    } else {
 
                         String pid = map.get("pluginname") + ".Plugin";
                         String bsn = (String)map.get("pluginname");
@@ -1489,7 +1519,6 @@ public class PluginAdmin {
                         configuration.update(properties);
 
                         configMap.put(pluginId, configuration);
-                        isEmpty = true;
                         isAdded = true;
                     }
                 }
@@ -1539,10 +1568,14 @@ public class PluginAdmin {
                             int statusCode = 7;
                             String statusDesc = "Plugin instance could not be started";
                             try {
-                                while(ps == null) {
-                                    logger.error("PLUGIN SERVICE FOR PLUGIN " + pluginID + " is Null");
+                                // the service can be gone between the lookup and here (a stop racing the add): ask again
+                                // a few times, never for ever (this loop never re-read it, and never ended)
+                                for (int tries = 0; ps == null && tries < TRYCOUNT; tries++) {
+                                    logger.warn("startPlugin: the service of plugin " + pluginID + " is not there yet (" + (tries + 1) + "/" + TRYCOUNT + ")");
                                     Thread.sleep(1000);
+                                    ps = (PluginService) context.getService(sr);
                                 }
+                                if (ps == null) throw new IllegalStateException("the service of plugin " + pluginID + " is gone");
 
                                 if(ps.isStarted()) {
                                     statusCode = 10;

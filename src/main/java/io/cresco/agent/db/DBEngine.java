@@ -642,7 +642,7 @@ public class DBEngine {
                 List<Map<String, String>> regionList = new ArrayList<>();
                 List<String> tmpRegionList = null;
                 if(region_id == null) {
-                    tmpRegionList = getNodeList(null,null);
+                    tmpRegionList = getNodeListStrict(null,null);
                 } else {
                     tmpRegionList = new ArrayList<>();
                     tmpRegionList.add(region_id);
@@ -677,10 +677,10 @@ public class DBEngine {
 
                 } else {
 
-                    List<String> tmpRegionList = getNodeList(null,null);
+                    List<String> tmpRegionList = getNodeListStrict(null,null);
                     for(String tmp_region_id : tmpRegionList) {
                         List<Map<String, String>> agentList = new ArrayList<>();
-                        List<String> tmpAgentList = getNodeList(tmp_region_id, null);
+                        List<String> tmpAgentList = getNodeListStrict(tmp_region_id, null);
                         for(String tmp_agent_id : tmpAgentList) {
                             Map<String, String> aNode = getANodeStrict(tmp_agent_id);
                             if (aNode != null) {
@@ -703,7 +703,7 @@ public class DBEngine {
                 if((region_id != null) && (agent_id != null)) {
 
                     List<Map<String, String>> pluginList = new ArrayList<>();
-                    List<String> tmpPluginList = getNodeList(region_id, agent_id);
+                    List<String> tmpPluginList = getNodeListStrict(region_id, agent_id);
                     for (String pluginId : tmpPluginList) {
                         Map<String, String> pNode = getPNodeStrict(pluginId);
                         if (pNode != null) {
@@ -713,14 +713,14 @@ public class DBEngine {
                     pluginMap.put(agent_id, pluginList);
                 } else {
 
-                    List<String> tmpRegionList = getNodeList(null,null);
+                    List<String> tmpRegionList = getNodeListStrict(null,null);
                     for(String tmp_region_id : tmpRegionList) {
-                        List<String> tmpAgentList = getNodeList(tmp_region_id, null);
+                        List<String> tmpAgentList = getNodeListStrict(tmp_region_id, null);
                         for(String tmp_agent_id : tmpAgentList) {
                             if (agents && !exportedAgents.contains(tmp_agent_id)) {
                                 continue;
                             }
-                            List<String> tmpPluginList = getNodeList(tmp_region_id, tmp_agent_id);
+                            List<String> tmpPluginList = getNodeListStrict(tmp_region_id, tmp_agent_id);
                             List<Map<String, String>> pluginList = new ArrayList<>();
                             for(String tmp_plugin_id : tmpPluginList) {
                                 Map<String, String> pNode = getPNodeStrict(tmp_plugin_id);
@@ -3118,9 +3118,23 @@ public class DBEngine {
     public static final int STATUS_UNKNOWN = -2;
 
     public List<String> getNodeList(String regionId, String agentId) {
+        try {
+            return getNodeListStrict(regionId, agentId);
+        } catch (Exception ex) {
+            logger.error("DBEngine.getNodeList()", ex);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * {@link #getNodeList} for the state export: a query that fails THROWS. The lenient one answers with what it had read
+     * (nothing, or half a list), and an export built on that told the parent this region had no agents (or this agent no
+     * plugins): the parent's reconcile then deleted every row the list did not name.
+     */
+    protected List<String> getNodeListStrict(String regionId, String agentId) throws Exception {
 
         List<String> nodeList = null;
-        try {
+        {
 
 
             nodeList = new ArrayList<>();
@@ -3182,8 +3196,6 @@ public class DBEngine {
                 logger.error("getNodeList(regionId = {} , agentId= {})", regionId, agentId, new Throwable());
             }
 
-        } catch(Exception ex) {
-            logger.error("DBEngine.getNodeList()", ex);
         }
         return nodeList;
     }

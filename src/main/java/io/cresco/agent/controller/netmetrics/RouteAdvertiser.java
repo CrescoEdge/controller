@@ -94,9 +94,19 @@ public class RouteAdvertiser {
         return out;
     }
 
+    /** Does this node publish its link state and listen to the others'? A region's or the global's controller only. */
+    boolean advertises() {
+        return ce.cstate != null && ce.cstate.isRegionalController();
+    }
+
     /** Called once per AutoTuner tick. Lazily subscribes (once the dataplane is up), then publishes. */
     public void tick() {
         try {
+            // link state is the controllers': a region's or the global's edges are what a route is computed over. An
+            // agent has one link, to its region controller, which that controller advertises. With every agent
+            // publishing every 5 s on the fabric-wide topic and subscribed to every other, deliveries grew with the
+            // square of the fleet (10,000 agents: 20 million a second).
+            if (!advertises()) return;
             if (!ce.getActiveClient().isFaultURIActive()) return; // dataplane not ready yet
             ensureSubscribed();
             publish();

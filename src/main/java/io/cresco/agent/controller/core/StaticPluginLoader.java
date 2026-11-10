@@ -50,6 +50,14 @@ public class StaticPluginLoader implements Runnable  {
     }
 
 
+    /**
+     * Does the loader stop waiting for the controller to become active in {@code mode}? Only when the controller is
+     * shutting down. Never on a FAILED state: that is a join being tried again.
+     */
+    static boolean givesUp(io.cresco.library.agent.ControllerMode mode) {
+        return mode != null && mode.name().endsWith("_SHUTDOWN");
+    }
+
     public void run() {
 
         boolean isStaticInit = false;
@@ -330,10 +338,15 @@ public class StaticPluginLoader implements Runnable  {
 
 
                 } else {
-                    if(controllerEngine.cstate.isFailed()) {
-                        logger.error("Failed shutting down");
+                    io.cresco.library.agent.ControllerMode mode = controllerEngine.cstate.getControllerState();
+                    if (givesUp(mode)) {
+                        // the controller is stopping before it was ever active: nothing to load
+                        logger.info("the controller is shutting down (" + mode + "): no plugins loaded");
                         isStaticInit = true;
                     } else {
+                        // a FAILED state is a join that did not work and is tried again (the state machine goes on to
+                        // INIT): keep waiting. Leaving here on the first failure left a node that joined on its second
+                        // try running without its system and persisted plugins until its JVM was restarted.
                         Thread.sleep(100);
                         logger.trace("Status : " + controllerEngine.cstate.getControllerState());
                     }
