@@ -95,6 +95,22 @@ public class AgentConsumer {
 		this.uri = URI;
 		this.RXQueueName = RXQueueName;
 		this.callIdKey = "callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID();
+		// messages this node cannot judge yet are held a moment, not refused (TrustHold); 0 turns it off
+		long holdMs = Math.min(60_000L, plugin.getConfig().getLongParam("msg_signing_hold_ms", 5_000L));
+		MsgSigning signing = controllerEngine.msgSigning();
+		if (signing.required() && holdMs > 0) {
+			this.trustHold = new TrustHold(holdMs, 2048, 32L << 20, m -> {
+				MessageListener l = inboxListener;
+				if (l != null) l.onMessage(m);
+			});
+			this.trustListener = trustHold::trustChanged;
+			signing.onTrustChange(trustListener);
+		} else {
+			this.trustHold = null;
+			this.trustListener = null;
+		}
+		// the first moments with a parent only: a node whose parent never answers is not held back for ever
+		this.notReadyHoldUntil = System.currentTimeMillis() + 3 * holdMs;
 		// gfs#26: a node moved to another region keeps answering at its former address (region_alias)
 		boolean global = controllerEngine.cstate != null && controllerEngine.cstate.isGlobalController();
 		this.aliasRegion = RegionAlias.of(plugin, global);
@@ -201,9 +217,24 @@ public class AgentConsumer {
 									&& (me.getParam(callIdKey) != null || filegroup != null || !signing.relayOnly(me));
 							if (signing.required() && !checkNow) signing.deferred(me);
 							if (checkNow) {
-								MsgSigning.Verdict v = controllerEngine.msgSigning().verify(me, caller, controllerEngine.legacyNodesAdmitted(),
-										firstHand(msg, caller));
+								// what this node cannot judge YET is held a moment and verified again, never refused at once
+								// (TrustHold): in its first moments with a parent, before that parent's first pong brought the
+								// trust data, anything but the parent's own; later, a signer whose controller is not in the
+								// trust data held yet. Held at most msg_signing_hold_ms; then it is judged as it stands.
+								TrustHold hold = trustHold;
+								long now = System.currentTimeMillis();
+								boolean mayHold = hold != null && hold.mayHold(now);
+								if (mayHold && now < notReadyHoldUntil && !fromParentOrSelf(caller) && !controllerEngine.trustReady()
+										&& hold.hold(msg, msgEventString.length(), now)) {
+									return;
+								}
+								MsgSigning.Verdict v = signing.verify(me, caller, controllerEngine.legacyNodesAdmitted(),
+										firstHand(msg, caller), mayHold);
 								if (!v.ok()) {
+									if (v.later) {
+										if (hold.hold(msg, msgEventString.length(), now)) return;
+										signing.refusedAfterHold(me, v.refusal);
+									}
 									refuseUnauthenticated(me, v.refusal);
 									return;
 								}
@@ -419,6 +450,7 @@ public class AgentConsumer {
 				}
 			}
 		};
+		inboxListener = inbox;
 		consumer.setMessageListener(inbox);
 		if (aliasConsumer != null) aliasConsumer.setMessageListener(inbox);
 		if (legacyConsumer != null) legacyConsumer.setMessageListener(m -> {
@@ -600,6 +632,26 @@ public class AgentConsumer {
 		return false;
 	}
 
+	/** The inbox listener of the present transport (a held message is handed back to it). */
+	private volatile MessageListener inboxListener;
+	private final TrustHold trustHold;
+	private final Runnable trustListener;
+	private final long notReadyHoldUntil;
+
+	/** Messages held because this node could not judge them yet (diagnostics, tests). */
+	long heldForTrust() { return trustHold == null ? 0 : trustHold.heldTotal.get(); }
+
+	/** Is {@code c} this node itself or its parent (an agent's region controller, a region's global)? Never held back. */
+	private boolean fromParentOrSelf(io.cresco.library.security.Caller c) {
+		if (c == null || c.getRegion() == null || c.getAgent() == null) return false;
+		if (plugin.getRegion().equals(c.getRegion()) && plugin.getAgent().equals(c.getAgent())) return true;
+		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+		if (cs == null) return false;
+		boolean region = cs.isRegionalController();
+		String pr = region ? cs.getGlobalRegion() : cs.getRegionalRegion(), pa = region ? cs.getGlobalAgent() : cs.getRegionalAgent();
+		return pr != null && pa != null && pr.equals(c.getRegion()) && pa.equals(c.getAgent());
+	}
+
 	/** Is {@code me} for this node (its controller or one of its plugins), or an RPC reply to a call this node made? */
 	private boolean forThisNode(MsgEvent me) {
 		return (plugin.getRegion().equals(me.getDstRegion()) && plugin.getAgent().equals(me.getDstAgent()))
@@ -644,6 +696,10 @@ public class AgentConsumer {
 		// controller#24: shutdown wins over a re-init. Taking the transport lock waits for one in progress, so it
 		// cannot install a fresh connection after this teardown and leak it.
 		closed = true;
+		if (trustHold != null) {
+			controllerEngine.msgSigning().removeTrustListener(trustListener);
+			trustHold.close();
+		}
 		synchronized (this) {
 			shutdownTransport();
 		}
