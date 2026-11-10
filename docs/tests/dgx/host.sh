@@ -3,6 +3,7 @@
 #
 #   host.sh run <rundir> <host> <jar>    run the JVMs gate.sh asks of this host, until it says stop
 #   host.sh stats <rundir> <name>        one JSON line: CPU seconds, RSS, threads, heap of a JVM running on this host
+#   host.sh jfr <rundir> <name> start|dump <file>   start, or write and stop, a JFR recording of a JVM on this host
 #
 # run: every spec file <rundir>/spawn/<host>.<n> (lines "name|region|xmx|flags") is started once, in order, each JVM in a
 # node-local directory (/tmp, removed at the end), its output in <rundir>/logs/<name>.log; secrets come from
@@ -70,5 +71,15 @@ stats)
   heap=$("$(dirname "$J")/jcmd" "$p" GC.heap_info 2>/dev/null | grep -oE 'used [0-9]+K' | head -1 | grep -oE '[0-9]+')
   echo "{\"name\": \"$name\", \"cpu_s\": $cpu, \"rss_mb\": $(( ${rss:-0} / 1024 )), \"threads\": ${thr:-0}, \"heap_used_mb\": $(( ${heap:-0} / 1024 ))}"
   ;;
-*) echo "usage: host.sh run|stats ..."; exit 2 ;;
+jfr)
+  # host.sh jfr <rundir> <name> start | dump <file>: a JFR recording (profile settings) of a JVM running on this host
+  name="$3"; p=""
+  for f in "$RD"/pids/*; do p=$(awk -v n="$name" '$1==n {print $2}' "$f"); [ -n "$p" ] && break; done
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null || { echo "jfr: $name is not running"; exit 1; }
+  case "$4" in
+  start) "$(dirname "$J")/jcmd" "$p" JFR.start name=gate settings=profile ;;
+  dump) "$(dirname "$J")/jcmd" "$p" JFR.dump name=gate filename="$5" && "$(dirname "$J")/jcmd" "$p" JFR.stop name=gate ;;
+  esac
+  ;;
+*) echo "usage: host.sh run|stats|jfr ..."; exit 2 ;;
 esac

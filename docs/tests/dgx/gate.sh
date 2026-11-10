@@ -20,7 +20,8 @@
 #   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
 #   the phases; GATE_EXTRA_FLAGS is added to every node's flags (e.g. -Dactivemq_topic_memory_limit=67108864).
 #   DP_SIZES (default "262144 4194304"), DP_FLOWS (default "1 4") and DP_RUNS (default "fire:1 fire:2 fire:3 paced:1
-#   paced:2") pick the dataplane lines, so one line can be run again alone.
+#   paced:2") pick the dataplane lines, so one line can be run again alone. GATE_JFR_DIR: a JFR recording (profile
+#   settings) of the global and the region over the dataplane lines, written to <dir>/<build>-gc.jfr and -rc.jfr.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -132,6 +133,7 @@ EOF
   on "$H4" "$PY" "$PERF" --host 127.0.0.1 --port $AW --fingerprint "$AP" --rx-host "$H3" --rx-port $BW --rx-fingerprint "$BP" \
       ${KEY:+--key $KEY} --messages 500 --size 262144 --settle 120 --stream "gate-$B-warmup" >/dev/null 2>&1
   local dp="{" first=1 size flows rep
+  if [ -n "${GATE_JFR_DIR:-}" ]; then on "$H1" bash "$HERE/host.sh" jfr "$RD" gc start; on "$H2" bash "$HERE/host.sh" jfr "$RD" rc start; fi
   for size in ${DP_SIZES:-262144 4194304}; do
     local msgs=$([ "$size" = 262144 ] && echo "${DP_MSGS_256K:-2000}" || echo "${DP_MSGS_4M:-150}")
     for flows in ${DP_FLOWS:-1 4}; do
@@ -164,6 +166,9 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
     done
   done
   put dataplane "$dp}"
+  if [ -n "${GATE_JFR_DIR:-}" ]; then
+    on "$H1" bash "$HERE/host.sh" jfr "$RD" gc dump "$GATE_JFR_DIR/$B-gc.jfr"; on "$H2" bash "$HERE/host.sh" jfr "$RD" rc dump "$GATE_JFR_DIR/$B-rc.jfr"
+  fi
   fi
 
   # ---- 3. scale: light agents in steps, all hosts, alternately on the global and the region
