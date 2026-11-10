@@ -215,7 +215,8 @@ public class AgentExecutor implements Executor {
                     // Contained: only fires for a peer region we have a via-path choice to; region->global
                     // health pings have no PathTable entry and are untouched.
                     try {
-                        if (plugin.getConfig().getBooleanParam("net_cost_routing", false)) {
+                        if (plugin.getConfig().getBooleanParam("net_cost_routing", false)
+                                && io.cresco.agent.controller.communication.MsgRouter.sourceRouting(plugin)) {
                             io.cresco.agent.controller.netmetrics.PathTable pt = controllerEngine.getPathTable();
                             String srcPeer = incoming.getSrcRegion() + "_" + incoming.getSrcAgent();
                             String route = (pt != null) ? pt.chosenSrcroute(srcPeer) : null;
@@ -1032,7 +1033,7 @@ public class AgentExecutor implements Executor {
             byte[] jarData = ce.getDataParam("jardata");
 
             if(ce.paramsContains("jardata")) {
-                logger.error("JAR FOUND");
+                logger.debug("JAR FOUND");
             }
 
             String jarPath = controllerEngine.getPluginAdmin().pluginUpdate(hm, jarData);

@@ -377,8 +377,8 @@ public class RegionHealthWatcher {
 
             // VIA-G probe: force global as an explicit source-route waypoint (also bypasses injection).
             double viaGRtt = -1;
-            String viaGRoute = (gRegion != null && gAgent != null && !gRegion.equals(peerRegion))
-                    ? gRegion + "," + gAgent + ";" + peerRegion + "," + peerAgent : null;
+            String viaGRoute = viaGlobalRoute(io.cresco.agent.controller.communication.MsgRouter.sourceRouting(plugin),
+                    plugin.getRegion(), plugin.getAgent(), gRegion, gAgent, peerRegion, peerAgent);
             if (viaGRoute != null) {
                 viaGRtt = probePath(peerRegion, peerAgent, viaGRoute, timeout, true, "probe-VIAG");
             }
@@ -403,6 +403,24 @@ public class RegionHealthWatcher {
     }
 
     /**
+     * The waypoint stack of the via-global probe from {@code self} to a peer region's controller, or null when there is
+     * none to measure: this node does not do source routing (net_source_routing off: the global would not relay the probe,
+     * it would take it as addressed to itself and refuse it as another node's), this node is the global, or the peer is in
+     * the global's region.
+     */
+    static String viaGlobalRoute(boolean sourceRouting, String selfRegion, String selfAgent, String gRegion, String gAgent,
+                                 String peerRegion, String peerAgent) {
+        if (!sourceRouting || gRegion == null || gAgent == null || gRegion.equals(peerRegion)) return null;
+        if (gRegion.equals(selfRegion) && gAgent.equals(selfAgent)) return null;
+        return gRegion + "," + gAgent + ";" + peerRegion + "," + peerAgent;
+    }
+
+    /** A probe is answered only by a pong: an error reply (route unavailable, 401) is a miss, not a round trip. */
+    static boolean isPong(MsgEvent resp) {
+        return resp != null && "pong".equals(resp.getParam("action"));
+    }
+
+    /**
      * Send one timed ping to {@code peerRegion/peerAgent}. If {@code srcroute} is non-null the probe is
      * source-routed over that waypoint stack (head becomes the forwardDst); otherwise it is addressed
      * directly. Returns the round-trip in ms, or -1 on miss.
@@ -424,7 +442,7 @@ public class RegionHealthWatcher {
             }
             long t0 = System.nanoTime();
             MsgEvent resp = plugin.sendRPC(probe, timeout);
-            return (resp != null) ? (System.nanoTime() - t0) / 1_000_000.0 : -1;
+            return isPong(resp) ? (System.nanoTime() - t0) / 1_000_000.0 : -1;
         } catch (Exception e) {
             return -1;
         }

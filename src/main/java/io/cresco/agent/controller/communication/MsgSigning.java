@@ -763,48 +763,48 @@ public final class MsgSigning {
                         + " first hand (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + fromBroker + ")");
                 return new Verdict(fromBroker, null);
             }
-            return refuse("an unsigned message (from " + fromBroker + (firstHand == null ? ", not delivered first hand" : ", delivered by "
+            return refuse(m, "an unsigned message (from " + fromBroker + (firstHand == null ? ", not delivered first hand" : ", delivered by "
                     + firstHand) + ")");
         }
         try {
             String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS), to = m.getParam(TO);
-            if (by == null || ts == null || (macB64 == null && cred == null)) return refuse("a signature without its signer, credential or time");
+            if (by == null || ts == null || (macB64 == null && cred == null)) return refuse(m, "a signature without its signer, credential or time");
             long t = Long.parseLong(ts), now = System.currentTimeMillis();
             if (Math.abs(now - t) > maxAgeMs) {
-                return refuse("a signature made " + (now - t) / 1000 + " s from now (msg_signature_max_age_ms=" + maxAgeMs + ")");
+                return refuse(m, "a signature made " + (now - t) / 1000 + " s from now (msg_signature_max_age_ms=" + maxAgeMs + ")");
             }
             // the recipient first: a message signed for another node is refused before any key operation
             String notMine = recipientRefusal(to, m);
-            if (notMine != null) return refuse(notMine + " (from " + by + ")");
+            if (notMine != null) return refuse(m, notMine + " (from " + by + ")");
             MsgSessions.Found under = null;
             Signer who;
             if (macB64 != null) {
                 String peerNode = nodeOf(by);
                 under = sessions == null || peerNode == null ? null : sessions.lookup(peerNode, by, m.getParam(MsgSessions.SID));
-                if (under == null) return refuse("a message under a session key this node does not hold (from " + by
+                if (under == null) return refuse(m, "a message under a session key this node does not hold (from " + by
                         + ": this node restarted or the session ended; its sender returns to signatures)");
-                if (now > under.session.expires) return refuse("a message under an ended session key (" + by + ")");
+                if (now > under.session.expires) return refuse(m, "a message under an ended session key (" + by + ")");
                 who = under.peer.signer;
-                if (who == null) return refuse("a message under a session key whose peer no longer verifies (" + by + ")");
+                if (who == null) return refuse(m, "a message under a session key whose peer no longer verifies (" + by + ")");
             } else {
                 String[] why = new String[1];
                 who = resolve(cred, why);
-                if (who == null) return refuse("the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")");
+                if (who == null) return refuse(m, "the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")");
             }
-            if (!who.name.equals(by)) return refuse("signed by " + who.name + ", which is not the declared signer " + by);
+            if (!who.name.equals(by)) return refuse(m, "signed by " + who.name + ", which is not the declared signer " + by);
             String revoked = signerRefusal(who, now);
             if (revoked != null) {
                 if (under != null) sessions.dropPeer(under.peer.node);
-                return refuse("the signer " + by + " is refused: " + revoked);
+                return refuse(m, "the signer " + by + " is refused: " + revoked);
             }
             if (to.startsWith("^") && !to.startsWith("^" + who.region + "/")) {
-                return refuse("a message for the global above " + to.substring(1) + ", signed by " + by + " of another region");
+                return refuse(m, "a message for the global above " + to.substring(1) + ", signed by " + by + " of another region");
             }
             byte[] replayKey;
             if (under != null) {
                 byte[] mac = Base64.getDecoder().decode(macB64);
                 if (!MessageDigest.isEqual(mac, MsgSessions.mac(under.session.key, by, canonical(m)))) {
-                    return refuse("the session MAC does not verify (" + by + ")");
+                    return refuse(m, "the session MAC does not verify (" + by + ")");
                 }
                 replayKey = mac;
             } else {
@@ -816,14 +816,14 @@ public final class MsgSigning {
                     byte[] leaf = MsgBatchSigner.leaf(canonical(m));
                     int[] count = new int[1];
                     byte[] root = MsgBatchSigner.root(leaf, tree, count);
-                    if (root == null) return refuse("a malformed batch signature path (" + by + ")");
+                    if (root == null) return refuse(m, "a malformed batch signature path (" + by + ")");
                     String cacheKey = Base64.getEncoder().encodeToString(sha256.get().digest(sig)) + "|" + who.fp + "|"
                             + Base64.getEncoder().encodeToString(root) + "|" + count[0];
                     if (batchVerified.getIfPresent(cacheKey) == null) {
                         Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
                         s.initVerify(who.key);
                         s.update(MsgBatchSigner.signedBytes(root, count[0]));
-                        if (!s.verify(sig)) return refuse("the batch signature does not verify (" + by + ")");
+                        if (!s.verify(sig)) return refuse(m, "the batch signature does not verify (" + by + ")");
                         batchVerified.put(cacheKey, Boolean.TRUE);
                     }
                     replayKey = java.nio.ByteBuffer.allocate(sig.length + leaf.length).put(sig).put(leaf).array();
@@ -831,23 +831,23 @@ public final class MsgSigning {
                     Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(who.key.getAlgorithm()));
                     s.initVerify(who.key);
                     s.update(canonical(m));
-                    if (!s.verify(sig)) return refuse("the signature does not verify (" + by + ")");
+                    if (!s.verify(sig)) return refuse(m, "the signature does not verify (" + by + ")");
                 }
             }
             Caller signed = Caller.parse(m.getParam(S_CALLER), m.getParam(S_TENANT), m.getParam(S_ROLES));
-            if (signed == null || signed.isAnonymous()) return refuse("no signed caller");
+            if (signed == null || signed.isAnonymous()) return refuse(m, "no signed caller");
             String vouch = vouchRefusal(CrescoIdentity.of(who.tenant, who.region, who.agent, null), signed,
                     ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig()));
-            if (vouch != null) return refuse(vouch);
+            if (vouch != null) return refuse(m, vouch);
             if (fromBroker != null && !fromBroker.equals(signed)) {
-                return refuse("the broker's caller " + fromBroker + " is not the signed caller " + signed);
+                return refuse(m, "the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
             switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now)) {
                 case FRESH: break;
-                case REPLAY: return refuse("a signature seen before (a replay) from " + by);
-                case TOO_OLD: return refuse("a message signed " + (now - t) / 1000 + " s ago while the replay memory is full (from " + by + ")");
-                case FULL: return refuse("a message while the replay memory is full (from " + by + ")");
-                default: return refuse("a message signed at a time this node's clock went back past (from " + by + ")");
+                case REPLAY: return refuse(m, "a signature seen before (a replay) from " + by);
+                case TOO_OLD: return refuse(m, "a message signed " + (now - t) / 1000 + " s ago while the replay memory is full (from " + by + ")");
+                case FULL: return refuse(m, "a message while the replay memory is full (from " + by + ")");
+                default: return refuse(m, "a message signed at a time this node's clock went back past (from " + by + ")");
             }
             String peerNode = who.node();
             int caps = parseCaps(m.getParam(CAPS));
@@ -873,7 +873,7 @@ public final class MsgSigning {
             return new Verdict(signed, null);
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
-            return refuse("an unreadable signature (" + e.getClass().getSimpleName() + ")");
+            return refuse(m, "an unreadable signature (" + e.getClass().getSimpleName() + ")");
         }
     }
 
@@ -926,9 +926,9 @@ public final class MsgSigning {
         }
     }
 
-    private Verdict refuse(String why) {
+    private Verdict refuse(MsgEvent m, String why) {
         refusedCount.incrementAndGet();
-        refusal(why);
+        refusal(m, why);
         return new Verdict(null, why);
     }
 
@@ -942,6 +942,11 @@ public final class MsgSigning {
         try {
             ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info).warn(line);
         } catch (RuntimeException ignore) { }
+    }
+
+    /** A refused message's log line names its type and action, which the reason does not. */
+    private void refusal(MsgEvent m, String why) {
+        refusal(m == null ? why : why + " [" + m.getMsgType() + " " + m.getParam("action") + "]");
     }
 
     private void refusal(String why) {

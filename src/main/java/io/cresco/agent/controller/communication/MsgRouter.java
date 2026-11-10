@@ -22,10 +22,27 @@ public class MsgRouter {
     // empties, the true destination (this node + the saved dst-plugin) is restored and delivered
     // locally. This lets a route-computer force a message down a chosen path (e.g. via a low-latency
     // region, or around a congested one) rather than ActiveMQ's default shortest-broker-hop route.
-    // Gated by net_source_routing (default off); a message with no SRCROUTE param is untouched.
+    // Gated by net_source_routing (default off); a message with no SRCROUTE param is untouched. A node with it off
+    // starts no source route and relays none: a source route through it is not delivered here (its header names this
+    // waypoint, its signed recipient is the route's last node); one that ends here is delivered as addressed.
     public static final String SRCROUTE = "srcroute";            // "r1,a1;rg,gc;r2,a2" (remaining hops)
     public static final String SRCROUTE_DST_PLUGIN = "srcroute_dst_plugin"; // preserved final dst plugin
     private static final int SRCROUTE_MAX_HOPS = 16;             // safety bound on the stack length
+
+    /** Does this node start and relay source routes ({@code net_source_routing}, default off)? */
+    public static boolean sourceRouting(PluginBuilder plugin) {
+        return plugin.getConfig().getBooleanParam("net_source_routing", false);
+    }
+
+    /**
+     * A message turned around (a reply made from its request) does not keep the request's source route: the signer names
+     * a source route's last node as the recipient, so a reply that kept it was signed for the request's destination and
+     * refused by the caller it is addressed to.
+     */
+    static void dropSourceRoute(MsgEvent rm) {
+        rm.removeParam(SRCROUTE);
+        rm.removeParam(SRCROUTE_DST_PLUGIN);
+    }
     private volatile boolean loggedSrcRoute = false;
     private volatile boolean loggedInject = false;
 
@@ -291,6 +308,7 @@ public class MsgRouter {
         try {
             rm.setParam("error", error);
             rm.setParam(marker, markerValue);
+            dropSourceRoute(rm);
             rm.setReturn();
             String callId = rm.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
             if (callId != null) {
@@ -314,6 +332,7 @@ public class MsgRouter {
                 MsgSigning.clear(rm);
                 rm.setParam("status_code", "401");
                 rm.setParam("status_desc", "unauthenticated: " + why);
+                dropSourceRoute(rm);
                 rm.setReturn();
                 plugin.msgOut(rm);
             }
@@ -405,11 +424,8 @@ public class MsgRouter {
                 // current head, pop-and-forward to the next waypoint. Returns true when the message was
                 // re-forwarded (nothing more to do here); false to continue to normal routing (either the
                 // final waypoint reached with the true dst restored, or no/irrelevant source route).
-                if (plugin.getConfig().getBooleanParam("net_source_routing", false)
-                        && rm.getParam(SRCROUTE) != null) {
-                    if (advanceSourceRoute(rm)) {
-                        return; // forwarded to the next waypoint; finally-block still records the timer
-                    }
+                if (rm.getParam(SRCROUTE) != null && advanceSourceRoute(rm, sourceRouting(plugin))) {
+                    return; // forwarded to the next waypoint (or, source routing off here, not relayed); timer still recorded
                 }
 
                 int routePath = getRoutePath(rm);
@@ -479,6 +495,7 @@ public class MsgRouter {
     private void maybeInjectCostRoute(MsgEvent rm) {
         try {
             if (!plugin.getConfig().getBooleanParam("net_cost_routing", false)) return;
+            if (!sourceRouting(plugin)) return;                              // a route this fabric would not relay
             if ("1".equals(rm.getParam("no_cost_route"))) return;            // prober opts out (measures raw path)
             if (rm.getParam(SRCROUTE) != null) return;                       // already routed
             if (rm.getDstRegion() == null || rm.getDstAgent() == null) return;
@@ -521,12 +538,16 @@ public class MsgRouter {
      * Defensive: if the head is not this node, leave the message alone (return false) and let normal
      * routing carry it toward forwardDst. TTL (getTTL) still bounds total hops; the stack is also
      * length-capped. Any parse error falls back to normal routing (return false) — never drops silently.
+     * With {@code relay} false (net_source_routing off here) the final waypoint is still delivered, but a route with
+     * waypoints beyond this node is not relayed: it is answered as unavailable (an RPC) or dropped, never delivered
+     * here as if it were addressed to this node.
      *
      * @param rm the message being routed
+     * @param relay this node relays source routes (net_source_routing)
      * @return true if this call consumed/forwarded the message (caller should stop), false to let normal
      *         routing proceed (final waypoint reached, not source-routed, or a defensive fallback)
      */
-    private boolean advanceSourceRoute(MsgEvent rm) {
+    private boolean advanceSourceRoute(MsgEvent rm, boolean relay) {
         try {
             String path = rm.getParam(SRCROUTE);
             if (path == null || path.isEmpty()) return false;
@@ -544,6 +565,11 @@ public class MsgRouter {
             // The head must be this node (ActiveMQ delivered here because forwardDst=head=me). If not,
             // this node is only a transit broker at the ActiveMQ layer — let normal routing continue.
             if (!hops.get(0).equals(me)) return false;
+            if (!relay && hops.size() > 1) {
+                unavailable(rm, Hop.REMOTE_REGION, "source-routed on to " + hops.get(hops.size() - 1)
+                        + ", and this node does not relay source routes (net_source_routing is off)");
+                return true;
+            }
 
             // Prove the path taken: stamp this waypoint into the trail (visible on the final message).
             rm.setParam("srcroute-hop-" + plugin.getAgent(), me);
