@@ -200,6 +200,13 @@ public final class PeerTrustRegistry {
     private final java.util.concurrent.ConcurrentSkipListMap<Long, Revocation> revokedBySeq = new java.util.concurrent.ConcurrentSkipListMap<>();
     /** Key fingerprint -> how many entries revoke it (any scope). */
     private final Map<String, Integer> revokedAnyScope = new ConcurrentHashMap<>();
+    /** Region -> how many entries are in force for its names only (what that region's own list holds here). */
+    private final Map<String, Integer> revokedByScope = new ConcurrentHashMap<>();
+    /**
+     * The most entries a child region's list may hold in force here (and so in the list this node serves on). A region
+     * refuses the keys it revoked itself whatever this node holds of its list.
+     */
+    static final int CHILD_REVOCATIONS_MAX = 10_000;
     /** Guards the assignment of list positions together with the in-memory application of an entry. */
     private final Object revMemLock = new Object();
     private long revSeq;                                        // with revMemLock: the last position given out
@@ -1499,7 +1506,10 @@ public final class PeerTrustRegistry {
     private void putRevocation(Revocation r) {
         Revocation old = revoked.put(r.id(), r);
         if (old != null) revokedBySeq.remove(old.seq, old);
-        else revokedAnyScope.merge(r.fp, 1, Integer::sum);
+        else {
+            revokedAnyScope.merge(r.fp, 1, Integer::sum);
+            if (r.scope != null) revokedByScope.merge(r.scope, 1, Integer::sum);
+        }
         revokedBySeq.put(r.seq, r);
         if (r.own && r.seq > ownRevSeq) ownRevSeq = r.seq;
         revVersion++;
@@ -1510,6 +1520,7 @@ public final class PeerTrustRegistry {
         if (!revoked.remove(r.id(), r)) return;
         revokedBySeq.remove(r.seq, r);
         revokedAnyScope.computeIfPresent(r.fp, (k, v) -> v <= 1 ? null : v - 1);
+        if (r.scope != null) revokedByScope.computeIfPresent(r.scope, (k, v) -> v <= 1 ? null : v - 1);
         revVersion++;
     }
 
@@ -1672,7 +1683,11 @@ public final class PeerTrustRegistry {
     /** Called (outside the write lock) once per batch of newly revoked key fingerprints (after their bindings are dropped). */
     public void setRevokedBatchListener(Consumer<Collection<String>> l) { this.revokedBatchListener = l; }
 
-    /** Is the key with this fingerprint revoked (for every name, or for some region's names)? Lock-free. */
+    /**
+     * Is the key with this fingerprint on the list at all (for every name, or for SOME region's names)? Lock-free. Not a
+     * check of a peer: an entry a region listed applies to that region's names only, so whoever judges a signer, a
+     * certificate or an anchor asks {@link #isRevokedFor} with the region the key is presented under.
+     */
     public boolean isRevokedKey(String fp) { return fp != null && revokedAnyScope.containsKey(fp); }
 
     // ---------------------------------------------------------------- pre-provisioned PKI (security_profile=production)
@@ -1714,6 +1729,8 @@ public final class PeerTrustRegistry {
         PkiSeen(String tenant, String role, String key, long t) { this.tenant = tenant; this.role = role; this.key = key; this.t = t; }
     }
     private final Map<String, PkiSeen> pkiSeen = new ConcurrentHashMap<>();
+    /** Key fingerprint -> the name ({@code region/agent}) PKI verification last saw it under (what {@link #pkiSeen} holds). */
+    private final Map<String, String> pkiNameByKey = new ConcurrentHashMap<>();
     static final int PKI_SEEN_MAX = 200_000;
 
     /**
@@ -1741,7 +1758,8 @@ public final class PeerTrustRegistry {
         Rec tr = rec("tomb", n);
         tr.key = key; tr.source = source; tr.t = t;
         if (!append(tr)) log.accept("peer trust registry: the tombstone of " + n + " is in force but could not be recorded");
-        pkiSeen.remove(n);
+        PkiSeen was = pkiSeen.remove(n);
+        if (was != null) pkiNameByKey.remove(was.key, n);
     }
 
     /**
@@ -1775,7 +1793,11 @@ public final class PeerTrustRegistry {
         PkiSeen prev = pkiSeen.get(n);
         long now = System.currentTimeMillis();
         if (prev == null || !prev.key.equals(fp) || !prev.role.equals(role) || now - prev.t > 60_000L) {
-            if (prev != null || pkiSeen.size() < PKI_SEEN_MAX) pkiSeen.put(n, new PkiSeen(id.getTenant(), role, fp, now));
+            if (prev != null || pkiSeen.size() < PKI_SEEN_MAX) {
+                pkiSeen.put(n, new PkiSeen(id.getTenant(), role, fp, now));
+                if (prev != null && !prev.key.equals(fp)) pkiNameByKey.remove(prev.key, n);
+                pkiNameByKey.put(fp, n);
+            }
         }
         return id;
     }
@@ -2068,10 +2090,15 @@ public final class PeerTrustRegistry {
      * <ul>
      *   <li>{@code scopeRegion} null: the PARENT's list -- every entry as listed (the parent is the authority for its
      *       subtree: an entry without a scope applies to every name, a scoped one to that region's names).</li>
-     *   <li>{@code scopeRegion} non-null: a CHILD region's list -- a POSITIVE scope check: an entry is accepted only when its
-     *       key is bound here to a name of that region (and to no other name), or is bound to no name here and the entry names
-     *       an identity of that region; it then applies to that region's names ONLY (recorded as {@code fp@region}). A CA key,
-     *       a key bound here outside the region, or an entry naming no identity of the region is refused.</li>
+     *   <li>{@code scopeRegion} non-null: a CHILD region's list -- a POSITIVE scope check: an entry is accepted only for a
+     *       key THIS node verified under that region -- bound here to a name of that region, or (pre-provisioned) last
+     *       verified here by the PKI under one -- and under no name outside it. A key this node never saw is taken on the
+     *       region's word only where this node verifies that region's names by certificate rather than by a binding (the CA
+     *       recorded here for that region, or the operator's PKI) and the entry names an identity of that region: there the
+     *       entry is what refuses the certificate that key still holds for that name. It applies to that region's names ONLY
+     *       (recorded as {@code fp@region}), and a region holds at most {@link #CHILD_REVOCATIONS_MAX} entries here. A CA key,
+     *       a key known here outside the region, a key never verified here under the region, or an entry naming no identity
+     *       of the region is refused.</li>
      * </ul>
      * This node's own key and its own region CA are never revoked by a list. With {@code async} the entries are in force
      * when this returns and their bindings, tombstones and durable record follow on the background writer (one write): the
@@ -2102,12 +2129,29 @@ public final class PeerTrustRegistry {
                             if (n.startsWith(scopeRegion + "/")) name = n; else outside = n;
                         }
                     }
+                    String seen = pkiNameByKey.get(fp);                 // pre-provisioned: the name the PKI verified this key under
+                    if (seen != null) {
+                        if (!seen.startsWith(scopeRegion + "/")) outside = seen;
+                        else if (name == null) name = seen;
+                    }
                     if (outside != null) {
                         why = "the key " + PeerIdentity.shortFp(fp) + " is bound here to " + outside + ", outside region " + scopeRegion;
                     } else if (name == null) {
-                        if (e.name != null && e.name.startsWith(scopeRegion + "/")) name = e.name;
-                        else why = "the key " + PeerIdentity.shortFp(fp) + " is bound here to no name and the list names no identity of region "
-                                + scopeRegion + " for it";
+                        // a key this node never verified: the region's word counts only where the entry is all that refuses a
+                        // certificate for one of ITS names (its CA recorded here, or the operator's PKI) -- never under per-node trust
+                        if (e.name == null || !e.name.startsWith(scopeRegion + "/")) {
+                            why = "the key " + PeerIdentity.shortFp(fp) + " is bound here to no name and the list names no identity of region "
+                                    + scopeRegion + " for it";
+                        } else if (pki == null && !cas.containsKey(scopeRegion)) {
+                            why = "the key " + PeerIdentity.shortFp(fp) + " was never verified here under a name of region " + scopeRegion
+                                    + " (" + e.name + " is the region's word alone)";
+                        } else {
+                            name = e.name;
+                        }
+                    }
+                    if (why == null && revokedByScope.getOrDefault(scopeRegion, 0) >= CHILD_REVOCATIONS_MAX
+                            && !revoked.containsKey(fp + "@" + scopeRegion)) {
+                        why = "region " + scopeRegion + " already holds " + CHILD_REVOCATIONS_MAX + " entries here (the most a region's list may)";
                     }
                 }
             } else {
@@ -2444,7 +2488,7 @@ public final class PeerTrustRegistry {
         identities.clear(); cas.clear(); bridges.clear(); consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
         namesByKey.clear(); tombs.clear();
         synchronized (revMemLock) {
-            revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
+            revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revokedByScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
         }
         revUndurable.clear(); revokedToFire.clear(); durableRevSeq = 0; ownRevSeq = 0; revEpoch = null; revDurability = null;
         lastMac = ""; lines = 0; needsNewline = false; recentMacs.clear();

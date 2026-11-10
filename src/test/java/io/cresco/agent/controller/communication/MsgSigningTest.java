@@ -114,6 +114,42 @@ class MsgSigningTest {
         assertTrue(g.msgSigning().verify(toGlobal, plugin(a1), false).ok(), "the global verifies an agent's attestation by its region's key");
     }
 
+    /**
+     * An entry a region listed is in force for that region's names only (it travels as {@code key@region}): the same key
+     * signing under another region's name -- an agent, its attesting controller -- is not refused, and the controller's
+     * entry stays in the trust bundle.
+     */
+    @Test
+    void aRevocationForOneRegionsNamesDoesNotRefuseTheKeyUnderAnotherRegion() throws Exception {
+        ControllerEngine g2 = node("rgG", "gc", true);
+        ((TlsTestSupport.State) g2.cstate).global = true;
+        ControllerEngine rA2 = node("rgA", "rc", true), rB2 = node("rgB", "rc2", true), a = node("rgA", "a1", false), b = node("rgB", "b1", false);
+        joined(rA2, g2, true);
+        joined(rB2, g2, true);
+        joined(a, rA2, false);
+        joined(b, rB2, false);
+        for (int i = 0; i < 2; i++) { ping(rA2, g2, true); ping(rB2, g2, true); }
+        ping(a, rA2, false);
+        ping(b, rB2, false);
+        String kb = PeerTrustRegistry.fingerprint(leaf(b).getPublicKey().getEncoded());
+        String krB = PeerTrustRegistry.fingerprint(leaf(rB2).getPublicKey().getEncoded());
+        int bundle = a.msgSigning().bundleSize();
+        assertTrue(a.msgSigning().verify(sent(b, plugin(b), a), plugin(b), false).ok(), "precondition");
+        // the parent's list carries what region rgA listed, for rgA's names: rgB's agent's key and rgB's controller's key
+        for (ControllerEngine at : new ControllerEngine[]{a, g2}) {
+            assertEquals(2, at.getCertificateManager().getPeerTrust().mergeRevocations(List.of(
+                    new PeerTrustRegistry.ListEntry(kb, "rgA", "rgA/x", 0), new PeerTrustRegistry.ListEntry(krB, "rgA", "rgA/y", 0)),
+                    "revocation list of rgG/gc", null, false));
+            at.msgSigning().onRevocations();
+            MsgSigning.Verdict v = at.msgSigning().verify(sent(b, plugin(b), at), plugin(b), false);
+            assertTrue(v.ok(), "an agent of rgB is refused at " + at.cstate.getAgent() + " by an entry for rgA's names: " + v.refusal);
+        }
+        Caller rc = Caller.controller("t1", "rgB", "rc2");
+        MsgSigning.Verdict v = a.msgSigning().verify(sent(rB2, rc, a), rc, false);
+        assertTrue(v.ok(), "rgB's controller is refused at an agent of rgA by an entry for rgA's names: " + v.refusal);
+        assertEquals(bundle, a.msgSigning().bundleSize(), "rgB's controller was dropped from the trust bundle by an entry for rgA's names");
+    }
+
     @Test
     void controllersVerifyEverywhere() {
         Caller gc = Caller.controller("t1", "rgG", "gc");

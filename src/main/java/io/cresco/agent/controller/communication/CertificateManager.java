@@ -674,7 +674,11 @@ public class CertificateManager {
         }
     }
 
-    /** Remove every truststore entry carrying one of {@code keyFps}; refresh the broker's trust when any was removed. */
+    /**
+     * Remove every truststore entry carrying one of {@code keyFps} that is revoked for the name its certificate carries (an
+     * entry a region listed applies to that region's names only: the same key anchored for another region's node stays);
+     * refresh the broker's trust when any was removed.
+     */
     private void dropAnchorsOfKeys(java.util.Set<String> keyFps) {
         try {
             if (trustStore == null || keyFps.isEmpty()) return;
@@ -682,7 +686,11 @@ public class CertificateManager {
             synchronized (trustStore) {
                 for (String alias : java.util.Collections.list(trustStore.aliases())) {
                     Certificate c = trustStore.getCertificate(alias);
-                    if (c != null && keyFps.contains(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) drop.add(alias);
+                    if (c == null) continue;
+                    String fp = PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded());
+                    if (!keyFps.contains(fp)) continue;
+                    CrescoIdentity named = c instanceof X509Certificate ? CrescoNames.identityOf((X509Certificate) c) : null;
+                    if (peerTrust == null || peerTrust.isRevokedFor(fp, named == null ? null : named.getRegion())) drop.add(alias);
                 }
                 for (String alias : drop) trustStore.deleteEntry(alias);
             }

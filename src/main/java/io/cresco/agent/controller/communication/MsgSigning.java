@@ -967,7 +967,7 @@ public final class MsgSigning {
         if (who.self) return null;
         if (now > who.expires) return "its credential ended " + new java.util.Date(who.expires);
         PeerTrustRegistry reg = peers();
-        if (reg.isRevokedKey(who.fp)) return "its key is revoked";
+        if (reg.isRevokedFor(who.fp, who.region)) return "its key is revoked";
         String why = reg.nameRefusal(who.region, who.agent);
         if (why != null) return why;
         why = reg.refsRefusal(who.refs, who.region, now);
@@ -976,7 +976,7 @@ public final class MsgSigning {
             int s = who.issuer.indexOf('/');
             String ir = who.issuer.substring(0, s), ia = who.issuer.substring(s + 1);
             if (ir.equals(ce.cstate.getRegion()) && ia.equals(ce.cstate.getAgent())) return null;      // this node attested it
-            if (reg.isRevokedKey(who.issuerFp)) return "its attestation's issuer " + who.issuer + " has a revoked key";
+            if (reg.isRevokedFor(who.issuerFp, ir)) return "its attestation's issuer " + who.issuer + " has a revoked key";
             why = reg.nameRefusal(ir, ia);
             if (why != null) return "its attestation's issuer: " + why;
             why = reg.refsRefusal(who.issuerRefs, ir, now);
@@ -1243,7 +1243,7 @@ public final class MsgSigning {
         }
         for (Map.Entry<String, BundleEntry> en : bundle.entrySet()) {
             BundleEntry e = en.getValue();
-            String why = reg.isRevokedKey(e.fp) ? "its key is revoked" : reg.nameRefusal(e.r, e.a);
+            String why = reg.isRevokedFor(e.fp, e.r) ? "its key is revoked" : reg.nameRefusal(e.r, e.a);
             if (why == null) why = reg.refsRefusal(e.refs, e.r, now);
             if (why != null && bundle.remove(en.getKey(), e)) {
                 dropped++;

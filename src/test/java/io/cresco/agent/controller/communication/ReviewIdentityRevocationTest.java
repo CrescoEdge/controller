@@ -525,6 +525,8 @@ class ReviewIdentityRevocationTest {
         bindAsController(region, global);
         TlsTestSupport.Id b1 = TlsTestSupport.selfRooted("b1", "t1", "rgB", "b1");
         assertTrue(region.getCertificateManager().getPeerTrust().bind("t1", "rgB", "b1", b1.kp.getPublic(), "discovery").ok);
+        // the global verified b1 under rgB itself: a region's list is taken only for such a key
+        assertTrue(global.getCertificateManager().getPeerTrust().bind("t1", "rgB", "b1", b1.kp.getPublic(), "discovery").ok);
         assertNull(region.getCertificateManager().getPeerTrust().revoke("rgB/b1", "operator"));
         MsgEvent p1 = ping("rgB", "rc");
         RevocationSync.onChildPing(region, p1);
@@ -535,6 +537,7 @@ class ReviewIdentityRevocationTest {
         // the global's registry is reset (or the global re-installed): a fresh registry that knows the region again
         ControllerEngine global2 = node("rgG", "gc", true);
         bindAsController(global2, region);
+        assertTrue(global2.getCertificateManager().getPeerTrust().bind("t1", "rgB", "b1", b1.kp.getPublic(), "discovery").ok);
         for (int i = 0; i < 3; i++) {
             MsgEvent p = ping("rgB", "rc");
             RevocationSync.onChildPing(region, p);
