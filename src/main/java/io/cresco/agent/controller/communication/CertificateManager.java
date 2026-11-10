@@ -2148,6 +2148,23 @@ System.out.println("Decoded value is " + new String(valueDecoded));
     }
 
     /**
+     * Per-node trust: why the controller presenting {@code chain} in a REGION/GLOBAL discovery exchange (a joiner here, or
+     * the responder this node joins) may not be bound as a controller, or null. The region and global discovery secrets
+     * prove membership, not a name or a tenant, and the tenant is read from the certificate the peer made for itself: a
+     * controller in a superuser tenant ({@code broker_superuser_tenants}: SUPERUSER at every broker that binds it) is never
+     * bound first come. The operator lists it by key or certificate in {@code controller_trust_anchors} on this node.
+     */
+    public String controllerJoinRefusal(X509Certificate[] chain) {
+        CrescoIdentity id = chain == null || chain.length == 0 || chain[0] == null ? null : CrescoNames.identityOf(chain[0]);
+        if (id == null) return "its certificate names no valid identity";
+        if (!superuserTenants().contains(id.getTenant())) return null;
+        if (controllerAnchorVouches(chain)) return null;
+        return "it claims the superuser tenant " + id.getTenant() + ", and a controller of a superuser tenant is never bound first"
+                + " come: list its key or certificate (SHA-256, hex; its key is " + PeerIdentity.spkiFingerprint(chain[0])
+                + ") in controller_trust_anchors on this node";
+    }
+
+    /**
      * A region or global controller joining over a REGION/GLOBAL discovery exchange is not re-issued: it presents its
      * own region CA chain {@code [leaf, itsRegionCA, root]}, and the two CAs are recorded as each other's peers, each
      * scoped to its own region and tenant (a region CA vouches only for its own region's names). Refused when the

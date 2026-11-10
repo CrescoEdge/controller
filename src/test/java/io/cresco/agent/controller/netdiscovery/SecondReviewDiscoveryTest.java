@@ -103,6 +103,81 @@ class SecondReviewDiscoveryTest {
                 "an agent's self-chosen superuser tenant is now a verified identity at its region broker");
     }
 
+    private static ControllerEngine controllerAt(java.nio.file.Path dir, String region, String agent, String... extra) throws Exception {
+        io.cresco.agent.controller.communication.TlsTestSupport.provider();
+        Map<String, Object> c = new HashMap<>(cfg(true, extra));
+        c.put("public_key_directory", dir.resolve("public-keys").toString());
+        io.cresco.library.plugin.PluginBuilder pb = io.cresco.agent.test.TestAgentService.plugin(dir.toString(), c, m -> { }, region, agent);
+        ControllerEngine e = new ControllerEngine(null, pb, null, null);
+        TlsTestSupport.State st = io.cresco.agent.controller.communication.TlsTestSupport.state(pb, region, agent);
+        st.regional = true;
+        e.cstate = st;
+        e.setCertificateManager(new io.cresco.agent.controller.communication.CertificateManager(e));
+        return e;
+    }
+
+    private static String keyOf(ControllerEngine e) {
+        return io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(chain(e)[0]);
+    }
+
+    /**
+     * A holder of the region or global discovery secret joins under a new controller name with a certificate it made for
+     * a superuser tenant: bound first come, its certificate would be SUPERUSER at the broker (every tenant's traffic).
+     */
+    @Test
+    void aJoiningControllerCannotChooseASuperuserTenant() throws Exception {
+        for (DiscoveryType type : new DiscoveryType[]{DiscoveryType.GLOBAL, DiscoveryType.REGION}) {
+            ControllerEngine responder = controller("rgG", "gc");
+            ControllerEngine attacker = TlsTestSupport.engine("rgX", "evil", cfg(true, "tenant_id", "cresco-system"));
+            ((TlsTestSupport.State) attacker.cstate).regional = true;
+            DiscoveryAuth.Msg r = exchange(attacker, responder, type);
+            PeerTrustRegistry reg = responder.getCertificateManager().getPeerTrust();
+            CrescoIdentity asSeen = reg.verifiedIdentity(chain(attacker));
+            System.out.println(type + " exchange with tenant cresco-system: ok=" + (r != null && r.ok) + "; verified identity " + asSeen
+                    + "; bridge peer=" + reg.isBridgePeer(CrescoIdentity.of("cresco-system", "rgX", "evil", null)));
+            assertFalse(r != null && r.ok, "a " + type + " joiner's self-chosen superuser tenant was accepted");
+            assertNull(asSeen, "a " + type + " joiner's self-chosen superuser tenant is now a verified identity (SUPERUSER at the broker)");
+            assertFalse(reg.isBridgePeer(CrescoIdentity.of("cresco-system", "rgX", "evil", null)));
+            // a controller of an ordinary tenant joins first come, as before
+            ControllerEngine region = controller("rgB", "rc");
+            DiscoveryAuth.Msg ok = exchange(region, responder, type);
+            assertTrue(ok != null && ok.ok, "a " + type + " joiner of an ordinary tenant was refused");
+        }
+    }
+
+    /** The same from the other side: a secret holder ANSWERS as a controller of a superuser tenant; the joiner does not bind it. */
+    @Test
+    void aControllerDoesNotJoinASelfMadeSuperuserController() throws Exception {
+        ControllerEngine region = controller("rgA", "rc");
+        ControllerEngine answering = TlsTestSupport.engine("rgX", "evil", cfg(true, "tenant_id", "cresco-system"));
+        ((TlsTestSupport.State) answering.cstate).regional = true;
+        exchange(region, answering, DiscoveryType.REGION);
+        PeerTrustRegistry reg = region.getCertificateManager().getPeerTrust();
+        assertNull(reg.verifiedIdentity(chain(answering)), "a responder's self-chosen superuser tenant is now a verified identity at the joiner");
+        assertFalse(reg.isBridgePeer(CrescoIdentity.of("cresco-system", "rgX", "evil", null)));
+    }
+
+    /** The fabric's own controllers of a superuser tenant: the operator lists their keys (controller_trust_anchors); they join. */
+    @Test
+    void anOperatorListedSuperuserControllerJoins() throws Exception {
+        java.nio.file.Path gDir = java.nio.file.Files.createTempDirectory("su-global"), rDir = java.nio.file.Files.createTempDirectory("su-region");
+        // first start: each makes its identity; the operator reads the keys
+        String gKey = keyOf(controllerAt(gDir, "rgG", "gc", "tenant_id", "cresco-system"));
+        String rKey = keyOf(controllerAt(rDir, "rgA", "rc", "tenant_id", "cresco-system"));
+        ControllerEngine global = controllerAt(gDir, "rgG", "gc", "tenant_id", "cresco-system", "controller_trust_anchors", rKey);
+        ControllerEngine region = controllerAt(rDir, "rgA", "rc", "tenant_id", "cresco-system", "controller_trust_anchors", gKey);
+        assertEquals(gKey, keyOf(global), "precondition: a controller keeps its key across restarts");
+        DiscoveryAuth.Msg r = exchange(region, global, DiscoveryType.GLOBAL);
+        assertTrue(r != null && r.ok, "the operator-listed region of a superuser tenant was refused: " + (r == null ? null : r.reason));
+        assertEquals(CrescoIdentity.of("cresco-system", "rgA", "rc", null), global.getCertificateManager().getPeerTrust().verifiedIdentity(chain(region)));
+        assertEquals(CrescoIdentity.of("cresco-system", "rgG", "gc", null), region.getCertificateManager().getPeerTrust().verifiedIdentity(chain(global)));
+        // another key under a superuser tenant is still refused at the global
+        ControllerEngine other = TlsTestSupport.engine("rgX", "evil", cfg(true, "tenant_id", "cresco-system", "controller_trust_anchors", gKey));
+        ((TlsTestSupport.State) other.cstate).regional = true;
+        DiscoveryAuth.Msg no = exchange(other, global, DiscoveryType.GLOBAL);
+        assertFalse(no != null && no.ok, "an unlisted controller of a superuser tenant joined");
+    }
+
     /** PBKDF2 (210k) runs for every distinct secret string and is cached forever; IPv6 workers default to a random one. */
     @Test
     void validatorKeyDerivationIsNotPerMessage() {
