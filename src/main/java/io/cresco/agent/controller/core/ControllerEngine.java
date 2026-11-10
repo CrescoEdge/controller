@@ -787,6 +787,20 @@ public class ControllerEngine {
         return false;
     }
 
+    /**
+     * Does this node hold what it needs to judge the signers of the messages it receives? A node with a parent (an agent's
+     * region controller, a region's global) does once it has taken that parent's first pong, which brings the trust
+     * bundle, an agent's attestation and the parent's revocations; before, it can verify nobody but that parent. A global,
+     * a node with no parent joined, and a node without message signing are always ready.
+     */
+    public boolean trustReady() {
+        io.cresco.agent.core.ControllerStateImp cs = cstate;
+        if (cs == null || !securityOn() || !msgSigning().required() || cs.isGlobalController()) return true;
+        boolean region = cs.isRegionalController();
+        String pr = region ? cs.getGlobalRegion() : cs.getRegionalRegion(), pa = region ? cs.getGlobalAgent() : cs.getRegionalAgent();
+        return pr == null || pa == null || msgSigning().heardParent(pr, pa);
+    }
+
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
     public void markForSigning(MsgEvent msg) {
         msgSigning().markForSigning(msg, tenant());

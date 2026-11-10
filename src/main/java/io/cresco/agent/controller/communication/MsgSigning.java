@@ -750,7 +750,15 @@ public final class MsgSigning {
     public static final class Verdict {
         public final Caller caller;
         public final String refusal;
-        Verdict(Caller caller, String refusal) { this.caller = caller; this.refusal = refusal; }
+        /**
+         * Not accepted, but not refused for good: its signer's credential does not verify HERE YET (its controller, or
+         * that controller's present key, is not in the trust data this node holds), which newer trust data may cure. Only
+         * a caller that said it can hold the message gets this ({@link #verify(MsgEvent, Caller, boolean, CrescoIdentity, boolean)}):
+         * nothing was counted or logged; it verifies the message again later, or refuses it ({@link #refusedAfterHold}).
+         */
+        public final boolean later;
+        Verdict(Caller caller, String refusal) { this(caller, refusal, false); }
+        Verdict(Caller caller, String refusal, boolean later) { this.caller = caller; this.refusal = refusal; this.later = later; }
         public boolean ok() { return refusal == null; }
     }
 
@@ -795,6 +803,14 @@ public final class MsgSigning {
      * ({@link #vouchRefusal}): it is the stamp's own node, or (an API user) a node of the user's tenant.
      */
     public Verdict verify(MsgEvent m, Caller fromBroker, boolean legacyAdmitted, CrescoIdentity firstHand) {
+        return verify(m, fromBroker, legacyAdmitted, firstHand, false);
+    }
+
+    /**
+     * As above; {@code hold}: the caller can hold the message and verify it again later, so a credential that does not
+     * verify here YET is answered {@link Verdict#later} instead of a refusal.
+     */
+    public Verdict verify(MsgEvent m, Caller fromBroker, boolean legacyAdmitted, CrescoIdentity firstHand, boolean hold) {
         if (!required) return new Verdict(fromBroker, null);
         String sigB64 = m.getParam(SIG);
         String macB64 = sigB64 == null ? m.getParam(MsgSessions.MAC) : null;
@@ -834,9 +850,12 @@ public final class MsgSigning {
                 who = under.peer.signer;
                 if (who == null) return refuse(m, "a message under a session key whose peer no longer verifies (" + by + ")");
             } else {
-                String[] why = new String[1];
+                String[] why = new String[2];                // [1]: set when newer trust data may cure it
                 who = resolve(cred, why);
-                if (who == null) return refuse(m, "the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")");
+                if (who == null) {
+                    String reason = "the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")";
+                    return hold && why[1] != null ? new Verdict(null, reason, true) : refuse(m, reason);
+                }
             }
             if (!who.name.equals(by)) return refuse(m, "signed by " + who.name + ", which is not the declared signer " + by);
             String revoked = signerRefusal(who, now);
@@ -988,6 +1007,36 @@ public final class MsgSigning {
         return new Verdict(null, why);
     }
 
+    /** A message its receiver held ({@link Verdict#later}, or while this node's trust data was arriving) is refused after all. */
+    public void refusedAfterHold(MsgEvent m, String why) {
+        refuse(m, why);
+    }
+
+    // ---- trust data arriving (a node's first moments with a parent)
+
+    private volatile String heardParent;
+    private final java.util.concurrent.CopyOnWriteArrayList<Runnable> trustListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * Has this node taken a pong of the parent {@code region/agent} (with it: the trust bundle when this node held another,
+     * an agent's attestation, the parent's revocations)? Until then it cannot judge any signer but that parent.
+     */
+    public boolean heardParent(String region, String agent) {
+        String h = heardParent;
+        return h != null && h.equals(region + "/" + agent);
+    }
+
+    /** {@code listener} runs (on the changing thread: keep it short) whenever the trust data this node verifies with changed. */
+    public void onTrustChange(Runnable listener) { trustListeners.add(listener); }
+
+    public void removeTrustListener(Runnable listener) { trustListeners.remove(listener); }
+
+    private void trustChanged() {
+        for (Runnable r : trustListeners) {
+            try { r.run(); } catch (RuntimeException ignore) { }
+        }
+    }
+
     private void info(String line) {
         try {
             ce.getPluginBuilder().getLogger(MsgSigning.class.getName(), io.cresco.library.utilities.CLogger.Level.Info).info(line);
@@ -1070,6 +1119,7 @@ public final class MsgSigning {
             return new Signer(e.t, e.r, e.a, e.key, fp, intern(refs), null, null, null, until, false);
         }
         why[0] = idWhy[0];
+        if (why.length > 1) why[1] = "a controller (or its present key) this node's trust bundle does not list yet";
         return null;
     }
 
@@ -1090,7 +1140,11 @@ public final class MsgSigning {
             issuerRefs = List.of();
         } else {
             BundleEntry e = bundleEntry(iss[0], iss[1]);
-            if (e == null) { why[0] = "its issuer " + a.iss + " is not in the trust bundle here"; return null; }
+            if (e == null) {
+                why[0] = "its issuer " + a.iss + " is not in the trust bundle here";
+                if (why.length > 1) why[1] = "the trust bundle may list it soon";
+                return null;
+            }
             issuerKey = e.key;
             issuerTenant = e.t;
             issuerRefs = e.refs == null ? List.of() : e.refs;
@@ -1103,7 +1157,11 @@ public final class MsgSigning {
         Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(issuerKey.getAlgorithm()));
         s.initVerify(issuerKey);
         s.update(attestationBytes(a));
-        if (!s.verify(Base64.getDecoder().decode(a.sig))) { why[0] = "the attestation's signature does not verify"; return null; }
+        if (!s.verify(Base64.getDecoder().decode(a.sig))) {
+            why[0] = "the attestation's signature does not verify";
+            if (why.length > 1) why[1] = "its issuer may have another key than the one this node holds yet";
+            return null;
+        }
         PublicKey key = KeyFactory.getInstance(keyAlg(a.k)).generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(a.k)));
         String fp = PeerTrustRegistry.fingerprint(key.getEncoded());
         if (!fp.equals(a.refs.get(0).k)) { why[0] = "an attestation whose certificate is not of its key"; return null; }
@@ -1322,6 +1380,13 @@ public final class MsgSigning {
         } catch (Exception e) {
             refusal("pong of " + parentRegion + "/" + parentAgent + ": " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        if (parentRegion != null && parentAgent != null) {
+            String p = parentRegion + "/" + parentAgent;
+            if (!p.equals(heardParent)) {
+                heardParent = p;
+                trustChanged();
+            }
+        }
     }
 
     /** Adopt a bundle signed by this node's parent (its certificate verifies here as the parent); unknown names are kept a while. */
@@ -1397,6 +1462,7 @@ public final class MsgSigning {
     /** What this node serves its children changed: the next ping rebuilds it (once). */
     void bundleChanged() {
         bundleVersion.incrementAndGet();
+        trustChanged();
     }
 
     /**
