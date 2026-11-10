@@ -94,6 +94,9 @@ public class RegionHealthWatcher {
         if (controllerEngine.cstate.isRegionalController()) { // Check if it's configured or potentially acting as a region
             this.activePingTimer = new Timer("RegionActivePingTimer", true); // Daemon thread
             this.activePingTimer.scheduleAtFixedRate(new ActivePingTask(), pingInterval, pingInterval); // Start after first interval
+            // the first ping goes at once when this region has joined a global (each time), not an interval later: the
+            // trust bundle and the global's revocation list arrive on its pong
+            this.activePingTimer.schedule(new ParentLinkTask(), 0L, PARENT_LINK_CHECK_MS);
             logger.info("Active Ping Timer (for Global) scheduled with interval: {} ms", pingInterval);
         }
         // --- END NEW ---
@@ -622,6 +625,21 @@ public class RegionHealthWatcher {
                 }
             } catch (Exception ex) {
                 logger.error("setPluginsLost for agent [{}] Error: {}", agentName, ex.getMessage(), ex);
+            }
+        }
+    }
+
+    /** How often the ping timer looks whether this region just joined a global (a field read). */
+    static final long PARENT_LINK_CHECK_MS = 250L;
+
+    /** Sees this region join a global (REGION_GLOBAL) and pings at once then; tells RevocationSync whether the link is up. */
+    class ParentLinkTask extends TimerTask {
+        public void run() {
+            try {
+                boolean up = controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL;
+                if (io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up)) new ActivePingTask().run();
+            } catch (Exception ex) {
+                logger.warn("ParentLinkTask Error: {}", ex.getMessage());
             }
         }
     }

@@ -29,7 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * what its parent acknowledged; the pong acknowledges ({@code <epoch>.<seq>}) and always names the parent's epoch. When
  * that epoch changes (the parent's registry was re-created or reset) the child resets what it believes the parent holds
  * and sends its list again, and asks for the parent's from the start. Per ping, when nothing changed, the cost is a few
- * string comparisons: O(1) in the size of the list. Signed deltas are cached (one signature for every child at the same
+ * string comparisons: O(1) in the size of the list. The pong also states the last position of the parent's list, so a
+ * child knows when it holds all of it ({@link #parentListComplete}). Signed deltas are cached (one signature for every child at the same
  * position). Only durable entries are served, so a position is never reused after a crash.
  *
  * <p><b>Who may send a list.</b>
@@ -63,6 +64,8 @@ public final class RevocationSync {
     static final String PARENT_LIST = "rev_parent_list";
     /** On a pong: the parent's registry epoch (always): a change makes the child send its list again. */
     static final String EPOCH = "rev_epoch";
+    /** On a pong: the last position of the parent's list (always, with the epoch): the child holds all of it at that position. */
+    static final String SEQ = "rev_seq";
     /** On a ping: the child's clock (the parent reports a skew). */
     static final String CLOCK = "rev_ts";
 
@@ -97,6 +100,10 @@ public final class RevocationSync {
         volatile String ackedEpoch = "";
         volatile long ackedSeq = -1;                   // -1: the parent acknowledged nothing (send from the start)
         volatile long lastSentFrom = -1, lastSentTo = -1, lastSentAt;
+        /** This node's link to its parent is up, as its health watcher last saw it. */
+        volatile boolean parentJoined;
+        /** A pong since this node last joined its parent showed that it holds the parent's whole list. */
+        volatile boolean parentComplete;
         final Map<String, String> childAcks = new ConcurrentHashMap<>();
         final Map<String, Long> lastWarned = new ConcurrentHashMap<>();
         final Map<String, String> cache = java.util.Collections.synchronizedMap(new LinkedHashMap<String, String>(16, 0.75f, true) {
@@ -368,7 +375,10 @@ public final class RevocationSync {
                 st.ackedSeq = -1;                                                 // the parent holds nothing of ours (restarted)
             }
             String list = pong.getParam(PARENT_LIST) == null ? null : pong.getCompressedParam(PARENT_LIST);
-            if (list == null || parentRegion == null || parentAgent == null) return;
+            if (list == null || parentRegion == null || parentAgent == null) {
+                if (list == null) noteHeld(st, pong);
+                return;
+            }
             String[] why = new String[1];
             Verified v = verifyController(ce, list, parentRegion, parentAgent, false, why);
             if (v == null) {
@@ -382,7 +392,64 @@ public final class RevocationSync {
             // a whole list (from the start) that ends before what this node held of it: the parent's list is shorter than it was
             // (it went back in time within the hour after a new epoch): hold what it serves now, so its next positions arrive
             st.parentSeq = (v.from == 0 && v.to < st.parentSeq) ? v.to : Math.max(st.parentSeq, v.to);
+            noteHeld(st, pong);
         } catch (Exception ignore) { }
+    }
+
+    /**
+     * After a pong: this node holds the parent's whole list when it holds the position the pong states as the list's last
+     * ({@link #SEQ}) in the parent's epoch. A list that arrived in parts (at most {@code revocation_sync_max_entries} per
+     * pong) is whole only with its last part; a parent that states no position (an earlier build) never completes it.
+     */
+    private static void noteHeld(State st, MsgEvent pong) {
+        if (st.parentComplete) return;
+        String seq = pong.getParam(SEQ), epoch = pong.getParam(EPOCH);
+        if (seq == null || epoch == null || epoch.isEmpty() || !epoch.equals(st.parentEpoch)) return;
+        try {
+            if (st.parentSeq >= Long.parseLong(seq)) st.parentComplete = true;
+        } catch (NumberFormatException ignore) { }
+    }
+
+    /**
+     * From a child's health watcher, each time it looks: is this node's link to its parent up (an agent active under its
+     * region, a region joined to its global)? A join after the link was down (or the first) starts anew: the parent's
+     * list counts as held only once a pong of THIS join shows it. True when this call saw the join (the watcher then
+     * pings at once: the list, the trust bundle and an agent's attestation come on the first pong).
+     */
+    public static boolean onParentLink(ControllerEngine ce, boolean up) {
+        State st = state(ce);
+        if (!up) {
+            st.parentJoined = false;
+            return false;
+        }
+        if (st.parentJoined) return false;
+        st.parentComplete = false;
+        st.parentJoined = true;
+        return true;
+    }
+
+    /**
+     * Does this node hold its parent's COMPLETE revocation list -- every position up to the last the parent stated on a
+     * pong -- since it last joined that parent? False from the join until a pong shows it (the first, unless the list is
+     * longer than one pong carries); true for a node without a parent (a global, a region that joined no global, a
+     * standalone node). While the parent is lost the answer of the last join stands (a region keeps running through its
+     * global's outage); it is false again from the moment the node rejoins. Entries the parent adds later arrive on the
+     * following pongs and do not make it false. Read-only: two volatile reads and the controller mode.
+     */
+    public static boolean parentListComplete(ControllerEngine ce) {
+        io.cresco.library.agent.ControllerMode mode = ce.cstate.getControllerState();
+        if (ce.cstate.isGlobalController() || (mode != null && mode.name().startsWith("STANDALONE"))) return true;
+        boolean up;
+        if (ce.cstate.isRegionalController()) {
+            up = mode == io.cresco.library.agent.ControllerMode.REGION_GLOBAL;
+            if (!up && mode != io.cresco.library.agent.ControllerMode.REGION_GLOBAL_INIT
+                    && mode != io.cresco.library.agent.ControllerMode.REGION_GLOBAL_FAILED) return true;      // no global
+        } else {
+            up = mode == io.cresco.library.agent.ControllerMode.AGENT;
+        }
+        State st = STATE.get(ce);
+        // joined, but the watcher has not seen this join yet: what the node held before it does not count
+        return st != null && st.parentComplete && (st.parentJoined || !up);
     }
 
     // ------------------------------------------------------------------ parent side
@@ -430,6 +497,7 @@ public final class RevocationSync {
                 if (ack != null) msg.setParam(ACK, ack);
             }
             msg.setParam(EPOCH, reg.revocationEpoch());
+            msg.setParam(SEQ, Long.toString(reg.revocationSeq()));
             if (serve) {
                 if (pinger != null && have != null && have.indexOf('.') > 0 && epochOf(have).equals(reg.revocationEpoch())
                         && seqOf(have) > reg.revocationSeq()) {
@@ -437,6 +505,7 @@ public final class RevocationSync {
                     boolean renewed = reg.rollbackSuspected(pinger + " holds position " + seqOf(have) + " of this node's revocation list, which"
                             + " has only " + reg.revocationSeq() + " (the registry was restored from an older copy?)");
                     msg.setParam(EPOCH, reg.revocationEpoch());
+                    msg.setParam(SEQ, Long.toString(reg.revocationSeq()));
                     // no new epoch (one was made within the hour): what the child says it holds is not of this list as it is --
                     // serve the whole list, so the positions this node writes next are not skipped as already held
                     if (!renewed) have = null;

@@ -66,7 +66,11 @@ public class AgentHealthWatcher {
         // --- NEW: Schedule Active Ping Timer ---
         if (!controllerEngine.cstate.isRegionalController()) { // Only ping if this is an agent connected to a region
             this.activePingTimer = new Timer("AgentActivePingTimer", true); // Daemon thread
+            io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, false);   // a new watcher: a new join
             this.activePingTimer.scheduleAtFixedRate(new ActivePingTask(), pingInterval, pingInterval); // Start after first interval
+            // the first ping goes at once when this agent is active under its region, not an interval later: the trust
+            // bundle, this agent's attestation and the region's revocation list arrive on its pong
+            this.activePingTimer.schedule(new ParentLinkTask(), 0L, PARENT_LINK_CHECK_MS);
             logger.info("Active Ping Timer scheduled with interval: {} ms", pingInterval);
         }
         // --- END NEW ---
@@ -88,6 +92,8 @@ public class AgentHealthWatcher {
         if (activePingTimer != null) {
             activePingTimer.cancel();
             activePingTimer = null; // Help GC
+            // this watcher goes with the agent's link to its region: the next join starts anew
+            io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, false);
         }
         // --- END NEW ---
         logger.info("Shutdown AgentWatcher");
@@ -200,6 +206,21 @@ public class AgentHealthWatcher {
                     communicationsHealthTimerActive.set(false); // Ensure lock release on exception
                 }
                 logger.error("CommunicationHealthWatcherTask Error: {}", ex.getMessage(), ex);
+            }
+        }
+    }
+
+    /** How often the ping timer looks whether this agent just became active under its region (a field read). */
+    static final long PARENT_LINK_CHECK_MS = 250L;
+
+    /** Sees this agent join its region (active) and pings at once then; tells RevocationSync whether the link is up. */
+    class ParentLinkTask extends TimerTask {
+        public void run() {
+            try {
+                boolean up = controllerEngine.cstate.isActive() && !controllerEngine.cstate.isRegionalController();
+                if (io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up)) new ActivePingTask().run();
+            } catch (Exception ex) {
+                logger.warn("ParentLinkTask Error: {}", ex.getMessage());
             }
         }
     }
