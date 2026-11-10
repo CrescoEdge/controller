@@ -335,10 +335,13 @@ public class DiscoveryProcessor {
 	 *
 	 * <p>As the RESPONDER (the peer joined us): an AGENT joiner is bound first come, only inside this controller's region and
 	 * tenant, never to a controller name or a superuser tenant ({@code agentJoinRefusal}); a REGION/GLOBAL joiner is bound
-	 * first come as a controller (reserved) and becomes a bridge peer. The discovery secret proves membership, not a name.
+	 * first come as a controller (reserved) and becomes a bridge peer -- unless its certificate names a superuser tenant:
+	 * then only when the operator listed it ({@code controllerJoinRefusal}). The discovery secret proves membership, not a
+	 * name or a tenant.
 	 *
 	 * <p>As the CLIENT (we joined the peer): the responder is our controller. An AGENT responder must be in the region and
-	 * tenant we joined; a REGION/GLOBAL responder must not claim our region. Its key is bound as a controller and FOLLOWS
+	 * tenant we joined; a REGION/GLOBAL responder must not claim our region, nor a superuser tenant unless the operator
+	 * listed it. Its key is bound as a controller and FOLLOWS
 	 * authenticated discovery: a re-installed controller is accepted (logged), because a joiner cannot tell a re-install from
 	 * anything else and refusing would cut every agent off until each was reconfigured.
 	 */
@@ -404,6 +407,15 @@ public class DiscoveryProcessor {
 			} else if (controllerExchange && region.equals(myRegion)) {
 				logger.error("Discovery REFUSED " + region + "/" + agent + ": a joining controller claims this node's region");
 				return false;
+			}
+			if (controllerExchange && pinLeaf) {
+				// a controller that joins, or that this node joins: its tenant is its own certificate's word, so one in a
+				// superuser tenant is bound only when the operator listed its key (never first come)
+				String refusal = controllerEngine.getCertificateManager().controllerJoinRefusal(certs);
+				if (refusal != null) {
+					logger.error("Discovery REFUSED controller " + region + "/" + agent + ": " + refusal);
+					return false;
+				}
 			}
 			if (!record) return true;
 			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
@@ -503,10 +515,12 @@ public class DiscoveryProcessor {
 			java.security.cert.X509Certificate[] c = controllerEngine.getCertificateManager().getCertsfromJson(discoveryNode.discover_cert);
 			io.cresco.library.security.CrescoIdentity id = (c == null || c.length == 0) ? null
 					: io.cresco.agent.controller.communication.CrescoNames.identityOf(c[0]);
-			String scope = (id == null || discoveryNode.discovery_type != DiscoveryType.AGENT) ? null
-					: controllerEngine.getCertificateManager().agentJoinRefusal(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent);
+			String scope = id == null ? null : discoveryNode.discovery_type == DiscoveryType.AGENT
+					? controllerEngine.getCertificateManager().agentJoinRefusal(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent)
+					: controllerEngine.getCertificateManager().controllerJoinRefusal(c);
 			if (scope != null) {
-				logger.error("Discovery REFUSED agent " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": " + scope);
+				logger.error("Discovery REFUSED " + (discoveryNode.discovery_type == DiscoveryType.AGENT ? "agent " : "controller ")
+						+ discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": " + scope);
 				return null;
 			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult free = (id == null) ? null
