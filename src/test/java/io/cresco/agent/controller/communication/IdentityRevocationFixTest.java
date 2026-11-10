@@ -70,11 +70,14 @@ class IdentityRevocationFixTest {
 
     /** A child region's entry applies to that region's names only: the same key under another region's name is untouched. */
     @Test
-    void aChildRegionsRevocationAppliesOnlyToItsOwnNames() {
+    void aChildRegionsRevocationAppliesOnlyToItsOwnNames() throws Exception {
+        TlsTestSupport.provider();
         PeerTrustRegistry atGlobal = new PeerTrustRegistry();
-        String k = randomFingerprints(1).get(0);
+        KeyPair b1 = TlsTestSupport.rsa();
+        assertTrue(atGlobal.bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);          // the global verified it as rgB/b1
+        String k = fp(b1.getPublic());
         int n = atGlobal.mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(k, null, "rgB/b1", 0)), "region rgB", "rgB", false);
-        assertEquals(1, n, "an entry naming an identity of the child's own region was refused");
+        assertEquals(1, n, "an entry for a key this node verified under the child's own region was refused");
         assertTrue(atGlobal.isRevokedFor(k, "rgB"));
         assertFalse(atGlobal.isRevokedFor(k, "rgA"), "a region's revocation applied to another region's names");
         // an entry naming another region's identity, or no identity at all, is refused
@@ -83,6 +86,92 @@ class IdentityRevocationFixTest {
                 new PeerTrustRegistry.ListEntry(k3, null, null, 0)), "region rgB", "rgB", false));
         assertFalse(atGlobal.isRevokedKey(k2));
         assertFalse(atGlobal.isRevokedKey(k3));
+    }
+
+    /**
+     * A region cannot list a key this node never verified under it: the key of another region's agent (bound at that region
+     * only), named by the listing region as one of its own, is refused -- under per-node trust the name is its word alone.
+     */
+    @Test
+    void aChildRegionCannotListAKeyThisNodeNeverVerifiedUnderIt() throws Exception {
+        TlsTestSupport.provider();
+        PeerTrustRegistry atGlobal = new PeerTrustRegistry();
+        String victim = randomFingerprints(1).get(0);                               // rgB/b1's key: the global never saw it
+        assertEquals(0, atGlobal.mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(victim, null, "rgA/x", 0)),
+                "revocation list of region rgA/rc", "rgA", false), "region rgA listed a key the global never verified under rgA");
+        assertFalse(atGlobal.isRevokedKey(victim), "another region's key is on the global's list (and travels to every node)");
+        assertFalse(atGlobal.isTombstoned("rgA", "x"));
+        // where the region's CA is recorded, its entry is what refuses that CA's leaf for its own name: taken, for its names only
+        RegionCA caA = RegionCA.generate("t1", "rgA", 2048, 1);
+        assertNull(atGlobal.trustCa(caA.caCert(), "rgA", "t1", "federated"));
+        KeyPair a5 = TlsTestSupport.rsa();
+        X509Certificate[] leaf = caA.enrollFor(a5.getPublic(), "t1", "rgA", "a5", DAY);
+        assertEquals(1, atGlobal.mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(fp(a5.getPublic()), null, "rgA/a5", 0)),
+                "revocation list of region rgA/rc", "rgA", false));
+        assertNull(atGlobal.verifiedIdentity(leaf), "a revoked agent's CA-issued leaf verifies at the global");
+        assertFalse(atGlobal.isRevokedFor(fp(a5.getPublic()), "rgB"));
+    }
+
+    /** A pre-provisioned node: a region cannot list a key the PKI verified here under another region's name. */
+    @Test
+    void aChildRegionCannotListAKeyThePkiVerifiedUnderAnotherRegion() throws Exception {
+        TlsTestSupport.provider();
+        long now = System.currentTimeMillis();
+        PkiTestSupport.Ca root = PkiTestSupport.root("Fabric Root");
+        PkiTestSupport.Node rcB = PkiTestSupport.node(root, "t1", "rgB", "rc", true, now - 60_000, DAY);
+        PkiTestSupport.Node rcA = PkiTestSupport.node(root, "t1", "rgA", "rc", true, now - 60_000, DAY);
+        PeerTrustRegistry atGlobal = new PeerTrustRegistry();
+        atGlobal.setPki(List.of(root.cert), null);
+        assertNotNull(atGlobal.verifiedIdentity(rcB.chain));
+        assertNotNull(atGlobal.verifiedIdentity(rcA.chain));
+        String kB = fp(rcB.kp.getPublic()), kA = fp(rcA.kp.getPublic());
+        assertEquals(0, atGlobal.mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(kB, null, "rgA/x", 0)),
+                "revocation list of region rgA/rc", "rgA", false), "region rgA listed the key of region rgB's controller");
+        assertFalse(atGlobal.isRevokedKey(kB));
+        assertNotNull(atGlobal.verifiedIdentity(rcB.chain));
+        // its own: a key the PKI verified here under rgA
+        PkiTestSupport.Node a1 = PkiTestSupport.node(root, "t1", "rgA", "a1", false, now - 60_000, DAY);
+        assertNotNull(atGlobal.verifiedIdentity(a1.chain));
+        assertEquals(1, atGlobal.mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(fp(a1.kp.getPublic()), null, null, 0)),
+                "revocation list of region rgA/rc", "rgA", false));
+        assertNull(atGlobal.verifiedIdentity(a1.chain));
+        assertFalse(atGlobal.isRevokedFor(kA, "rgA"));
+    }
+
+    /** What one child region's list may hold here is bounded; the entries it already holds stay in force. */
+    @Test
+    void aChildRegionsListIsBoundedHere() throws Exception {
+        TlsTestSupport.provider();
+        PeerTrustRegistry atGlobal = new PeerTrustRegistry();
+        RegionCA caA = RegionCA.generate("t1", "rgA", 2048, 1);
+        assertNull(atGlobal.trustCa(caA.caCert(), "rgA", "t1", "federated"));
+        List<PeerTrustRegistry.ListEntry> flood = new ArrayList<>();
+        List<String> keys = randomFingerprints(PeerTrustRegistry.CHILD_REVOCATIONS_MAX + 500);
+        for (int i = 0; i < keys.size(); i++) flood.add(new PeerTrustRegistry.ListEntry(keys.get(i), null, "rgA/a" + i, 0));
+        int added = atGlobal.mergeRevocations(flood, "revocation list of region rgA/rc", "rgA", false);
+        assertEquals(PeerTrustRegistry.CHILD_REVOCATIONS_MAX, added, "a child region's list grew past its bound here");
+        assertTrue(atGlobal.isRevokedFor(keys.get(0), "rgA"));
+        assertFalse(atGlobal.isRevokedFor(keys.get(keys.size() - 1), "rgA"));
+        assertEquals(PeerTrustRegistry.CHILD_REVOCATIONS_MAX, atGlobal.revocationsAfter(0, Integer.MAX_VALUE, false).size());
+    }
+
+    /** An entry for one region's names does not remove the truststore anchor the same key holds for another region's node. */
+    @Test
+    void anEntryForOneRegionsNamesKeepsTheAnchorOfAnotherRegionsNode() throws Exception {
+        ControllerEngine regionB = node("rgB", "rc", true);
+        CertificateManager cm = regionB.getCertificateManager();
+        TlsTestSupport.Id b1 = TlsTestSupport.selfRooted("b1", "t1", "rgB", "b1");
+        assertTrue(cm.getPeerTrust().bind("t1", "rgB", "b1", b1.kp.getPublic(), "discovery").ok);
+        cm.addCertificatesToTrustStore("rgB_b1", new X509Certificate[]{b1.chain[0]});
+        int anchors = cm.trustStoreSize();
+        String k = fp(b1.kp.getPublic());
+        // the parent's list carries what region rgA listed, for rgA's names
+        cm.getPeerTrust().mergeRevocations(List.of(new PeerTrustRegistry.ListEntry(k, "rgA", "rgA/x", 0)), "revocation list of rgG/gc", null, false);
+        assertEquals(anchors, cm.trustStoreSize(), "rgB/b1's anchor was removed by an entry for rgA's names: b1 can no longer connect to its region");
+        assertNotNull(cm.getPeerTrust().verifiedIdentity(b1.chain));
+        // revoked for every name (this node's operator): the anchor goes
+        assertNull(cm.getPeerTrust().revoke(k, "operator"));
+        assertEquals(anchors - 1, cm.trustStoreSize());
     }
 
     /** A region's list never revokes a CA key. */
@@ -271,7 +360,7 @@ class IdentityRevocationFixTest {
         assertEquals(own, reopened.ownRevocationSeq());
         assertTrue(reopened.isTombstoned("rgA", "a1"));
         assertTrue(reopened.isRevokedKey(fp(kp.getPublic())));
-        assertEquals(1, reopened.revocationsAfter(0, 10_000, true).size(), "the own list lost its entry");
+        assertEquals(1, reopened.revocationsAfter(0, PeerTrustRegistry.CHILD_REVOCATIONS_MAX, true).size(), "the own list lost its entry");
     }
 
     // ------------------------------------------------------------------ rebind tokens and vouched re-keys
