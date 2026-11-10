@@ -20,7 +20,8 @@
 #   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
 #   the phases; GATE_EXTRA_FLAGS is added to every node's flags (e.g. -Dactivemq_topic_memory_limit=67108864).
 #   DP_SIZES (default "262144 4194304"), DP_FLOWS (default "1 4") and DP_RUNS (default "fire:1 fire:2 fire:3 paced:1
-#   paced:2") pick the dataplane lines, so one line can be run again alone. GATE_JFR_DIR: a JFR recording (profile
+#   paced:2") pick the dataplane lines, so one line can be run again alone. Each line keeps every flow's own figures
+#   (per_flow: setup time, how late it started, its send start, first and last receive, send time). GATE_JFR_DIR: a JFR recording (profile
 #   settings) of the global and the region over the dataplane lines, written to <dir>/<build>-gc.jfr and -rc.jfr.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -143,22 +144,34 @@ EOF
       for run in $runs; do
         mode=${run%:*}; rep=${run#*:}; rate=0; n=$msgs
         if [ "$mode" = paced ]; then rate="${DP_RATE_MIB_S:-100}"; n=$(( rate * 3 * 1048576 / size )); fi
-        local at; at=$(( $(date +%s) + 8 ))
+        # start barrier: each flow says it is ready (connected, both dataplanes active), then all start together; a
+        # fixed start time let a flow whose process came up late (by seconds, before its connects) start late
+        # and stretch the measured span (first receive of any flow to the last of any)
         local res; res=$(on "$H4" bash -c "
+          d=\$(mktemp -d); trap 'rm -rf \$d' EXIT
           for f in \$(seq 1 $flows); do
             '$PY' '$PERF' --host 127.0.0.1 --port $AW --fingerprint '$AP' --rx-host $H3 --rx-port $BW --rx-fingerprint '$BP' \
               ${KEY:+--key $KEY} \
-              --messages $n --size $size --rate-mib-s $rate --settle ${DP_SETTLE_S:-90} --start-at $at --stream gate-$B-$size-$flows-$mode-$rep-\$f 2>/dev/null | grep '^BENCH' &
-          done; wait" | sed 's/^BENCH //' | "$PY" -c '
+              --messages $n --size $size --rate-mib-s $rate --settle ${DP_SETTLE_S:-90} --ready-file \$d/ready.\$f --start-file \$d/go --stream gate-$B-$size-$flows-$mode-$rep-\$f 2>/dev/null | grep '^BENCH' &
+          done
+          for _ in \$(seq 1 1200); do [ \$(ls \$d | grep -c '^ready') -ge $flows ] && break; sleep 0.1; done
+          '$PY' -c 'import time; print(time.time() + 0.5)' > \$d/go.tmp && mv \$d/go.tmp \$d/go
+          wait" | sed 's/^BENCH //' | "$PY" -c '
 import json, sys
 rs = [json.loads(l) for l in sys.stdin if l.strip()]
 if not rs: print("null"); sys.exit()
 first = min(r["first_rx"] for r in rs if r["first_rx"]); last = max(r["last_rx"] for r in rs if r["last_rx"])
 tot = sum(r["recv_bytes"] for r in rs)
+t00 = min(r["t0"] for r in rs)   # each flow below: times in s from the first flow starting to send (one host, one clock)
 print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "received": sum(r["received"] for r in rs),
   "missing": sum(r["missing"] for r in rs), "dups": sum(r["dups"] for r in rs), "out_of_order": sum(r["out_of_order"] for r in rs),
   "bad_size": sum(r["bad_size"] for r in rs), "mib_s": round(tot / 1048576 / max(1e-6, last - first), 1),
-  "p50_ms": sorted(r["p50_ms"] for r in rs)[len(rs) // 2], "p99_ms": max(r["p99_ms"] for r in rs)}))')
+  "p50_ms": sorted(r["p50_ms"] for r in rs)[len(rs) // 2], "p99_ms": max(r["p99_ms"] for r in rs),
+  "per_flow": [{"setup_s": r.get("setup_s"), "start_late_s": r.get("start_late_s"), "t0": round(r["t0"] - t00, 3),
+                "first_rx": round(r["first_rx"] - t00, 3) if r["first_rx"] else None,
+                "last_rx": round(r["last_rx"] - t00, 3) if r["last_rx"] else None,
+                "send_s": r["send_s"], "received": r["received"], "mib_s": r["recv_mib_s"]}
+               for r in sorted(rs, key=lambda r: r["t0"])]}))')
         [ $first = 1 ] || dp="$dp,"; first=0
         dp="$dp\"${size}_${flows}f_${mode}_r$rep\": ${res:-null}"
         log "$B: dataplane size=$size flows=$flows $mode rep=$rep $res"
