@@ -19,6 +19,8 @@
 #   dependencies; GATE_PYCRESCOLIB: pycrescolib checkout; GATE_TESTS: controller docs/tests; GATE_PERF: dataplane_perf.py;
 #   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
 #   the phases; GATE_EXTRA_FLAGS is added to every node's flags (e.g. -Dactivemq_topic_memory_limit=67108864).
+#   DP_SIZES (default "262144 4194304"), DP_FLOWS (default "1 4") and DP_RUNS (default "fire:1 fire:2 fire:3 paced:1
+#   paced:2") pick the dataplane lines, so one line can be run again alone.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -63,6 +65,7 @@ EOF
       && bash "$PKI_TOOL" node "$PKI" t1 glob a1 --days 3 && bash "$PKI_TOOL" node "$PKI" t1 rgr b1 --days 3 \
       && bash "$PKI_TOOL" api "$PKI" t1 bench admin --days 3; } > "$RD/pki.log" 2>&1 || { log "FATAL pki"; return 1; }
     local top=0; for s in $STEPS; do top=$s; done
+    [[ " ${GATE_PHASES:-cp dp scale} " == *" scale "* ]] || top=0
     for i in $(seq 1 "$top"); do
       if [ $((i % 2)) = 1 ]; then bash "$PKI_TOOL" node "$PKI" t1 glob "s$i" --days 3; else bash "$PKI_TOOL" node "$PKI" t1 rgr "s$i" --days 3; fi
     done >> "$RD/pki.log" 2>&1 || { log "FATAL pki agents"; return 1; }
@@ -129,12 +132,12 @@ EOF
   on "$H4" "$PY" "$PERF" --host 127.0.0.1 --port $AW --fingerprint "$AP" --rx-host "$H3" --rx-port $BW --rx-fingerprint "$BP" \
       ${KEY:+--key $KEY} --messages 500 --size 262144 --settle 120 --stream "gate-$B-warmup" >/dev/null 2>&1
   local dp="{" first=1 size flows rep
-  for size in 262144 4194304; do
+  for size in ${DP_SIZES:-262144 4194304}; do
     local msgs=$([ "$size" = 262144 ] && echo "${DP_MSGS_256K:-2000}" || echo "${DP_MSGS_4M:-150}")
-    for flows in 1 4; do
+    for flows in ${DP_FLOWS:-1 4}; do
       # fire: as fast as the reader takes it (throughput, loss); paced: a fixed offered load per flow (latency that is
       # the pipeline's, not the depth of the queue a faster writer builds ahead of its reader)
-      local runs="fire:1 fire:2 fire:3 paced:1 paced:2" run mode rate n
+      local runs="${DP_RUNS:-fire:1 fire:2 fire:3 paced:1 paced:2}" run mode rate n
       for run in $runs; do
         mode=${run%:*}; rep=${run#*:}; rate=0; n=$msgs
         if [ "$mode" = paced ]; then rate="${DP_RATE_MIB_S:-100}"; n=$(( rate * 3 * 1048576 / size )); fi
