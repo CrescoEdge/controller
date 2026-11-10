@@ -531,7 +531,10 @@ public class DBEngine {
                     }
 
                     } else {
-                        logger.error("nodeUpdateStatus() WHY DOES AGENT: {} HAVE NO REGION!", agent_id, new Throwable());
+                        // an agent this node does not hold (yet): an export from a build before the export lists
+                        // plugins only with their agents, or an agent removed here meanwhile. Its plugins come again
+                        // with the agent.
+                        logger.debug("nodeUpdateStatus() plugins of agent {} skipped: the agent is not known here", agent_id);
                     }
 
                 }
@@ -629,6 +632,9 @@ public class DBEngine {
 
             exportMap = new HashMap<>();
 
+            // the agents this export lists: with agents and plugins in one export, an agent's plugins go only with the
+            // agent itself (one added between the two reads is in the next export, whole)
+            Set<String> exportedAgents = new HashSet<>();
 
             if(regions) {
 
@@ -665,6 +671,7 @@ public class DBEngine {
                     Map<String, String> aNode = getANodeStrict(agent_id);
                     if (aNode != null) {
                         agentList.add(ConfigRedaction.redactNode(aNode));
+                        exportedAgents.add(agent_id);
                     }
                     agentMap.put(region_id, agentList);
 
@@ -678,6 +685,7 @@ public class DBEngine {
                             Map<String, String> aNode = getANodeStrict(tmp_agent_id);
                             if (aNode != null) {
                                 agentList.add(ConfigRedaction.redactNode(aNode));
+                                exportedAgents.add(tmp_agent_id);
                             }
                         }
                         agentMap.put(tmp_region_id, agentList);
@@ -709,6 +717,9 @@ public class DBEngine {
                     for(String tmp_region_id : tmpRegionList) {
                         List<String> tmpAgentList = getNodeList(tmp_region_id, null);
                         for(String tmp_agent_id : tmpAgentList) {
+                            if (agents && !exportedAgents.contains(tmp_agent_id)) {
+                                continue;
+                            }
                             List<String> tmpPluginList = getNodeList(tmp_region_id, tmp_agent_id);
                             List<Map<String, String>> pluginList = new ArrayList<>();
                             for(String tmp_plugin_id : tmpPluginList) {
