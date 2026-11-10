@@ -100,6 +100,12 @@ public final class MsgSigning {
     /** Ping/pong parameters: a child's certificate and what it holds; the parent's attestation and trust bundle. */
     static final String P_CERT = "sig_cert", P_ATT_EXP = "sig_att_exp", P_ATT = "sig_att", P_BUNDLE_HAVE = "sig_bundle_have",
             P_BUNDLE = "sig_bundle";
+    /**
+     * Beside an attestation on a pong, and back on the agent's pings: the fingerprint of the key that signed it. A parent
+     * that comes back with another key sees that its agent holds an attestation of the key before, and attests it anew
+     * (otherwise the agent would sign with it until it nears its end, refused everywhere past its parent).
+     */
+    static final String P_ATT_ISS = "sig_att_iss";
     /** On a ping and a pong: this node accepts unsigned messages its broker attests first hand (direct links). */
     static final String P_DIRECT_OK = "sig_direct_ok";
     /** On a message this node originates and sends unsigned over a direct link: its own path (copied to {@link CallerStamps#P_ORIGIN}). */
@@ -138,13 +144,16 @@ public final class MsgSigning {
     static final int BATCH_PEERS_MAX = 200_000, BATCH_VERIFIED_MAX = 50_000;
     private final AtomicLong batchedSigned = new AtomicLong();
     private final long maxAgeMs;
+    /** How far ahead of this node's clock a signature's time may be ({@code msg_signature_max_future_ms}, default 60 s). */
+    private final long maxFutureMs;
     private final long attestationMs;
 
     // ---- this node's credential
     private volatile X509Certificate ownCertLeaf;
     private volatile String ownCertB64;
-    private volatile String ownAttestation;
-    private volatile long ownAttestationExp;
+    /** This node's own key (X.509 SPKI, base64) and its fingerprint, of {@link #ownCertLeaf}. */
+    private volatile String ownKeyB64, ownKeyFp;
+    private volatile OwnAttestation ownAttestation;
     /** This node's former region (region_alias), read once: a message for its former address is for it. */
     private volatile String alias;
     private volatile boolean aliasRead;
@@ -198,6 +207,19 @@ public final class MsgSigning {
         String sig;
     }
 
+    /**
+     * The attestation an agent holds, with what it says: it is this node's credential only while it is still this node's
+     * (its name, its key, issued by its current parent; {@link #currentAttestation}).
+     */
+    private static final class OwnAttestation {
+        final String json, issuer, region, agent, key, issuerFp;       // issuerFp: null from a parent that does not name it
+        final long exp;
+        OwnAttestation(String json, Attestation a, String issuerFp) {
+            this.json = json; this.issuer = a.iss; this.region = a.r; this.agent = a.a; this.key = a.k; this.exp = a.exp;
+            this.issuerFp = issuerFp;
+        }
+    }
+
     /** What this node serves its children: one signed bundle per version of its content. */
     private static final class Served {
         final long version, validUntil;
@@ -241,6 +263,9 @@ public final class MsgSigning {
         this.required = SecuritySettings.production(c)
                 || (SecuritySettings.brokerSecurity(c) && c.getBooleanParam("msg_signing_required", true));
         this.maxAgeMs = Math.max(10_000L, c.getLongParam("msg_signature_max_age_ms", 300_000L));
+        // a signed time ahead of the clock keeps its entry in the replay memory until that time has passed: the allowance is
+        // for clock differences between nodes only, never as long as the age a message may have
+        this.maxFutureMs = Math.min(this.maxAgeMs, Math.max(1_000L, c.getLongParam("msg_signature_max_future_ms", 60_000L)));
         this.attestationMs = Math.max(1L, c.getLongParam("msg_signing_attestation_hours", 24L)) * 3_600_000L;
         this.direct = c.getBooleanParam("msg_signing_direct", true);
         this.batch = c.getBooleanParam("msg_signing_batch", true);
@@ -255,7 +280,7 @@ public final class MsgSigning {
         this.credCache = CacheBuilder.newBuilder()
                 .maximumSize(Math.max(1L, c.getLongParam("msg_signing_credentials_max", 100_000L)))
                 .expireAfterWrite(Duration.ofHours(1)).build();
-        this.replay = new ReplayMemory(maxAgeMs, Math.max(4096L, c.getLongParam("msg_replay_memory_max", 4_000_000L)), this::warn);
+        this.replay = new ReplayMemory(maxAgeMs, maxFutureMs, Math.max(4096L, c.getLongParam("msg_replay_memory_max", 4_000_000L)), this::warn);
     }
 
     /** Messages sent and accepted under a session key, sessions made (diagnostics, tests). */
@@ -688,17 +713,35 @@ public final class MsgSigning {
         String b = ownCertB64;
         if (leaf != ownCertLeaf || b == null) {
             b = Base64.getEncoder().encodeToString(leaf.getEncoded());
+            ownKeyB64 = Base64.getEncoder().encodeToString(leaf.getPublicKey().getEncoded());
+            ownKeyFp = PeerTrustRegistry.fingerprint(leaf.getPublicKey().getEncoded());
             ownCertB64 = b;
             ownCertLeaf = leaf;
         }
         return b;
     }
 
-    /** An agent's attestation while it is valid (a tenth of its life left at least), else this node's certificate. */
+    /** An agent's attestation while it is its own and valid (a tenth of its life left at least), else this node's certificate. */
     String credential() throws Exception {
-        String att = ownAttestation;
-        if (att != null && System.currentTimeMillis() < ownAttestationExp - attestationMs / 10) return "att:" + att;
-        return "cert:" + ownCert();
+        String cert = ownCert();
+        OwnAttestation att = currentAttestation();
+        if (att != null && System.currentTimeMillis() < att.exp - attestationMs / 10) return "att:" + att.json;
+        return "cert:" + cert;
+    }
+
+    /**
+     * The attestation this node holds while it is still this node's: for its present name and key, and issued by its
+     * present parent (when it has one: between a parent's loss and the next join the one before stands). An agent that
+     * moved to another region or parent, or took a new key, signs with its certificate until its parent attests it anew
+     * (its next ping reports that it holds none). Call after {@link #ownCert()} (which reads this node's key).
+     */
+    private OwnAttestation currentAttestation() {
+        OwnAttestation a = ownAttestation;
+        if (a == null) return null;
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        if (cs == null || !a.region.equals(cs.getRegion()) || !a.agent.equals(cs.getAgent()) || !a.key.equals(ownKeyB64)) return null;
+        String pr = cs.getRegionalRegion(), pa = cs.getRegionalAgent();
+        return pr == null || pa == null || a.issuer.equals(pr + "/" + pa) ? a : null;
     }
 
     // ================================================================ receiving side
@@ -770,8 +813,12 @@ public final class MsgSigning {
             String by = m.getParam(BY), cred = m.getParam(CRED), ts = m.getParam(TS), to = m.getParam(TO);
             if (by == null || ts == null || (macB64 == null && cred == null)) return refuse(m, "a signature without its signer, credential or time");
             long t = Long.parseLong(ts), now = System.currentTimeMillis();
-            if (Math.abs(now - t) > maxAgeMs) {
-                return refuse(m, "a signature made " + (now - t) / 1000 + " s from now (msg_signature_max_age_ms=" + maxAgeMs + ")");
+            if (now - t > maxAgeMs) {
+                return refuse(m, "a signature made " + (now - t) / 1000 + " s ago (msg_signature_max_age_ms=" + maxAgeMs + ")");
+            }
+            if (t - now > maxFutureMs) {
+                return refuse(m, "a signature made " + (t - now) / 1000 + " s ahead of this node's clock (msg_signature_max_future_ms="
+                        + maxFutureMs + "): the clocks of this node and " + by + " differ");
             }
             // the recipient first: a message signed for another node is refused before any key operation
             String notMine = recipientRefusal(to, m);
@@ -842,11 +889,12 @@ public final class MsgSigning {
             if (fromBroker != null && !fromBroker.equals(signed)) {
                 return refuse(m, "the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
-            switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now)) {
+            switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now, signerMemoryKey(who))) {
                 case FRESH: break;
                 case REPLAY: return refuse(m, "a signature seen before (a replay) from " + by);
-                case TOO_OLD: return refuse(m, "a message signed " + (now - t) / 1000 + " s ago while the replay memory is full (from " + by + ")");
-                case FULL: return refuse(m, "a message while the replay memory is full (from " + by + ")");
+
+                case TOO_OLD: return refuse(m, "a message signed " + (now - t) / 1000 + " s ago while the replay memory for " + by + " is full");
+                case FULL: return refuse(m, "a message while the replay memory for " + by + " (or of this node) is full");
                 default: return refuse(m, "a message signed at a time this node's clock went back past (from " + by + ")");
             }
             String peerNode = who.node();
@@ -875,6 +923,14 @@ public final class MsgSigning {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             return refuse(m, "an unreadable signature (" + e.getClass().getSimpleName() + ")");
         }
+    }
+
+    /** Whose replay memory {@code who}'s messages are remembered in: its key's (64 bits of its fingerprint; never 0). */
+    static long signerMemoryKey(Signer who) {
+        long h = 1125899906842597L;
+        String fp = who.fp;
+        for (int i = 0; i < fp.length(); i++) h = 31 * h + fp.charAt(i);
+        return h == 0 ? 1 : h;
     }
 
     /** {@code tenant/region/agent} -> {@code region_agent}, or null. */
@@ -1152,7 +1208,11 @@ public final class MsgSigning {
         try {
             ping.setParam(P_CERT, ownCert());
             ping.setParam(P_BUNDLE_HAVE, heldBundleDigest);
-            if (!ce.cstate.isRegionalController()) ping.setParam(P_ATT_EXP, Long.toString(ownAttestation == null ? 0 : ownAttestationExp));
+            if (!ce.cstate.isRegionalController()) {
+                OwnAttestation att = currentAttestation();
+                ping.setParam(P_ATT_EXP, Long.toString(att == null ? 0 : att.exp));
+                if (att != null && att.issuerFp != null) ping.setParam(P_ATT_ISS, att.issuerFp);
+            }
         } catch (Exception ignore) { }
     }
 
@@ -1164,10 +1224,12 @@ public final class MsgSigning {
      */
     public void onPingAtParent(MsgEvent msg, boolean childIsRegion) {
         String certB64 = msg.getParam(P_CERT), have = msg.getParam(P_BUNDLE_HAVE), attExp = msg.getParam(P_ATT_EXP);
+        String attIss = msg.getParam(P_ATT_ISS);
         boolean childDirect = "1".equals(msg.getParam(P_DIRECT_OK));
         msg.removeParam(P_CERT);
         msg.removeParam(P_BUNDLE_HAVE);
         msg.removeParam(P_ATT_EXP);
+        msg.removeParam(P_ATT_ISS);
         msg.removeParam(P_DIRECT_OK);
         if (!required) return;
         try {
@@ -1205,8 +1267,12 @@ public final class MsgSigning {
                 } else if (same && id.getRegion().equals(ce.cstate.getRegion())) {
                     long exp = 0;
                     try { exp = attExp == null ? 0 : Long.parseLong(attExp); } catch (NumberFormatException ignore) { }
-                    if (exp < System.currentTimeMillis() + attestationMs / 3) {
+                    // anew when it nears its end, and when the agent holds one signed by another key than this node's now
+                    // (this controller came back re-keyed); an agent that names no key is judged by the end alone
+                    ownCert();
+                    if (exp < System.currentTimeMillis() + attestationMs / 3 || (attIss != null && !attIss.equals(ownKeyFp))) {
                         msg.setParam(P_ATT, attest(id, leaf.getPublicKey(), peers().pathRefs(new X509Certificate[]{leaf})));
+                        msg.setParam(P_ATT_ISS, ownKeyFp);
                     }
                 }
             }
@@ -1238,6 +1304,8 @@ public final class MsgSigning {
             directParentUntil = System.currentTimeMillis() + DIRECT_OFFER_MS;
         }
         pong.removeParam(P_DIRECT_OK);
+        String attIss = pong.getParam(P_ATT_ISS);
+        pong.removeParam(P_ATT_ISS);
         try {
             String att = pong.getParam(P_ATT);
             if (att != null) {
@@ -1246,8 +1314,7 @@ public final class MsgSigning {
                 if (a != null && a.v == 2 && a.k != null && a.iss != null && a.iss.equals(parentRegion + "/" + parentAgent)
                         && ce.cstate.getRegion().equals(a.r) && ce.cstate.getAgent().equals(a.a) && a.refs != null && !a.refs.isEmpty()
                         && a.k.equals(Base64.getEncoder().encodeToString(own.getEncoded())) && a.exp > System.currentTimeMillis()) {
-                    ownAttestation = att;
-                    ownAttestationExp = a.exp;
+                    ownAttestation = new OwnAttestation(att, a, attIss == null || attIss.isEmpty() ? null : attIss);
                 }
             }
             String b = pong.getParam(P_BUNDLE) == null ? null : pong.getCompressedParam(P_BUNDLE);
@@ -1405,5 +1472,8 @@ public final class MsgSigning {
     public int bundleSize() { return bundle.size() + childControllers.size(); }
 
     /** This node holds an attestation (tests, diagnostics). */
-    public boolean hasAttestation() { return ownAttestation != null; }
+    public boolean hasAttestation() {
+        try { ownCert(); } catch (Exception e) { return false; }
+        return currentAttestation() != null;
+    }
 }

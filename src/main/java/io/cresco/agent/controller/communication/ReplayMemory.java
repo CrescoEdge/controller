@@ -17,10 +17,22 @@ package io.cresco.agent.controller.communication;
  * <p><b>Bounded, failing closed.</b> At most {@code maxEntries} are held. A stripe that is full drops its OLDEST bucket and
  * from then on refuses every message signed in or before it (as too old): memory never grows past the bound and a replay
  * is never accepted -- under a flood beyond the bound, the age a message may have shrinks instead (logged).
+ *
+ * <p><b>Each signer has its own.</b> What a node accepts from one signer is remembered apart from what it accepts from
+ * every other ({@link #record(long, long, long, long)}): one ring of buckets per signer, at most
+ * {@code maxEntries / }{@value #SIGNER_DIVISOR} entries each, and {@code maxEntries} in all. A signer that sends more than
+ * its own memory holds shortens the age ITS messages may have, and no other signer's. In one shared memory a single
+ * signer could fill it -- and, with signed times ahead of the clock, keep it full: such entries stay until their time has
+ * passed -- and so have every other signer's messages refused for minutes. A signer's memory goes once nothing it holds
+ * could still be accepted ({@code retainMs} after its last message).
  */
 final class ReplayMemory {
 
     static final int STRIPES = 64;
+    /** One signer's memory holds at most the whole bound divided by this. */
+    static final int SIGNER_DIVISOR = 8;
+    /** Signers remembered at once; past it a new signer's messages are refused until one goes (fails closed). */
+    static final int SIGNERS_MAX = 200_000;
 
     /** Why {@link #record} refused. */
     enum Result { FRESH, REPLAY, TOO_OLD, CLOCK, FULL }
@@ -33,15 +45,110 @@ final class ReplayMemory {
     private final Stripe[] stripes = new Stripe[STRIPES];
     private final Log log;
     private volatile long lastLog;
+    // ---- one memory per signer
+    private final java.util.concurrent.ConcurrentHashMap<Long, Stripe> signers = new java.util.concurrent.ConcurrentHashMap<>();
+    private final long maxEntries, retainMs;
+    private final int perSignerMax;
+    /** Entries held in the signers' memories, kept beside them: read on every message without their locks. */
+    private final java.util.concurrent.atomic.LongAdder signerHeld = new java.util.concurrent.atomic.LongAdder();
+    private final java.util.concurrent.atomic.AtomicBoolean sweeping = new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile long lastSweep;
 
     ReplayMemory(long maxAgeMs, long maxEntries, Log log) {
+        this(maxAgeMs, maxAgeMs, maxEntries, log);
+    }
+
+    /** {@code maxFutureMs}: how far ahead of the receiver's clock an accepted signed time may be (at most the max age). */
+    ReplayMemory(long maxAgeMs, long maxFutureMs, long maxEntries, Log log) {
         this.bucketMs = Math.max(1_000L, maxAgeMs / 8);
         // the signed times a receiver accepts span 2 max-ages (either way of its clock): those buckets, and one more each side
         this.ring = (int) ((2 * maxAgeMs) / bucketMs) + 3;
         this.perStripeMax = (int) Math.max(256L, Math.min(Integer.MAX_VALUE / 2, maxEntries / STRIPES));
         this.log = log;
         for (int i = 0; i < STRIPES; i++) stripes[i] = new Stripe(ring);
+        this.maxEntries = (long) perStripeMax * STRIPES;
+        this.perSignerMax = (int) Math.max(256L, this.maxEntries / SIGNER_DIVISOR);
+        // the last signed time a signer's memory can hold is maxFuture after its last message, acceptable a max-age more
+        this.retainMs = maxAgeMs + Math.min(maxAgeMs, Math.max(0L, maxFutureMs)) + 2 * bucketMs;
     }
+
+    /**
+     * As {@link #record(long, long, long)}, in the memory of {@code signer} (a digest of its key; 0: the shared memory).
+     * FULL also when every signer's memory together holds the bound, or the bound of signers is reached.
+     */
+    Result record(long d, long signedAt, long now, long signer) {
+        if (signer == 0) return record(d, signedAt, now);
+        if (d == 0) d = 1;
+        long b = Math.floorDiv(signedAt, bucketMs);
+        if (now - lastSweep > bucketMs) sweep(now);
+        String note = null;
+        Result r;
+        while (true) {
+            Stripe s = signers.get(signer);
+            if (s == null) {
+                if (signers.size() >= SIGNERS_MAX) {
+                    note("MESSAGE SIGNATURE: the replay memory holds its bound of signers (" + SIGNERS_MAX
+                            + "): messages of signers not heard lately are refused until one goes", now);
+                    return Result.FULL;
+                }
+                Stripe made = new Stripe(ring);
+                s = signers.putIfAbsent(signer, made);
+                if (s == null) s = made;
+            }
+            synchronized (s) {
+                if (s.gone) continue;                            // swept meanwhile: take (or make) the present one
+                s.lastRecord = now;
+                if (signerHeld.sum() >= maxEntries && !s.holds(d, b)) {
+                    note = "MESSAGE SIGNATURE: the replay memory is full (" + signerHeld.sum() + " entries, msg_replay_memory_max="
+                            + maxEntries + "): messages are refused until entries age out";
+                    r = Result.FULL;
+                } else {
+                    long before = s.size;
+                    r = s.record(d, b, perSignerMax);
+                    if (s.size != before) signerHeld.add(s.size - before);
+                    if (s.evicted != 0) {
+                        note = "MESSAGE SIGNATURE: one signer's replay memory is full (" + perSignerMax + " entries, an eighth of"
+                                + " msg_replay_memory_max=" + maxEntries + "): ITS messages signed before "
+                                + new java.util.Date(s.floor * bucketMs) + " are now refused as too old ("
+                                + (now - s.floor * bucketMs) / 1000 + " s instead of the max age); other signers are not affected";
+                        s.evicted = 0;
+                    }
+                }
+            }
+            break;
+        }
+        if (note != null) note(note, now);
+        return r;
+    }
+
+    private void note(String line, long now) {
+        if (log != null && now - lastLog > 60_000L) {
+            lastLog = now;
+            log.line(line);
+        }
+    }
+
+    /** Drop the memories of signers not heard for {@code retainMs}: nothing they hold could still be accepted. */
+    private void sweep(long now) {
+        if (!sweeping.compareAndSet(false, true)) return;
+        try {
+            lastSweep = now;
+            for (java.util.Iterator<java.util.Map.Entry<Long, Stripe>> it = signers.entrySet().iterator(); it.hasNext(); ) {
+                Stripe s = it.next().getValue();
+                synchronized (s) {
+                    if (now - s.lastRecord <= retainMs) continue;
+                    s.gone = true;
+                    signerHeld.add(-s.size);
+                }
+                it.remove();
+            }
+        } finally {
+            sweeping.set(false);
+        }
+    }
+
+    /** Signers with a memory (diagnostics, tests). */
+    int signers() { return signers.size(); }
 
     /**
      * Record the authenticator whose 64-bit digest is {@code d}, signed at {@code signedAt}, as it is accepted now: FRESH
@@ -71,7 +178,7 @@ final class ReplayMemory {
 
     /** Entries held (diagnostics, tests). */
     long size() {
-        long n = 0;
+        long n = signerHeld.sum();
         for (Stripe s : stripes) synchronized (s) { n += s.size; }
         return n;
     }
@@ -89,6 +196,15 @@ final class ReplayMemory {
         long floor = Long.MIN_VALUE;
         long size;
         long evicted;
+        /** As one signer's memory: when it last recorded, and that it was dropped (its holder takes another). */
+        long lastRecord;
+        boolean gone;
+
+        /** Is {@code d} held in the bucket of time {@code b}? */
+        boolean holds(long d, long b) {
+            int slot = (int) Math.floorMod(b, (long) idx.length);
+            return idx[slot] == b && sets[slot] != null && sets[slot].contains(d);
+        }
 
         Stripe(int ring) {
             idx = new long[ring];
