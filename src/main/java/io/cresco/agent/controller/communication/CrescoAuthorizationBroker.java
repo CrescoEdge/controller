@@ -198,6 +198,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         volatile Object bridgePeer;       // the controller at the other end of this bridge connection (resolved once), or NO_PEER
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
         final java.util.concurrent.atomic.AtomicInteger producers = new java.util.concurrent.atomic.AtomicInteger();
+        /** Holds one of the quarantine's connection slots (given back exactly once: when it is removed, or its add fails). */
+        final java.util.concurrent.atomic.AtomicBoolean quarantineSlot = new java.util.concurrent.atomic.AtomicBoolean();
         CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
             this(user, identity, verified, certificate, localController, false);
         }
@@ -657,11 +659,37 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         @Override
         public void addConnection(ConnectionContext context, ConnectionInfo info) throws Exception {
             CrescoSecurityContext sc = resolve(context, info);
-            if (quarantined(context, sc) && quarantinedConnections.incrementAndGet() > quarantineMaxConnections) {
-                quarantinedConnections.decrementAndGet();
-                throw new SecurityException("Cresco: too many connections without a verified identity (at most "
-                        + quarantineMaxConnections + ")");
+            if (quarantined(context, sc)) {
+                if (quarantinedConnections.incrementAndGet() > quarantineMaxConnections) {
+                    quarantinedConnections.decrementAndGet();
+                    throw new SecurityException("Cresco: too many connections without a verified identity (at most "
+                            + quarantineMaxConnections + ")");
+                }
+                sc.quarantineSlot.set(true);
             }
+            // the broker never calls removeConnection for a connection whose add fails (a bridge refused below, a client id
+            // in use, ...): what this connection holds here is given back at once, or every failed attempt would leak it
+            String liveId = sc.verified && sc.certificate && sc.identity != null && context.getConnectionId() != null
+                    ? context.getConnectionId().getValue() : null;
+            ConnectionContext liveBefore = null;
+            boolean added = false;
+            try {
+                if (liveId != null) liveBefore = liveVerified.put(liveId, context);
+                admit(context, info, sc);
+                added = true;
+            } finally {
+                if (!added) {
+                    if (sc.quarantineSlot.compareAndSet(true, false)) quarantinedConnections.decrementAndGet();
+                    if (liveId != null) {
+                        // a second ConnectionInfo for a connection that is up: that connection stays as it was recorded
+                        if (liveBefore != null) liveVerified.replace(liveId, context, liveBefore);
+                        else liveVerified.remove(liveId, context);
+                    }
+                }
+            }
+        }
+
+        private void admit(ConnectionContext context, ConnectionInfo info, CrescoSecurityContext sc) throws Exception {
             context.setSecurityContext(sc);
             // every connection is judged per message, vm:// included: the in-JVM connector is created lazily and does
             // not inherit the broker's policy, and this controller's own vm:// connection is not exempt (see above)
@@ -676,9 +704,6 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                             + ": it has NO identity on this secured broker, so its subscriptions receive nothing and its sends are"
                             + " discarded (logged at most every 10 s)");
                 }
-            }
-            if (sc.verified && sc.certificate && sc.identity != null && context.getConnectionId() != null) {
-                liveVerified.put(context.getConnectionId().getValue(), context);
             }
             if (sc.certificate && sc.identity != null) info.setUserName(sc.identity.toX500Name());
             // Bridge claim (BrokerInfo before ConnectionInfo, as every real bridge does): judge it now so an impostor
@@ -769,7 +794,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 super.removeConnection(context, info, error);
             } finally {
                 CrescoSecurityContext sc = stateOf(context);
-                if (sc != null && quarantined(context, sc)) quarantinedConnections.decrementAndGet();
+                if (sc != null && sc.quarantineSlot.compareAndSet(true, false)) quarantinedConnections.decrementAndGet();
                 if (context != null && context.getConnectionId() != null) liveVerified.remove(context.getConnectionId().getValue());
             }
         }

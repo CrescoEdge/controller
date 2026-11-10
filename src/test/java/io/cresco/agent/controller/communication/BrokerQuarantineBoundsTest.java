@@ -81,6 +81,30 @@ class BrokerQuarantineBoundsTest {
         assertEquals(2, authz.quarantinedConnectionCount());
     }
 
+    /**
+     * A connection the broker refuses to add (here: its client id is in use) holds nothing afterwards: the broker never
+     * removes a connection it did not add, so neither a live-connection record nor a quarantine slot may stay behind.
+     */
+    @Test
+    void aConnectionThatIsNotAddedHoldsNothing() throws Exception {
+        TlsTestSupport.provider();
+        RegionCA ca = RegionCA.generate("t1", "rgA", 2048, 1);
+        PeerTrustRegistry peers = new PeerTrustRegistry();
+        assertNull(peers.trustCa(ca.caCert(), "rgA", "t1", "test"));
+        CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin(Map.of("broker_quarantine_max_connections", "2")), peers);
+        BrokerService b = broker(ca, authz, "?wantClientAuth=true");
+        TlsTestSupport.Id a1 = TlsTestSupport.issued(ca, "t1", "rgA", "a1");
+        connect(b, ca, a1, "one-client");
+        assertEquals(1, authz.liveVerifiedCount());
+        for (int i = 0; i < 5; i++) assertThrows(Exception.class, () -> connect(b, ca, a1, "one-client"), "a client id in use was accepted");
+        assertEquals(1, authz.liveVerifiedCount(), "every refused connection of a verified agent left its context with the broker");
+        connect(b, ca, null, "anon-client");
+        for (int i = 0; i < 5; i++) assertThrows(Exception.class, () -> connect(b, ca, null, "anon-client"), "a client id in use was accepted");
+        assertEquals(1, authz.quarantinedConnectionCount(), "every refused connection kept a quarantine slot");
+        connect(b, ca, null, "anon-2");
+        assertEquals(2, authz.quarantinedConnectionCount());
+    }
+
     /** L2: quarantined connections cannot create destinations without bound over time. */
     @Test
     void quarantinedConnectionsCreateABoundedNumberOfDestinations() throws Exception {
