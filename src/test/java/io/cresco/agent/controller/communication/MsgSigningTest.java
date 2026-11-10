@@ -180,6 +180,30 @@ class MsgSigningTest {
         assertFalse(b1.msgSigning().verify(forgedCred, plugin(a1), false).ok());
     }
 
+    /**
+     * A signed time may be ahead of the receiver's clock by the difference clocks may have (msg_signature_max_future_ms,
+     * 60 s), not by a whole max-age: what is signed ahead stays in the replay memory until its time has passed.
+     */
+    @Test
+    void aSignedTimeFarAheadOfTheClockIsRefused() {
+        MsgEvent ahead = sent(a1, plugin(a1), b1);
+        ahead.setParam(MsgSigning.TS, Long.toString(System.currentTimeMillis() + 120_000L));
+        MsgSigning.Verdict v = b1.msgSigning().verify(ahead, plugin(a1), false);
+        assertFalse(v.ok());
+        assertTrue(v.refusal.contains("ahead of this node's clock"), v.refusal);
+        // within the allowance the time is not what refuses it (here the signature is: the time is signed)
+        MsgEvent slightly = sent(a1, plugin(a1), b1);
+        slightly.setParam(MsgSigning.TS, Long.toString(System.currentTimeMillis() + 30_000L));
+        v = b1.msgSigning().verify(slightly, plugin(a1), false);
+        assertFalse(v.ok());
+        assertFalse(v.refusal.contains("clock"), v.refusal);
+        // behind the clock a message may be as old as before
+        MsgEvent old = sent(a1, plugin(a1), b1);
+        old.setParam(MsgSigning.TS, Long.toString(System.currentTimeMillis() - 240_000L));
+        v = b1.msgSigning().verify(old, plugin(a1), false);
+        assertFalse(v.refusal.contains(" s ago ("), v.refusal);
+    }
+
     @Test
     void aRelayNeverSignsWhatItCarries() {
         MsgEvent m = new MsgEvent(MsgEvent.Type.EXEC, "rgA", "a1", null, "rgB", "b1", null, false, false);
