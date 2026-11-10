@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -56,8 +57,8 @@ class ExportConsistencyTest {
             private int agentReads;
 
             @Override
-            public List<String> getNodeList(String regionId, String agentId) {
-                List<String> list = super.getNodeList(regionId, agentId);
+            protected List<String> getNodeListStrict(String regionId, String agentId) throws Exception {
+                List<String> list = super.getNodeListStrict(regionId, agentId);
                 if ("r1".equals(regionId) && agentId == null && ++agentReads == 1) {
                     addANode("a9", 10, "test", 15000, System.currentTimeMillis(), "{}");
                     assoicateANodetoRNode("r1", "a9");
@@ -87,5 +88,26 @@ class ExportConsistencyTest {
         plugins = gson.fromJson(export.get("pluginconfigs"), TYPE);
         assertEquals(3, agents.get("r1").size());
         assertTrue(plugins.containsKey("a9"));
+    }
+
+    /**
+     * A list query that fails aborts the export (null): the lenient list answered with nothing, and an export saying this
+     * region has no agents made the parent's reconcile delete every agent row of the region.
+     */
+    @Test
+    void aFailedListReadAbortsTheExportInsteadOfSendingAnEmptyOne() {
+        dbe = new DBEngine(TestAgentService.plugin(tmp.toString(), new HashMap<>())) {
+            @Override
+            protected List<String> getNodeListStrict(String regionId, String agentId) throws Exception {
+                if ("r1".equals(regionId) && agentId == null) throw new java.sql.SQLException("lock timeout (test)");
+                return super.getNodeListStrict(regionId, agentId);
+            }
+        };
+        dbe.addRNode("r1", 10, "test", 15000, System.currentTimeMillis(), "{}");
+        dbe.addANode("a1", 10, "test", 15000, System.currentTimeMillis(), "{}");
+        dbe.assoicateANodetoRNode("r1", "a1");
+        assertNull(dbe.getDBExport(true, true, true, "r1", null, null), "an export was built on a list that could not be read");
+        // the lenient read (other callers) still answers, with no rows
+        assertTrue(dbe.getNodeList("r1", null).isEmpty());
     }
 }
