@@ -47,8 +47,10 @@ public class AgentProducer {
     private final String localTenant;
 
 
-    private class ClearProducerTask extends TimerTask {
-        public void run() {
+    private class ClearProducerTask extends io.cresco.agent.core.GuardedTimerTask {
+        ClearProducerTask() { super(logger); }
+
+        protected void tick() {
             logger.trace("Running ClearProducerTask cleanup...");
             // no lock: the map is concurrent. A worker idle for a cycle leaves the map (that worker only: one made since
             // for the same queue stays) and is closed outside any lock -- a JMS close may block on the broker, and every
