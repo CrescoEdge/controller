@@ -1,8 +1,8 @@
 #!/bin/bash
 # The nightly fabric matrix on one DGX node (see nightly.sh). Start the chain once:
 #
-#   sbatch -A <account> -o ~/cresco-gate/nightly/job-%j.out --export=NIGHTLY_HOME=$HOME/cresco-gate/nightly \
-#     ~/cresco-gate/nightly/scripts/nightly.sbatch
+#   sbatch -A <account> -o ~/cresco-gate/nightly/job-%j.out \
+#     --export=NIGHTLY_HOME=$HOME/cresco-gate/nightly,NIGHTLY_ACCOUNT=<account> ~/cresco-gate/nightly/scripts/nightly.sbatch
 #   (one night without a next one: add ,NIGHTLY_CHAIN=0; chosen cells: ,NIGHTLY_CELLS="tree mesh")
 #
 # Each night submits the next one first (01:30), with the same account and scripts, so a night that fails or is killed
@@ -25,8 +25,10 @@ if [ "${NIGHTLY_CHAIN:-1}" = 1 ]; then
   # job's SLURM settings or an environment that grows from night to night
   pending=$(bash -lc "squeue -h -u $USER -n cresco-nightly -t PENDING -o %i" 2>/dev/null | grep -c -E '^[0-9]+$')
   if [ "$pending" = 0 ]; then
-    bash -lc "sbatch -A $SLURM_JOB_ACCOUNT --begin=$(date -d 'tomorrow 01:30' +%Y-%m-%dT%H:%M:%S) -o $N/job-%j.out --export=NIGHTLY_HOME=$N $S/nightly.sbatch" 2>&1 \
-      | grep -E "Submitted|rror" || echo "nightly: the next night could NOT be submitted"
+    # the account is passed on by name: inside a job the DGX reports SLURM_JOB_ACCOUNT as "general", which sbatch refuses
+    A="${NIGHTLY_ACCOUNT:?set NIGHTLY_ACCOUNT (the account the next night is submitted under)}"
+    bash -lc "sbatch -A $A --begin=$(date -d 'tomorrow 01:30' +%Y-%m-%dT%H:%M:%S) -o $N/job-%j.out --export=NIGHTLY_HOME=$N,NIGHTLY_ACCOUNT=$A $S/nightly.sbatch" 2>&1 \
+      | grep "Submitted" || echo "nightly: the next night could NOT be submitted"
   fi
 fi
 find "$N" -maxdepth 1 -name 'job-*.out' -mtime +30 -delete 2>/dev/null
