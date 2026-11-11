@@ -391,12 +391,7 @@ public class ActiveBroker {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
 					this.authorization = authz;
 					// review F2: a bridge carries only principals it may carry; this node's global carries the fabric below it
-					authz.setParent(() -> {
-						io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
-						if (cs == null || cs.isGlobalController()) return null;
-						String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
-						return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
-					});
+					authz.setParent(() -> parentOf(controllerEngine.cstate, controllerEngine.joiningGlobal()));
 					// a node whose inbox consumer left this broker gets nothing first hand any more: no unsigned direct messages
 					authz.setInboxLeftListener(node -> controllerEngine.msgSigning().inboxConsumerLeft(node));
 					// gfs#26: a node attached here answers at the former region its own registration recorded (region_alias)
@@ -882,6 +877,18 @@ public class ActiveBroker {
 	public static boolean dataplaneBackpressure(PluginBuilder plugin) {
 		return plugin.getConfig().getBooleanParam("dataplane_backpressure", true)
 				&& plugin.getConfig().getBooleanParam("activemq_topic_producer_flow_control", true);
+	}
+
+	/**
+	 * This node's parent controller, whose bridge carries the whole fabric below it: the global a region has joined, or --
+	 * while its state does not name one yet -- the global it is joining ({@code joining}: authenticated in discovery, its
+	 * bridge up before the join is recorded). None for the global itself, and for a region that has no global.
+	 */
+	static PeerIdentity.Expected parentOf(io.cresco.agent.core.ControllerStateImp cs, PeerIdentity.Expected joining) {
+		if (cs == null || cs.isGlobalController()) return null;
+		String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
+		if (gr != null && ga != null) return new PeerIdentity.Expected(gr, ga);
+		return joining;
 	}
 
 	// Create the bridge group to a remote host. Returns the PRIMARY connector (index 0) un-started so
