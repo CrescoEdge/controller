@@ -9,7 +9,8 @@ package io.cresco.agent.controller.communication;
  * traffic.
  *
  * <p><b>Compact.</b> An entry is the first 64 bits of the SHA-256 of the signature or MAC (a false "replay" of a legitimate
- * message is a 2^-64 event per entry held), in open-addressing tables of primitive longs: 8 to 21 bytes an entry.
+ * message is a 2^-64 event per entry held), in open-addressing tables of primitive longs: 8 to 21 bytes an entry in a
+ * busy bucket, and about a kilobyte for a signer that sends little (its ring and a small table per bucket it wrote).
  *
  * <p><b>Atomic.</b> The digests are split over {@value #STRIPES} stripes, each with its own lock: the check and the record
  * are one step under the lock of the digest's stripe, so two copies of one message can never both be accepted.
@@ -23,8 +24,14 @@ package io.cresco.agent.controller.communication;
  * {@code maxEntries / }{@value #SIGNER_DIVISOR} entries each, and {@code maxEntries} in all. A signer that sends more than
  * its own memory holds shortens the age ITS messages may have, and no other signer's. In one shared memory a single
  * signer could fill it -- and, with signed times ahead of the clock, keep it full: such entries stay until their time has
- * passed -- and so have every other signer's messages refused for minutes. A signer's memory goes once nothing it holds
- * could still be accepted ({@code retainMs} after its last message).
+ * passed -- and so have every other signer's messages refused for minutes.
+ *
+ * <p><b>A signer's memory drains by time.</b> A bucket whose signing times are all older than the max age holds nothing
+ * that could still be accepted: it is dropped at that signer's next message and by a sweep (once a bucket's time), and a
+ * signer's memory that is empty and idle goes. When every signer's memory TOGETHER holds the bound, the oldest signing
+ * times go in every signer's memory at once ({@link #makeRoom}): from then on a message signed before them is refused as
+ * too old, and fresh messages are accepted -- the age a message may have shrinks, as in the shared memory. Only a flood
+ * that fills the bound within one bucket's time is refused outright (FULL).
  */
 final class ReplayMemory {
 
@@ -47,8 +54,11 @@ final class ReplayMemory {
     private volatile long lastLog;
     // ---- one memory per signer
     private final java.util.concurrent.ConcurrentHashMap<Long, Stripe> signers = new java.util.concurrent.ConcurrentHashMap<>();
-    private final long maxEntries, retainMs;
+    private final long maxEntries, retainMs, maxAgeMs;
     private final int perSignerMax;
+    /** Bucket index: signing times before it are refused in every signer's memory (raised when all together hold the bound). */
+    private volatile long globalFloor = Long.MIN_VALUE;
+    private final Object roomLock = new Object();
     /** Entries held in the signers' memories, kept beside them: read on every message without their locks. */
     private final java.util.concurrent.atomic.LongAdder signerHeld = new java.util.concurrent.atomic.LongAdder();
     private final java.util.concurrent.atomic.AtomicBoolean sweeping = new java.util.concurrent.atomic.AtomicBoolean();
@@ -60,6 +70,7 @@ final class ReplayMemory {
 
     /** {@code maxFutureMs}: how far ahead of the receiver's clock an accepted signed time may be (at most the max age). */
     ReplayMemory(long maxAgeMs, long maxFutureMs, long maxEntries, Log log) {
+        this.maxAgeMs = maxAgeMs;
         this.bucketMs = Math.max(1_000L, maxAgeMs / 8);
         // the signed times a receiver accepts span 2 max-ages (either way of its clock): those buckets, and one more each side
         this.ring = (int) ((2 * maxAgeMs) / bucketMs) + 3;
@@ -74,15 +85,17 @@ final class ReplayMemory {
 
     /**
      * As {@link #record(long, long, long)}, in the memory of {@code signer} (a digest of its key; 0: the shared memory).
-     * FULL also when every signer's memory together holds the bound, or the bound of signers is reached.
+     * FULL when the bound of signers is reached, or when every signer's memory together holds the bound and no older
+     * signing time is left to give up (a flood within one bucket's time).
      */
     Result record(long d, long signedAt, long now, long signer) {
         if (signer == 0) return record(d, signedAt, now);
         if (d == 0) d = 1;
         long b = Math.floorDiv(signedAt, bucketMs);
-        if (now - lastSweep > bucketMs) sweep(now);
+        if (now - lastSweep > bucketMs || now < lastSweep) sweep(now);
         String note = null;
         Result r;
+        boolean madeRoom = false;
         while (true) {
             Stripe s = signers.get(signer);
             if (s == null) {
@@ -95,17 +108,25 @@ final class ReplayMemory {
                 s = signers.putIfAbsent(signer, made);
                 if (s == null) s = made;
             }
+            boolean full = false;
             synchronized (s) {
                 if (s.gone) continue;                            // swept meanwhile: take (or make) the present one
-                s.lastRecord = now;
+                // what this signer holds that no message could repeat any more (signed longer ago than the max age, or
+                // before the oldest signing time every memory keeps) goes first: O(ring), once a bucket's time
+                long keep = keep(now);
+                if (s.floor < keep) {
+                    long before = s.size;
+                    s.expire(keep);
+                    if (s.size != before) signerHeld.add(s.size - before);
+                }
                 if (signerHeld.sum() >= maxEntries && !s.holds(d, b)) {
-                    note = "MESSAGE SIGNATURE: the replay memory is full (" + signerHeld.sum() + " entries, msg_replay_memory_max="
-                            + maxEntries + "): messages are refused until entries age out";
+                    full = true;
                     r = Result.FULL;
                 } else {
                     long before = s.size;
                     r = s.record(d, b, perSignerMax);
                     if (s.size != before) signerHeld.add(s.size - before);
+                    if (r == Result.FRESH || r == Result.REPLAY) s.lastRecord = now;
                     if (s.evicted != 0) {
                         note = "MESSAGE SIGNATURE: one signer's replay memory is full (" + perSignerMax + " entries, an eighth of"
                                 + " msg_replay_memory_max=" + maxEntries + "): ITS messages signed before "
@@ -115,10 +136,58 @@ final class ReplayMemory {
                     }
                 }
             }
+            if (full && !madeRoom && makeRoom(now)) {
+                madeRoom = true;                                 // once: the oldest signing times went everywhere
+                continue;
+            }
+            if (full) {
+                note = "MESSAGE SIGNATURE: the replay memory is full (" + signerHeld.sum() + " entries, msg_replay_memory_max="
+                        + maxEntries + ") with signing times of the present moment alone: messages are refused until they age";
+            }
             break;
         }
         if (note != null) note(note, now);
         return r;
+    }
+
+    /** The oldest bucket a signer's memory keeps now: older ones hold only signing times past the max age, or given up. */
+    private long keep(long now) {
+        return Math.max(Math.floorDiv(now - maxAgeMs, bucketMs), globalFloor);
+    }
+
+    /**
+     * Every signer's memory together holds the bound: give up the oldest signing times in ALL of them, one bucket at a
+     * time, until there is room -- from then on a message signed before them is refused as too old, in every memory. True
+     * when there is room; false when what is held was all signed in the present bucket or later (nothing older is left
+     * to give up). Each step visits every signer's memory once; it runs only while the bound is held.
+     */
+    private boolean makeRoom(long now) {
+        synchronized (roomLock) {
+            long present = Math.floorDiv(now, bucketMs);
+            while (signerHeld.sum() >= maxEntries) {
+                long next = keep(now) + 1;
+                if (next > present) return false;
+                globalFloor = next;
+                expireAll(now);
+                note("MESSAGE SIGNATURE: the replay memory is full (msg_replay_memory_max=" + maxEntries + " over " + signers.size()
+                        + " signers): messages signed before " + new java.util.Date(next * bucketMs) + " are now refused as too old ("
+                        + (now - next * bucketMs) / 1000 + " s instead of the max age), from every signer", now);
+            }
+            return true;
+        }
+    }
+
+    /** Drop, in every signer's memory, the buckets no message could repeat any more. */
+    private void expireAll(long now) {
+        long keep = keep(now);
+        for (Stripe s : signers.values()) {
+            synchronized (s) {
+                if (s.gone || s.floor >= keep) continue;
+                long before = s.size;
+                s.expire(keep);
+                if (s.size != before) signerHeld.add(s.size - before);
+            }
+        }
     }
 
     private void note(String line, long now) {
@@ -128,15 +197,25 @@ final class ReplayMemory {
         }
     }
 
-    /** Drop the memories of signers not heard for {@code retainMs}: nothing they hold could still be accepted. */
+    /**
+     * Once a bucket's time: drop in every signer's memory what no message could repeat any more, and the memories that
+     * are empty and were not written for a bucket's time (or not at all for {@code retainMs}).
+     */
     private void sweep(long now) {
         if (!sweeping.compareAndSet(false, true)) return;
         try {
             lastSweep = now;
+            long keep = keep(now);
             for (java.util.Iterator<java.util.Map.Entry<Long, Stripe>> it = signers.entrySet().iterator(); it.hasNext(); ) {
                 Stripe s = it.next().getValue();
                 synchronized (s) {
-                    if (now - s.lastRecord <= retainMs) continue;
+                    if (s.floor < keep) {
+                        long before = s.size;
+                        s.expire(keep);
+                        if (s.size != before) signerHeld.add(s.size - before);
+                    }
+                    long idle = now - s.lastRecord;
+                    if (idle >= 0 && idle <= retainMs && (s.size > 0 || idle <= bucketMs)) continue;
                     s.gone = true;
                     signerHeld.add(-s.size);
                 }
@@ -212,6 +291,18 @@ final class ReplayMemory {
             java.util.Arrays.fill(idx, Long.MIN_VALUE);
         }
 
+        /** Drop every bucket before {@code keep}; from now on a signing time before it is refused as too old. */
+        void expire(long keep) {
+            for (int i = 0; i < idx.length; i++) {
+                if (idx[i] != Long.MIN_VALUE && idx[i] < keep) {
+                    if (sets[i] != null) size -= sets[i].size;
+                    sets[i] = null;
+                    idx[i] = Long.MIN_VALUE;
+                }
+            }
+            if (keep > floor) floor = keep;
+        }
+
         Result record(long d, long b, int max) {
             if (b < floor) return Result.TOO_OLD;
             int slot = (int) Math.floorMod(b, (long) idx.length);
@@ -247,9 +338,13 @@ final class ReplayMemory {
         }
     }
 
-    /** An open-addressing set of non-zero longs (linear probing, grows at 3/4 load). */
+    /**
+     * An open-addressing set of non-zero longs (linear probing, grows at 3/4 load). It starts at 4 slots: a signer that
+     * sends a message or two in a bucket's time holds 48 bytes for it, not the 528 of a 64-slot table -- with one memory
+     * per signer, 200,000 quiet signers would otherwise hold gigabytes.
+     */
     static final class LongSet {
-        private long[] t = new long[64];
+        private long[] t = new long[4];
         int size;
 
         boolean add(long v) {
