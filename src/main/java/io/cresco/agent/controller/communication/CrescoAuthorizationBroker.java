@@ -89,6 +89,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final boolean logAllow;
     private final boolean recipientBinding;
     private final boolean allowUnverifiedBridges;
+    private final boolean transit;
     private final String ownTenant;
     private volatile CrescoIdentity ownIdentity;
     /** Bounds on what a quarantined connection may hold (it receives nothing and its sends are discarded). */
@@ -140,6 +141,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             logger.warn("broker_allow_unverified_bridges=true: ANY client that claims to be a broker bridge without a client"
                     + " certificate is exempt from tenant authorization (migration only; turn on broker_require_client_auth)");
         }
+        // split horizon (see relayedByABridge): only the global's broker hands a bridge what another bridge brought
+        String relay = plugin.getConfig().getStringParam(TRANSIT_KEY);
+        this.transit = relay != null && !relay.trim().isEmpty() ? Boolean.parseBoolean(relay.trim())
+                : plugin.getConfig().getBooleanParam("is_global", false);
         // W-GFS-1: named cross-tenant sinks (see TenantPolicy.CrossTenantSink). Empty by default -> the
         // strict own-subtree rule, exactly as before.
         this.crossTenantSinks = TenantPolicy.CrossTenantSink.parse(
@@ -151,7 +156,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         this.seenRefreshMs = Math.max(60_000L, plugin.getConfig().getLongParam("peer_seen_refresh_ms", 3_600_000L));
         logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes
                 + " superuser tenants=" + this.superuserTenants + " cross-tenant sinks=" + this.crossTenantSinks
-                + " stream recipient binding=" + this.recipientBinding + " " + PeerIdentity.MODE_KEY + "=" + this.peerMode);
+                + " stream recipient binding=" + this.recipientBinding + " " + PeerIdentity.MODE_KEY + "=" + this.peerMode
+                + " relays between bridges=" + this.transit);
     }
 
     /** Authorization role for a resolved identity: SUPERUSER for a configured superuser tenant, else TENANT. */
@@ -413,6 +419,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         CrescoSecurityContext q = stateOf(context);
         if (quarantined(context, q)) return withheld(message, null, "a connection without a client certificate receives nothing");
         if (bridgeCarrier(context, q)) {
+            // split horizon: what a bridge brought to a region's broker is for that broker's own clients, never for a bridge
+            if (!transit && relayedByABridge(message)) return false;
             // a bridge's demand subscription: only its peer's own traffic leaves over it (judged per message: the demand may
             // be a wildcard, and refusing the subscription itself would take the whole bridge down)
             ActiveMQDestination about = message.getDestination();
@@ -1235,6 +1243,58 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     + (dest == null ? "?" : dest.getPhysicalName()) + "': " + why + " (" + n + " so far)");
         }
         return false;
+    }
+
+    // ---- split horizon: a region's broker is no relay between bridges ----
+
+    /** Set to true or false to decide it by hand; unset, only the global's broker ({@code is_global}) relays between bridges. */
+    static final String TRANSIT_KEY = "broker_bridge_transit";
+    private final java.util.concurrent.atomic.LongAdder transitWithheld = new java.util.concurrent.atomic.LongAdder(),
+            transitDemandWithheld = new java.util.concurrent.atomic.LongAdder();
+
+    /** Messages that reached this broker over a bridge and were therefore not handed to another bridge, so far. */
+    public long transitWithheldCount() { return transitWithheld.sum(); }
+
+    /** Announcements of a bridge's demand that this broker did not pass on to another bridge, so far. */
+    public long transitDemandWithheldCount() { return transitDemandWithheld.sum(); }
+
+    /** Does this broker hand a bridge what another bridge brought (the global's does; a region's does not)? */
+    public boolean relaysBetweenBridges() { return transit; }
+
+    /**
+     * Would handing {@code message} to a bridge make this broker a relay between two bridges? Asked for a bridge's
+     * subscription on a broker that is not the global's; true (and counted) for
+     * <ul>
+     *   <li>a message that reached this broker over a bridge: its broker path names the brokers it crossed, and is empty
+     *       for what a client of this broker (its controller, a node of its region) sent;</li>
+     *   <li>the announcement of a consumer that is itself a bridge's demand: passed on, it would tell the next broker that
+     *       this one is a way to that consumer.</li>
+     * </ul>
+     * Why: ActiveMQ forwards on demand along every path of up to {@code broker_message_ttl} brokers. Where regions are
+     * bridged to each other as well as to the global, every topic message then reached a broker once over each such path
+     * (in a mesh of three regions: directly, over the global, and over each other region), and a queue message took the
+     * way over another region whenever its own bridge was away for a moment (after a restart of the global). The broker
+     * at the end strips the caller from what a region's bridge brings for another region's node ({@link #bridgeScope}: a
+     * region speaks for its own nodes only) -- rightly, and so those copies arrived without a caller: a subscriber could
+     * be handed the stripped copy before the direct one, and a watchdog or ping that went the long way was refused as
+     * unsigned. The global is the one relay of the tree: the regions below it take from its bridge what any node of the
+     * fabric sent. A region relays nothing: its bridges carry what its own clients send and bring what its own clients
+     * asked for. One comparison per message handed to a bridge; nothing is looked up.
+     */
+    private boolean relayedByABridge(Message message) {
+        if (isAdvisory(message)) {
+            Object about = message.getDataStructure();
+            if (!(about instanceof ConsumerInfo)) return false;
+            ConsumerInfo demand = (ConsumerInfo) about;
+            org.apache.activemq.command.BrokerId[] crossed = demand.getBrokerPath();
+            if (!demand.isNetworkSubscription() && (crossed == null || crossed.length == 0)) return false;
+            transitDemandWithheld.increment();
+            return true;
+        }
+        org.apache.activemq.command.BrokerId[] crossed = message.getBrokerPath();
+        if (crossed == null || crossed.length == 0) return false;
+        transitWithheld.increment();
+        return true;
     }
 
     // ---- what a bridge may carry (review Phase 3 F2) ----

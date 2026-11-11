@@ -452,6 +452,17 @@ is refused for its caller.
   logged as a forged caller): the message travels without a caller and is refused wherever one is required. With
   `net_source_routing` on, a message relayed through another region's controller loses its stamp at that hop until
   messages are signed end to end (D4).
+- **What a region's broker hands a bridge** (split horizon). Only the global's broker relays between bridges: a region's
+  broker gives a bridge what its own clients sent (its controller, the nodes of its region), never a message that
+  reached it over another bridge, and it does not pass a bridge's demand on to another bridge
+  (`CrescoAuthorizationBroker.relayedByABridge`; counted in `broker.bridge.transit.withheld`, not logged). ActiveMQ
+  forwards on demand along every path of up to `broker_message_ttl` brokers, so where regions are bridged to each other
+  as well as to the global every topic message used to arrive once per path, and a queue message went over another region
+  whenever its own bridge was away -- and the copy a region's bridge brought for another region's node lost its stamp
+  under the rule above (one `STRIPPED a forged caller` line per node every 10 s in a mesh at rest; watchdogs refused as
+  unsigned after a restart of the global). The rule above is unchanged: a region still speaks for its own nodes only.
+  `broker_bridge_transit=true|false` decides it by hand (unset: only the node with `is_global` relays). A region that
+  other regions can reach only through another REGION (no global, no bridge of their own) is no longer reached that way.
 - **Plugin ids** (review F6) are one plain path segment: 1-64 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
   no `..`, checked where they enter (`pluginadd` `inode_id`, `pluginremove` `pluginid`, the global's `addplugin`). A purge
   deletes only a real directory whose real parent is `plugin-data`, and never follows a link inside it.

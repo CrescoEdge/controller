@@ -28,7 +28,7 @@ import java.util.function.ToLongFunction;
  *       ({@link MsgCounts.Drop}). Three counts are not messages this node received and are in neither total:
  *       {@code msg.sign.failed}, {@code msg.trust.refused}, {@code msg.filepart.dropped};</li>
  *   <li>group {@value #BROKER_GROUP}: {@code broker.caller.stripped}, {@code broker.bridge.withheld},
- *       {@code broker.bridge.discarded}, {@code broker.anonymous.discarded}, {@code broker.recipient.withheld},
+ *       {@code broker.bridge.transit.withheld}, {@code broker.bridge.discarded}, {@code broker.anonymous.discarded}, {@code broker.recipient.withheld},
  *       {@code broker.quarantine.connections} (a gauge: now).</li>
  * </ul>
  * On a quiet fabric, summed over its nodes: {@code msg.originated = msg.delivered + msg.refused + msg.dropped}
@@ -82,6 +82,9 @@ public final class MsgMetrics {
                 ce, CrescoAuthorizationBroker::forgedStampCount);
         broker(registry, names, "broker.bridge.withheld", "Messages a bridge demanded and this node's broker did not give it.",
                 ce, CrescoAuthorizationBroker::bridgeWithheldCount);
+        broker(registry, names, "broker.bridge.transit.withheld", "Messages that reached this node's broker over a bridge and were not handed"
+                        + " on to another bridge (a region's broker relays nothing between bridges; the global's does).",
+                ce, CrescoAuthorizationBroker::transitWithheldCount);
         broker(registry, names, "broker.bridge.discarded", "Messages a bridge brought in for a destination its peer may not write: discarded.",
                 ce, CrescoAuthorizationBroker::bridgeDiscardedCount);
         broker(registry, names, "broker.anonymous.discarded", "Messages sent by connections without a client certificate: discarded.",
