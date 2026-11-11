@@ -251,6 +251,21 @@ final class MsgSessions {
         }
     }
 
+    /**
+     * Forget every session held with {@code peerNode} when the signer its MACs are checked against is {@code signer} (that
+     * signer's name, or the controller that attested it, got another key): true when it was. O(1).
+     */
+    boolean dropIfSigner(String peerNode, MsgSigning.Signer signer) {
+        Peer p = peerNode == null ? null : peers.getIfPresent(peerNode);
+        if (p == null) return false;
+        synchronized (p) {
+            if (p.signer != signer) return false;
+            p.current = p.pending = p.previous = null;
+            p.signer = null;
+        }
+        return true;
+    }
+
     /** Forget the sessions of every peer {@code refused} says no (a revocation came in force); how many. */
     int dropWhere(Predicate<Peer> refused) {
         int n = 0;
@@ -295,7 +310,15 @@ final class MsgSessions {
                 if (p.name != null) { p.current = p.pending = p.previous = null; p.offer = null; }
                 p.name = by;
             }
-            if (signed && signer != null) p.signer = signer;
+            if (signed && signer != null) {
+                MsgSigning.Signer had = p.signer;
+                if (had != null && had != signer && !had.fp.equals(signer.fp)) {
+                    // the name authenticates with another key: what was agreed with the key before is not this peer's
+                    p.current = p.pending = p.previous = null;
+                    p.offer = null;
+                }
+                p.signer = signer;
+            }
             if (inc != null && p.inc != null && !inc.equals(p.inc)) {
                 // the peer restarted: it holds none of this node's sessions any more (what it sent before still verifies)
                 if (p.current != null) p.previous = p.current;

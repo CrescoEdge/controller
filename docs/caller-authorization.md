@@ -686,7 +686,16 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   serial, validity): a credential is verified once and cached, but on EVERY message the signer -- and an attestation's
   issuer -- is checked against this node's revocations as they stand: a key revoked here (any scope), a tombstoned name,
   a certificate out of its validity, and with a PKI the operator's `revocation_file` (a listed key or certificate, a CRL
-  serial, a CRL past its `nextUpdate`: fail closed). A revocation coming in force (a reload of `revocation_file`, a revoked
+  serial, a CRL past its `nextUpdate`: fail closed). A name has ONE key: from the moment a node binds another key to a
+  name (an operator's rebind, a controller it follows that re-keyed) or learns one for it (a trust bundle that lists the
+  name with another key; at a global, the certificate a region presents on its ping), what it verified on the name's
+  former key is no longer served -- its cached certificates and attestation, every cached attestation that key ISSUED,
+  the sessions agreed with them, the trust-bundle entry under that key -- and a controller refuses its own attestation of
+  a key the attested name no longer has there. Only that name pays (the others stay cached); nothing is added per
+  message. Two limits: a node that never learns of the change keeps verifying an agent's attestation until it ends (an
+  agent's rebind is known to its controller only: revoke the key to tell the fabric), and with a PKI a re-issued
+  certificate does not replace the one before, which verifies until the operator revokes it (production-deployment.md,
+  section 5). A revocation coming in force (a reload of `revocation_file`, a revoked
   key, a merged list) also re-verifies every cached credential, drops the sessions of what it now refuses and, at a
   global, re-verifies its regions' certificates and drops those refused from the bundle it sends down.
 - **The receiver** refuses an unsigned message, a bad signature or credential, a message that does not name it, a
