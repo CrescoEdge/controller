@@ -706,9 +706,16 @@ public class ControllerEngine {
             }
             routed = true;
             msgRouter.route(msg, offWire);
+        } catch (InterruptedException gaveUp) {
+            // The sender stopped waiting for the parent link (its own timeout cancelled the send, or the node is
+            // stopping). That is the link's fault, not a routing error: one WARN line, no stack trace, the cause the
+            // message would have had at the end of the wait, and the thread's interrupt kept for the caller.
+            Thread.currentThread().interrupt();
+            logger.warn("msgIn: parent link in connection fault, the sender stopped waiting; dropping message [" + io.cresco.agent.controller.communication.ParamLog.describe(msg) + "]");
+            if (!routed) msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.PARENT_LINK_DOWN, msg);
         } catch (Exception ex) {
         logger.error("ControllerEngine.msgIn ", ex);
-            // it never reached the router (the wait for the parent link was interrupted, or the check itself failed)
+            // it never reached the router (the check before it failed)
             if (!routed) msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.ROUTE_ERROR, msg);
         }
     }

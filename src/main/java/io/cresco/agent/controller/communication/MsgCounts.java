@@ -65,7 +65,7 @@ public final class MsgCounts {
         /** Source-routed on through this node, which relays no source routes (net_source_routing is off). */
         SOURCE_ROUTE_NOT_RELAYED("source_route_not_relayed", "a source-routed message this node does not relay"),
         /** Waited msgin_fault_wait_ms for the link to the parent's broker, which stayed down. */
-        PARENT_LINK_DOWN("parent_link_down", "a message that waited out the parent link's connection fault"),
+        PARENT_LINK_DOWN("parent_link_down", "a message held for the parent link, which stayed down until the wait ended or the sender gave up"),
         /** This node has no producer (or broker client) now: its link is being made anew. */
         NO_SENDER("no_sender", "a message to send while this node has no producer (AgentProducer is null. Message not sent)"),
         /** A message to send that names no destination. */
