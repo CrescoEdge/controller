@@ -6,7 +6,6 @@ import io.cresco.library.plugin.PluginBuilder;
 import io.cresco.library.utilities.CLogger;
 import java.util.Map;
 import java.util.Timer;
-import java.util.TimerTask;
 
 public class GlobalHealthWatcher {
     private ControllerEngine controllerEngine;
@@ -42,12 +41,13 @@ public class GlobalHealthWatcher {
 
 
 
-    static class GlobalNodeStatusWatchDog extends TimerTask {
+    static class GlobalNodeStatusWatchDog extends io.cresco.agent.core.GuardedTimerTask {
         private ControllerEngine controllerEngine;
         private CLogger logger;
         private PluginBuilder plugin;
 
         public GlobalNodeStatusWatchDog(ControllerEngine controllerEngine, CLogger logger) {
+            super(logger);
 
             this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
@@ -55,7 +55,7 @@ public class GlobalHealthWatcher {
             this.logger = logger;
         }
 
-        public void run() {
+        protected void tick() {
             if (controllerEngine.cstate.isGlobalController()) { //only run if node is regional controller
                 logger.debug("GlobalNodeStatusWatchDog");
 

@@ -9,7 +9,6 @@ import io.cresco.library.utilities.CLogger;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ActiveBrokerManager implements Runnable  {
@@ -141,14 +140,15 @@ public class ActiveBrokerManager implements Runnable  {
 
 
 
-	class BrokerWatchDog extends TimerTask {
+	class BrokerWatchDog extends io.cresco.agent.core.GuardedTimerTask {
 		//private final Logger logger = LoggerFactory.getLogger(BrokerWatchDog.class);
         private CLogger logger;
 
         public BrokerWatchDog(CLogger logger) {
+            super(logger);
             this.logger = logger;
         }
-		public void run() {
+		protected void tick() {
 
 		    for (Entry<String, BrokeredAgent> entry : controllerEngine.getBrokeredAgents().entrySet()) {
 				//logger.trace(entry.getKey() + "/" + entry.getValue());
