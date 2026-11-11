@@ -34,6 +34,8 @@ class NoRouteAnswerTest {
     private static final AtomicInteger ids = new AtomicInteger();
     private final List<Fixture> fixtures = new ArrayList<>();
     private final List<MsgEvent> toBroker = new CopyOnWriteArrayList<>();
+    /** Does the broker take what the stub client is given? */
+    private volatile boolean brokerTakes = true;
 
     @AfterEach
     void stop() {
@@ -54,8 +56,8 @@ class NoRouteAnswerTest {
         Field client = ControllerEngine.class.getDeclaredField("activeClient");
         client.setAccessible(true);
         client.set(f.engine, new ActiveClient(f.engine) {
-            @Override public boolean sendMessage(MsgEvent sm) { return toBroker.add(sm); }
-            @Override public boolean sendAPMessage(MsgEvent msg) { return toBroker.add(msg); }
+            @Override public boolean sendMessage(MsgEvent sm) { return brokerTakes && toBroker.add(sm); }
+            @Override public boolean sendAPMessage(MsgEvent msg) { return brokerTakes && toBroker.add(msg); }
             @Override public String queueOf(MsgEvent msg) { return msg.getForwardDst() == null ? null : queue(msg.getForwardDst()); }
         });
         f.engine.routeGate().bound(System.currentTimeMillis() - 60_000L);
@@ -155,6 +157,34 @@ class NoRouteAnswerTest {
         assertTrue(f.sent.isEmpty(), f.sent.toString());
         assertEquals(0, f.engine.msgCounts().droppedCount());
         assertEquals(1, gate.heldCount());
+    }
+
+    @Test
+    void aHeldRequestThatCannotBeSentOnWhenItsRouteIsBackIsAnsweredToo() throws Exception {
+        // before: counted as dropped and never answered -- the caller of a held request waited out its timeout after all
+        Fixture f = controller(ControllerMode.GLOBAL, Map.of("route_rebuild_grace_ms", "5000"));
+        RouteGate gate = f.engine.routeGate();
+        ConsumerId bridge = consumer();
+        gate.consumerAdded(bridge, new ActiveMQQueue(queue("r2_a21")));
+        gate.consumerRemoved(bridge, System.currentTimeMillis());
+        f.router.route(request("list"));
+        assertEquals(1, gate.heldNow());
+        brokerTakes = false;                                                         // the route is back, and the send fails
+        gate.consumerAdded(consumer(), new ActiveMQQueue(queue("r2_a21")));
+        await(() -> !f.sent.isEmpty(), 3000, "a held request whose send failed was not answered");
+        MsgEvent reply = f.sent.get(0);
+        assertNotNull(reply.getParam(MsgRouter.ROUTE_UNAVAILABLE), reply.getParams().toString());
+        assertTrue(String.valueOf(reply.getParam("error")).contains("broker send to r2_a21 failed"), reply.getParams().toString());
+        assertEquals("call-7", reply.getParam("callId-r1-a1-plugin/9"));
+    }
+
+    @Test
+    void aRequestThatComesAfterTheNodeStoppedIsAnsweredAtOnceNotHeld() throws Exception {
+        Fixture f = controller(ControllerMode.GLOBAL, Map.of("route_rebuild_grace_ms", "5000"));
+        f.engine.routeGate().stop();                                                 // ControllerEngine.stop, first thing
+        f.router.route(request("list"));                                             // never seen: would be held for a grace
+        onlyReply(f);
+        assertEquals(0, f.engine.routeGate().heldNow());
     }
 
     @Test

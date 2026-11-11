@@ -108,6 +108,8 @@ public class ControllerEngine {
         this.msgCounts = new io.cresco.agent.controller.communication.MsgCounts(
                 pluginBuilder.getLogger(io.cresco.agent.controller.communication.MsgCounts.class.getName(), CLogger.Level.Info));
         this.routeGate = new io.cresco.agent.controller.communication.RouteGate(pluginBuilder.getConfig());
+        CLogger routeLog = pluginBuilder.getLogger(io.cresco.agent.controller.communication.RouteGate.class.getName(), CLogger.Level.Info);
+        this.routeGate.setWarn(routeLog::warn);
         CLogger expiryLog = pluginBuilder.getLogger(io.cresco.agent.controller.communication.ExpiredMessages.class.getName(), CLogger.Level.Info);
         this.expiredMessages.setWarn(expiryLog::warn);
         this.msgRouter = new MsgRouter(this);
@@ -282,6 +284,10 @@ public class ControllerEngine {
         boolean isStopped = false;
         try {
 
+            // first, while this node can still send and sign: the requests it holds for a route are answered (nothing will
+            // send them on), and none is held from now
+            routeGate.stop();
+
             if (healthExecutor != null) {
                 healthExecutor.shutdown();
             }
@@ -304,9 +310,6 @@ public class ControllerEngine {
             }
 
             if (msgSigning != null) msgSigning.close();
-
-            // requests held for a route are answered now: nothing will send them on
-            routeGate.stop();
 
             if(plugin != null) {
                 plugin.setIsActive(false);
@@ -978,6 +981,35 @@ public class ControllerEngine {
         if (t != null) return t;
         msgCounts.tenantUnresolved(region, peers == null ? null : peers.tenantsRecordedFor(region));
         return cfg.tenant;
+    }
+
+    /**
+     * Is the verified caller of {@code msg} of a tenant that is not a superuser's, asking for a node that this node does
+     * not know to be of the caller's own tenant? Such a caller is told nothing about that node's state by how a request
+     * for it fails (MsgRouter: one answer and one timing whether the node is gone, was never there, or cannot be told).
+     * The node's tenant as this node knows it first hand: for its own region the tenant bound to that node's name here,
+     * else its own; for another region the tenant of that region's controllers that completed discovery here, else the
+     * tenant bound to the node's name. False without security or tenant namespacing, and for a message with no caller.
+     */
+    public boolean foreignTenantCaller(MsgEvent msg) {
+        if (msg == null || msg.getParams() == null) return false;
+        Travel cfg = travel();
+        if (!cfg.on) return false;
+        io.cresco.library.security.Caller caller = io.cresco.library.security.Caller.fromMsgEvent(msg);
+        if (caller == null || caller.isAnonymous() || caller.getTenant() == null) return false;
+        if (cfg.superusers != null && cfg.superusers.contains(caller.getTenant())) return false;
+        String region = msg.getDstRegion(), agent = msg.getDstAgent();
+        CertificateManager cm = getCertificateManager();
+        io.cresco.agent.controller.communication.PeerTrustRegistry peers = cm == null ? null : cm.getPeerTrust();
+        String t;
+        if (region == null || region.isEmpty() || (cstate != null && region.equals(cstate.getRegion()))) {
+            t = peers == null || agent == null || cstate == null ? null : peers.boundTenant(cstate.getRegion(), agent);
+            if (t == null) t = cfg.tenant;
+        } else {
+            t = peers == null ? null : peers.tenantOfRegion(region);
+            if (t == null && peers != null && agent != null) t = peers.boundTenant(region, agent);
+        }
+        return t == null || !t.equals(caller.getTenant());
     }
 
     /**

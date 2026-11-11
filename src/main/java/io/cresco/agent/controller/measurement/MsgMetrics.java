@@ -27,7 +27,7 @@ import java.util.function.ToLongFunction;
  *       ({@link MsgSigning.Refusal}); {@code msg.dropped} (every message dropped here) and {@code msg.dropped.<cause>}
  *       ({@link MsgCounts.Drop}). Three counts are not messages this node received and are in neither total:
  *       {@code msg.sign.failed}, {@code msg.trust.refused}, {@code msg.filepart.dropped}. Beside them: {@code msg.route.held},
- *       and what the broker let expire, which ended on
+ *       {@code msg.route.mismatch}, {@code msg.route.unread.patterns} (a gauge), and what the broker let expire, which ended on
  *       no node: {@code msg.expired}, {@code msg.expired.on_arrival}, {@code msg.expired.by_consumer};</li>
  *   <li>group {@value #BROKER_GROUP}: {@code broker.caller.stripped}, {@code broker.bridge.withheld},
  *       {@code broker.bridge.transit.withheld}, {@code broker.bridge.discarded}, {@code broker.anonymous.discarded}, {@code broker.recipient.withheld},
@@ -78,6 +78,14 @@ public final class MsgMetrics {
         count(registry, names, GROUP, "msg.route.held", "RPC requests held on this node for a route that had just gone (each then went on"
                         + " when the route was back, or was answered that there is none: msg.dropped.no_route).",
                 ce, e -> e.routeGate().heldCount());
+        count(registry, names, GROUP, "msg.route.mismatch", "RPC requests for an inbox the route gate counted no consumer for and this node's"
+                        + " broker had one (each was sent on; a consumer event was missed or the queue is read by a pattern).",
+                ce, e -> e.routeGate().mismatchCount());
+        Gauge.builder("msg.route.unread.patterns", ce, e -> e.routeGate().unreadPatterns())
+                .description("Consumers at this node's broker that read queues by a pattern the route gate does not count: requests for"
+                        + " the inboxes such a pattern can match are sent as before, never answered `route unavailable`.")
+                .strongReference(true).register(registry);
+        names.put("msg.route.unread.patterns", GROUP);
         count(registry, names, GROUP, "msg.expired", "Messages this node's broker let expire (nothing consumed them within their life).",
                 ce, e -> e.expiredMessages().expiredCount());
         count(registry, names, GROUP, "msg.expired.on_arrival", "Of msg.expired: messages that had already expired when they reached this"
