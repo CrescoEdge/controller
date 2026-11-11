@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""The gate table from gate.sh's results: one column per build (old, std, prod), one row per metric, PASS/FAIL per the gate.
+"""The gate table from gate.sh's results: one column per build (old, oldprod, std, prod), one row per metric, PASS/FAIL
+per the gate.
 
-Gate (each candidate against the earlier build, same harness): throughput no more than 10% lower, p99 no more than 20%
-higher, every frame delivered whole and in order, every agent registered, no refusal or loss line, and the per-op cost
-flat as agents grow (serial p50 at the largest step within 1.25x of the smallest, 8-caller rate within 0.8x).
+Gate (each candidate against the earlier build in the SAME security profile, same harness: std against old, prod against
+oldprod): throughput no more than 10% lower, p99 no more than 20% higher, every frame delivered whole and in order,
+every agent registered, no refusal or loss line, and the per-op cost flat as agents grow (serial p50 at the largest
+step within 1.25x of the smallest, 8-caller rate within 0.8x).
 
-Usage: report.py <results dir> [builds...] [--rescan]   (default: old std prod)
+Without an oldprod run, prod is judged against old (the standard profile) and the report says so: a FAIL of a prod row
+may then be the profile and not the build.
+
+Usage: report.py <results dir> [builds...] [--rescan]   (default: the builds the directory holds of old oldprod std prod)
   --rescan reads the logs the run kept again (logscan.py) instead of the counts stored with the results.
 """
 import datetime
@@ -13,6 +18,10 @@ import json
 import os
 import statistics
 import sys
+
+
+ALL_BUILDS = ["old", "oldprod", "std", "prod"]
+EARLIER = ("old", "oldprod")      # the earlier build, in the standard and in the production profile
 
 
 def load(d, b):
@@ -39,8 +48,12 @@ def fmt(v):
 def main():
     args = [a for a in sys.argv[1:] if a != "--rescan"]
     d = args[0]
-    builds = args[1:] or ["old", "std", "prod"]
+    builds = args[1:] or [b for b in ALL_BUILDS if os.path.exists(os.path.join(d, b + ".json"))] or ["old", "std", "prod"]
     R = {b: load(d, b) for b in builds}
+
+    def baseline(b):
+        """The earlier build a candidate is judged against: the one in its own profile when the run has it."""
+        return "oldprod" if b == "prod" and R.get("oldprod") is not None else "old"
     if "--rescan" in sys.argv:
         # judge the logs a finished run kept (<results dir>/<build>/logs) by today's rule (logscan.py)
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -52,22 +65,21 @@ def main():
                 stop = os.path.join(d, b, "stop")
                 until = datetime.datetime.fromtimestamp(os.path.getmtime(stop)) if os.path.exists(stop) else None
                 R[b]["logs"] = logscan.scan(logs, until)
-    base = R.get("old")
     rows, fails = [], []
 
     def row(name, vals, kind=None):
         """kind: 'tput' (higher better, -10%), 'p99' (lower better, +20%), None (informational)."""
         verdicts = []
         for b in builds:
-            if b == "old" or kind is None or base is None:
+            if b in EARLIER or kind is None:
                 continue
-            v, o = vals.get(b), vals.get("old")
+            v, o = vals.get(b), vals.get(baseline(b))
             if v is None or o is None or o == 0:
                 continue
             ok = (v >= 0.9 * o) if kind == "tput" else (v <= 1.2 * o)
             verdicts.append("%s %s" % (b, "PASS" if ok else "FAIL"))
             if not ok:
-                fails.append("%s: %s %s vs old %s" % (name, b, fmt(v), fmt(o)))
+                fails.append("%s: %s %s vs %s %s" % (name, b, fmt(v), baseline(b), fmt(o)))
         rows.append([name] + [fmt(vals.get(b)) for b in builds] + [", ".join(verdicts)])
 
     for tgt in ("global", "region", "agent"):
@@ -93,7 +105,7 @@ def main():
             for b in builds:
                 rs = reps(b) + reps(b, "paced")
                 lost[b] = sum(r["sent"] - r["received"] + r["out_of_order"] + r["bad_size"] + r["dups"] for r in rs) if rs else None
-                if b != "old" and rs and lost[b]:
+                if b not in EARLIER and rs and lost[b]:
                     fails.append("DP %s %s flow(s): %s lost/damaged/reordered %d" % (label, flows, b, lost[b]))
             row("DP %s %s flow(s) lost+damaged+reordered" % (label, flows), lost)
     steps = sorted({int(s) for b in builds for s in (get(R[b], "scale") or {}).keys()})
@@ -113,12 +125,12 @@ def main():
         row("SCALE %d CP agent 8 callers msg/s" % s,
             {b: get(sc[b], "control_plane", "targets", "agent", "concurrent", "8", "msg_per_s") for b in builds})
         for b in builds:
-            if b != "old" and sc[b] and (sc[b].get("listed") or 0) < s:
+            if b not in EARLIER and sc[b] and (sc[b].get("listed") or 0) < s:
                 fails.append("SCALE %d: %s listed only %s" % (s, b, sc[b].get("listed")))
     if len(steps) >= 2:
         lo, hi = str(steps[0]), str(steps[-1])
         for b in builds:
-            if b == "old":
+            if b in EARLIER:
                 continue
             p_lo = get(R[b], "scale", lo, "control_plane", "targets", "global", "serial", "p50_ms")
             p_hi = get(R[b], "scale", hi, "control_plane", "targets", "global", "serial", "p50_ms")
@@ -136,10 +148,10 @@ def main():
                                                (" ".join("%s=%s" % kv for kv in sorted(d.items())) or "0"))(get(R[b], "logs", "dropped"))
                                             for b in builds})
     for b in builds:
-        if b != "old" and (get(R[b], "logs", "refusal_or_loss_lines") or 0) > 0:
+        if b not in EARLIER and (get(R[b], "logs", "refusal_or_loss_lines") or 0) > 0:
             fails.append("%s: %s refusal/loss line(s): %s" % (b, get(R[b], "logs", "refusal_or_loss_lines"),
                                                               [k for k, _ in (get(R[b], "logs", "top") or []) if k.startswith("REFUSAL")][:3]))
-        if b != "old" and (get(R[b], "logs", "would_refuse_lines") or 0) > 0:
+        if b not in EARLIER and (get(R[b], "logs", "would_refuse_lines") or 0) > 0:
             # the gate's fabric manages every node from the global's gateway: nothing in it may be out of place
             fails.append("%s: %s call(s) authority_direction=enforce would refuse: %s" % (
                 b, get(R[b], "logs", "would_refuse_lines"),
@@ -150,6 +162,15 @@ def main():
     for r in rows:
         print("  ".join(str(c).ljust(w[i]) for i, c in enumerate(r)))
     print()
+    for b in builds:
+        if b not in EARLIER and R.get(b) is not None:
+            if R.get(baseline(b)) is None:
+                print("NOTE %s has no earlier build to be judged against in this run: its rate and p99 rows are not judged" % b)
+            elif b == "prod" and baseline(b) == "old":
+                print("NOTE prod is judged against old, which ran the standard profile (no oldprod in this run): "
+                      "a FAIL of a prod row may be the profile, not the build")
+            else:
+                print("%s is judged against %s" % (b, baseline(b)))
     print("GATE " + ("PASS" if not fails else "FAIL"))
     for f in fails:
         print("  FAIL " + f)
