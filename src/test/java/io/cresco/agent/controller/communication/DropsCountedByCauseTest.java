@@ -84,6 +84,25 @@ class DropsCountedByCauseTest {
     }
 
     @Test
+    void aSenderThatStopsWaitingForTheParentLinkIsCountedAsTheLinksFaultAndKeepsItsInterrupt() throws Exception {
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("msgin_fault_wait_ms", "20000");             // the sender gives up long before the wait ends
+        ControllerEngine e = agent("d12", cfg);
+        boolean[] interrupted = new boolean[1];
+        Thread sender = new Thread(() -> {
+            e.msgIn(msg("d12", "r1", "d8", null));
+            interrupted[0] = Thread.currentThread().isInterrupted();
+        });
+        sender.start();
+        Thread.sleep(400);                                   // it is in the wait
+        sender.interrupt();                                  // as a caller's timeout cancels its send
+        sender.join(5000);
+        assertFalse(sender.isAlive(), "the send returned when its sender gave up");
+        assertEquals(1, only(e.msgCounts(), MsgCounts.Drop.PARENT_LINK_DOWN));   // not a routing error
+        assertTrue(interrupted[0], "the sender's thread still knows it was interrupted");
+    }
+
+    @Test
     void aMessageForTheRegionalControllerOfAnAgentThatKnowsNoneIsCountedAfterTheWait() {
         ControllerEngine e = agent("d5", null);
         // a regional message of this agent's own controller: for its regional controller, which it has not joined
