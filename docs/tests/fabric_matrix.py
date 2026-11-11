@@ -165,8 +165,9 @@ KNOWN: list[Known] = [
     Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 2,
           "a restarted node refuses what a peer sent it under the session it lost and tells that peer, which signs again within"
           " one round trip: at most 2 per peer per restart (bound 3 until 2026-11-11, when a peer went on for up to 30 s)."
-          " By the log's count; what a broker stored for the node while it was down is refused as it arrives and shows in the"
-          " counters only (refused.session_key: 10 at a global that was down 60 s, before and after)"),
+          " A peer whose own broker saw the node leave signs at once, so what a broker stored for the node verifies (the"
+          " counters at a global after a 60 s outage: 10 before, 0 since); what remains is an agent's messages for an agent"
+          " under another controller"),
     Known("refused-stale-unsigned", "refused", r"an unsigned message \(from null, not delivered first hand\)",
           ("restart-region", "restart-global", "global-outage", "cut-bridge"), 2,
           "one stale unsigned ping or WATCHDOG reaches a parent that restarted"),

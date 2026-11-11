@@ -2109,7 +2109,20 @@ public final class MsgSigning {
      * former parent sent it for a minute.
      */
     public void inboxConsumerLeft(String node) {
-        if (node == null || directChildren.remove(node) == null) return;
+        if (node == null) return;
+        // (1) Its session: this node's broker has no way to that node now, so nothing more is sent under the session it
+        // holds with it until that node confirms it again (MsgSessions.linkDown) -- signed, what a broker stores for it
+        // verifies when it is back, restarted or not. One peer per event: when a bridge goes, the broker says so for each
+        // node whose inbox that bridge carried.
+        if (sessions != null) sessions.linkDown(node);
+        // (2) When it is this node's own parent (a region's global): nothing reaches it first hand either
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        if (st != null && st.parentRegion != null && node.length() == st.parentRegion.length() + 1 + st.parentAgent.length()
+                && node.startsWith(st.parentRegion) && node.endsWith(st.parentAgent) && node.charAt(st.parentRegion.length()) == '_') {
+            parentLinkReset();
+        }
+        if (directChildren.remove(node) == null) return;
         // a ping of that node still on its way here must not offer the link again: only a ping after this moment does
         if (inboxLeftAt.size() >= DIRECT_CHILDREN_MAX) inboxLeftAt.clear();
         inboxLeftAt.put(node, System.currentTimeMillis());
@@ -2136,6 +2149,19 @@ public final class MsgSigning {
     public void parentLinkReset() {
         directParentUntil = 0L;
         directWithheldTillPong = true;
+    }
+
+    /**
+     * An AGENT's connection to its controller's broker was interrupted (AgentConsumer's transport listener says so at
+     * once). Every session of an agent ran over that one link: none is sent under until its peer confirms it again
+     * (MsgSessions.linkDown), and what goes to the controller is signed until its next pong ({@link #parentLinkReset}).
+     * A controller has its own broker, which tells it node by node ({@link #inboxConsumerLeft}): nothing here for it.
+     */
+    public void parentLinkDown() {
+        parentLinkReset();
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        if (sessions != null && st != null && !st.regionController) sessions.linkDown(System.currentTimeMillis());
     }
 
     /**

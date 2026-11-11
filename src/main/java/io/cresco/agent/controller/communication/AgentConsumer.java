@@ -144,6 +144,19 @@ public class AgentConsumer {
 			logger.info("AgentConsumer inbox on dedicated control-plane connection for uri [{}]", uri);
 		}
 		this.connection = (org.apache.activemq.ActiveMQConnection) sess.getConnection();
+		// A node on another node's broker (an agent) is told at once when its transport to it is interrupted: from that
+		// moment it sends under none of its sessions (they all ran over this link; MsgSigning.parentLinkDown). On vm://
+		// (a controller on its own broker) there is nothing to interrupt.
+		if (connection != null && uri != null && !uri.startsWith("vm")) {
+			connection.addTransportListener(new org.apache.activemq.transport.TransportListener() {
+				@Override public void onCommand(Object command) { }
+				@Override public void onException(java.io.IOException error) { }
+				@Override public void transportResumed() { }
+				@Override public void transportInterupted() {
+					try { controllerEngine.msgSigning().parentLinkDown(); } catch (RuntimeException ignore) { }
+				}
+			});
+		}
 		// controller#24: we own the dedicated socket, so its failure is ours to recover from. Chain to the listener
 		// ActiveClient installed (it prunes the connection from its registry and closes it) and then rebuild the inbox.
 		if (dedicatedConnection && connection != null) {

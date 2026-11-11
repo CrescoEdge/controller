@@ -795,10 +795,22 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   counts its end from its offer (the acceptor from when it took the offer, which is later), so the node that sends under
   a session always stops before the other's end. Counted in the metric inventory: `msg.session.lost.told`,
   `msg.session.lost.heard`, `msg.session.lost.retried`.
-  **What the notice cannot do:** a message a broker stored for a node while it was down was sent under the lost session
-  before anybody could know, and is refused when it arrives. And a node that moved regions (`region_alias`) signs under
-  its new name, while its peers hold the session under its former one: its word does not match, and recovery with it is
-  as before.
+  **A link known to be down ends the use of the sessions that ran over it, at once.** A sender used to go on under a
+  session for 30 s after its peer last confirmed it, also when its own broker had just lost the way to that peer; what a
+  broker stored of that for a peer that then restarted was refused when it arrived (10 messages at a global that was
+  down 60 s: its regions' pings and watchdogs). Now: (1) when a node's broker loses the consumer of a node's inbox (that
+  node's connection broke, or the bridge that carried its inbox went: the broker says so for each node the bridge
+  carried), the session with THAT node is not sent under until the node confirms it again, and when it is the node's
+  own parent nothing goes to it unsigned over the direct link either; (2) when an agent's connection to its controller's
+  broker is interrupted, none of the agent's sessions is (they all ran over that one link). One peer, or one noted
+  time, per event: no session is walked. The session is kept: a peer that did not restart goes on with it at its next
+  message. What is sent meanwhile is signed, and a signed message stored by a broker verifies when the peer is back,
+  restarted or not. (Measured in the tree cell: refused at the global after a 60 s outage 10 -> 0, at a restarted agent
+  1 -> 0.) **What this cannot do:** a node whose own broker does not see the peer leave -- an agent, whose peer is an
+  agent under another controller -- learns nothing, and what it sends under the session while that peer is down is
+  refused when the peer is back (the notice then stops it within one round trip). And a node that moved regions
+  (`region_alias`) signs under its new name, while its peers hold the session under its former one: its word does not
+  match, and recovery with it is as before.
 - **A node answers from its first message on (2026-11-11).** A node could be asked before it could answer: its inbox
   consumer was made some 20 ms before its producer (at its start, and each time it joined a controller again), so a
   request waiting in its inbox was served and answered into nothing (`AgentProducer is null. Message not sent`, at
