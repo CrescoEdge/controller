@@ -324,24 +324,41 @@ The trace above is one tenant talking to itself through the global. When the glo
 (`broker_superuser_tenants`) and manages several tenants' regions, three more things hold; without them such a
 fabric did not form (`docs/tests/fabric_matrix.py --topology tenants`):
 
-- **Which namespace a message travels in is decided where its origin stamps it** (`ControllerEngine.markForSigning`
-  → `MsgRouter.travelTenant`), before it is signed. A tenant's caller: its own tenant, always — an answer is the
+- **Which namespace a message travels in is decided where its origin stamps it** (`ControllerEngine.stampAs` →
+  `MsgRouter.travelTenant`), before it is signed. A tenant's caller: its own tenant, always — an answer is the
   request's message sent back and carried the request's `cresco_tenant`, so a tenant's answer to the global stayed in
   `T.cresco-system.` and the tenant's own router dropped it (`route: refused … travels in tenant cresco-system's
-  namespace`). A superuser tenant's caller: the stamp the message carries (the request it answers, or the tenant an
-  operator's client named through wsapi); else the tenant of the region it addresses; else its own.
+  namespace`). A superuser tenant's caller: answering a tenant's caller, that caller's verified tenant (never one the
+  request merely named); else the stamp the message carries (a superuser's request it answers, or the tenant an
+  operator's client named through wsapi); else the tenant of the node it addresses; else its own.
+- **The tenant rule holds where a message is dispatched, not only where it is relayed**
+  (`ControllerEngine.admitArrival`, from the inbox and from `admitDeferred`): its namespace must be its verified
+  caller's tenant's unless the caller is of a superuser tenant, and an RPC request of another tenant's caller must
+  name the node that verified as its sender (its own node, at its region or its former one; an API user's speaker) —
+  the answer goes to the request's source, which nothing else binds. Refused: dropped, counted
+  (`msg.dropped.cross_tenant`, `msg.dropped.sender_unbound`), logged, never answered.
 - **The tenant of a region** is the tenant of that region's controller(s) that completed discovery with this node
-  (`PeerTrustRegistry.tenantOfRegion`: the bridge peer's recorded tenant, else the tenant bound to its name). A
-  tenant's leaf consumes only `T.<its tenant>.<path>`, so this is what lets the global reach it. A region whose
-  recorded controllers are of two tenants is addressed in neither's namespace (nothing is guessed: the second
-  claimant would be handed the first one's messages). A superuser node that does not hold the region's controller
-  first hand (an operator's agent, a second global) does not resolve it: its client names the tenant
-  (`cresco_tenant`, from `tenant_id` in `listagents`).
+  (`PeerTrustRegistry.tenantOfRegion`: the bridge peer's recorded tenant, else the tenant bound to its name); failing
+  that, the tenant bound here to the very node addressed. A tenant's leaf consumes only `T.<its tenant>.<path>`, so
+  this is what lets the global reach it. A region whose recorded controllers are of several tenants — a superuser
+  tenant among them or not — is addressed in nobody's namespace (nothing is guessed: the second claimant would be
+  handed the first one's messages). Then, and for a region nothing is recorded of, the message goes in the sender's
+  own namespace, counted (`msg.tenant.unresolved`) and logged (`TENANT UNRESOLVED`, with the region and the tenants).
+  A superuser node that does not hold the region's controller first hand (an operator's agent, a second global) does
+  not resolve it: its client names the tenant (`cresco_tenant`, from `tenant_id` in `listagents`).
+- **A node of a superuser tenant reads its inbox in every tenant's namespace** (`T.*.<its inbox>`,
+  `MsgRouter.inboxQueue`), a leaf like a controller: a tenant answers it in the tenant's own namespace. A tenant's
+  bridge therefore brings in nothing under a superuser tenant's name any more.
 - **The global's registry listener for region exports is on every tenant's topic** (`T.*.agent.event`,
   `DataPlaneServiceImpl.addMessageListenerEveryTenant`) when the global is of a superuser tenant: a region exports its
-  state in its own tenant's namespace, and that export is the region's registration. Each export is still judged by
-  its verified writer (`RegistryBinding`). Nothing else changes: the node publishes, and every other listener
-  subscribes, in its own tenant's namespace.
+  state in its own tenant's namespace, and that export is the region's registration. The namespace says nothing about
+  the writer, so the writer is everything: an export is applied only when its verified writer is a controller (no API
+  caller, whatever its role), the one that joined this global, reporting its own region
+  (`RegistryBinding.dataplaneRefusal`); its agents' rows carry the writer's tenant. The registry keys an agent row and
+  a plugin row by id alone, fabric-wide: an entry for a name that is another tenant's node here is refused (`REGISTRY
+  NAME COLLISION`, the row untouched), and an export's omission removes only its writer's tenant's rows — so the same
+  name in two tenants is listed once, for whoever registered it first. Nothing else changes: the node publishes, and
+  every other listener subscribes, in its own tenant's namespace.
 
 No tenant gains reach: a tenant's node sends in its own namespace only (the router's rule is unchanged), a tenant's
 bridge still carries its own tenant's subtree, and only a superuser tenant's node — which the policy already lets

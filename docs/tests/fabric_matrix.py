@@ -32,7 +32,11 @@ HOW TO RUN IT
               mesh       the tree, every region also bridged to the others (regional_peers)
               tenants    two tenants, each its own region and 2 agents, under a global in the superuser tenant
                          (regions are given the global's key in controller_trust_anchors; standard profile only).
-                         The release of 2026-11-10 does not form it: a tenant's region never registers with the global.
+                         The release of 2026-11-10 did not form it (a tenant's region never registered with the global);
+                         a build with the fix (controller branch fix/tenants, 2026-11-11) passes every default event.
+                         It has no agent of the superuser tenant: in the standard profile an agent's tenant is its own
+                         claim, and a controller binds none in a superuser tenant (CertificateManager.agentJoinRefusal);
+                         the production profile, where an operator issues such a node, runs one tenant here.
               alias      the tree, plus one agent that starts in the global's region and is moved to a region with
                          region_alias (it must keep answering at its former address through every event)
               regions30  a global and 30 regions, no agents, no plugins: a scale smoke for a bigger machine
@@ -85,8 +89,8 @@ ON THE RELEASE OF 2026-11-10 (agent 1.3, controller 29ef93d), 2026-11-11
   single, tree (standard, production, upgrade) pass. mesh fails restart-global and global-outage (after the global
   restarts, messages for controller inboxes and agent.event arrive over another region's bridge and lose their caller
   stamp); alias fails restart-region (the moved agent's failover dials the global's broker, which its region's broker
-  advertised, and logs PEER IDENTITY MISMATCH: refused, as it must be); tenants does not form; rekey-region fails. None
-  of these has a known-item entry: each is for its owner to fix or to list. The release before it (tree) fails six of
+  advertised, and logs PEER IDENTITY MISMATCH: refused, as it must be); tenants does not form (fixed since: see the
+  topology above); rekey-region fails. None of these has a known-item entry: each is for its owner to fix or to list. The release before it (tree) fails six of
   eight events: credentials that do not verify at start, a minute of unsigned-message refusals at a moved agent.
   SINCE THEN: rekey-region is fixed in the controller (message signing: see the event above) and is part of the default
   order; tree passes it in standard and in production with no message refused at any node, and the agents hold an
