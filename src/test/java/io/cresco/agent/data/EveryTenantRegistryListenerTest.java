@@ -92,10 +92,28 @@ class EveryTenantRegistryListenerTest {
         await(ownTenant, 1);
         assertEquals(List.of("rops"), ownTenant, "any other listener of the node stays in its own tenant's namespace");
 
+        // the wildcard is ONE segment (a tenant name has no '.'): a deeper name is no tenant's topic
+        export(s, "T.a.b.agent.event", "deep");
+        export(s, "T.ta.agent.event.x", "longer");
+        export(s, "T.cresco-system.agent.event", "rops2");
+        await(registry, 4);
+        assertEquals(List.of("rta", "rtb", "rops", "rops2"), registry, "the listener took a topic that is no tenant's agent.event");
+
+        // the node's dataplane connection is made anew (a broker reconnect): the listener is still on every tenant's topic
+        dps.updateConnections(uri);
+        export(s, "T.ta.agent.event", "rta-again");
+        await(registry, 5);
+        assertEquals("rta-again", registry.size() == 5 ? registry.get(4) : null, "after a reconnect the registry listener was back on its"
+                + " own tenant's topic (or gone): " + registry);
+        export(s, "T.cresco-system.agent.event", "rops3");
+        await(registry, 6);
+        await(ownTenant, 3);
+        assertEquals(List.of("rops", "rops2", "rops3"), ownTenant, "the other listener after the reconnect");
+
         dps.removeMessageListener(id);
         export(s, "T.ta.agent.event", "rta");
         export(s, "T.cresco-system.agent.event", "rops");
-        await(ownTenant, 2);
-        assertEquals(3, registry.size(), "a removed listener takes nothing");
+        await(ownTenant, 4);
+        assertEquals(6, registry.size(), "a removed listener takes nothing");
     }
 }

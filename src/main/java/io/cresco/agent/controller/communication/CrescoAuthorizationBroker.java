@@ -1186,8 +1186,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      *   <li>any other controller carries what {@link TenantPolicy} gives its own identity (its tenant's {@code T.<tenant>.}
      *       subtree, the fabric-shared destinations, named cross-tenant sinks; it reads advisories), and besides: it is
      *       given the messages addressed to an inbox of its OWN region under any tenant's name (a node of another tenant
-     *       wrote to one of its nodes), and it may bring in a message for an inbox under a SUPERUSER tenant's name (its
-     *       region's answers to the operator's nodes; only controllers and the operator's nodes consume those);</li>
+     *       wrote to one of its nodes). It brings in nothing under another tenant's name, a superuser tenant's included:
+     *       its region's answers to the operator's nodes travel in its OWN tenant's namespace (MsgRouter.travelTenant),
+     *       where every node of a superuser tenant reads its inbox (MsgRouter.inboxQueue);</li>
      *   <li>a peer that is not a verified controller that completed discovery with this node carries nothing.</li>
      * </ul>
      * With peer_identity_mode warn or off nothing is refused, as before.
@@ -1218,8 +1219,6 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (why != null && dest.isQueue() && io.cresco.library.security.TenantNamespace.isNamespaced(name)) {
             String[] node = CrescoNames.splitPath(ActiveBroker.bridgedInboxPath(name));
             if (node != null && access == TenantPolicy.Access.READ && node[0].equals(peer.getRegion())) why = null;
-            if (node != null && access == TenantPolicy.Access.WRITE
-                    && superuserTenants.contains(io.cresco.library.security.TenantNamespace.tenantOf(name))) why = null;
         }
         if (sc.bridgeVerdicts.size() > 4096) sc.bridgeVerdicts.clear();
         sc.bridgeVerdicts.put(key, why == null ? BRIDGE_ALLOWED : why);

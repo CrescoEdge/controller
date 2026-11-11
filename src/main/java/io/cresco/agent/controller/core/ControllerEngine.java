@@ -799,8 +799,22 @@ public class ControllerEngine {
 
     /** Strip whatever {@code msg} says about its caller and stamp this controller (with this node's region alias, if any). */
     public void stampSelf(MsgEvent msg) {
-        io.cresco.agent.controller.communication.CallerStamps.stamp(msg, selfCaller(), regionAlias());
-        markForSigning(msg);
+        stampAs(msg, selfCaller(), regionAlias());
+    }
+
+    /**
+     * A stamping point: whatever {@code msg} says about its caller is replaced by {@code caller} (null: it goes unstamped;
+     * {@code alias}: the former region a node caller also answers at), and the message is this node's from now on -- counted
+     * as originated, given the namespace it travels in, and signed when it leaves the node.
+     */
+    public void stampAs(MsgEvent msg, io.cresco.library.security.Caller caller, String alias) {
+        Travel cfg = travel();
+        // on a superuser tenant's node: whose word the message carried before this node's replaces it -- the verified
+        // caller of the request it answers (read as it stands: nothing is parsed)
+        String answered = cfg.superuserNode && msg != null && msg.getParams() != null
+                ? msg.getParam(io.cresco.library.security.Caller.PARAM_TENANT) : null;
+        io.cresco.agent.controller.communication.CallerStamps.stamp(msg, caller, alias);
+        originated(msg, caller, answered, cfg);
     }
 
     private volatile io.cresco.agent.controller.communication.MsgSigning msgSigning;
@@ -831,7 +845,8 @@ public class ControllerEngine {
     public boolean admitDeferred(MsgEvent msg) {
         io.cresco.agent.controller.communication.MsgSigning s = msgSigning();
         io.cresco.agent.controller.communication.MsgSigning.Verdict v = s.verifyIfDeferred(msg, legacyNodesAdmitted());
-        if (v == null || v.ok()) return true;
+        if (v == null) return true;
+        if (v.ok()) return admitArrival(msg, v.caller);        // verified only now: the tenant rule of an arrival, now too
         io.cresco.agent.controller.communication.MsgRouter.answerUnauthenticated(plugin, msg, v.refusal);
         return false;
     }
@@ -855,40 +870,103 @@ public class ControllerEngine {
 
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
     public void markForSigning(MsgEvent msg) {
-        msgCounts.originated();             // every stamping point passes here: the message is this node's from now on
-        stampTravelTenant(msg);
-        msgSigning().markForSigning(msg, tenant());
+        originated(msg, io.cresco.library.security.Caller.fromMsgEvent(msg), null, travel());
+    }
+
+    /** What deciding a message's namespace reads from the configuration, read once a second at most (not per message). */
+    private static final class Travel {
+        final boolean on, superuserNode;
+        final String tenant;
+        final java.util.Set<String> superusers;
+        final long at;
+        Travel(boolean on, String tenant, java.util.Set<String> superusers, long at) {
+            this.on = on; this.tenant = tenant; this.superusers = superusers; this.at = at;
+            this.superuserNode = on && tenant != null && superusers.contains(tenant);
+        }
+    }
+
+    private volatile Travel travel;
+
+    private Travel travel() {
+        Travel t = travel;
+        long now = System.currentTimeMillis();
+        if (t == null || now - t.at >= 1000L || now < t.at) {
+            travel = t = new Travel(securityOn() && io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig()),
+                    tenant(), io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()), now);
+        }
+        return t;
     }
 
     /**
-     * The namespace a message this node originates travels in ({@code cresco_tenant}), set before the message is signed:
-     * its caller's tenant; for a superuser tenant's caller the stamp it carries, else the tenant of the region it is
-     * addressed to (MsgRouter.travelTenant). Nothing without security or tenant namespacing, or for a message with no caller.
+     * {@code msg} was just stamped as {@code caller}'s: it is this node's from now on (every stamping point passes here).
+     * The namespace it travels in ({@code cresco_tenant}) is set before it is signed: its caller's tenant; for a superuser
+     * tenant's caller the tenant of the caller it answers ({@code answeredTenant}), else the stamp it carries, else the
+     * tenant of the node it is addressed to (MsgRouter.travelTenant). Nothing without security or tenant namespacing, or
+     * for a message with no caller.
      */
-    private void stampTravelTenant(MsgEvent msg) {
-        if (msg == null || msg.getParams() == null || !securityOn()
-                || !io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())) return;
-        io.cresco.library.security.Caller c = io.cresco.library.security.Caller.fromMsgEvent(msg);
-        if (c == null || c.isAnonymous()) return;
-        String carried = msg.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
-        String t = io.cresco.agent.controller.communication.MsgRouter.travelTenant(c, carried, tenant(),
-                io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()),
-                () -> tenantOfRegion(msg.getDstRegion()));
-        if (t != null && !t.equals(carried)) msg.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, t);
+    private void originated(MsgEvent msg, io.cresco.library.security.Caller caller, String answeredTenant, Travel cfg) {
+        msgCounts.originated();
+        if (cfg.on && msg != null && msg.getParams() != null && caller != null && !caller.isAnonymous()) {
+            String carried = msg.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
+            String t = io.cresco.agent.controller.communication.MsgRouter.travelTenant(caller, answeredTenant, carried, cfg.tenant, cfg.superusers);
+            if (t == null) t = destinationTenant(msg, cfg);
+            if (t != null && !t.equals(carried)) msg.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, t);
+        }
+        msgSigning().markForSigning(msg, cfg.tenant);
     }
 
     /**
-     * The tenant whose namespace reaches the nodes of {@code region}, as this node knows it first hand: its own for its own
-     * region; else the tenant of that region's controllers that completed discovery with this node
-     * (PeerTrustRegistry.tenantOfRegion). Null when it is not known.
+     * The tenant whose namespace reaches the node {@code msg} is addressed to, as this node knows it first hand: its own for
+     * its own region; the tenant of that region's controllers that completed discovery with this node
+     * (PeerTrustRegistry.tenantOfRegion); else the tenant bound here to that very node's name (a node this node bound
+     * itself, at its former region too). When none of these says -- the region is unknown here, or controllers of several
+     * tenants are recorded for it -- the message goes in this node's own namespace: counted and logged
+     * (MsgCounts.tenantUnresolved), because a tenant's leaf does not read it there.
      */
-    public String tenantOfRegion(String region) {
-        if (region == null || region.isEmpty()) return null;
-        if (cstate != null && region.equals(cstate.getRegion())) return tenant();
+    private String destinationTenant(MsgEvent msg, Travel cfg) {
+        String region = msg.getDstRegion();
+        if (region == null || region.isEmpty() || (cstate != null && region.equals(cstate.getRegion()))) return cfg.tenant;
         CertificateManager cm = getCertificateManager();
         io.cresco.agent.controller.communication.PeerTrustRegistry peers = cm == null ? null : cm.getPeerTrust();
-        return peers == null ? null : peers.tenantOfRegion(region);
+        String t = peers == null ? null : peers.tenantOfRegion(region);
+        if (t == null && peers != null && msg.getDstAgent() != null) t = peers.boundTenant(region, msg.getDstAgent());
+        if (t != null) return t;
+        msgCounts.tenantUnresolved(region, peers == null ? null : peers.tenantsRecordedFor(region));
+        return cfg.tenant;
     }
+
+    /**
+     * A message off the wire, verified as {@code caller}'s, is about to be dispatched on this node (to its controller, a
+     * plugin, or as the answer to a call it made). The tenant rule a relay applies before it sends (MsgRouter.tenantRefusal)
+     * holds here too: the namespace it travels in is its caller's tenant's, unless its caller is of a superuser tenant --
+     * otherwise a tenant's controller could hand a superuser tenant's node a request stamped with ANOTHER tenant, and the
+     * answer, which kept that stamp, went into that tenant's namespace. And an RPC request of another tenant's caller must
+     * name the node that verified as its sender (MsgRouter.senderRefusal). False: refused -- counted as dropped under its
+     * cause, logged, never answered.
+     */
+    public boolean admitArrival(MsgEvent msg, io.cresco.library.security.Caller caller) {
+        if (msg == null || msg.getParams() == null || caller == null) return true;
+        Travel cfg = travel();
+        if (!cfg.on) return true;
+        io.cresco.agent.controller.communication.MsgCounts.Drop cause = io.cresco.agent.controller.communication.MsgCounts.Drop.CROSS_TENANT;
+        String why = io.cresco.agent.controller.communication.MsgRouter.tenantRefusal(caller,
+                msg.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM), cfg.superusers);
+        if (why == null) {
+            cause = io.cresco.agent.controller.communication.MsgCounts.Drop.SENDER_UNBOUND;
+            why = io.cresco.agent.controller.communication.MsgRouter.senderRefusal(msg, caller,
+                    io.cresco.agent.controller.communication.MsgSigning.speakerOf(msg), cfg.tenant, cfg.superusers);
+        }
+        if (why == null) return true;
+        msgCounts.dropped(cause, msg);
+        long now = System.currentTimeMillis();
+        if (now - lastArrivalRefusedLog > 10_000L) {
+            lastArrivalRefusedLog = now;
+            logger.warn("arrival: refused (" + why + "); not dispatched, not answered");
+        }
+        return false;
+    }
+
+    private volatile long lastArrivalRefusedLog;
 
     /**
      * Unsigned messages from nodes without signing (stamped {@code agent:} by their broker) are admitted only during an

@@ -510,8 +510,7 @@ public class AgentServiceImpl implements AgentService {
             return;
         }
         try {
-            io.cresco.agent.controller.communication.CallerStamps.stamp(msg, controllerEngine.pluginCaller(id), controllerEngine.regionAlias());
-            controllerEngine.markForSigning(msg);
+            controllerEngine.stampAs(msg, controllerEngine.pluginCaller(id), controllerEngine.regionAlias());
             controllerEngine.msgIn(msg);
         } catch (Exception ex) {
             logger.error("msgOut() from " + bundle.getSymbolicName() + ": " + ex.getMessage(), ex);
@@ -529,10 +528,8 @@ public class AgentServiceImpl implements AgentService {
             refused("send on behalf of a user", bundle.getSymbolicName() + ": " + why);
             throw new SecurityException(why);
         }
-        io.cresco.agent.controller.communication.CallerStamps.stamp(msg,
-                controllerEngine.securityOn() ? caller : io.cresco.library.security.Caller.anonymous());
         io.cresco.agent.controller.communication.CallerStamps.dropFiles(msg);   // a user names no file on this node's disk
-        controllerEngine.markForSigning(msg);
+        controllerEngine.stampAs(msg, controllerEngine.securityOn() ? caller : io.cresco.library.security.Caller.anonymous(), null);
         // this node vouches for the user: it is the speaker, here and (by its signature) wherever the message goes
         if (controllerEngine.securityOn()) controllerEngine.msgSigning().spokenHere(msg);
         controllerEngine.msgIn(msg);

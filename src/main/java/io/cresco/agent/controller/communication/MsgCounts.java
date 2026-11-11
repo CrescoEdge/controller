@@ -48,6 +48,8 @@ public final class MsgCounts {
         TIER_REFUSED("tier_refused", "a controller function sent to the wrong tier"),
         /** A caller's message travelling in another tenant's namespace ({@link MsgRouter#tenantRefusal}). */
         CROSS_TENANT("cross_tenant", "a message of one tenant's caller in another tenant's namespace"),
+        /** An RPC request of another tenant's caller whose source is not the node that verified as its sender (MsgRouter.senderRefusal). */
+        SENDER_UNBOUND("sender_unbound", "an RPC request of another tenant's caller that names another node as its sender"),
         /** For a plugin of this node while the node has no plugin admin (it is starting or stopping). */
         PLUGIN_ADMIN_UNAVAILABLE("plugin_admin_unavailable", "a message for a plugin while this node's plugin admin is not available"),
         /** For a plugin this node does not run. */
@@ -166,6 +168,38 @@ public final class MsgCounts {
     public void dropped(Drop cause, long n, String what, String name) {
         if (n > 0 && drops.add(cause.ordinal(), n)) line(cause, null, what, name);
     }
+
+    private final LongAdder tenantUnresolved = new LongAdder();
+    private volatile long lastUnresolvedLine;
+
+    /**
+     * A superuser tenant's node originated a message for a node of {@code region} without knowing that region's tenant: no
+     * controller of it completed discovery with this node, or ({@code recordedTenants}, e.g. {@code "cresco-system, ta"})
+     * controllers of several tenants are recorded for it. The message goes out in this node's own namespace, which
+     * controllers read and no tenant's leaf does -- it is not ended here, so it is counted by itself
+     * ({@code msg.tenant.unresolved}), never as a drop, and logged at most every 10 s.
+     */
+    public void tenantUnresolved(String region, String recordedTenants) {
+        tenantUnresolved.increment();
+        long now = System.currentTimeMillis();
+        if (now - lastUnresolvedLine < LINE_EVERY_MS && now >= lastUnresolvedLine) return;
+        lastUnresolvedLine = now;
+        String line = "TENANT UNRESOLVED: a message for a node of region " + ParamLog.safeName(region) + " is sent in this node's own namespace: "
+                + (recordedTenants == null ? "no controller of that region completed discovery with this node"
+                        : "controllers of tenants " + recordedTenants + " are recorded for that region, and a region's names are one tenant's"
+                                + " (revoke the one that does not belong: peer_bridge_revoke)")
+                + "; a tenant's leaf does not read it there. An operator's client can name the tenant (cresco_tenant). ("
+                + tenantUnresolved.sum() + " so far; logged at most every " + LINE_EVERY_MS / 1000L + " s)";
+        try {
+            if (logger != null) logger.warn(line);
+        } catch (RuntimeException ignore) {
+            // a count is never lost to its log line
+        }
+        Consumer<String> tap = lineTap;
+        if (tap != null) tap.accept(line);
+    }
+
+    public long tenantUnresolvedCount() { return tenantUnresolved.sum(); }
 
     public long originatedCount() { return originated.sum(); }
     public long relayedCount() { return relayed.sum(); }
