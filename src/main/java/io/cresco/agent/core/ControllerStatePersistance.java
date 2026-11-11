@@ -47,11 +47,14 @@ public class ControllerStatePersistance {
      * REGION_GLOBAL and never removed (the id kept was always null): a global held two of each from boot and applied every
      * region export twice -- an older export could then be applied after a newer one, and its reconcile deleted rows the
      * newer one added --, a region gained one per global rejoin, and a region with no global took none of its agents'
-     * exports. A subscription the dataplane could not make leaves the id null and is tried again on the next state change.
+     * exports. A subscription the dataplane could not make leaves the id null and is tried again on the next state change;
+     * so is one the dataplane no longer holds (a listener whose re-add failed after a dataplane reconnect is gone, and the
+     * id kept for it is stale).
      */
     private synchronized void syncRegistryListeners(ControllerMode mode) {
         try {
             if (takesAgentExports(mode)) {
+                if (regionalListener != null && !holdsRegistryListener(regionalListener)) regionalListener = null;
                 if (regionalListener == null) regionalListener = registerRegionalListener();
             } else if (regionalListener != null) {
                 String id = regionalListener;
@@ -59,6 +62,7 @@ public class ControllerStatePersistance {
                 removeRegistryListener(id);
             }
             if (takesRegionExports(mode)) {
+                if (globalListener != null && !holdsRegistryListener(globalListener)) globalListener = null;
                 if (globalListener == null) globalListener = registerGlobalListener();
             } else if (globalListener != null) {
                 String id = globalListener;
@@ -461,6 +465,13 @@ public class ControllerStatePersistance {
 
     void removeRegistryListener(String listenerId) {
         plugin.getAgentService().getDataPlaneService().removeMessageListener(listenerId);
+    }
+
+    /** Whether the dataplane still holds the listener (the controller's own dataplane is asked; any other counts as holding it). */
+    boolean holdsRegistryListener(String listenerId) {
+        Object dps = plugin.getAgentService().getDataPlaneService();
+        return !(dps instanceof io.cresco.agent.data.DataPlaneServiceImpl)
+                || ((io.cresco.agent.data.DataPlaneServiceImpl) dps).holdsMessageListener(listenerId);
     }
 
     public String registerRegionalListener() {

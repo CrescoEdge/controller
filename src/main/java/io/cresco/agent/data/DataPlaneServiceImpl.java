@@ -1061,6 +1061,16 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         t.start();
     }
 
+    /**
+     * Whether this dataplane holds the listener {@code listenerId} now. A persistent listener whose re-add fails after a
+     * reconnect (updateConnections) is gone for good, while its owner still has the id. Controller-internal.
+     */
+    public boolean holdsMessageListener(String listenerId) {
+        synchronized (lockMessage) {
+            return listenerId != null && messageConsumerMap.containsKey(listenerId);
+        }
+    }
+
     public void removeMessageListener(String listenerId) {
 	    try {
 	        // Take the consumer OUT of the map under the lock, then close it OUTSIDE. consumer.close()
