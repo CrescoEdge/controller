@@ -400,7 +400,11 @@ public class ActiveBroker {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
 					this.authorization = authz;
 					// review F2: a bridge carries only principals it may carry; this node's global carries the fabric below it
-					authz.setParent(() -> parentOf(controllerEngine.cstate, controllerEngine.joiningGlobal()));
+					authz.setParent(() -> parentOf(controllerEngine.cstate));
+					// ... and, on a connection verified as it, the global it is joining or lost (see CrescoAuthorizationBroker.isParent)
+					authz.setParentWhileNotJoined(controllerEngine::parentWhileNotJoined);
+					// broker_bridge_transit=auto: a region relays between bridges only until it has known a global
+					authz.setGlobalKnown(controllerEngine::knewAGlobal);
 					// a node whose inbox consumer left this broker gets nothing first hand any more: no unsigned direct messages
 					authz.setInboxLeftListener(node -> controllerEngine.msgSigning().inboxConsumerLeft(node));
 					// gfs#26: a node attached here answers at the former region its own registration recorded (region_alias)
@@ -959,15 +963,26 @@ public class ActiveBroker {
 	}
 
 	/**
-	 * This node's parent controller, whose bridge carries the whole fabric below it: the global a region has joined, or --
-	 * while its state does not name one yet -- the global it is joining ({@code joining}: authenticated in discovery, its
-	 * bridge up before the join is recorded). None for the global itself, and for a region that has no global.
+	 * This node's parent controller, whose bridge carries the whole fabric below it: the global a region has joined (its
+	 * controller state names it). None for the global itself, and for a region that has no global joined.
 	 */
-	static PeerIdentity.Expected parentOf(io.cresco.agent.core.ControllerStateImp cs, PeerIdentity.Expected joining) {
+	static PeerIdentity.Expected parentOf(io.cresco.agent.core.ControllerStateImp cs) {
 		if (cs == null || cs.isGlobalController()) return null;
 		String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
-		if (gr != null && ga != null) return new PeerIdentity.Expected(gr, ga);
-		return joining;
+		return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
+	}
+
+	/**
+	 * Is this node configured to be part of a fabric with a global (ControllerSMHandler's config modes)? Yes when
+	 * {@code global_controller_host} names one (mode 24: it joins that host, and keeps trying), and yes when
+	 * {@code global_optional} is not set: such a region looks for its global by discovery and does not start its own
+	 * services (its agents cannot join it) before it has joined one (mode 8). Only a region with {@code global_optional=true}
+	 * and no {@code global_controller_host} runs on its own: it may still find and join a global by discovery later, which is
+	 * what {@code ControllerEngine.knewAGlobal} records.
+	 */
+	public static boolean configuredWithGlobal(io.cresco.library.plugin.Config config) {
+		String host = config.getStringParam("global_controller_host");
+		return (host != null && !host.trim().isEmpty()) || !config.getBooleanParam("global_optional", false);
 	}
 
 	// Create the bridge group to a remote host. Returns the PRIMARY connector (index 0) un-started so

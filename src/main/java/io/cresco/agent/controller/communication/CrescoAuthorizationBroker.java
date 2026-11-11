@@ -89,7 +89,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     private final boolean logAllow;
     private final boolean recipientBinding;
     private final boolean allowUnverifiedBridges;
-    private final boolean transit;
+    private final Transit transit;
+    private final boolean global, configuredWithGlobal;
     private final String ownTenant;
     private volatile CrescoIdentity ownIdentity;
     /** Bounds on what a quarantined connection may hold (it receives nothing and its sends are discarded). */
@@ -141,10 +142,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             logger.warn("broker_allow_unverified_bridges=true: ANY client that claims to be a broker bridge without a client"
                     + " certificate is exempt from tenant authorization (migration only; turn on broker_require_client_auth)");
         }
-        // split horizon (see relayedByABridge): only the global's broker hands a bridge what another bridge brought
-        String relay = plugin.getConfig().getStringParam(TRANSIT_KEY);
-        this.transit = relay != null && !relay.trim().isEmpty() ? Boolean.parseBoolean(relay.trim())
-                : plugin.getConfig().getBooleanParam("is_global", false);
+        // split horizon (see relaysBetweenBridges): who hands a bridge what another bridge brought
+        this.transit = Transit.parse(plugin.getConfig().getStringParam(TRANSIT_KEY), logger);
+        this.global = plugin.getConfig().getBooleanParam("is_global", false);
+        this.configuredWithGlobal = ActiveBroker.configuredWithGlobal(plugin.getConfig());
         // W-GFS-1: named cross-tenant sinks (see TenantPolicy.CrossTenantSink). Empty by default -> the
         // strict own-subtree rule, exactly as before.
         this.crossTenantSinks = TenantPolicy.CrossTenantSink.parse(
@@ -157,7 +158,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         logger.info("Cresco tenant authorization active. shared destinations=" + this.sharedPrefixes
                 + " superuser tenants=" + this.superuserTenants + " cross-tenant sinks=" + this.crossTenantSinks
                 + " stream recipient binding=" + this.recipientBinding + " " + PeerIdentity.MODE_KEY + "=" + this.peerMode
-                + " relays between bridges=" + this.transit);
+                + " " + TRANSIT_KEY + "=" + this.transit.name().toLowerCase(java.util.Locale.ROOT)
+                + " (relays between bridges now: " + relaysBetweenBridges() + ")");
     }
 
     /** Authorization role for a resolved identity: SUPERUSER for a configured superuser tenant, else TENANT. */
@@ -419,8 +421,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         CrescoSecurityContext q = stateOf(context);
         if (quarantined(context, q)) return withheld(message, null, "a connection without a client certificate receives nothing");
         if (bridgeCarrier(context, q)) {
-            // split horizon: what a bridge brought to a region's broker is for that broker's own clients, never for a bridge
-            if (!transit && relayedByABridge(message)) return false;
+            // split horizon: a region of a fabric with a global hands no bridge another bridge's topic messages or demand
+            if (!relaysBetweenBridges() && relayedByABridge(message)) return false;
             // a bridge's demand subscription: only its peer's own traffic leaves over it (judged per message: the demand may
             // be a wildcard, and refusing the subscription itself would take the whole bridge down)
             ActiveMQDestination about = message.getDestination();
@@ -1176,9 +1178,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             scope = BRIDGE_NOT_A_PEER;
         } else {
             peers.touchBridgePeer(peer);
-            PeerIdentity.Expected p = parent.get();
-            boolean isParent = p != null && peer.getRegion().equals(p.region) && peer.getAgent().equals(p.agent);
-            scope = isParent || superuserTenants.contains(peer.getTenant()) ? BRIDGE_ALL : BRIDGE_OWN;
+            scope = isParent(sc, peer) || superuserTenants.contains(peer.getTenant()) ? BRIDGE_ALL : BRIDGE_OWN;
         }
         sc.bridgeReach = scope;
         sc.bridgeReachAt = now;
@@ -1245,30 +1245,82 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         return false;
     }
 
-    // ---- split horizon: a region's broker is no relay between bridges ----
+    // ---- split horizon: which broker relays between bridges ----
 
-    /** Set to true or false to decide it by hand; unset, only the global's broker ({@code is_global}) relays between bridges. */
+    /**
+     * {@code auto} (the default), {@code true} or {@code false}: see {@link #relaysBetweenBridges}.
+     */
     static final String TRANSIT_KEY = "broker_bridge_transit";
+
+    enum Transit {
+        AUTO, ALWAYS, NEVER;
+
+        static Transit parse(String v, CLogger logger) {
+            String t = v == null ? "" : v.trim().toLowerCase(java.util.Locale.ROOT);
+            if (t.isEmpty() || t.equals("auto")) return AUTO;
+            if (t.equals("true")) return ALWAYS;
+            if (t.equals("false")) return NEVER;
+            if (logger != null) logger.warn(TRANSIT_KEY + "=" + v + " is none of auto, true, false: auto");
+            return AUTO;
+        }
+    }
+
     private final java.util.concurrent.atomic.LongAdder transitWithheld = new java.util.concurrent.atomic.LongAdder(),
             transitDemandWithheld = new java.util.concurrent.atomic.LongAdder();
+    /** The last message each dispatching thread was seen to withhold: a message is counted once, not once per bridge. */
+    private final ThreadLocal<Object> lastWithheld = new ThreadLocal<>();
+    private volatile java.util.function.BooleanSupplier globalKnown = () -> false;
+    private volatile boolean hadGlobal;
 
-    /** Messages that reached this broker over a bridge and were therefore not handed to another bridge, so far. */
+    /** Topic messages that reached this broker over a bridge and were therefore not handed on to a bridge that asked, so far. */
     public long transitWithheldCount() { return transitWithheld.sum(); }
 
     /** Announcements of a bridge's demand that this broker did not pass on to another bridge, so far. */
     public long transitDemandWithheldCount() { return transitDemandWithheld.sum(); }
 
-    /** Does this broker hand a bridge what another bridge brought (the global's does; a region's does not)? */
-    public boolean relaysBetweenBridges() { return transit; }
+    /**
+     * Has this node joined a global, or begun to join one, since it started ({@code ControllerEngine.knewAGlobal})? Asked
+     * while {@code broker_bridge_transit=auto} on a node that is configured with no global, until it says yes once.
+     */
+    public void setGlobalKnown(java.util.function.BooleanSupplier known) {
+        this.globalKnown = known == null ? () -> false : known;
+    }
+
+    /**
+     * Does this broker hand a bridge what another bridge brought? {@code broker_bridge_transit}:
+     * <ul>
+     *   <li>{@code auto} (the default): the global's broker does ({@code is_global}); a region's broker does only while its
+     *       fabric has no global -- it is configured with none ({@link ActiveBroker#configuredWithGlobal}) AND has not
+     *       joined, or begun to join, one since it started. From the first global on it never relays again until it
+     *       restarts, also while that global is down: relaying a topic over every path of up to five brokers costs paths
+     *       times regions per message, which is not what a large fabric may fall back to in an outage;</li>
+     *   <li>{@code true}: it does, whatever it is (two globals federated only through bridges between their regions);</li>
+     *   <li>{@code false}: it does not.</li>
+     * </ul>
+     */
+    public boolean relaysBetweenBridges() {
+        switch (transit) {
+            case ALWAYS: return true;
+            case NEVER: return false;
+            default:
+                if (global) return true;
+                if (configuredWithGlobal || hadGlobal) return false;
+                if (!globalKnown.getAsBoolean()) return true;
+                hadGlobal = true;
+                logger.info(TRANSIT_KEY + "=auto: this region has a global now: its broker no longer relays between bridges"
+                        + " (until this node restarts)");
+                return false;
+        }
+    }
 
     /**
      * Would handing {@code message} to a bridge make this broker a relay between two bridges? Asked for a bridge's
-     * subscription on a broker that is not the global's; true (and counted) for
+     * subscription on a broker that does not relay ({@link #relaysBetweenBridges}); true (and counted) for
      * <ul>
-     *   <li>a message that reached this broker over a bridge: its broker path names the brokers it crossed, and is empty
-     *       for what a client of this broker (its controller, a node of its region) sent;</li>
-     *   <li>the announcement of a consumer that is itself a bridge's demand: passed on, it would tell the next broker that
-     *       this one is a way to that consumer.</li>
+     *   <li>a TOPIC message that reached this broker over a bridge: its broker path names the brokers it crossed, and is
+     *       empty for what a client of this broker (its controller, a node of its region) sent;</li>
+     *   <li>the announcement of a consumer (of a queue or a topic) that is itself a bridge's demand: passed on, it would
+     *       tell the next broker that this one is a way to that consumer.</li>
      * </ul>
      * Why: ActiveMQ forwards on demand along every path of up to {@code broker_message_ttl} brokers. Where regions are
      * bridged to each other as well as to the global, every topic message then reached a broker once over each such path
@@ -1278,8 +1330,15 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      * region speaks for its own nodes only) -- rightly, and so those copies arrived without a caller: a subscriber could
      * be handed the stripped copy before the direct one, and a watchdog or ping that went the long way was refused as
      * unsigned. The global is the one relay of the tree: the regions below it take from its bridge what any node of the
-     * fabric sent. A region relays nothing: its bridges carry what its own clients send and bring what its own clients
-     * asked for. One comparison per message handed to a bridge; nothing is looked up.
+     * fabric sent.
+     *
+     * <p>A QUEUE message is not judged: what stops a queue message from taking the way over another region is that no
+     * region announces that way (the second point). A message that is in a region's queue is handed to whatever consumes
+     * that queue, a bridge included -- a node that moved to another region and consumes its former inbox there gets what
+     * waited for it here; withheld, those messages stayed in the queue and, more than a page of them, kept every later
+     * message from being dispatched.
+     *
+     * <p>One comparison per message handed to a bridge; nothing is looked up.
      */
     private boolean relayedByABridge(Message message) {
         if (isAdvisory(message)) {
@@ -1291,9 +1350,16 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             transitDemandWithheld.increment();
             return true;
         }
+        ActiveMQDestination to = message.getDestination();
+        if (to == null || !to.isTopic()) return false;
         org.apache.activemq.command.BrokerId[] crossed = message.getBrokerPath();
         if (crossed == null || crossed.length == 0) return false;
-        transitWithheld.increment();
+        // a topic's subscriptions are asked one after the other for one message, by the thread that dispatches it
+        Object id = message.getMessageId();
+        if (id == null || lastWithheld.get() != id) {
+            lastWithheld.set(id);
+            transitWithheld.increment();
+        }
         return true;
     }
 
@@ -1308,9 +1374,45 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     /** Stamps a bridge carried outside what it may carry, stripped so far. */
     public long outOfScopeStampCount() { return outOfScopeStamps.get(); }
 
-    /** This node's parent controller (a region's global), whose bridge carries the whole fabric below it; null for none. */
+    /** This node's parent controller (the global a region has JOINED), whose bridge carries the whole fabric below it; null for none. */
     public void setParent(java.util.function.Supplier<PeerIdentity.Expected> parent) {
         this.parent = parent == null ? () -> null : parent;
+    }
+
+    private volatile java.util.function.Supplier<PeerIdentity.Expected> parentWhileNotJoined = () -> null;
+
+    /**
+     * The global of a region that has none joined at the moment: the one it is joining now, else the one it joined last
+     * and lost ({@code ControllerEngine.parentWhileNotJoined}); null for none. See {@link #isParent}.
+     */
+    public void setParentWhileNotJoined(java.util.function.Supplier<PeerIdentity.Expected> global) {
+        this.parentWhileNotJoined = global == null ? () -> null : global;
+    }
+
+    /**
+     * Is the controller {@code peer} at the other end of the bridge connection {@code sc} this node's parent -- the one
+     * controller whose bridge brings the whole fabric's messages?
+     * <ul>
+     *   <li>the global this region has joined (its controller state names it): yes, as before;</li>
+     *   <li>while the state names none: the global the region is joining, or the one it joined last and lost -- but only on
+     *       a connection whose own certificate verified as that controller and that is a recorded bridge peer. The bridge
+     *       to a global is up about a second before the join is recorded, and the global's own connector is back at a
+     *       region before the region has found the global again; what the global relayed in those moments (another
+     *       region's advert) was judged as a peer region's bridge would be and lost its caller. Nothing is granted to a
+     *       name: a join that is only being tried, to a controller with no verified bridge here, changes nothing, and when
+     *       the attempt fails the region is joining nobody.</li>
+     * </ul>
+     */
+    private boolean isParent(CrescoSecurityContext sc, CrescoIdentity peer) {
+        if (peer == null) return false;
+        PeerIdentity.Expected p = parent.get();
+        if (p != null) return peer.getRegion().equals(p.region) && peer.getAgent().equals(p.agent);
+        PeerIdentity.Expected g = parentWhileNotJoined.get();
+        if (g == null || sc == null || !sc.verified || !sc.certificate || sc.identity == null) return false;
+        CrescoIdentity proven = sc.identity;
+        return g.region != null && g.agent != null && g.region.equals(proven.getRegion()) && g.agent.equals(proven.getAgent())
+                && g.region.equals(peer.getRegion()) && g.agent.equals(peer.getAgent())
+                && peers.isBridgePeer(proven, sc.leaf);
     }
 
     /** A bridge this broker opened ({@code ActiveBroker}): what arrives over its local side came from {@code peer}. */
@@ -1374,9 +1476,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             Object t = m.getProperty(CallerStamps.P_TENANT), r = m.getProperty(CallerStamps.P_ROLES);
             declared = io.cresco.library.security.Caller.parse(String.valueOf(raw), t == null ? null : String.valueOf(t),
                     r == null ? null : String.valueOf(r));
-            PeerIdentity.Expected p = parent.get();
-            boolean isParent = p != null && peer.getRegion().equals(p.region) && peer.getAgent().equals(p.agent);
-            why = declared == null ? "a malformed stamp" : bridgeCarryRefusal(peer, isParent, declared, superuserTenants);
+            why = declared == null ? "a malformed stamp" : bridgeCarryRefusal(peer, isParent(sc, peer), declared, superuserTenants);
         }
         if (why == null) return;
         outOfScopeStamps.incrementAndGet();

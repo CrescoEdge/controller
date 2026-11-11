@@ -102,8 +102,8 @@ public final class MsgMetrics {
                 ce, CrescoAuthorizationBroker::forgedStampCount);
         broker(registry, names, "broker.bridge.withheld", "Messages a bridge demanded and this node's broker did not give it.",
                 ce, CrescoAuthorizationBroker::bridgeWithheldCount);
-        broker(registry, names, "broker.bridge.transit.withheld", "Messages that reached this node's broker over a bridge and were not handed"
-                        + " on to another bridge (a region's broker relays nothing between bridges; the global's does).",
+        broker(registry, names, "broker.bridge.transit.withheld", "Topic messages that reached this node's broker over a bridge and were"
+                        + " not handed on to a bridge that asked for them (a region of a fabric with a global relays none; each message once).",
                 ce, CrescoAuthorizationBroker::transitWithheldCount);
         broker(registry, names, "broker.bridge.discarded", "Messages a bridge brought in for a destination its peer may not write: discarded.",
                 ce, CrescoAuthorizationBroker::bridgeDiscardedCount);

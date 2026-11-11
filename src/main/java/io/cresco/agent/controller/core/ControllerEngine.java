@@ -147,22 +147,42 @@ public class ControllerEngine {
      */
     public io.cresco.agent.controller.communication.MsgCounts msgCounts() { return msgCounts; }
 
-    private volatile io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal;
+    private volatile io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal, lastGlobal;
+    private volatile boolean knewAGlobal;
 
     /**
-     * The global this region is joining now: authenticated in discovery, the bridge to it being built, the join not yet
-     * recorded in the controller state (that follows about a second later, when the bridge carries). Its broker treats it
-     * as this node's parent from this moment: what the global's bridge brings in that second -- another region's advert it
-     * relays -- is the fabric's, and was stripped as if a peer region had brought it. Null arguments: the join ended
-     * (recorded, or failed).
+     * This region begins to join the global {@code region/agent} (found in discovery; its bridge is about to be built).
+     * From now this node has known a global ({@link #knewAGlobal}), and its broker takes a bridge connection that verifies
+     * as that controller for its parent's ({@link #parentWhileNotJoined}).
      */
-    public void setJoiningGlobal(String region, String agent) {
-        this.joiningGlobal = (region == null || agent == null) ? null
-                : new io.cresco.agent.controller.communication.PeerIdentity.Expected(region, agent);
+    public void joiningGlobal(String region, String agent) {
+        if (region == null || agent == null) return;
+        this.joiningGlobal = new io.cresco.agent.controller.communication.PeerIdentity.Expected(region, agent);
+        this.knewAGlobal = true;
     }
 
-    /** The global this region is joining ({@link #setJoiningGlobal}), or null. */
-    public io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal() { return joiningGlobal; }
+    /**
+     * The join attempt begun with {@link #joiningGlobal} ended. {@code joined}: the controller state names the global now,
+     * and it is remembered as the one joined last. Not joined: this region is joining nobody.
+     */
+    public void joinEnded(boolean joined) {
+        io.cresco.agent.controller.communication.PeerIdentity.Expected g = joiningGlobal;
+        if (joined && g != null) lastGlobal = g;
+        joiningGlobal = null;
+    }
+
+    /**
+     * The global of this region while its controller state names none: the one it is joining now, else the one it joined
+     * last (and lost: it is trying to join it again); null when neither. The broker grants it nothing by name -- only a
+     * bridge connection whose certificate verified as that controller is its parent's (CrescoAuthorizationBroker.isParent).
+     */
+    public io.cresco.agent.controller.communication.PeerIdentity.Expected parentWhileNotJoined() {
+        io.cresco.agent.controller.communication.PeerIdentity.Expected g = joiningGlobal;
+        return g != null ? g : lastGlobal;
+    }
+
+    /** Has this node joined a global, or begun to join one, since it started? Never false again once true. */
+    public boolean knewAGlobal() { return knewAGlobal; }
 
     private final io.cresco.agent.controller.communication.ExpiredMessages expiredMessages = new io.cresco.agent.controller.communication.ExpiredMessages();
 
@@ -283,7 +303,6 @@ public class ControllerEngine {
         if (sweeper != null) sweeper.shutdownNow();
         boolean isStopped = false;
         try {
-
             // first, while this node can still send and sign: the requests it holds for a route are answered (nothing will
             // send them on), and none is held from now
             routeGate.stop();
