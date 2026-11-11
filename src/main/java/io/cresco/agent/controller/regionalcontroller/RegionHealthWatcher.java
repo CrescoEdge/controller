@@ -21,6 +21,7 @@ public class RegionHealthWatcher {
     private PluginBuilder plugin;
     private CLogger logger;
     public Timer regionalUpdateTimer;
+    public Timer peerTimer;
     // New Timer for active pinging Global Controller
     public Timer activePingTimer;
 
@@ -40,6 +41,9 @@ public class RegionHealthWatcher {
     private int pingRetries;      // extra attempts within one tick before recording a miss
 
     private Set<String> registeredPeers = new HashSet<>(); // Add this field
+    // the peers this region bridged by inference (their paths), at most net_infer_max_peers; and the rounds of inference
+    private final Set<String> inferredPeers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private int inferRound;
 
     // Health->state moved to HC: transport-only. Stamps the last successful pong from the global
     // (parent) controller; ParentLinkHealthCheck reads it and the HC->MINA bridge fires
@@ -89,6 +93,12 @@ public class RegionHealthWatcher {
         // This timer checks the status of agents connected to this region via DB timestamps
         regionalUpdateTimer.scheduleAtFixedRate(new RegionalNodeStatusWatchDog(controllerEngine, logger), watchDogIntervalDelay * periodMultiplier, periodMultiplier * watchDogInterval);//remote
 
+        // Region-to-region peer work has its own timer, at the cadence it had on the one above: the discovery of the
+        // configured peers (5 s each), inference (1 s per address) and the path probes (3 RPCs x 5 s per peer) ran ahead
+        // of the agent aging, which then lagged by minutes. Fixed delay: a slow round is not followed by a burst.
+        peerTimer = new Timer("RegionPeerTimer", true); // Daemon thread
+        peerTimer.schedule(new PeerMaintenanceTask(), watchDogIntervalDelay * periodMultiplier, periodMultiplier * watchDogInterval);
+
         // --- NEW: Schedule Active Ping Timer for Global Controller ---
         // Only schedule if this node might connect to a global controller
         if (controllerEngine.cstate.isRegionalController()) { // Check if it's configured or potentially acting as a region
@@ -126,6 +136,10 @@ public class RegionHealthWatcher {
                 regionalUpdateTimer.cancel();
                 regionalUpdateTimer = null;
             }
+            if (peerTimer != null) {
+                peerTimer.cancel();
+                peerTimer = null;
+            }
             // --- NEW: Cancel Ping Timer ---
             if (activePingTimer != null) {
                 activePingTimer.cancel();
@@ -153,7 +167,19 @@ public class RegionHealthWatcher {
         }
     }
 
-    private void maintainPeerConnections() {
+    /** Whether this region holds a bridge to {@code peerPath} (a configured or inferred peer, or its global). */
+    boolean bridgedTo(String peerPath) {
+        return controllerEngine.getBroker().isPeerConnected(peerPath);
+    }
+
+    /** Dial a region's discovery listener: the node that answered, or null. */
+    DiscoveryNode dialRegion(String host, int port, int timeout) throws Exception {
+        TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
+        List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, timeout, host, port, true);
+        return (discovered != null && !discovered.isEmpty()) ? discovered.get(0) : null;
+    }
+
+    void maintainPeerConnections() {
         logger.trace("Maintaining regional peer connections...");
         String regionalPeersStr = plugin.getConfig().getStringParam("regional_peers");
 
@@ -178,16 +204,14 @@ public class RegionHealthWatcher {
                         }
                     }
                     // Discover the peer first to get its proper agent path
-                    TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-                    List<DiscoveryNode> discovered = ds.discover(DiscoveryType.REGION, plugin.getConfig().getIntegerParam("peer_discovery_timeout",5000), peerHost, peerPort, true); // 5 sec timeout
+                    DiscoveryNode peerNode = dialRegion(peerHost, peerPort, plugin.getConfig().getIntegerParam("peer_discovery_timeout",5000)); // 5 sec timeout
 
-                    if (discovered != null && !discovered.isEmpty()) {
-                        DiscoveryNode peerNode = discovered.get(0);
+                    if (peerNode != null) {
                         String peerAgentPath = peerNode.getDiscoveredPath();
 
                         // Use isPeerConnected, which checks the brokeredAgents map directly
                         logger.debug("Peer Discovered Path: {}", peerAgentPath);
-                        if (!controllerEngine.getBroker().isPeerConnected(peerAgentPath)) {
+                        if (!bridgedTo(peerAgentPath)) {
                             logger.warn("Peer connection to {} ({}) is down or not established. Attempting to connect...", peerAddress, peerAgentPath);
                             controllerEngine.getIncomingCanidateBrokers().put(peerNode);
                             logger.info("Submitted connection candidate for peer {}", peerAddress);
@@ -215,6 +239,11 @@ public class RegionHealthWatcher {
      * a peer; probeConnectedRegionPeers() then measures the new direct path and the cost selector ADOPTS it
      * only if it beats the existing multi-hop / via-global path. That is: infer a link between two already-
      * (transitively-)connected regions, connect it, and use it iff it is faster.
+     *
+     * <p>CAPPED: a region holds at most {@code net_infer_max_peers} inferred peers (3 by default; 0: none) and dials
+     * only while it has a free place, a few regions a round ({@link #inferTargets}). Without the cap every region
+     * dialed every other each round and bridged all that answered: R regions built R x (R-1) bridge groups. The
+     * configured peers (regional_peers) and the global are not inferred peers and take none of the places.
      */
     public void inferConnections() {
         try {
@@ -223,11 +252,21 @@ public class RegionHealthWatcher {
             if (rv == null) return;
             String self = plugin.getRegion() + "_" + plugin.getAgent();
             int timeout = plugin.getConfig().getIntegerParam("infer_discovery_timeout", 1000);
+            int cap = plugin.getConfig().getIntegerParam("net_infer_max_peers", 3);
+            // a failed bridge frees its place (one still waiting for the broker manager keeps it)
+            inferredPeers.removeIf(peer -> !bridgedTo(peer) && !awaitingBridge(peer));
+            if (inferredPeers.size() >= cap) return;
+            Map<String, io.cresco.agent.controller.netmetrics.RouteView.NodeState> candidates = new HashMap<>();
             for (io.cresco.agent.controller.netmetrics.RouteView.NodeState ns : rv.fresh()) {
                 if (ns.node == null || ns.node.equals(self)) continue;
                 if (!"region".equals(ns.role)) continue;                                 // region<->region only
-                if (controllerEngine.getBroker().isPeerConnected(ns.node)) continue;      // already bridged
+                if (bridgedTo(ns.node) || awaitingBridge(ns.node)) continue;      // already bridged, or about to be (a configured peer just submitted)
                 if (ns.addrs == null || ns.addrs.isEmpty()) continue;
+                candidates.put(ns.node, ns);
+            }
+            for (String node : inferTargets(self, candidates.keySet(), cap, inferredPeers.size(), inferRound++)) {
+                if (inferredPeers.size() >= cap) break;
+                io.cresco.agent.controller.netmetrics.RouteView.NodeState ns = candidates.get(node);
                 for (String addr : ns.addrs) {
                     int colon = addr.lastIndexOf(':');
                     if (colon <= 0) continue;
@@ -235,10 +274,10 @@ public class RegionHealthWatcher {
                     int port;
                     try { port = Integer.parseInt(addr.substring(colon + 1).trim()); } catch (Exception e) { continue; }
                     try {
-                        TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
-                        List<DiscoveryNode> found = ds.discover(DiscoveryType.REGION, timeout, host, port, true);
-                        if (found != null && !found.isEmpty()) {
-                            controllerEngine.getIncomingCanidateBrokers().put(found.get(0));
+                        DiscoveryNode found = dialRegion(host, port, timeout);
+                        if (found != null) {
+                            controllerEngine.getIncomingCanidateBrokers().put(found);
+                            inferredPeers.add(found.getDiscoveredPath());
                             logger.info("INFERRED CONNECTION: region {} directly reachable at {}:{} (learned "
                                     + "from shared route state) -> self-organizing a bridge", ns.node, host, port);
                             break; // one reachable address suffices
@@ -249,6 +288,34 @@ public class RegionHealthWatcher {
         } catch (Exception e) {
             logger.debug("inferConnections error: {}", e.getMessage());
         }
+    }
+
+    /** Whether {@code peerPath} was submitted to the broker manager and is not taken up yet. */
+    private boolean awaitingBridge(String peerPath) {
+        for (DiscoveryNode candidate : controllerEngine.getIncomingCanidateBrokers()) {
+            if (peerPath.equals(candidate.getDiscoveredPath())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The regions to dial in one round of inference, of those this region could bridge to (regions in the route view it
+     * holds no bridge to). None once it holds {@code cap} inferred peers. Else at most twice its free places, so a
+     * round's dialing does not grow with the fabric: in name order starting after this region's own name -- every region
+     * then picks different neighbours, a ring, not the same few hubs -- and moved on by that many each round, so regions
+     * that do not answer are not dialed ahead of the rest for ever.
+     */
+    static List<String> inferTargets(String self, Collection<String> candidates, int cap, int inferredNow, int round) {
+        int free = cap - inferredNow;
+        if (free <= 0 || candidates.isEmpty()) return Collections.emptyList();
+        List<String> ring = new ArrayList<>(new TreeSet<>(candidates));
+        int start = 0;
+        while (start < ring.size() && ring.get(start).compareTo(self) <= 0) start++;
+        int window = (int) Math.min(ring.size(), 2L * free);
+        long offset = start + (long) Math.max(round, 0) * window;
+        List<String> targets = new ArrayList<>(window);
+        for (int i = 0; i < window; i++) targets.add(ring.get((int) ((offset + i) % ring.size())));
+        return targets;
     }
 
     /**
@@ -553,6 +620,22 @@ public class RegionHealthWatcher {
         }
     }
 
+    // Region-to-region peer work, on its own timer
+    class PeerMaintenanceTask extends io.cresco.agent.core.GuardedTimerTask {
+        PeerMaintenanceTask() { super(logger); }
+
+        protected void tick() {
+            if (controllerEngine.cstate.isRegionalController()) {
+                // 1) keep CONFIGURED peer links up; 2) self-organize INFERRED links from learned route
+                // state; 3) cost-probe EVERY connected region peer (configured or inferred) and select.
+                maintainPeerConnections();
+                inferConnections();
+                probeConnectedRegionPeers();
+                verifyGraphRoutes();
+            }
+        }
+    }
+
     // Task to check status of connected agents via DB timestamps
     class RegionalNodeStatusWatchDog extends io.cresco.agent.core.GuardedTimerTask {
         private ControllerEngine controllerEngine;
@@ -569,12 +652,7 @@ public class RegionHealthWatcher {
         protected void tick() {
             if (controllerEngine.cstate.isRegionalController()) { // Only run if node is regional controller
 
-                // 1) keep CONFIGURED peer links up; 2) self-organize INFERRED links from learned route
-                // state; 3) cost-probe EVERY connected region peer (configured or inferred) and select.
-                controllerEngine.getRegionHealthWatcher().maintainPeerConnections();
-                controllerEngine.getRegionHealthWatcher().inferConnections();
-                controllerEngine.getRegionHealthWatcher().probeConnectedRegionPeers();
-                controllerEngine.getRegionHealthWatcher().verifyGraphRoutes();
+                // (the region-to-region peer work that ran here is PeerMaintenanceTask, on its own timer)
 
                 if (!regionalUpdateTimerActive.compareAndSet(false, true)) {
                     logger.warn("RegionalNodeStatusWatchDog already running, skipping cycle.");

@@ -23,6 +23,7 @@ class GuardedTimerTaskTest {
             "io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher$CommunicationHealthWatcherTask",
             "io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher$RegionalNodeStatusWatchDog",
             "io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher$ActivePingTask",
+            "io.cresco.agent.controller.regionalcontroller.RegionHealthWatcher$PeerMaintenanceTask",
             "io.cresco.agent.controller.agentcontroller.AgentHealthWatcher$CommunicationHealthWatcherTask",
             "io.cresco.agent.controller.agentcontroller.AgentHealthWatcher$ActivePingTask",
             "io.cresco.agent.controller.statemachine.ControllerSMHandler$stateUpdateTask",
