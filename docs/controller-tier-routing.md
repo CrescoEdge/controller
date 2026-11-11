@@ -145,6 +145,17 @@ Agent and plugin messages are not controller messages and are routed by address 
   controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
   `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing
   rule accepts (`msg_signature_max_future_ms`, 60 s): the expiry is judged by the clock of whoever holds the message.
+  A sender whose clock is BEHIND by more than the timeout plus the margin has every such request expire on arrival
+  (earlier builds tolerated 300 s): that is counted and said, see the next point.
+- **What a broker lets expire** is counted and logged (`ExpiredMessages`): `msg.expired`, of which
+  `msg.expired.on_arrival` had already expired when they reached this broker, and `msg.expired.by_consumer` for what a
+  consumer's client library discarded by its own clock. One WARN every 10 s at most: `MESSAGE EXPIRED: a message for
+  '<queue>' was not consumed within its life of N ms (it waited M ms at this node's broker)`, or `MESSAGE EXPIRED on
+  arrival: ... had expired N ms before it reached this node's broker ...: the sender's clock is behind this node's by
+  about S s, or the message waited that long on its way`. An expired message is discarded, never moved to
+  `ActiveMQ.DLQ` (it was: every expired persistent message, with its expiry cleared, into a queue nothing reads, until
+  the store was full). What else lands there (a persistent message a consumer refused) expires after
+  `broker_dlq_expiry_ms`; the gauge `broker.dlq.depth` is its depth.
 - **Liveness pings** that cannot be served are never answered with an error (a pinger reads any reply as a pong).
 
 ## Behaviour changes for callers
@@ -204,6 +215,7 @@ How it is measured:
 | `lost_node_sweep_interval_ms` | long | `3600000` | Minimum time between two retention sweeps of one controller's DB. |
 | `route_rebuild_grace_ms` | long | `1500` | How long after a node's inbox lost its last consumer at this node's broker (or, for an inbox the broker never served, after a request for it arrived) an RPC request for it is held for the route to come back before it is answered `route unavailable`. |
 | `route_hold_max` | int | `1024` | The most RPC requests a controller holds for routes being rebuilt; one more is answered at once. |
+| `broker_dlq_expiry_ms` | long | `3600000` | How long a dead letter (a persistent message a consumer refused) stays in `ActiveMQ.DLQ`; at least a minute. Expired messages are never put there. |
 | `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |
 

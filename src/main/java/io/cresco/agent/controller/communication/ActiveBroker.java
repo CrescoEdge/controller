@@ -218,6 +218,14 @@ public class ActiveBroker {
 				sslContextBroker.setSSLContext(sslContext);
 				logger.info("Initialized SSL Context");
 
+				// Dead letters. With no strategy set ActiveMQ's default applied: every PERSISTENT message that expired (liveness
+				// and control are persistent, MsgQoS) went to the queue ActiveMQ.DLQ with its expiry cleared, which nothing
+				// consumes -- it grew until the store was full. An expired message is now discarded (counted and logged by
+				// ExpiredMessages); whatever else lands there (a persistent message a consumer refused) expires after
+				// broker_dlq_expiry_ms, and the queue's depth is the gauge broker.dlq.depth.
+				long dlqExpiryMs = plugin.getConfig().getLongParam("broker_dlq_expiry_ms", DLQ_EXPIRY_MS);
+				entry.setDeadLetterStrategy(deadLetters(dlqExpiryMs));
+
 				PolicyMap map = new PolicyMap();
 		        map.setDefaultEntry(entry);
 
@@ -265,6 +273,7 @@ public class ActiveBroker {
 								+ " messages behind loses its oldest (counted: dataplane.broker.discarded)");
 					}
 					topics.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
+					topics.setDeadLetterStrategy(deadLetters(dlqExpiryMs));
 					topics.setAdvisoryForDiscardingMessages(discardAccounting);
 					topics.setAdvisoryForSlowConsumers(discardAccounting);
 					map.put(new org.apache.activemq.command.ActiveMQTopic(">"), topics);
@@ -420,6 +429,8 @@ public class ActiveBroker {
 				if (discardAccounting) {
 					brokerPlugins.add(new CrescoDiscardAccountingBroker(plugin));
 				}
+				// What this broker lets expire is counted and said (msg.expired; ExpiredMessages). Always installed.
+				brokerPlugins.add(controllerEngine.expiredMessages().plugin());
 				// What this broker can reach: every consumer that joins or leaves is told to the controller's RouteGate, which
 				// answers a request for a node nothing here leads to instead of leaving it in a queue. Always installed.
 				brokerPlugins.add(controllerEngine.routeGate().plugin());
@@ -881,6 +892,45 @@ public class ActiveBroker {
 	public static boolean dataplaneBackpressure(PluginBuilder plugin) {
 		return plugin.getConfig().getBooleanParam("dataplane_backpressure", true)
 				&& plugin.getConfig().getBooleanParam("activemq_topic_producer_flow_control", true);
+	}
+
+	static final long DLQ_EXPIRY_MS = 3_600_000L;
+	static final String DLQ = "ActiveMQ.DLQ";
+
+	/**
+	 * What becomes of a message nothing took: an expired one is discarded, not kept; a non-persistent one is discarded as
+	 * before; a persistent one a consumer refused goes to {@value #DLQ} and expires there after {@code expiryMs} (at least a
+	 * minute), so that nothing collects in a queue nobody reads.
+	 */
+	static org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy deadLetters(long expiryMs) {
+		org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy s = new org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy();
+		s.setProcessExpired(false);
+		s.setProcessNonPersistent(false);
+		s.setExpiration(Math.max(60_000L, expiryMs));
+		return s;
+	}
+
+	/** The messages in this broker's dead-letter queue now (the gauge broker.dlq.depth): one lookup, nothing scanned. */
+	public long deadLetterDepth() {
+		return deadLetterDepth(broker);
+	}
+
+	static long deadLetterDepth(BrokerService service) {
+		try {
+			org.apache.activemq.broker.region.Destination d = queue(service, DLQ);
+			return d == null ? 0L : d.getDestinationStatistics().getMessages().getCount();
+		} catch (Exception e) {
+			return 0L;
+		}
+	}
+
+	/** The queue {@code name} of {@code service} when it exists: one lookup in the queue region's own map. */
+	private static org.apache.activemq.broker.region.Destination queue(BrokerService service, String name) {
+		if (service == null) return null;
+		Broker b = service.getRegionBroker();
+		if (!(b instanceof org.apache.activemq.broker.region.RegionBroker)) return null;
+		return ((org.apache.activemq.broker.region.RegionBroker) b).getQueueRegion().getDestinationMap()
+				.get(new org.apache.activemq.command.ActiveMQQueue(name));
 	}
 
 	/**
