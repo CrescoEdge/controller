@@ -216,20 +216,18 @@ public class AgentHealthWatcher {
     static final long PARENT_LINK_CHECK_MS = 250L;
 
     /** Sees this agent join its region (active) and pings at once then; tells RevocationSync whether the link is up. */
-    class ParentLinkTask extends TimerTask {
-        public void run() {
-            try {
-                boolean up = controllerEngine.cstate.isActive() && !controllerEngine.cstate.isRegionalController();
-                io.cresco.agent.controller.communication.MsgSigning signing = controllerEngine.msgSigning();
-                boolean joined = io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up);
-                // while the link is down, and for the first message of a join, nothing goes to the region unsigned: its pong
-                // offers the direct link anew
-                if (!up || joined) signing.parentLinkReset();
-                // a join, or a message this agent holds because it cannot judge it yet: ping now, not at the next interval
-                if (joined || (up && signing.takeTrustWanted(System.currentTimeMillis()))) new ActivePingTask().run();
-            } catch (Exception ex) {
-                logger.warn("ParentLinkTask Error: {}", ex.getMessage());
-            }
+    class ParentLinkTask extends io.cresco.agent.core.GuardedTimerTask {
+        ParentLinkTask() { super(logger); }
+
+        protected void tick() {
+            boolean up = controllerEngine.cstate.isActive() && !controllerEngine.cstate.isRegionalController();
+            io.cresco.agent.controller.communication.MsgSigning signing = controllerEngine.msgSigning();
+            boolean joined = io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up);
+            // while the link is down, and for the first message of a join, nothing goes to the region unsigned: its pong
+            // offers the direct link anew
+            if (!up || joined) signing.parentLinkReset();
+            // a join, or a message this agent holds because it cannot judge it yet: ping now, not at the next interval
+            if (joined || (up && signing.takeTrustWanted(System.currentTimeMillis()))) new ActivePingTask().run();
         }
     }
 
