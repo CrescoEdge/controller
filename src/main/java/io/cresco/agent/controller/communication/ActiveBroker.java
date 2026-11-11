@@ -420,6 +420,9 @@ public class ActiveBroker {
 				if (discardAccounting) {
 					brokerPlugins.add(new CrescoDiscardAccountingBroker(plugin));
 				}
+				// What this broker can reach: every consumer that joins or leaves is told to the controller's RouteGate, which
+				// answers a request for a node nothing here leads to instead of leaving it in a queue. Always installed.
+				brokerPlugins.add(controllerEngine.routeGate().plugin());
 				if (!brokerPlugins.isEmpty()) {
 					broker.setPlugins(brokerPlugins.toArray(new org.apache.activemq.broker.BrokerPlugin[0]));
 				}
@@ -797,6 +800,7 @@ public class ActiveBroker {
 
 	public void stopBroker() {
 		try {
+			controllerEngine.routeGate().unbound();          // no broker to ask: requests are sent (and fail) as before
 
 			broker.getRegionBroker().getScheduler().shutdown();
 			broker.getBroker().getScheduler().shutdown();

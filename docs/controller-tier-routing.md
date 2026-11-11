@@ -130,6 +130,17 @@ Agent and plugin messages are not controller messages and are routed by address 
   own schedulers are starting (GLOBAL_INIT) it is waited for up to `route_ready_wait_ms` (default 3000).
 - **An agent re-initialising (regional controller unknown).** A function that must go to its regional controller
   waits up to `route_ready_wait_ms`, then gets `route unavailable ... regional controller not known`.
+- **A node this node's broker has no way to** (its region's controller is down, the bridge to it is gone, an agent of
+  this region is not connected). A controller hands a message for another node to its own broker; the broker has a way to
+  that node while something consumes the node's inbox queue there (the node itself, or the demand of the bridge that
+  leads to it). `RouteGate` keeps that from the broker's consumer events. An RPC request whose inbox has no consumer is
+  not sent: if the broker saw the last consumer leave more than `route_rebuild_grace_ms` ago it is answered at once with
+  `route unavailable at <node>: <hop>: no route to <region>_<agent> ...` (the caller's call fails with status 503); if
+  the consumer left less than that ago, or the broker never had one (a bridge just being built), the request is held on
+  the controller -- not in the broker -- and goes on the moment a consumer of that inbox joins, or is answered when the
+  grace ends (at most half of the caller's stated timeout). At most `route_hold_max` requests are held. Counted as
+  `msg.dropped.no_route` (and `msg.route.held`). A ping is dropped, not answered. Messages that are not RPC requests are
+  handed to the broker as before. An agent has no broker and judges nothing: its request waits at its region's broker.
 - **How long a request lives.** An RPC request that states its caller's timeout (`rpc_timeout_ms`, milliseconds; the
   controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
   `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing
@@ -191,6 +202,8 @@ How it is measured:
 |---|---|---|---|
 | `lost_node_retention_days` | double | `30` | Days a LOST node stays listed before its rows are deleted, counted from when it went LOST. `0` or negative keeps LOST nodes forever. Fractions allowed (`0.5` = 12 h). |
 | `lost_node_sweep_interval_ms` | long | `3600000` | Minimum time between two retention sweeps of one controller's DB. |
+| `route_rebuild_grace_ms` | long | `1500` | How long after a node's inbox lost its last consumer at this node's broker (or, for an inbox the broker never served, after a request for it arrived) an RPC request for it is held for the route to come back before it is answered `route unavailable`. |
+| `route_hold_max` | int | `1024` | The most RPC requests a controller holds for routes being rebuilt; one more is answered at once. |
 | `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |
 
