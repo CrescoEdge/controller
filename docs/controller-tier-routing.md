@@ -229,6 +229,7 @@ How it is measured:
 | `route_rebuild_grace_ms` | long | `1500` | How long after a node's inbox lost its last consumer at this node's broker (or, for an inbox the broker never served, after a request for it arrived) an RPC request for it is held for the route to come back before it is answered `route unavailable`. |
 | `route_hold_max` | int | `1024` | The most RPC requests a controller holds for routes being rebuilt; one more is answered at once. |
 | `route_hold_max_per_node` | int | `64` | The most of them for one node. |
+| `broker_bridge_transit` | string | `auto` | Which broker relays between bridges: `auto` (the global; a region only while its fabric has no global), `true`, `false`. See docs/caller-authorization.md. |
 | `broker_dlq_expiry_ms` | long | `3600000` | How long a dead letter (a persistent message a consumer refused) stays in `ActiveMQ.DLQ`; at least a minute. Expired messages are never put there. |
 | `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |

@@ -1221,16 +1221,16 @@ public class ControllerSMHandler {
         return ownStatus == null || ownStatus == BrokerStatusType.FAILED || ownStatus == BrokerStatusType.STOPPED;
     }
 
-    private boolean isRegionGlobal(DiscoveryNode discoveryNode) {
+    boolean isRegionGlobal(DiscoveryNode discoveryNode) {
 
         boolean isInit = false;
         logger.debug("isRegionGlobal Called");
 
         try {
             String globalPath = discoveryNode.getDiscoveredPath();
-            // the broker treats the global as this region's parent from now, not from the moment the join is recorded below:
-            // its bridge carries the fabric's messages as soon as it is up
-            controllerEngine.setJoiningGlobal(discoveryNode.discovered_region, discoveryNode.discovered_agent);
+            // from now a bridge connection that verifies as this global is this region's parent's, not only from the moment
+            // the join is recorded below: the bridge carries the fabric's messages as soon as it is up
+            controllerEngine.joiningGlobal(discoveryNode.discovered_region, discoveryNode.discovered_agent);
             BrokeredAgent own = controllerEngine.getBrokeredAgents().get(globalPath);
             boolean reachable = controllerEngine.isReachableAgent(globalPath);
             if (needsOwnUplink(reachable, own == null ? null : own.getBrokerStatus())) {
@@ -1287,7 +1287,7 @@ public class ControllerSMHandler {
             logger.error("connectToGlobal() Error " + ex.getMessage(), ex);
         }
         finally {
-            controllerEngine.setJoiningGlobal(null, null);      // recorded in the state now, or not joined
+            controllerEngine.joinEnded(isInit);                 // recorded in the state now, or joining nobody
         }
 
         return isInit;

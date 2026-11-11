@@ -452,17 +452,46 @@ is refused for its caller.
   logged as a forged caller): the message travels without a caller and is refused wherever one is required. With
   `net_source_routing` on, a message relayed through another region's controller loses its stamp at that hop until
   messages are signed end to end (D4).
-- **What a region's broker hands a bridge** (split horizon). Only the global's broker relays between bridges: a region's
-  broker gives a bridge what its own clients sent (its controller, the nodes of its region), never a message that
-  reached it over another bridge, and it does not pass a bridge's demand on to another bridge
-  (`CrescoAuthorizationBroker.relayedByABridge`; counted in `broker.bridge.transit.withheld`, not logged). ActiveMQ
-  forwards on demand along every path of up to `broker_message_ttl` brokers, so where regions are bridged to each other
-  as well as to the global every topic message used to arrive once per path, and a queue message went over another region
-  whenever its own bridge was away -- and the copy a region's bridge brought for another region's node lost its stamp
-  under the rule above (one `STRIPPED a forged caller` line per node every 10 s in a mesh at rest; watchdogs refused as
-  unsigned after a restart of the global). The rule above is unchanged: a region still speaks for its own nodes only.
-  `broker_bridge_transit=true|false` decides it by hand (unset: only the node with `is_global` relays). A region that
-  other regions can reach only through another REGION (no global, no bridge of their own) is no longer reached that way.
+- **Which broker relays between bridges** (split horizon, `broker_bridge_transit`). ActiveMQ forwards on demand along
+  every path of up to `broker_message_ttl` (5) brokers, so every broker with two bridges was a relay. Where regions are
+  bridged to each other as well as to the global, every topic message then arrived once per path, and a queue message
+  went over another region whenever its own bridge was away -- and the copy a region's bridge brought for another
+  region's node lost its stamp under the rule above (one `STRIPPED a forged caller` line per node every 10 s in a mesh at
+  rest; watchdogs refused as unsigned after a restart of the global). The rule above is unchanged; who relays is now
+  decided:
+  - `auto` (the default). The global's broker relays (`is_global`): it is the parent of the regions, and they take the
+    fabric from its bridge. A region's broker relays only while its fabric has no global: it is configured with none
+    AND has not joined, or begun to join, one since it started. "Configured with a global" is `global_controller_host`
+    set, or `global_optional` not set (such a region looks for its global by discovery and does not start its own
+    services before it has joined one); only a region with `global_optional=true` and no `global_controller_host` runs
+    on its own. From its first global on a region never relays again until it restarts, also while that global is down:
+    relaying a topic over every path costs paths times regions per message, which is not what a large fabric may fall
+    back to in an outage.
+  - `true`: this broker relays, whatever it is. `false`: it does not.
+
+  A broker that does not relay (`CrescoAuthorizationBroker.relayedByABridge`) hands a bridge no TOPIC message that
+  reached it over another bridge (counted once per such message in `broker.bridge.transit.withheld`, not logged), and
+  does not pass a bridge's demand -- for a queue or a topic -- on to another bridge. A QUEUE message is never judged:
+  what is in a region's queue goes to whatever consumes that queue, a bridge included (a node that moved to another
+  region gets what waited for it); a queue message no longer takes the way over another region because no region
+  announces that way.
+
+  **What a fabric with a global gives up against earlier builds.** A region whose own uplink is down is no longer reached
+  through a peer region (before: it was, with the caller stripped; a signed message still counted as its sender's); its
+  messages wait for its own bridge. Two globals federated only through bridges between their regions carry nothing
+  between them unless those regions set `broker_bridge_transit=true`. A fabric WITHOUT a global is unchanged: its regions
+  relay, a chain of regions carries a request and an advert past a neighbour (stripped, as before), and the regions learn
+  of each other through the adverts.
+- **A region's parent before the join is recorded.** While a region's controller state names no global, a bridge
+  connection is still its parent's when its own certificate verified as the global the region is joining now, or joined
+  last and lost (`CrescoAuthorizationBroker.isParent`, `ControllerEngine.parentWhileNotJoined`). The bridge to a global
+  is up about a second before the join is recorded, and a restarted global's own connector is back at a region before
+  the region has found it again; what the global relayed in those moments was stripped as a peer region's. Nothing is
+  granted to a name -- only to a connection that verified as that controller and is a recorded bridge peer -- and a join
+  attempt that fails leaves the region joining nobody. Not covered: a region that itself restarted remembers no global
+  until its first join begins, which is after its discovery of the global (usually well under a second, at most the
+  discovery timeout); a connector of the global that reaches the region's new broker inside that time is a peer's for
+  that long.
 - **Plugin ids** (review F6) are one plain path segment: 1-64 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
   no `..`, checked where they enter (`pluginadd` `inode_id`, `pluginremove` `pluginid`, the global's `addplugin`). A purge
   deletes only a real directory whose real parent is `plugin-data`, and never follows a link inside it.
