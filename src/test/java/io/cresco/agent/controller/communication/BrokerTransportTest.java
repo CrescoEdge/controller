@@ -52,4 +52,31 @@ class BrokerTransportTest {
         assertEquals("vm://localhost", BrokerTransport.withoutSecretParams("vm://localhost", null));
         assertNull(BrokerTransport.withoutSecretParams(null, null));
     }
+
+    @Test
+    void aBrokerDoesNotAdvertiseTheBrokersItIsBridgedToToItsClients() {
+        // on from an early experiment: every failover client was sent the global's and the peer regions' addresses
+        org.apache.activemq.broker.TransportConnector connector = new org.apache.activemq.broker.TransportConnector();
+        connector.setUpdateClusterClients(true);
+        connector.setUpdateClusterClientsOnRemove(true);
+        connector.setRebalanceClusterClients(true);
+        BrokerTransport.noClusterAdvertising(connector);
+        assertFalse(connector.isUpdateClusterClients());
+        assertFalse(connector.isUpdateClusterClientsOnRemove());
+        assertFalse(connector.isRebalanceClusterClients());
+    }
+
+    @Test
+    void anAgentsFailoverNamesItsParentsBrokerOnlyAndTakesNoAddressABrokerAdvertises() throws Exception {
+        String uri = BrokerTransport.agentFailoverURI("tcp", "127.0.0.1", 32010, "?soTimeout=1000", "5000");
+        assertEquals("failover:(tcp://127.0.0.1:32010?soTimeout=1000)?maxReconnectAttempts=5&initialReconnectDelay=5000"
+                + "&useExponentialBackOff=false&updateURIsSupported=false", uri);
+        // ActiveMQ reads it as written (an option it does not know is an error, not ignored): nothing is connected here
+        org.apache.activemq.transport.failover.FailoverTransport t = (org.apache.activemq.transport.failover.FailoverTransport)
+                new org.apache.activemq.transport.failover.FailoverTransportFactory()
+                        .createTransport(org.apache.activemq.util.URISupport.parseComposite(new java.net.URI(uri)));
+        assertFalse(t.isUpdateURIsSupported(), "an agent of a parent that still advertises its network (an earlier build) stays with its parent");
+        assertEquals(5, t.getMaxReconnectAttempts());
+        assertNull(BrokerTransport.agentFailoverURI("nio+ssl", "h", 1, null, "250").split("\\)")[0].contains("null") ? "null in the URI" : null);
+    }
 }

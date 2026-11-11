@@ -1426,7 +1426,8 @@ public class ControllerSMHandler {
 
     /** The failover URI an agent uses for its regional broker (consumer, producer and dataplane share it). */
     private String agentBrokerURI(String brokerAddress, int discoveryPort) {
-        return "failover:(" + transport +"://" + brokerAddress + ":" + discoveryPort + verifyTransport + ")?maxReconnectAttempts=5&initialReconnectDelay=" + plugin.getConfig().getStringParam("failover_reconnect_delay","5000") + "&useExponentialBackOff=false";
+        return io.cresco.agent.controller.communication.BrokerTransport.agentFailoverURI(transport, brokerAddress, discoveryPort, verifyTransport,
+                plugin.getConfig().getStringParam("failover_reconnect_delay","5000"));
     }
 
     // W-GFS-5: the discovered controller advertises the port its broker is bound to; prefer it over the

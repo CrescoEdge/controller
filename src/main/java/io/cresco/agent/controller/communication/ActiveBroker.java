@@ -435,9 +435,7 @@ public class ActiveBroker {
 					logger.info("Broker transport " + transport + " on port: " + brokerPort);
 					connector = new TransportConnector();
 
-					//try for connector
-					connector.setUpdateClusterClients(true);
-					connector.setUpdateClusterClientsOnRemove(true);
+					BrokerTransport.noClusterAdvertising(connector);
 
 					// Socket buffers: 0 (default) = kernel autotuning. ActiveMQ's default is a pinned 64 KiB,
 					// and any explicit size is capped by net.core.rmem_max/wmem_max on Linux (256/208 KiB on the
