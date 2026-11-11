@@ -1217,7 +1217,7 @@ def counter_gains(fab, counters) -> dict:
     for node, m in counters.items():
         base = fab.prev_counters.get(node, {}) if fab.prev_launches.get(node) == launches.get(node) else {}
         for k, v in m.items():
-            if k.startswith(("msg.refused.", "msg.dropped.", "msg.session.lost.", "msg.send.held", "msg.expired", "msg.route.mismatch", "broker.")):
+            if k.startswith(("msg.refused.", "msg.dropped.", "msg.session.lost.", "msg.session.unanswered", "msg.send.held", "msg.expired", "msg.route.mismatch", "broker.")):
                 gain = int(v - base.get(k, 0.0))
                 if gain > 0:
                     out.setdefault(k, {})[node] = gain

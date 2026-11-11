@@ -714,6 +714,8 @@ public final class MsgSigning {
                 ? CacheBuilder.newBuilder().maximumWeight(LOST_RETRY_CHARS_MAX).weigher((String k, Retry r) -> r.weight)
                         .expireAfterWrite(Duration.ofMillis(LOST_RETRY_MS)).build()
                 : null;
+        this.watchCalls = sessionsOn && c.getBooleanParam("msg_signing_unanswered_calls", true);
+        if (watchCalls) sessions.onTimedOut = peer -> setAside(peer, "a call to it was not answered before its caller stopped waiting");
         String caps = batch ? "batch" : "";
         if (sessionsOn) caps = caps.isEmpty() ? "session" : caps + ",session";
         this.ownCaps = caps.isEmpty() ? null : caps;
@@ -1139,7 +1141,7 @@ public final class MsgSigning {
                         if (macSent.incrementAndGet() == 1) info("session keys ON: messages to the nodes this node holds a session with"
                                 + " carry a MAC under it instead of a signature (first: " + m.getMsgType() + " " + m.getParam("action")
                                 + " to " + m.getDstRegion() + "/" + m.getDstAgent() + ")");
-                        if (lostRetries != null && m.getParam("is_rpc") != null) {
+                        if ((lostRetries != null || watchCalls) && m.getParam("is_rpc") != null) {
                             // its own try: a failure of this bookkeeping is no failure of the session keys (the catch
                             // below would turn them off for the whole node); the request simply is not sent again
                             try {
@@ -1210,8 +1212,11 @@ public final class MsgSigning {
      * room, is not kept: its caller sees the refusal, as before.
      */
     private void sentUnderSession(MsgEvent m, String node, MsgSessions.Session ss) {
-        if (!MsgRouter.isRpcRequest(m) || m.hasFiles() || m.getParam(MsgRouter.SRCROUTE) != null) return;
+        if (!MsgRouter.isRpcRequest(m)) return;
         String callId = m.getParam("callId-" + m.getSrcRegion() + "-" + m.getSrcAgent() + "-" + m.getSrcPlugin());
+        // the call is awaited for as long as its caller says it waits: unanswered, the session is set aside (unanswered calls)
+        if (watchCalls) sessions.called(node, ss, callId, RpcExpiry.statedTimeoutMs(m));
+        if (lostRetries == null || m.hasFiles() || m.getParam(MsgRouter.SRCROUTE) != null) return;
         long chars = 0;
         for (Map.Entry<String, String> e : m.getParams().entrySet()) chars += e.getKey().length() + (e.getValue() == null ? 0 : e.getValue().length());
         if (chars > LOST_RETRY_CHARS_MAX / 8) return;
@@ -2030,6 +2035,7 @@ public final class MsgSigning {
      */
     public boolean afterVerified(MsgEvent m, Verdict v) {
         if (v == null || !v.ok() || m == null || m.getParams() == null) return false;
+        if (watchCalls && sessions != null && sessions.callsWatched() != 0) callAnswered(m, v);
         if (v.lost == null) {
             // a reply of the peer a recorded request went to: the call is answered, there is nothing to send again (a
             // message of any OTHER node that names the call id changes nothing)
@@ -2105,6 +2111,86 @@ public final class MsgSigning {
                 + " session it came under, sent after it stopped holding it, was sent again, signed; its caller does not see the"
                 + " refusal (first of this kind: " + m.getMsgType() + " " + m.getParam("action") + ")");
         return true;
+    }
+
+    // ---- a call a peer does not answer (MsgSessions.called)
+
+    /**
+     * {@code msg_signing_unanswered_calls} (default true): a call to a peer that times out at this node, or is answered
+     * {@code route unavailable}, ends the use of the session with that peer until it confirms it again.
+     */
+    private final boolean watchCalls;
+    private final AtomicLong ownNoRoute = new AtomicLong();
+
+    /**
+     * Calls of this node that a peer did not answer and that set its session aside: the caller's wait ended, a node on
+     * the way answered that there is no route, or this node's own broker had none.
+     */
+    public long callsUnansweredCount() {
+        return sessions == null ? 0 : sessions.callsTimedOut() + sessions.callsNoRoute() + ownNoRoute.get();
+    }
+    /** Calls this node awaits an answer to now, and calls it did not watch for want of room (tests, diagnostics). */
+    int callsWatched() { return sessions == null ? 0 : sessions.callsWatched(); }
+    long callsNotWatchedCount() { return sessions == null ? 0 : sessions.callsNotWatched(); }
+
+    /**
+     * {@code m}, verified, answers a call this node may await ({@link MsgSessions#called}).
+     *
+     * <p>An answer ends the watch: the call did not time out at its caller. It is found by the node the answer says it
+     * comes from (the node the call went to: a controller on the way answers in that node's place, as a refusal of the
+     * tier does), else by the node that signed it.
+     *
+     * <p>One answer does more: {@code route unavailable} made by ANOTHER node than the peer (a controller on the way has
+     * no consumer for the peer's inbox, so the peer, or the controller it is reached through, is gone) sets the session
+     * aside at once: what this node sends that peer from now on is signed, and a peer that comes back restarted verifies
+     * it -- under the session it would have refused it. The peer confirms the session with its next message that names
+     * or uses it, if it still holds it.
+     *
+     * <p>What an attacker gets: nothing but signatures, or nothing at all. The answer must verify (a node of this fabric
+     * made it), must be addressed to the caller of a call this node awaits from exactly that peer, and must name its id,
+     * which only the nodes on the call's way ever saw -- and those can drop the call anyway. A session set aside drops no
+     * key and refuses nothing: this node signs (the stronger credential) until the peer's next word. A watch ended by a
+     * false answer leaves the session as it would be on 1.3.378, which watches nothing.
+     */
+    private void callAnswered(MsgEvent m, Verdict v) {
+        String from = m.getSrcRegion() == null || m.getSrcAgent() == null ? null : m.getSrcRegion() + "_" + m.getSrcAgent();
+        String peer = from != null && sessions.awaits(from) ? from
+                : v.signerNode != null && sessions.awaits(v.signerNode) ? v.signerNode : null;
+        if (peer == null) return;
+        String id = replyCallId(m);
+        if (id == null) return;
+        if (m.getParam(MsgRouter.ROUTE_UNAVAILABLE) == null || peer.equals(v.signerNode)) {
+            sessions.answered(peer, id);
+        } else if (sessions.unanswered(peer, id)) {
+            setAside(peer, "a call to it was answered `route unavailable` by " + v.signerNode);
+        }
+    }
+
+    /**
+     * This node's own route gate answered a request of this node {@code route unavailable} (MsgRouter.noRoute): its broker
+     * has no way to the node the request is for. The session with that node is not sent under until it confirms it again
+     * (as when this node's broker saw the node's consumer leave, {@link #inboxConsumerLeft}). O(1).
+     */
+    public void noRouteTo(MsgEvent request) {
+        if (!watchCalls || sessions == null || request == null) return;
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        if (st == null || st.region == null || !st.region.equals(request.getSrcRegion()) || st.agent == null
+                || !st.agent.equals(request.getSrcAgent()) || request.getDstRegion() == null || request.getDstAgent() == null) {
+            return;                                              // not a request of this node's: its caller's node hears the answer
+        }
+        String node = request.getDstRegion() + "_" + request.getDstAgent();
+        if (sessions.heldWith(node) == null) return;
+        sessions.linkDown(node);
+        ownNoRoute.incrementAndGet();
+        setAside(node, "this node's broker has no route to it");
+    }
+
+    private final AtomicLong setAsideLogged = new AtomicLong();
+
+    private void setAside(String peer, String why) {
+        if (setAsideLogged.incrementAndGet() == 1) info("session with " + peer + " SET ASIDE: " + why + "; this node signs to it until it"
+                + " confirms the session again (first of this kind)");
     }
 
     /** The hop a request sent again names when the route gate answers it ({@code route_unavailable}). */
