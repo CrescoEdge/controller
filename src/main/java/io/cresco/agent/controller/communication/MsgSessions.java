@@ -72,6 +72,11 @@ final class MsgSessions {
         /** The acceptor's answer, attached to its messages to the offerer until the offerer confirms. */
         volatile String ack;
         volatile long ackSentAt;
+        /**
+         * When this node first treated the session as ended ({@link System#nanoTime}; 0: it has not): from that instant on
+         * nothing is accepted or sent under it, whatever a clock does afterwards. It stays in its slot as "ended at".
+         */
+        volatile long endedNanos;
 
         Session(String sid, byte[] key, String offerDigest, long expires) {
             this.sid = sid;
@@ -107,6 +112,12 @@ final class MsgSessions {
         volatile Session current, pending, previous;
         volatile Offer offer;
         long lastOfferAccepted;
+        /**
+         * When this entry last let go of a session without keeping it (a slot was written over, the peer's sessions were
+         * dropped), or was made ({@link System#nanoTime}): since then every session held with this peer is still in one of
+         * its three slots, so a session id that is in none of them was not held at any moment since.
+         */
+        volatile long forgotNanos = System.nanoTime();
         Peer(String node) { this.node = node; }
     }
 
@@ -122,6 +133,13 @@ final class MsgSessions {
     /** This node's incarnation: random at each start. */
     volatile String incarnation;
     private final Cache<String, Peer> peers;
+    /**
+     * Since when this table can speak for itself ({@link System#nanoTime}): its start, and the last time an entry was put
+     * out of it while it could still hold a session (the table was full, or it was emptied). An entry that left because
+     * it was idle held nothing that was used for {@link #idleNanos}.
+     */
+    private volatile long startedNanos = System.nanoTime(), evictedNanos = startedNanos;
+    private final long idleNanos;
     /** Offers accepted (a key pair and an ECDH each): diagnostics, tests. */
     final java.util.concurrent.atomic.AtomicLong offersAccepted = new java.util.concurrent.atomic.AtomicLong();
     private static final ThreadLocal<Mac> HMAC = ThreadLocal.withInitial(() -> {
@@ -140,8 +158,12 @@ final class MsgSessions {
         this.incarnation = newIncarnation();
         // the hard bound is a little above the admission bound (size() is approximate under concurrency); an idle peer goes
         // with its last session
+        this.idleNanos = (this.lifetimeMs + 120_000L) * 1_000_000L;
         this.peers = CacheBuilder.newBuilder().maximumSize(this.maxPeers + this.maxPeers / 8 + 16)
-                .expireAfterAccess(Duration.ofMillis(this.lifetimeMs + 120_000L)).build();
+                .expireAfterAccess(Duration.ofMillis(this.lifetimeMs + 120_000L))
+                .removalListener((com.google.common.cache.RemovalNotification<String, Peer> gone) -> {
+                    if (gone.getCause() != com.google.common.cache.RemovalCause.EXPIRED) evictedNanos = System.nanoTime();
+                }).build();
     }
 
     private Peer peer(String node, boolean create) {
@@ -184,7 +206,8 @@ final class MsgSessions {
     Session usable(String peerNode, long now) {
         Peer p = peers.getIfPresent(peerNode);
         Session s = p == null ? null : p.current;
-        return s != null && s.confirmedAt > 0 && now - s.confirmedAt < CONFIRM_MS && now < s.expires - USABLE_MARGIN_MS ? s : null;
+        return s != null && s.confirmedAt > 0 && now - s.confirmedAt < CONFIRM_MS && now < s.expires - USABLE_MARGIN_MS
+                && s.endedNanos == 0 ? s : null;
     }
 
     /**
@@ -232,15 +255,75 @@ final class MsgSessions {
 
     // ------------------------------------------------------------------ receiving
 
-    /** The session {@code sid} that {@code by} (of node {@code peerNode}) holds with this node, or null. */
-    Found lookup(String peerNode, String by, String sid) {
+    /**
+     * The session {@code sid} this node holds with the node {@code peerNode}, or null: found by the NODE and the session
+     * id, never by a name the message carries. Whether the message's signer is the name the session is bound to
+     * ({@link Peer#name}) is for the caller to judge, and a mismatch there is a refusal of a message under a session this
+     * node HOLDS -- it must never be reported as a session it does not hold (a forged signer name with a genuine session
+     * id would otherwise make the holder say "not held", and the true peer drop a good session).
+     */
+    Found find(String peerNode, String sid) {
         if (peerNode == null || sid == null) return null;
         Peer p = peers.getIfPresent(peerNode);
-        if (p == null || !by.equals(p.name)) return null;
+        if (p == null) return null;
         Session s = p.current;
         if (s == null || !s.sid.equals(sid)) s = p.pending;
         if (s == null || !s.sid.equals(sid)) s = p.previous;
         return s == null || !s.sid.equals(sid) ? null : new Found(p, s);
+    }
+
+    /** As {@link #find}, and only when the session is bound to the name {@code by} (tests). */
+    Found lookup(String peerNode, String by, String sid) {
+        Found f = find(peerNode, sid);
+        return f != null && by.equals(f.peer.name) ? f : null;
+    }
+
+    /**
+     * {@code s} has ended (its time passed): from now on nothing is accepted or sent under it. It is KEPT, as "ended at
+     * this instant", so that this node can say for how long it has refused it. Returns that instant.
+     */
+    long ended(Session s) {
+        long at = s.endedNanos;
+        if (at == 0) {
+            synchronized (s) {
+                at = s.endedNanos;
+                if (at == 0) {
+                    at = System.nanoTime();
+                    s.endedNanos = at == 0 ? 1 : at;
+                }
+            }
+        }
+        return s.endedNanos;
+    }
+
+    /**
+     * Since when ({@link System#nanoTime}) this node has certainly not held ANY session with {@code peerNode} other than
+     * those in its entry now: the latest of this table's start, the last time an entry was put out of it, and the last
+     * time that peer's entry let go of a session. A session id of that node that is in none of its slots was not held at
+     * any moment since -- which is all this node can truthfully say of a session it has no record of. For a node with no
+     * entry at all the answer is at most {@link #idleNanos} ago: an entry that went for being idle is not announced.
+     * Monotonic time only; O(1).
+     */
+    long notHeldSince(String peerNode) {
+        long now = System.nanoTime(), since = startedNanos, e = evictedNanos;
+        if (e - since > 0) since = e;
+        Peer p = peerNode == null ? null : peers.getIfPresent(peerNode);
+        if (p != null) {
+            long f = p.forgotNanos;
+            if (f - since > 0) since = f;
+        } else if ((now - idleNanos) - since > 0) {
+            since = now - idleNanos;
+        }
+        return since;
+    }
+
+    /** With {@code p}'s lock, after its slots changed: a session that was in one of them and is in none now is forgotten. */
+    private static void settle(Peer p, Session c, Session n, Session v) {
+        Session c1 = p.current, n1 = p.pending, v1 = p.previous;
+        if ((c != null && c != c1 && c != n1 && c != v1) || (n != null && n != c1 && n != n1 && n != v1)
+                || (v != null && v != c1 && v != n1 && v != v1)) {
+            p.forgotNanos = System.nanoTime();
+        }
     }
 
     /** Forget every session held with {@code peerNode} (its credential no longer verifies, or its key was revoked). */
@@ -248,8 +331,10 @@ final class MsgSessions {
         Peer p = peers.getIfPresent(peerNode);
         if (p == null) return;
         synchronized (p) {
+            Session c = p.current, n = p.pending, v = p.previous;
             p.current = p.pending = p.previous = null;
             p.signer = null;
+            settle(p, c, n, v);
         }
     }
 
@@ -262,8 +347,10 @@ final class MsgSessions {
         if (p == null) return false;
         synchronized (p) {
             if (p.signer != signer) return false;
+            Session c = p.current, n = p.pending, v = p.previous;
             p.current = p.pending = p.previous = null;
             p.signer = null;
+            settle(p, c, n, v);
         }
         return true;
     }
@@ -285,24 +372,19 @@ final class MsgSessions {
         synchronized (p) {
             Session cur = p.current;
             if (cur == null || !by.equals(p.name) || !cur.sid.equals(sid)) return false;
+            Session v = p.previous;
             p.previous = cur;
             p.current = null;
+            settle(p, cur, null, v);
             return true;
         }
     }
 
-    /**
-     * Forget the session {@code sid} held with {@code peerNode} (it ended): from here on a message under it is under a
-     * session this node does not hold, whatever this node's clock does.
-     */
-    void forget(String peerNode, String sid) {
+    /** Is {@code sid} the session this node sends to {@code by} (node {@code peerNode}) under now? Reads only. */
+    boolean isCurrent(String peerNode, String by, String sid) {
         Peer p = peerNode == null || sid == null ? null : peers.getIfPresent(peerNode);
-        if (p == null) return;
-        synchronized (p) {
-            if (p.current != null && p.current.sid.equals(sid)) p.current = null;
-            if (p.pending != null && p.pending.sid.equals(sid)) p.pending = null;
-            if (p.previous != null && p.previous.sid.equals(sid)) p.previous = null;
-        }
+        Session cur = p == null ? null : p.current;
+        return cur != null && by.equals(p.name) && cur.sid.equals(sid);
     }
 
     /** Forget the sessions of every peer {@code refused} says no (a revocation came in force); how many. */
@@ -321,6 +403,7 @@ final class MsgSessions {
     void restart() {
         peers.invalidateAll();
         incarnation = newIncarnation();
+        startedNanos = evictedNanos = System.nanoTime();
     }
 
     private static String newIncarnation() {
@@ -344,6 +427,7 @@ final class MsgSessions {
         if (p == null) return null;
         String changed = null;
         synchronized (p) {
+            final Session c0 = p.current, n0 = p.pending, v0 = p.previous;
             if (p.name == null || !p.name.equals(by)) {
                 // a node of that address authenticating under another name holds nothing of the one before
                 if (p.name != null) { p.current = p.pending = p.previous = null; p.offer = null; }
@@ -394,6 +478,7 @@ final class MsgSessions {
                     }
                 }
             }
+            settle(p, c0, n0, v0);
         }
         return changed;
     }
@@ -408,7 +493,9 @@ final class MsgSessions {
         String sid = sid(o.spki, theirs);
         if (!sid.equals(parts[0])) return null;
         byte[] key = derive(agree(o.eph, theirs), self, by, o.spki, theirs);
-        Session s = new Session(sid, key, o.digest, now + lifetimeMs);
+        // its end counts from the OFFER, not from the answer: the acceptor counts from when it took the offer, which is
+        // later, so this node (which sends under it) always stops before the acceptor's end -- however late the answer came
+        Session s = new Session(sid, key, o.digest, o.at + lifetimeMs);
         s.confirmedAt = now;                                                // its answer says it holds the session
         if (p.current != null) p.previous = p.current;
         p.current = s;

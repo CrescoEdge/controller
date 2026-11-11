@@ -124,6 +124,7 @@ class RegionalDispatchIsCountedTest {
         assertEquals(1, down.engine.getActiveClient().sendsHeldCount());
         down.engine.getActiveClient().stopHolding();
         only(down.engine.msgCounts(), MsgCounts.Drop.NO_SENDER, 1);
+        assertEquals(0, down.engine.msgCounts().relayedCount(), "it ended in one count: it was not relayed after all");
 
         // a region that keeps its KPIs (forward_global_kpi=false) is where they end: delivered
         RegionalRebuildWindowPingTest.Fixture keeps = new RegionalRebuildWindowPingTest.Fixture(ControllerMode.REGION_GLOBAL,
