@@ -173,17 +173,18 @@ public class PerfMonitorNet {
     }
 
 
-    private class PerfMonitorTask extends TimerTask {
+    private class PerfMonitorTask extends io.cresco.agent.core.GuardedTimerTask {
 
         //private ControllerEngine controllerEngine;
         private PluginBuilder plugin;
 
         PerfMonitorTask(ControllerEngine controllerEngine) {
+            super(logger);
             //this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
         }
 
-        public void run() {
+        protected void tick() {
 
             if(!polling) {
 
