@@ -200,6 +200,32 @@ public class MsgRouter {
     }
 
     /**
+     * The tenant whose namespace a message this node originates travels in ({@code cresco_tenant}: it names the queues every
+     * hop puts the message on), decided where the node stamps the message as its caller's and before it is signed:
+     * <ul>
+     *   <li>a tenant's caller: that tenant, whatever the message carried. An answer is the request's message sent back, so
+     *       it carried the request's stamp: a tenant's answer to a superuser tenant's request stayed in the superuser
+     *       tenant's namespace and was dropped by the first router ({@link #tenantRefusal}) -- and a tenant's leaf may
+     *       write its own tenant's queues only;</li>
+     *   <li>a superuser tenant's caller: the stamp the message carries (the request it answers came in that namespace, or
+     *       an operator's client named the tenant it addresses); else the tenant of the node it is addressed to when this
+     *       node knows it ({@code destinationTenant}: a tenant's leaf consumes its own tenant's inbox and no other);
+     *       else this node's tenant, which controllers read and no tenant's leaf does;</li>
+     *   <li>no caller (security off): as before, the stamp it carries, else this node's tenant.</li>
+     * </ul>
+     * What it returns is never refused by {@link #tenantRefusal(MsgEvent, java.util.Set)} for that caller.
+     */
+    public static String travelTenant(io.cresco.library.security.Caller caller, String carried, String nodeTenant,
+                                      java.util.Set<String> superuserTenants, java.util.function.Supplier<String> destinationTenant) {
+        boolean stamped = carried != null && !carried.isEmpty();
+        if (caller == null || caller.isAnonymous() || caller.getTenant() == null) return stamped ? carried : nodeTenant;
+        if (superuserTenants == null || !superuserTenants.contains(caller.getTenant())) return caller.getTenant();
+        if (stamped) return carried;
+        String to = destinationTenant == null ? null : destinationTenant.get();
+        return to == null || to.isEmpty() ? nodeTenant : to;
+    }
+
+    /**
      * Why this node's regional controller cannot run {@code rm} right now, or null when it can. The
      * RegionalExecutor itself is always there; what can be missing is the state it needs.
      */

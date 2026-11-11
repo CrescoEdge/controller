@@ -392,20 +392,53 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         return addMessageListener(topicType, messageListener, selectorString, persistant, null);
     }
 
+    /** The listeners subscribed in every tenant's namespace ({@link #addMessageListenerEveryTenant}), by id. */
+    private final java.util.Set<String> everyTenantListeners = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * As {@link #addMessageListener(TopicType, MessageListener, String)}, on the topic of EVERY tenant
+     * ({@code T.*.<topic>}) instead of this node's own ({@code T.<tenant>.<topic>}): for the registry listener of a
+     * superuser tenant's controller, which takes the state exports of the tenants' controllers below it -- each publishes
+     * in its own tenant's namespace, which this node's own topic never names. Publishing stays in this node's tenant.
+     * Kept across a reconnect like any listener. Without tenant namespacing there is one topic and this is the same call.
+     */
+    public String addMessageListenerEveryTenant(TopicType topicType, MessageListener messageListener, String selectorString) {
+        if (!tenantNamespacing) return addMessageListener(topicType, messageListener, selectorString);
+        String listenerId = UUID.randomUUID().toString();
+        everyTenantListeners.add(listenerId);
+        String held = null;
+        try {
+            held = addMessageListener(topicType, StreamSequence.detecting(messageListener), selectorString, true, listenerId);
+        } finally {
+            if (held == null) everyTenantListeners.remove(listenerId);
+        }
+        return held;
+    }
+
+    /** The topic of {@code topicType} in every tenant's namespace ({@code T.*.<topic>}), or null without a session. */
+    private Destination everyTenantDestination(TopicType topicType) throws JMSException {
+        String raw = topicType == TopicType.AGENT ? agentTopicName : topicType == TopicType.REGION ? regionTopicName : globalTopicName;
+        ActiveMQSession s = getSession();
+        return s == null || raw == null ? null : s.createTopic(io.cresco.library.security.TenantNamespace.wildcard(raw));
+    }
+
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, Boolean persistant, String listenerId) {
 	    try {
 
             MessageConsumer consumer = null;
+            boolean everyTenant = listenerId != null && everyTenantListeners.contains(listenerId);
 
             if (paced(messageListener)) {
                 if (listenerId == null) listenerId = UUID.randomUUID().toString();
                 try {
-                    consumer = ownConsumer(listenerId, getSession(), getDestination(topicType), selectorString);
+                    consumer = ownConsumer(listenerId, getSession(), everyTenant ? everyTenantDestination(topicType) : getDestination(topicType), selectorString);
                 } catch (Exception ex) {
                     String refusal = policyRefusal(ex);
                     if (refusal != null) throw new io.cresco.library.data.SubscriptionRefusedException(refusal);
                     throw ex;
                 }
+            } else if (everyTenant) {
+                consumer = getConsumer(everyTenantDestination(topicType), selectorString);
             } else
             switch (topicType) {
                 case AGENT:
@@ -1005,6 +1038,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 tellRefused(dataPlanePersistantInstance.getMessageListener(), refused.getMessage());
             }
             if (id != null) restored++;
+            else everyTenantListeners.remove(dataPlanePersistantInstance.getListenerId());   // not held any more
         }
         } finally {
             synchronized (lockMessage) { restoring.clear(); }
@@ -1091,6 +1125,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 consumer = messageConsumerMap.remove(listenerId);
                 messageConfigMap.remove(listenerId);
             }
+            if (listenerId != null) everyTenantListeners.remove(listenerId);
             if (consumer == null) {
                 logger.error("removeMessageListener close called on unknown listener_id: " + listenerId);
                 return;
