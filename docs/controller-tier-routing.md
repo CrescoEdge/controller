@@ -130,6 +130,10 @@ Agent and plugin messages are not controller messages and are routed by address 
   own schedulers are starting (GLOBAL_INIT) it is waited for up to `route_ready_wait_ms` (default 3000).
 - **An agent re-initialising (regional controller unknown).** A function that must go to its regional controller
   waits up to `route_ready_wait_ms`, then gets `route unavailable ... regional controller not known`.
+- **How long a request lives.** An RPC request that states its caller's timeout (`rpc_timeout_ms`, milliseconds; the
+  controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
+  `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing
+  rule accepts (`msg_signature_max_future_ms`, 60 s): the expiry is judged by the clock of whoever holds the message.
 - **Liveness pings** that cannot be served are never answered with an error (a pinger reads any reply as a pong).
 
 ## Behaviour changes for callers
@@ -187,6 +191,7 @@ How it is measured:
 |---|---|---|---|
 | `lost_node_retention_days` | double | `30` | Days a LOST node stays listed before its rows are deleted, counted from when it went LOST. `0` or negative keeps LOST nodes forever. Fractions allowed (`0.5` = 12 h). |
 | `lost_node_sweep_interval_ms` | long | `3600000` | Minimum time between two retention sweeps of one controller's DB. |
+| `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |
 
 Tests: `LostNodeRetentionTest` (real Derby: stamping on every write path, kept across updates, cleared on return,

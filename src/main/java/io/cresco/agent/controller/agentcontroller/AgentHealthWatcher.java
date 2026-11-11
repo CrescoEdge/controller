@@ -328,7 +328,7 @@ public class AgentHealthWatcher {
                     // time it and feed LinkMetrics. It is end-to-end APPLICATION path latency (incl. broker
                     // enqueue/dequeue + queueing), which is what a cost-aware router actually wants.
                     long pingT0 = System.nanoTime();
-                    MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
+                    MsgEvent pingResponse = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, pingRequest, pingTimeout);
 
                     // a pong, the parent's refusal, or a miss: each consumer of "a pong came" gets what is its own
                     pingAnswered(pingResponse, pingT0);

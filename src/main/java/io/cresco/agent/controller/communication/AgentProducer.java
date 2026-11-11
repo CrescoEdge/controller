@@ -45,6 +45,9 @@ public class AgentProducer {
     // tenant, so isolation holds end-to-end and every relay qualifies identically. See TenantNamespace.
     private final boolean tenantNamespacing;
     private final String localTenant;
+    // RpcExpiry: an RPC request that states its caller's timeout lives that long plus this margin, not the usual five minutes
+    private final long rpcExpiryMarginMs;
+    private final long workerTtlMs;
 
 
     private class ClearProducerTask extends io.cresco.agent.core.GuardedTimerTask {
@@ -86,6 +89,8 @@ public class AgentProducer {
 
         this.tenantNamespacing = SecuritySettings.tenantNamespacing(plugin.getConfig());
         this.localTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
+        this.rpcExpiryMarginMs = RpcExpiry.marginMs(plugin.getConfig());
+        this.workerTtlMs = plugin.getConfig().getLongParam("activeproducerworker_ttl", 300000L);
 
 
         try {
@@ -205,7 +210,7 @@ public class AgentProducer {
         if (!sm.hasFiles()) {
             MsgQoS.Tier tier = MsgQoS.classify(sm);
             if (tier.isControlPlane()) {
-                boolean ok = controlPlane.send(dstPath, sm, tier);
+                boolean ok = controlPlane.send(dstPath, sm, tier, RpcExpiry.ttlMs(sm, controlPlane.ttl(), rpcExpiryMarginMs));
                 if (!ok) {
                     ControlPlaneFailures.SEND_LOST.incrementAndGet();
                     logger.error("Control-plane send failed to [{}] for {} message.", dstPath, sm.getMsgType());
@@ -271,7 +276,7 @@ public class AgentProducer {
                         break;
                     } else {
                         try {
-                            apw.sendMessage(sm);
+                            apw.sendMessage(sm, RpcExpiry.ttlMs(sm, workerTtlMs, rpcExpiryMarginMs));
                             isSent = true;
                             logger.debug("Message to [{}] sent successfully (Attempt {}/{})", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
                             break;

@@ -2210,7 +2210,7 @@ public class ControllerSMHandler {
 
 
 
-            MsgEvent re = plugin.sendRPC(disableMsg,3000);
+            MsgEvent re = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, disableMsg, 3000);
 
             if (re != null) {
 
@@ -2328,7 +2328,7 @@ public class ControllerSMHandler {
                 disableMsg.setParam("desc", "to-rc-agent");
                 disableMsg.setParam("action", "agent_disable");
 
-                MsgEvent re = plugin.sendRPC(disableMsg, 2000);
+                MsgEvent re = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, disableMsg, 2000);
 
                 if (re != null) {
                     logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);

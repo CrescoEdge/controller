@@ -147,6 +147,11 @@ public class ActiveProducerWorker {
 
 	// Sends a message. Throws JMSException on failure to be handled by AgentProducer.
 	public void sendMessage(MsgEvent se) throws JMSException {
+		sendMessage(se, -1L);
+	}
+
+	/** As {@link #sendMessage(MsgEvent)}, with this message's own time to live ({@code ttlMs}; negative: the producer's). */
+	public void sendMessage(MsgEvent se, long ttlMs) throws JMSException {
 		if (!isActive || sess == null || producer == null || sess.isClosed()) {
 			String errorMsg = String.format("sendMessage called on worker [%s] but it's inactive, session/producer is null, or session is closed! isActive: %s, session: %s, producer: %s",
 					producerWorkerName, isActive, (sess == null ? "null" : (sess.isClosed() ? "closed" : "open")), (producer == null ? "null" : "exists"));
@@ -185,7 +190,7 @@ public class ActiveProducerWorker {
 			// Send with determined delivery mode, priority, and TTL (0 = broker default)
 			// Note: producer.getTimeToLive() was set during producer creation.
 			// Sending with 0 here means use the producer's default.
-			producer.send(textMessage, deliveryMode, pri, producer.getTimeToLive());
+			producer.send(textMessage, deliveryMode, pri, ttlMs >= 0 ? ttlMs : producer.getTimeToLive());
 
 			logger.trace("Worker [{}] successfully sent message to queue [{}]", producerWorkerName, txQueueName);
 
