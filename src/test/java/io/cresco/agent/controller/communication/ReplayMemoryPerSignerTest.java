@@ -117,4 +117,74 @@ class ReplayMemoryPerSignerTest {
             pool.shutdownNow();
         }
     }
+
+    @Test
+    void aFullMemoryDrainsByTimeWhileItsSignersKeepSending() {
+        // every signer's memory together holds the bound: the check for room came before the only place an old bucket was
+        // dropped, and each refused message kept its signer's memory from being swept -- all signed traffic was refused
+        // for as long as the signers went on sending
+        ReplayMemory mem = new ReplayMemory(AGE, FUTURE, MAX, null);
+        Random rnd = new Random(5);
+        long t0 = 1_800_000_000_000L;
+        int signers = 10;
+        for (long signer = 1; signer <= signers; signer++) {
+            for (int i = 0; i < PER_SIGNER; i++) mem.record(rnd.nextLong() | 1, t0, t0, signer);
+        }
+        assertEquals(MAX, mem.size(), "the fabric's signers hold the bound");
+        assertEquals(ReplayMemory.Result.FULL, mem.record(rnd.nextLong() | 1, t0, t0, 1), "all of it was signed this moment: nothing older to give up");
+        // they keep sending, every second, past the max age of what filled the memory
+        long now = t0;
+        int freshAtEnd = 0;
+        for (int sec = 1; sec <= (AGE + 60_000L) / 1000; sec++) {
+            now = t0 + sec * 1000L;
+            for (long signer = 1; signer <= signers; signer++) {
+                ReplayMemory.Result r = mem.record(rnd.nextLong() | 1, now, now, signer);
+                if (sec > AGE / 1000 + 45 && r == ReplayMemory.Result.FRESH) freshAtEnd++;
+            }
+            assertTrue(mem.size() <= MAX, "past the bound: " + mem.size());
+        }
+        assertEquals(15 * signers, freshAtEnd, "what filled the memory is past the max age, and fresh messages are still refused");
+        assertTrue(mem.size() < MAX / 2, "entries signed longer ago than the max age are still held: " + mem.size());
+    }
+
+    @Test
+    void whenAllSignersTogetherHoldTheBoundTheOldestSigningTimesGoAndFreshMessagesPass() {
+        ReplayMemory mem = new ReplayMemory(AGE, FUTURE, MAX, null);
+        Random rnd = new Random(6);
+        long t0 = 1_800_000_000_000L;
+        // twenty signers, each far below its own bound, fill the whole with messages signed over the last four minutes
+        long oldest = t0 - 240_000L, anOld = rnd.nextLong() | 1;
+        assertEquals(ReplayMemory.Result.FRESH, mem.record(anOld, oldest, t0, 1));
+        int n = 0, each = (int) (MAX / 20) - 4;
+        for (long signer = 1; signer <= 20; signer++) {
+            for (int i = 0; i < each; i++, n++) {
+                assertEquals(ReplayMemory.Result.FRESH, mem.record(rnd.nextLong() | 1, t0 - (n % 240) * 1000L, t0, signer));
+            }
+        }
+        assertTrue(mem.size() >= MAX - 100 && mem.size() < MAX, "not just below the bound: " + mem.size());
+        // more traffic, signed now, from every signer: accepted -- the oldest signing times were given up instead
+        for (int i = 0; i < 2000; i++) {
+            assertEquals(ReplayMemory.Result.FRESH, mem.record(rnd.nextLong() | 1, t0 + i, t0 + i, 1 + i % 20), "a fresh message with the memory at its bound");
+            assertTrue(mem.size() <= MAX, "past the bound: " + mem.size());
+        }
+        // and what was given up is refused by its age from then on, whoever signed it: never accepted twice
+        assertEquals(ReplayMemory.Result.TOO_OLD, mem.record(anOld, oldest, t0 + 2000, 1), "a replay of a message whose bucket was given up");
+        assertEquals(ReplayMemory.Result.TOO_OLD, mem.record(rnd.nextLong() | 1, oldest, t0 + 2000, 21), "a signing time that was given up, from a new signer");
+        // a message signed two minutes ago is still within what every memory keeps
+        assertEquals(ReplayMemory.Result.FRESH, mem.record(rnd.nextLong() | 1, t0 - 120_000L, t0 + 2000, 21));
+    }
+
+    @Test
+    void aSignerThatFellSilentHoldsNothingOnceItsEntriesArePastTheMaxAge() {
+        ReplayMemory mem = new ReplayMemory(AGE, FUTURE, MAX, null);
+        Random rnd = new Random(7);
+        long t0 = 1_800_000_000_000L;
+        for (long signer = 1; signer <= 500; signer++) mem.record(rnd.nextLong() | 1, t0, t0, signer);
+        assertEquals(500, mem.signers());
+        assertEquals(500, mem.size());
+        // one signer goes on; the sweep (once a bucket's time) drops what the others held, then their empty memories
+        for (long dt = 1000; dt <= AGE + 120_000L; dt += 1000) mem.record(rnd.nextLong() | 1, t0 + dt, t0 + dt, 1);
+        assertEquals(1, mem.signers(), "silent signers kept their memories");
+        assertTrue(mem.size() <= (AGE + 120_000L) / 1000, "their entries are still counted: " + mem.size());
+    }
 }
