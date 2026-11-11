@@ -49,7 +49,8 @@ public class AgentConsumer {
 	static long REBUILD_INITIAL_BACKOFF_MS = 2_000, REBUILD_MAX_BACKOFF_MS = 30_000;
 
 	private AtomicBoolean lockGroupMap = new AtomicBoolean();
-	private Map<String, FileObjectGroupReceiver> fileGroupMap;
+	// the file groups being received: removed on completion, expired when abandoned, bounded (IncomingFileGroups)
+	private final IncomingFileGroups fileGroups = new IncomingFileGroups();
 
 	private Cache<String, MsgEvent> fileMsgEventCache;
 
@@ -59,8 +60,6 @@ public class AgentConsumer {
 		this.logger = plugin.getLogger(AgentConsumer.class.getName(),CLogger.Level.Trace);
 
 		this.gson = new Gson();
-
-		this.fileGroupMap = Collections.synchronizedMap(new HashMap<>());
 
 
 		//use expiring cache to trigger cleanup of files and messages
@@ -186,6 +185,7 @@ public class AgentConsumer {
 			public void onMessage(Message msg) {
 				try {
 
+					sweepFileGroups();
 
 					if (msg instanceof TextMessage) {
 
@@ -318,14 +318,13 @@ public class AgentConsumer {
 
 							if((dstRegion.equals(plugin.getRegion())) && (dstAgent.equals(plugin.getAgent()))) {
 
-								boolean groupExist = false;
+								// the group the part is for, while it is held (a part marks its group active)
+								FileObjectGroupReceiver group;
 								synchronized (lockGroupMap) {
-									if(fileGroupMap.containsKey(filegroup)) {
-										groupExist = true;
-									}
+									group = fileGroups.active(filegroup, System.currentTimeMillis());
 								}
 
-								if(groupExist) {
+								if(group != null) {
 
 
 									Path journalBase = controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath();
@@ -350,13 +349,13 @@ public class AgentConsumer {
 									String combinedFileHash = null;
 
 									synchronized (lockGroupMap) {
-										fileGroupMap.get(filegroup).setDestFilePart(dataName, dataPart, filePartMD5Hash);
+										group.setDestFilePart(dataName, dataPart, filePartMD5Hash);
 										//check if file is complete
-										isPartComplete = fileGroupMap.get(filegroup).isFilePartComplete(dataName);
+										isPartComplete = group.isFilePartComplete(dataName);
 										if(isPartComplete) {
-											orderedFilePartNameList = fileGroupMap.get(filegroup).getOrderedPartList(dataName);
-											combinedFileName = fileGroupMap.get(filegroup).getFileName(dataName);
-											combinedFileHash = fileGroupMap.get(filegroup).getFileMD5Hash(dataName);
+											orderedFilePartNameList = group.getOrderedPartList(dataName);
+											combinedFileName = group.getFileName(dataName);
+											combinedFileHash = group.getFileMD5Hash(dataName);
 										}
 									}
 
@@ -388,11 +387,13 @@ public class AgentConsumer {
 												boolean isGroupComplete = false;
 												List<String> newFilePaths = null;
 												synchronized (lockGroupMap) {
-													fileGroupMap.get(filegroup).setFileComplete(dataName);
-													isGroupComplete = fileGroupMap.get(filegroup).isFileGroupComplete();
+													group.setFileComplete(dataName);
+													isGroupComplete = group.isFileGroupComplete();
 													if(isGroupComplete) {
-														me = fileGroupMap.get(filegroup).getMsgEvent();
-														newFilePaths = fileGroupMap.get(filegroup).getFileList(controllerEngine.getDataPlaneService().getJournalPath());
+														me = group.getMsgEvent();
+														newFilePaths = group.getFileList(controllerEngine.getDataPlaneService().getJournalPath());
+														// complete: no longer held (it stayed for good, with its MsgEvent)
+														fileGroups.complete(filegroup, group);
 													}
 												}
 
@@ -578,7 +579,7 @@ public class AgentConsumer {
 	 * legitimate senders use UUID-derived values, so separators, "..", or absolute paths are
 	 * hostile. The resolved path must stay inside the journal directory.
 	 */
-	private Path resolveInJournal(Path baseDir, String name) throws IOException {
+	static Path resolveInJournal(Path baseDir, String name) throws IOException {
 		if ((name == null) || name.isEmpty() || name.contains("/") || name.contains("\\")
 				|| name.contains("..") || name.indexOf('\0') >= 0) {
 			throw new IOException("rejecting unsafe file name component: [" + name + "]");
@@ -619,7 +620,7 @@ public class AgentConsumer {
 	private boolean partFromGroupSender(String filegroup, Message part) {
 		FileObjectGroupReceiver group;
 		synchronized (lockGroupMap) {
-			group = fileGroupMap.get(filegroup);
+			group = fileGroups.get(filegroup);
 		}
 		if (group == null) return true;
 		io.cresco.library.security.Caller ownerCaller = io.cresco.library.security.Caller.fromMsgEvent(group.getMsgEvent());
@@ -680,16 +681,45 @@ public class AgentConsumer {
 
 			FileObjectGroupReceiver fileObjectGroupReceiver = new FileObjectGroupReceiver(plugin,me,fileObjectMap,fileGroup);
 
+			// the caller the group is bound to, as partFromGroupSender reads it; without broker security there is none
+			io.cresco.library.security.Caller ownerCaller = controllerEngine.securityOn() ? io.cresco.library.security.Caller.fromMsgEvent(me) : null;
+			String owner = ownerCaller == null || ownerCaller.getPrincipal() == null ? "" : ownerCaller.getPrincipal();
+			long now = System.currentTimeMillis();
+			deleteExpired(fileGroups.expire(now));      // abandoned groups make room first
+			String refused;
 			synchronized (lockGroupMap) {
-				fileGroupMap.put(fileGroup,fileObjectGroupReceiver);
+				refused = fileGroups.register(fileGroup, owner, fileObjectGroupReceiver, fileObjectMap.keySet(), now);
 			}
-			isRegistered = true;
+			if (refused == null) {
+				isRegistered = true;
+			} else {
+				logger.warn("REFUSED the file group {} of {}: {}", fileGroup, owner.isEmpty() ? "an unverified caller" : owner, refused);
+			}
 
 
 		} catch (Exception ex) {
 			logger.error("AgentConsumer.registerIncomingFiles Failure to Register File Message", ex);
 		}
 		return isRegistered;
+	}
+
+	/** On any message, once per IncomingFileGroups.SWEEP_INTERVAL_MS: abandoned file groups expire and their files go. */
+	private void sweepFileGroups() {
+		long now = System.currentTimeMillis();
+		if (fileGroups.sweepDue(now)) deleteExpired(fileGroups.expire(now));
+	}
+
+	private void deleteExpired(List<IncomingFileGroups.Group> expired) {
+		for (IncomingFileGroups.Group group : expired) {
+			int files = 0;
+			try {
+				files = IncomingFileGroups.deleteFiles(group, controllerEngine.getDataPlaneService().getJournalPath().toAbsolutePath());
+			} catch (Exception ex) {
+				logger.warn("expired file group {}: its files were not deleted: {}", group.id, ex.getMessage());
+			}
+			logger.warn("EXPIRED the file group {} of {}: no part arrived for {} min; {} file(s) deleted from the journal directory",
+					group.id, group.owner.isEmpty() ? "an unverified caller" : group.owner, IncomingFileGroups.IDLE_EXPIRY_MS / 60_000L, files);
+		}
 	}
 
 	public void shutdown() {
