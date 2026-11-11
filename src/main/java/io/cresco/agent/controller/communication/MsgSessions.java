@@ -39,7 +39,9 @@ import java.util.function.Predicate;
  * that names another one stops this node's use of its session at once. Every message also names its sender's incarnation
  * ({@value #INC}, random at each start): a peer that restarted (and so lost its sessions) names a new one, and its next
  * message makes this node return to signatures and agree anew; what was sent to it meanwhile under the lost session is
- * refused like any unauthenticated message.
+ * refused like any unauthenticated message -- and the node that refuses says so at once, on a signed message that names
+ * the session ({@link MsgSigning#LOST}): its sender drops that session ({@link #lostAtPeer}) and signs again within one
+ * round trip, whether or not the restarted node had anything else to say to it.
  *
  * <p><b>Renewal never interrupts.</b> An offer from a peer that still holds a confirmed session with this node is answered
  * into a PENDING slot: this node keeps sending under the confirmed session until the peer uses (or names) the new one.
@@ -264,6 +266,43 @@ final class MsgSessions {
             p.signer = null;
         }
         return true;
+    }
+
+    /**
+     * The peer {@code by} (node {@code peerNode}) said, on a message this node authenticated by its SIGNATURE, that it does
+     * not hold the session {@code sid}. When that is the session this node sends to it under, it is no longer: it moves to
+     * the previous slot (what the peer sent under it before it lost it still verifies) and this node signs to that peer
+     * again, offering a new session on its next message. True when it was the current session.
+     *
+     * <p>Only the CURRENT session, and only by its id: a notice that names any other session -- one this node already
+     * replaced (a notice delivered late, or replayed), one it never held, a renewal still pending -- changes nothing. A
+     * peer speaks for the sessions it shares with this node and no others: the entry is found by the node the signature
+     * verified as, never by a name the message merely carries.
+     */
+    boolean lostAtPeer(String peerNode, String by, String sid) {
+        Peer p = peerNode == null || sid == null ? null : peers.getIfPresent(peerNode);
+        if (p == null) return false;
+        synchronized (p) {
+            Session cur = p.current;
+            if (cur == null || !by.equals(p.name) || !cur.sid.equals(sid)) return false;
+            p.previous = cur;
+            p.current = null;
+            return true;
+        }
+    }
+
+    /**
+     * Forget the session {@code sid} held with {@code peerNode} (it ended): from here on a message under it is under a
+     * session this node does not hold, whatever this node's clock does.
+     */
+    void forget(String peerNode, String sid) {
+        Peer p = peerNode == null || sid == null ? null : peers.getIfPresent(peerNode);
+        if (p == null) return;
+        synchronized (p) {
+            if (p.current != null && p.current.sid.equals(sid)) p.current = null;
+            if (p.pending != null && p.pending.sid.equals(sid)) p.pending = null;
+            if (p.previous != null && p.previous.sid.equals(sid)) p.previous = null;
+        }
     }
 
     /** Forget the sessions of every peer {@code refused} says no (a revocation came in force); how many. */

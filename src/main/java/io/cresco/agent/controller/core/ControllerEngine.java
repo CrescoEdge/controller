@@ -262,6 +262,7 @@ public class ControllerEngine {
             }
 
             if (msgSigning != null) msgSigning.close();
+            if (activeClient != null) activeClient.stopHolding();     // what waited for a producer is counted, its timer stopped
 
             if(plugin != null) {
                 plugin.setIsActive(false);
@@ -847,7 +848,7 @@ public class ControllerEngine {
         io.cresco.agent.controller.communication.MsgSigning.Verdict v = s.verifyIfDeferred(msg, legacyNodesAdmitted());
         if (v == null) return true;
         if (v.ok()) return admitArrival(msg, v.caller);        // verified only now: the tenant rule of an arrival, now too
-        io.cresco.agent.controller.communication.MsgRouter.answerUnauthenticated(plugin, msg, v.refusal);
+        s.answerRefused(msg, v);                               // the 401; it names a session this node does not hold
         return false;
     }
 

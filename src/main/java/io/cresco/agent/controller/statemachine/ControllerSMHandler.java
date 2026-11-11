@@ -1450,6 +1450,14 @@ public class ControllerSMHandler {
 
             boolean consumerAgentConnected = false; //loop to catch expections on JMX connect of consumer
             int consumerAgentConnectCount = 0;
+            // The producer is made BEFORE the inbox consumer, once. Until now the consumer came first and the producer
+            // some 20 ms later (after the dataplane was restored and the consumer had started): a request that was
+            // waiting in this node's inbox -- at its start, and each time it joined a parent again -- was taken, served
+            // and answered into nothing ("AgentProducer is null. Message not sent"), and so was whatever a plugin sent
+            // in that moment (ControllerEngine.msgIn lets a message through as soon as the consumer's link is up). The
+            // producer needs nothing of the consumer (its own connection to the same broker), so it goes first: from
+            // the first message this node takes, it can answer.
+            boolean producerInit = false;
             while(!consumerAgentConnected && (consumerAgentConnectCount < 10)) {
                 try {
                     //consumer agent
@@ -1477,6 +1485,14 @@ public class ControllerSMHandler {
                     }
 
                     if(URI != null) {
+                        if (!producerInit) {
+                            // a producer made by an earlier attempt of this loop stays: the broker is the same
+                            if (!controllerEngine.getActiveClient().initActiveAgentProducer(URI)) {
+                                throw new Exception("initActiveAgentProducer failed for " + URI);
+                            }
+                            producerInit = true;
+                            logger.info("Agent ProducerThread Started..");
+                        }
                         // Tenant namespacing: the inbox queue is tenant-qualified. An infra controller on
                         // vm:// (its own broker) is a multi-tenant relay -> it consumes the T.*.<agentPath>
                         // WILDCARD so it receives every tenant's traffic regardless of the stamped tenant; so does a
@@ -1526,22 +1542,10 @@ public class ControllerSMHandler {
                 logger.error("initIOChannels(): the Agent Consumer never connected after " + consumerAgentConnectCount + " attempts");
                 return false;
             }
-            int discoveryPort = brokerPortFor(discoveredBrokerPort);
-            boolean producerInit;
-            if(isLocalBroker(brokerAddress)) {
-                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer("vm://localhost");
-            } else {
-                String producerURI = agentBrokerURI(brokerAddress, discoveryPort);
-                if (expected != null) {
-                    controllerEngine.getActiveClient().expectPeer(producerURI, expected.region, expected.agent);
-                }
-                producerInit = controllerEngine.getActiveClient().initActiveAgentProducer(producerURI);
-            }
             if (!producerInit) {
                 logger.error("initIOChannels(): the Agent Producer failed to initialize");
                 return false;
             }
-            logger.info("Agent ProducerThread Started..");
             isInit = true;
         } catch (Exception ex) {
             logger.error("initIOChannels() Error " + ex.getMessage());

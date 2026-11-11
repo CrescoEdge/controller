@@ -58,6 +58,7 @@ class MessageCountsInTheMetricInventoryTest {
         Map<String, String> names = MsgMetrics.register(registry, e);
         Set<String> expected = new HashSet<>(List.of("msg.originated", "msg.relayed", "msg.delivered", "msg.held", "msg.hold.full",
                 "msg.refused", "msg.dropped", "msg.sign.failed", "msg.trust.refused", "msg.filepart.dropped", "msg.tenant.unresolved",
+                "msg.session.lost.told", "msg.session.lost.heard", "msg.session.lost.retried", "msg.send.held",
                 "broker.caller.stripped", "broker.bridge.withheld", "broker.bridge.discarded", "broker.anonymous.discarded",
                 "broker.recipient.withheld", "broker.quarantine.connections"));
         for (String reason : List.of("unsigned", "not_for_this_node", "no_recipient", "too_old", "ahead_of_clock", "replay",

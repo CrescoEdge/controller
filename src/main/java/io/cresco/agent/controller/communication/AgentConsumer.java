@@ -223,6 +223,7 @@ public class AgentConsumer {
 							boolean checkNow = signing.required() && forThisNode(me)
 									&& (me.getParam(callIdKey) != null || filegroup != null || !signing.relayOnly(me));
 							if (signing.required() && !checkNow) signing.deferred(me);
+							MsgSigning.Verdict verified = null;     // accepted on arrival, with this verdict
 							if (checkNow) {
 								// what this node cannot judge YET is held a moment and verified again, never refused at once
 								// (TrustHold): in its first moments with a parent, before that parent's first pong brought the
@@ -250,7 +251,7 @@ public class AgentConsumer {
 										signing.refusedAfterHold(me, v.reason, v.refusal);
 									}
 									settled = true;                     // refused: counted by MsgSigning
-									refuseUnauthenticated(me, v.refusal);
+									refuseUnauthenticated(me, v);
 									return;
 								}
 								if (caller == null || !caller.equals(v.caller)) {
@@ -259,6 +260,7 @@ public class AgentConsumer {
 									CallerStamps.stamp(me, v.caller, alias == null || alias.isEmpty() ? null : alias);
 									caller = v.caller;
 								}
+								verified = v;
 							}
 
 							// what is dispatched here keeps the tenant rule a relay applies before it sends: its namespace is its
@@ -266,6 +268,13 @@ public class AgentConsumer {
 							// sender. What was deferred above is judged where it is verified (ControllerEngine.admitDeferred).
 							if (forThisNode(me) && (checkNow || !signing.required()) && !controllerEngine.admitArrival(me, caller)) {
 								settled = true;                     // refused: counted as dropped under its cause
+								return;
+							}
+							// a lost-session notice, or the refusal of a call this node has now sent again, signed: the signing
+							// layer took it, and nobody else is handed it (MsgSigning.afterVerified)
+							if (verified != null && signing.afterVerified(me, verified)) {
+								settled = true;
+								counts.delivered();
 								return;
 							}
 
@@ -739,10 +748,13 @@ public class AgentConsumer {
 
 	private final java.util.concurrent.atomic.AtomicLong unauthenticated = new java.util.concurrent.atomic.AtomicLong();
 
-	/** A message that failed its signature check: an RPC request is answered 401, anything else dropped (logged by MsgSigning). */
-	private void refuseUnauthenticated(MsgEvent me, String why) {
+	/**
+	 * A message that failed its signature check: an RPC request is answered 401, anything else dropped (logged by MsgSigning).
+	 * The answer to a request under a session this node does not hold names that session (MsgSigning.answerRefused).
+	 */
+	private void refuseUnauthenticated(MsgEvent me, MsgSigning.Verdict v) {
 		unauthenticated.incrementAndGet();
-		if (!MsgRouter.answerUnauthenticated(plugin, me, why)) logger.error("refuseUnauthenticated: the 401 reply failed");
+		if (!controllerEngine.msgSigning().answerRefused(me, v)) logger.error("refuseUnauthenticated: the 401 reply failed");
 	}
 
 	private boolean registerIncomingFiles(MsgEvent me, String fileobjectString, String fileGroup,

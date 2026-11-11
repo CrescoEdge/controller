@@ -113,13 +113,17 @@ class RegionalDispatchIsCountedTest {
         only(alone.engine.msgCounts(), MsgCounts.Drop.NO_GLOBAL, 1);
         assertEquals(0, alone.engine.msgCounts().deliveredCount());
 
-        // a send that fails is counted where it failed (this region has no producer), and only there
+        // a region with no producer (its link is being made anew) holds it for the producer: not dropped, not delivered;
+        // and when no producer comes (here: the node stops) it is counted where it ended, once
         RegionalRebuildWindowPingTest.Fixture down = region(ControllerMode.REGION_GLOBAL);
         down.state.globalRegion = "rg";
         down.state.globalAgent = "g1";
         down.engine.msgIn(kpi(), true);
+        assertEquals(0, down.engine.msgCounts().droppedCount());
+        assertEquals(0, down.engine.msgCounts().deliveredCount());
+        assertEquals(1, down.engine.getActiveClient().sendsHeldCount());
+        down.engine.getActiveClient().stopHolding();
         only(down.engine.msgCounts(), MsgCounts.Drop.NO_SENDER, 1);
-        assertEquals(0, down.engine.msgCounts().relayedCount());
 
         // a region that keeps its KPIs (forward_global_kpi=false) is where they end: delivered
         RegionalRebuildWindowPingTest.Fixture keeps = new RegionalRebuildWindowPingTest.Fixture(ControllerMode.REGION_GLOBAL,
