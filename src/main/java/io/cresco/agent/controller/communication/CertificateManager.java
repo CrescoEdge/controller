@@ -35,6 +35,14 @@ public class CertificateManager {
 
     private KeyStore keyStore;
     private volatile KeyStore trustStore;
+    /**
+     * Guards every change of {@link #trustStore}'s entries and every reading that walks them (building trust managers,
+     * storing it): a java.security.KeyStore is not safe to walk while another thread adds to it. A join adds the joiner's
+     * certificates while other joins build their trust managers: without this one of them failed on a
+     * ConcurrentModificationException ("getTrustManagers Error : null", once in 350 joins on the DGX gate of 1.3.378) and
+     * its connection had no trust manager. Its own object: the field above is replaced when a store is loaded.
+     */
+    private final Object trustStoreLock = new Object();
     private char[] keyStorePassword;
     private String keyStoreFilePath;
     private char[] trustStorePassword;
@@ -702,7 +710,7 @@ public class CertificateManager {
         try {
             if (trustStore == null || keyFps.isEmpty()) return;
             java.util.List<String> drop = new java.util.ArrayList<>();
-            synchronized (trustStore) {
+            synchronized (trustStoreLock) {
                 for (String alias : java.util.Collections.list(trustStore.aliases())) {
                     Certificate c = trustStore.getCertificate(alias);
                     if (c == null) continue;
@@ -883,7 +891,7 @@ public class CertificateManager {
             if (trustStore == null || name == null) return;
             String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
             java.util.List<String> drop = new java.util.ArrayList<>();
-            synchronized (trustStore) {
+            synchronized (trustStoreLock) {
                 for (String alias : java.util.Collections.list(trustStore.aliases())) {
                     Certificate c = trustStore.getCertificate(alias);
                     boolean sameKey = c != null && oldKeyFp != null && oldKeyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()));
@@ -1315,7 +1323,7 @@ public class CertificateManager {
                 keep.add(p + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(c.getEncoded())));
             }
             java.util.List<String> stale = new java.util.ArrayList<>();
-            synchronized (trustStore) {
+            synchronized (trustStoreLock) {
                 for (String alias : java.util.Collections.list(trustStore.aliases())) {
                     if (alias.toLowerCase(java.util.Locale.ROOT).startsWith(p) && !keep.contains(alias.toLowerCase(java.util.Locale.ROOT))) stale.add(alias);
                 }
@@ -1397,7 +1405,9 @@ public class CertificateManager {
                         logger.debug("public-key directory: " + f.getFileName() + " (" + fp + ") is not in public_key_trusted_fingerprints; not imported");
                         continue;
                     }
-                    trustStore.setCertificateEntry("imported#" + fp, cert);
+                    synchronized (trustStoreLock) {
+                        trustStore.setCertificateEntry("imported#" + fp, cert);
+                    }
                     imported.add(fp);
                     logger.info("Imported trust anchor " + f.getFileName() + " (" + fp + ") from " + dir + " (listed in public_key_trusted_fingerprints)");
                 } catch (Exception e) {
@@ -1446,9 +1456,11 @@ public class CertificateManager {
                 if (cert == null) continue;
                 String fp = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(cert.getEncoded()));
                 String name = (prefix + "#" + fp).toLowerCase(java.util.Locale.ROOT);
-                if (trustStore.containsAlias(name)) continue;
-                logger.debug("addCertificatesToTrustStore: adding " + name);
-                trustStore.setCertificateEntry(name, cert);
+                synchronized (trustStoreLock) {
+                    if (trustStore.containsAlias(name)) continue;
+                    logger.debug("addCertificatesToTrustStore: adding " + name);
+                    trustStore.setCertificateEntry(name, cert);
+                }
                 added.add(name);
             }
             if (!added.isEmpty()) saveKeyAndTrustStore();
@@ -1595,7 +1607,10 @@ public class CertificateManager {
         TrustManager[] trustManagers = null;
         try {
             TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            trustManagerFactory.init(trustStore);
+            // init copies the store's certificates into the factory: only that walk needs the store to hold still
+            synchronized (trustStoreLock) {
+                trustManagerFactory.init(trustStore);
+            }
             trustManagers = trustManagerFactory.getTrustManagers();
             for (int i = 0; i < trustManagers.length; i++) {
                 if (trustManagers[i] instanceof X509TrustManager) {
@@ -1603,7 +1618,7 @@ public class CertificateManager {
                 }
             }
         } catch(Exception ex) {
-            logger.error("getTrustManagers Error : " + ex.getMessage());
+            logger.error("getTrustManagers Error : " + ex);
         }
         return trustManagers;
     }
@@ -2449,7 +2464,9 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         try (FileOutputStream keyStoreOut = new FileOutputStream(keyStoreFilePath);
              FileOutputStream trustStoreOut = new FileOutputStream(trustStoreFilePath)) {
             keyStore.store(keyStoreOut, keyStorePassword);
-            trustStore.store(trustStoreOut, trustStorePassword);
+            synchronized (trustStoreLock) {                 // storing walks the entries
+                trustStore.store(trustStoreOut, trustStorePassword);
+            }
         } catch (IOException e) {
             logger.error("CertificateManager.saveKeyAndTrustStore IOException", e);
         } catch (CertificateException e) {
