@@ -243,25 +243,7 @@ EOF
   put scale "$sc}"
 
   # ---- errors and refusals in every log
-  local e; e=$("$PY" - "$RD/logs" <<'EOF'
-import json, os, re, sys
-d = sys.argv[1]; errs = {}; refusals = {}; lines = {}
-pat_r = re.compile(r"REFUS|does not verify|SIGNATURE: REFUSED|Discovery REFUSED|DISCARDED|overloaded|dropped [0-9]+ frame")
-for f in sorted(os.listdir(d)):
-    n = f[:-4]
-    for l in open(os.path.join(d, f), errors="replace"):
-        if " ERROR " in l:
-            errs[n] = errs.get(n, 0) + 1
-            k = re.sub(r"^\S+ \S+ \S+ +ERROR \[[^]]*\] - ", "", l.strip())[:160]
-            lines[k] = lines.get(k, 0) + 1
-        if pat_r.search(l):
-            refusals[n] = refusals.get(n, 0) + 1
-            k = "REFUSAL/LOSS " + re.sub(r"^\S+ \S+ \S+ +\w+ \[[^]]*\] - ", "", l.strip())[:160]
-            lines[k] = lines.get(k, 0) + 1
-print(json.dumps({"error_lines": sum(errs.values()), "refusal_or_loss_lines": sum(refusals.values()), "by_node_errors": errs,
-                  "by_node_refusals": refusals, "top": sorted(lines.items(), key=lambda x: -x[1])[:15]}))
-EOF
-)
+  local e; e=$("$PY" "$HERE/logscan.py" "$RD/logs")
   put logs "$e"
   touch "$RD/stop"; wait
   log "$B: done -> $R"
