@@ -108,6 +108,8 @@ public class ControllerEngine {
         this.msgCounts = new io.cresco.agent.controller.communication.MsgCounts(
                 pluginBuilder.getLogger(io.cresco.agent.controller.communication.MsgCounts.class.getName(), CLogger.Level.Info));
         this.routeGate = new io.cresco.agent.controller.communication.RouteGate(pluginBuilder.getConfig());
+        CLogger expiryLog = pluginBuilder.getLogger(io.cresco.agent.controller.communication.ExpiredMessages.class.getName(), CLogger.Level.Info);
+        this.expiredMessages.setWarn(expiryLog::warn);
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
@@ -159,6 +161,11 @@ public class ControllerEngine {
 
     /** The global this region is joining ({@link #setJoiningGlobal}), or null. */
     public io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal() { return joiningGlobal; }
+
+    private final io.cresco.agent.controller.communication.ExpiredMessages expiredMessages = new io.cresco.agent.controller.communication.ExpiredMessages();
+
+    /** The messages this node's broker let expire: counted (msg.expired) and said, whichever broker the node runs now. */
+    public io.cresco.agent.controller.communication.ExpiredMessages expiredMessages() { return expiredMessages; }
 
     private final io.cresco.agent.controller.communication.RouteGate routeGate;
 
