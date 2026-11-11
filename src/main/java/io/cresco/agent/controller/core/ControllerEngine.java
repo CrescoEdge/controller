@@ -178,6 +178,7 @@ public class ControllerEngine {
                 if (w.startsWith("UPGRADE WINDOW OPEN")) logger.error("WARNING: " + w);
                 else logger.warn("WARNING: " + w);
             }
+            for (String n : io.cresco.agent.controller.communication.SecuritySettings.bootNotices(plugin.getConfig())) logger.info(n);
 
             controllerSMHandler = new ControllerSMHandler(this);
             StateMachine sm = StateMachineFactory.getInstance(Transition.class).create(ControllerSMHandler.EMPTY, controllerSMHandler);

@@ -206,8 +206,15 @@ class AuthorityLogModeTest {
     @Test
     void everyBootSaysWhenAuthorityIsNotEnforced() throws Exception {
         long now = System.currentTimeMillis();
-        List<String> log = SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true"), now);
+        // the default mode is a notice (INFO), not a warning: a WARNING on every start of every node in the default
+        // configuration, naming what enforce "WOULD REFUSE", was counted as 204 refusals by the DGX gate of 1.3.377
+        List<String> log = SecuritySettings.bootNotices(cfg("broker_security_enabled", "true"));
         assertTrue(log.stream().anyMatch(w -> w.startsWith("authority_direction=log (this release's default)")), log.toString());
+        assertTrue(SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true"), now).stream()
+                .noneMatch(w -> w.startsWith("authority_direction")), "the default mode warns of nothing");
+        assertTrue(SecuritySettings.bootNotices(cfg("broker_security_enabled", "true", "authority_direction", "enforce")).isEmpty());
+        assertTrue(SecuritySettings.bootNotices(cfg("broker_security_enabled", "true", "authority_direction", "off")).isEmpty(), "off is a warning");
+        assertTrue(SecuritySettings.bootNotices(cfg("broker_security_enabled", "false")).isEmpty());
         List<String> off = SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true", "authority_direction", "off"), now);
         assertTrue(off.stream().anyMatch(w -> w.startsWith("authority_direction=off: authority does not follow the tree")), off.toString());
         List<String> enforce = SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true", "authority_direction", "enforce"), now);
