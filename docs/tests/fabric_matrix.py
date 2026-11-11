@@ -20,8 +20,9 @@ HOW TO RUN IT
       [--topology tree] [--profile standard] [--events start,restart-region,...] [--old-jar earlier-agent.jar] \
       [--base-port 41000] [--settle 30] [--seed 1] [--keep] [--json out.json]
   Needs a JDK 21 `java` on PATH, Python 3.12 with pycrescolib, and (production profile) OpenSSL 3 for tools/cresco-pki.sh.
-  One cell per run; about 11 minutes for the 10 JVMs of `tree` with every event (2 minutes of it settle time), ~4 GB of RAM
-  and 1.3 GB of disk, which is removed at the end unless --keep (logs stay in <work>/logs). It starts and stops only
+  One cell per run; about 11 minutes for the 10 JVMs of `tree` with every default event (4 of them settle time), ~4 GB
+  of RAM and 1.5 GB of disk, which is removed at the end unless --keep (logs stay in <work>/logs). A cell whose fabric
+  does not form at `start` stops there. It starts and stops only
   its own JVMs, by PID (also when it fails or is interrupted; a run that was killed outright is cleaned up by the next
   run in the same --work), uses only ports base .. base+400, makes its secrets per run in owner-only files and never
   prints them, and refuses to run with less than 12 GB of free disk.
@@ -44,8 +45,15 @@ HOW TO RUN IT
               restart-region kill -9 and start of one region controller; its agents come back by themselves
               restart-global kill -9, 20 s, start
               global-outage  the global down 60 s; meanwhile one agent starts under a region and one is killed
-              rekey-region   OPT-IN (see below): a region controller loses its identity and starts with a new key; the
-                             operator's rebind is done exactly where a refusing node's log asks for it
+              rekey-region   ONLY WHEN NAMED: a region controller is stopped, loses its identity (security/node-identity.p12)
+                             and starts with a new key; the operator's part is done exactly where a refusing node's
+                             log asks for it ("authorise ONE rebind on this node: add the line '<region>/<agent>=<key>'
+                             to <its security/peer-trust.json.rebind>"), with the key the re-keyed node printed. The
+                             release of 2026-11-10 fails it: the rebind is taken, then the re-keyed controller refuses
+                             its own agents' pings and registrations ("the attestation's signature does not verify":
+                             they still sign with the attestation its former key issued) until they are restarted.
+                             Nodes that still do not answer are restarted after the event is judged, so later events
+                             run on a whole fabric. Production: the node is re-issued (cresco-pki.sh node), no rebind.
               move-agent     an agent of the global's region is stopped and started in a region with region_alias
               cut-bridge     one region controller is SIGSTOPped for 40 s
               clock-skew     LEFT OUT: nothing supported gives one JVM another clock (the event reports that)
@@ -56,11 +64,15 @@ HOW TO RUN IT
 
 WHAT IT CANNOT SEE
   A node logs a refusal, a drop or a strip at most every 10 s, with a running count: the harness judges the reason of
-  every logged line and the count the line accounts for, so a second reason inside the same 10 s is counted but not
-  named (builds from controller 983407f on log each reason on its own and say "K of this kind", which is used when
-  present). The same counts are read from each node's metric inventory when the build has them (observe_counters), and
-  the conservation of messages (originated = delivered + refused + dropped, summed over the nodes) is REPORTED, not
-  judged. Every observation is one function (observe_*), so one can be moved from the log to the metric inventory.
+  every logged line and the count the line accounts for, so the tail of a burst is counted only by the next line of
+  that node, and a second reason inside the same 10 s is not named (builds from controller 983407f on log each reason
+  on its own and say "K of this kind", which is used when present). Those builds also expose the counts in the metric
+  inventory (msg.refused.<reason>, msg.dropped.<cause>, broker.caller.stripped, ...): observe_counters reads them with
+  one RPC, and what they gained per event and the conservation of messages (originated = delivered + refused + dropped,
+  summed over the nodes) are REPORTED, not judged -- they show more than the log does (12 refusals of one burst where
+  the log has one line). Every observation is one function (observe_*): moving the judgement from the log to the
+  counters is replacing those. An earlier-build agent (upgrade profile) keeps its membership and nothing more: it must
+  be listed, it is not asked an RPC, and its own log is not judged; nor is a revoked node's after its revocation.
 
 HOW TO ADD
   A topology    a function that adds nodes to the fabric (the global first: fab.add / fab.add_agent), listed in TOPOLOGIES.
@@ -128,40 +140,58 @@ RESTARTS = ("restart-agent", "restart-region", "restart-global", "global-outage"
 
 KNOWN: list[Known] = [
     # ---- messages refused
-    Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 4,
+    Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 3,
           "after a node restarts, its peers' messages under the session it lost are refused until they notice and sign again"),
     Known("refused-stale-unsigned", "refused", r"an unsigned message \(from null, not delivered first hand\)",
           ("restart-region", "restart-global", "global-outage", "cut-bridge"), 2,
           "one stale unsigned ping or WATCHDOG reaches a parent that restarted"),
+    # ---- messages dropped (logged by builds from controller 983407f on; the cause is the last word before the ';')
+    Known("dropped-no-sender", "dropped", r"of this kind, no_sender;", ("*",), 2,
+          "a node asked for an answer in its first moments (or while it joins again) has no sender yet"),
+    Known("dropped-no-global", "dropped", r"of this kind, no_global;", ("restart-global", "global-outage"), 4,
+          "a region's ping for the global is dropped while it has joined none"),
+    Known("dropped-send-failed", "dropped", r"of this kind, send_failed;", PARENT_AWAY, 5,
+          "an agent's watchdog or ping cannot be sent while its controller is away"),
+    Known("dropped-controller-stopping", "dropped", r"of this kind, controller_stopping;", ("rekey-region", "move-agent", "revoke"), 3,
+          "a node the event stops drops what it was about to send (seen by the counters' author at shutdown, not in these runs)"),
+    Known("dropped-plugin-inactive", "dropped", r"of this kind, plugin_inactive;", ("*",), 2,
+          "a message reaches a node whose plugin is still loading (expected by the counters' author, not seen in these runs)"),
     # ---- caller stamps stripped
     Known("stripped-mesh-adverts", "stripped",
-          r"global\.event' .* a node of region \S+ over the bridge of region (?!glob\b)\S+ \(outside its subtree\)", ("*",), 250,
+          r"global\.event' .* a node of region \S+ over the bridge of region (?!glob\b)\S+ \(outside its subtree\)", ("*",), 200,
           "in a region mesh, a controller's link-state advert that arrives over a second bridge loses its caller stamp", per_minute=True),
     Known("stripped-after-global-restart", "stripped",
           r"global\.event' .* a node of region \S+ over the bridge of region glob \(outside its subtree\)",
           ("restart-global", "global-outage"), 3,
           "right after the global restarts, a region strips another region's advert the global carried before its new bundle arrived"),
     # ---- ERROR lines that are the report of the event itself
-    Known("error-parent-discovery", "error", r"Discovery Failed: Connection refused|No agents discovered\.", PARENT_AWAY, 45,
+    Known("error-parent-discovery", "error", r"Discovery Failed: Connection refused|No agents discovered\.", PARENT_AWAY, 25,
           "an agent retries discovery (two lines every ~3 s) while its controller's port does not answer", per_minute=True),
     Known("error-global-discovery", "error", r"exchangeKeyWithBroker\(\) Connection refused|No global controller discovered\.",
-          PARENT_AWAY, 45, "a region retries discovery (two lines every ~3 s) while the global's port does not answer", per_minute=True),
+          PARENT_AWAY, 25, "a region retries discovery (two lines every ~3 s) while the global's port does not answer", per_minute=True),
+    Known("error-peer-discovery", "error", r"Could not discover or connect to peer", ("start", "restart-region", "rekey-region", "cut-bridge"), 3,
+          "in a region mesh, a region reports a configured peer (regional_peers) that does not answer while the event has it down"),
     Known("error-global-lost", "error", r"GLOBAL CONTROLLER LOST", ("restart-global", "global-outage", "cut-bridge"), 2,
           "a region reports that it lost the global"),
     Known("error-region-lost", "error", r"REGIONAL CONTROLLER LOST|HC bridge: link:parent CRITICAL in AGENT -> regionalControllerLost",
           PARENT_AWAY, 4, "an agent reports that it lost its controller"),
-    Known("error-send-failed", "error", r"Control-plane send failed to \[[^\]]+\] for (WATCHDOG|EXEC) message", PARENT_AWAY, 8,
+    Known("error-send-failed", "error", r"Control-plane send failed to \[[^\]]+\] for (WATCHDOG|EXEC) message", PARENT_AWAY, 5,
           "an agent's ping or watchdog cannot be sent while its controller is away"),
-    Known("error-dataplane-restore", "error", r"DataPlaneServiceImpl\] (Restoring DataPlane|Removing old listenerId)", PARENT_AWAY, 6,
+    Known("error-dataplane-restore", "error", r"DataPlaneServiceImpl\] (Restoring DataPlane|Removing old listenerId)", PARENT_AWAY, 4,
           "an agent that found its controller again rebuilds its dataplane listeners (logged at ERROR)"),
     Known("error-producer-null", "error", r"AgentProducer is null\. Message not sent", ("*",), 2,
           "a node asked for an answer in its first moments (or while it joins again) has no sender yet"),
+    Known("error-inactive-plugin", "error", r"MESSAGE SENT TO INACTIVE PLUGIN", ("*",), 2,
+          "a message reaches a node whose plugin is still loading (on the owner's list of known lines, not seen in these runs)"),
     Known("error-agent-lost", "error", r"Agent NodeID: \S+ (is STALE\. Setting to LOST|lost\. Setting Plugin NodeID: \S+ to LOST)",
-          ("global-outage", "revoke"), 8, "a controller reports an agent the event killed or revoked as lost (one line, and one per plugin)"),
+          ("global-outage", "revoke"), 7, "a controller reports an agent the event killed or revoked as lost (one line, and one per plugin)"),
+    Known("error-upgrade-window", "error", r"UPGRADE WINDOW OPEN until", ("*",), 3,
+          "a controller with the upgrade window open says so at ERROR at every start, and hourly (upgrade profile)"),
     # ---- revoke: the report of the revocation
     Known("error-revoked", "error", r"Key [0-9a-f]+ (of \S+ )?REVOKED \(operator file|Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED",
           ("revoke",), 2, "every node reports the key the operator revoked (at the global) or that reached it in a list"),
-    Known("error-revoked-refused", "error", r"Discovery REFUSED \S+: the key [0-9a-f]+ is REVOKED", ("revoke",), 25,
+    Known("error-revoked-refused", "error",
+          r"Discovery REFUSED \S+: the key [0-9a-f]+ is REVOKED|REFUSED the hello of \S+ from \S+ the certificate is REVOKED", ("revoke",), 15,
           "a controller refuses the revoked node each time it tries to join (every ~3 s)", per_minute=True),
     # ---- rekey-region: the report of the re-key and of the operator's rebind
     Known("error-rekey", "error", r"Discovery REFUSED \S+: the name is bound to another key|Identity \S+ REBOUND from key"
@@ -221,6 +251,8 @@ class Fabric:
         self.seq = 0                  # names of nodes added by events
         self.after_check = None       # set by an event: called with its result once the invariants are judged
         self.event_failures: list[str] = []   # what an event itself found wrong (beside the invariants)
+        self.prev_counters: dict = {}  # the metric inventory's counters at the event before, and the JVMs they were of
+        self.prev_launches: dict = {}
 
     # ---- layout ----
     def disc(self, n): return self.a.base_port + SLOT * n.slot
@@ -417,8 +449,10 @@ class Fabric:
         return None
 
     def targets(self) -> list:
-        """(region, agent) of every node that should answer; a moved node also at its former address."""
-        up = [n for n in self.nodes.values() if n.up]
+        """(region, agent) of every node that should answer; a moved node also at its former address. An earlier build
+        in the upgrade window keeps its membership and nothing more (docs/upgrade-1.3-secure-defaults.md section 3): it is
+        listed, and an API client's RPC is not for it."""
+        up = [n for n in self.nodes.values() if n.up and not n.old_build]
         return [(n.region, n.name) for n in up] + [(n.alias, n.name) for n in up if n.alias]
 
     def wait_converged(self, timeout) -> "float | None":
@@ -589,6 +623,7 @@ class Upgrade(Standard):
         if not pool:
             raise Fatal("the upgrade profile needs an agent")
         pool[0].jar, pool[0].old_build = fab.a.old_jar, True
+        pool[0].unjudged = "an earlier build: its own log is not the release's (what the release's nodes log about it is judged)"
 
     def flags(self, fab, n) -> list:
         f = super().flags(fab, n)
@@ -990,8 +1025,8 @@ def _counted(node, lines, kind):
             d = m.groupdict()
             key, n = ((kind, d["why"].strip()), int(d["k"])) if d.get("k") else (kind, int(m.group("n")))
             last = node.last.get(key, 0)
-            out.append((kind, l, n - last if n >= last else n))
-            node.last[key] = n
+            out.append((kind, l, max(0, n - last)))     # (two threads may log their lines out of order: never a reset)
+            node.last[key] = max(last, n)
     return out
 
 
@@ -1045,6 +1080,24 @@ def observe_counters(fab):
                 walk(v, node)
 
     walk(inv, "")
+    return out
+
+
+def counter_gains(fab, counters) -> dict:
+    """REPORTED, not judged: what each node's refusal, drop and broker counters gained since the reading after the event
+    before, {metric: {node: gain}} (a JVM started since then counts from zero; what a killed JVM counted is gone). The
+    log shows a reason at most every 10 s, so a burst's tail is in these counts and not in the log's."""
+    out = {}
+    launches = {"%s_%s" % (n.region, n.name): n.launches for n in fab.nodes.values()}
+    for node, m in counters.items():
+        base = fab.prev_counters.get(node, {}) if fab.prev_launches.get(node) == launches.get(node) else {}
+        for k, v in m.items():
+            if k.startswith(("msg.refused.", "msg.dropped.", "broker.")):
+                gain = int(v - base.get(k, 0.0))
+                if gain > 0:
+                    out.setdefault(k, {})[node] = gain
+    if counters:
+        fab.prev_counters, fab.prev_launches = counters, launches
     return out
 
 
@@ -1120,6 +1173,7 @@ def check(fab, event, began, counts_as=None):
         res["failures"].append("log: not a known item: " + ", ".join("%d %s" % (c, k) for k, c in sorted(kinds.items())))
     res["counters"] = observe_counters(fab)
     res["conservation"] = conservation(res["counters"])
+    res["counter_gains"] = counter_gains(fab, res["counters"])
     res["failures"] += fab.event_failures
     fab.event_failures = []
     return res
@@ -1132,13 +1186,17 @@ def one_line(res) -> str:
     known = sum(sum(v.values()) for v in res["known"].values())
     unknown = sum(u["count"] for u in res["unknown"])
     c = res.get("conservation") or {}
-    return "listing %s, converged after %s | rpc %d/%d%s | refused %d dropped %d stripped %d withheld %d discarded %d errors %d timer %d refused-start %d | known %d, NOT KNOWN %d%s%s" % (
+    line = "listing %s, converged after %s | rpc %d/%d%s | refused %d dropped %d stripped %d withheld %d discarded %d errors %d timer %d refused-start %d | known %d, NOT KNOWN %d%s%s" % (
         "ok" if not any(f.startswith("listing") for f in res["failures"]) else "WRONG", secs(res.get("listed_after_s")),
         len(ok), len(rpc), (" (max %.0f ms)" % max(ok)) if ok else "",
         t.get("refused", 0), t.get("dropped", 0), t.get("stripped", 0), t.get("withheld", 0), t.get("discarded", 0), t.get("error", 0),
         t.get("timer", 0), t.get("refused-start", 0), known, unknown,
         (", not judged %d (%s)" % (sum(res["unjudged"].values()), " ".join(res["unjudged"]))) if res.get("unjudged") else "",
         (" | counters of %(nodes)d nodes: originated %(originated)d = delivered %(delivered)d + refused %(refused)d + dropped %(dropped)d %(originated_minus_accounted)+d" % c) if c else "")
+    g = res.get("counter_gains") or {}
+    if g:
+        line += "; gained: " + ", ".join("%s +%d" % (k.replace("msg.", ""), sum(v.values())) for k, v in sorted(g.items()))
+    return line
 
 
 # ====================================================================================================================
@@ -1269,8 +1327,11 @@ def main():
             print("%-8s %-16s %s\n         %s" % ("PASS" if res["passed"] else "FAIL", label, what, one_line(res)), flush=True)
             for f in res["failures"]:
                 print("         ! " + f, flush=True)
+            if event == "start" and listed_after is None:
+                result["fatal"] = "the fabric did not form: the other events were not run"
+                break
         ran = [e for e in result["events"] if "skipped" not in e]
-        result["passed"] = bool(ran) and all(e["passed"] for e in ran)
+        result["passed"] = bool(ran) and all(e["passed"] for e in ran) and "fatal" not in result
         code = 0 if result["passed"] else 1
     except Fatal as e:
         result["fatal"] = str(e)
@@ -1331,6 +1392,13 @@ def report(cell, result):
             if c:
                 print("  %-28s %5d %10d %10d %8d %8d %8d %6d  %+d" % (e["event"], c["nodes"], c["originated"], c["delivered"], c["refused"],
                                                                  c["dropped"], c["relayed"], c["held"], c["originated_minus_accounted"]))
+    if any(e.get("counter_gains") for e in ran):
+        print("\nwhat the nodes' counters gained per event (reported, not judged; the highest at one node in brackets):")
+        for e in ran:
+            g = e.get("counter_gains") or {}
+            if g:
+                print("  %-28s %s" % (e["event"], ", ".join("%s +%d (%d)" % (k.replace("msg.", ""), sum(v.values()), max(v.values()))
+                                                            for k, v in sorted(g.items()))))
     unknown = [(e["event"], u) for e in result["events"] if "skipped" not in e for u in e["unknown"]]
     if unknown:
         print("\nNOT a known item (%d lines; each fails its event):" % len(unknown))
