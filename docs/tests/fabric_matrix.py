@@ -191,8 +191,11 @@ KNOWN: list[Known] = [
           "an agent retries discovery (two lines every ~3 s) while its controller's port does not answer", per_minute=True),
     Known("error-global-discovery", "error", r"exchangeKeyWithBroker\(\) Connection refused|No global controller discovered\.",
           PARENT_AWAY, 25, "a region retries discovery (two lines every ~3 s) while the global's port does not answer", per_minute=True),
-    Known("error-peer-discovery", "error", r"Could not discover or connect to peer", ("start", "restart-region", "rekey-region", "cut-bridge"), 3,
-          "in a region mesh, a region reports a configured peer (regional_peers) that does not answer while the event has it down"),
+    Known("error-peer-discovery", "error", r"Could not discover or connect to peer|Error while maintaining peer connection to \S+: Connection refused",
+          ("start", "restart-region", "rekey-region", "cut-bridge"), 3,
+          "in a region mesh, a region reports a configured peer (regional_peers) that does not answer while the event has it down"
+          " (the peer timer's own line, 'Error while maintaining peer connection ... Connection refused', was seen once at each"
+          " of the two peers of a controller being re-keyed, 2026-11-11)"),
     Known("error-global-lost", "error", r"GLOBAL CONTROLLER LOST", ("restart-global", "global-outage", "cut-bridge"), 2,
           "a region reports that it lost the global"),
     Known("error-region-lost", "error", r"REGIONAL CONTROLLER LOST|HC bridge: link:parent CRITICAL in AGENT -> regionalControllerLost",
@@ -1354,6 +1357,12 @@ def main():
             print("%-8s %-16s %s\n         %s" % ("PASS" if res["passed"] else "FAIL", label, what, one_line(res)), flush=True)
             for f in res["failures"]:
                 print("         ! " + f, flush=True)
+            # the lines themselves, not only how many: an intermittent one cannot be had again by running the cell again
+            # (2026-11-11: "4 error" once in four runs of tenants/rekey-region, never captured)
+            for u in res["unknown"][:8]:
+                print("           %s [%s x%d] %s" % (u["node"], u["kind"], u["count"], u["line"][:400]), flush=True)
+            if len(res["unknown"]) > 8:
+                print("           ... and %d more (use --json for all)" % (len(res["unknown"]) - 8), flush=True)
             if event == "start" and listed_after is None:
                 result["fatal"] = "the fabric did not form: the other events were not run"
                 break
