@@ -236,6 +236,23 @@ public final class SecuritySettings {
         }
     }
 
+    /**
+     * What a node says at start that is not a warning: one INFO line each. Today: that authority follows the tree is
+     * logged, not enforced ({@code authority_direction=log}, the default). It was a WARNING on every start of every node,
+     * in the default configuration, and its text names what enforce WOULD REFUSE: the DGX gate of agent release 1.3.377
+     * counted 204 of them as refusals.
+     */
+    public static java.util.List<String> bootNotices(Config c) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (brokerSecurity(c) && authorityDirection(c) == io.cresco.library.security.ActionAuthorizer.Mode.LOG) {
+            out.add(AUTHORITY_DIRECTION + "=log (this release's default): a management action from a node that is not this"
+                    + " node or a controller above it, and a report from a node that is not below it, is still allowed --"
+                    + " counted (authz.direction.would_refuse) and logged once per action and position (lines that start"
+                    + " 'AUTHORITY: WOULD REFUSE'). " + AUTHORITY_DIRECTION + "=enforce refuses them");
+        }
+        return out;
+    }
+
     /** WARNINGs (and ERRORs) a node logs on EVERY boot: temporary settings in effect. */
     public static java.util.List<String> bootWarnings(Config c, long now) {
         java.util.List<String> out = new java.util.ArrayList<>(compatProblems(c, now));
@@ -253,10 +270,8 @@ public final class SecuritySettings {
                             + " counted or logged");
                     break;
                 case LOG:
-                    out.add(AUTHORITY_DIRECTION + "=log (this release's default): a management action from a node that is not this"
-                            + " node or a controller above it, and a report from a node that is not below it, is still ALLOWED --"
-                            + " counted (authz.direction.would_refuse) and logged once per action and position (AUTHORITY: WOULD"
-                            + " REFUSE). Set " + AUTHORITY_DIRECTION + "=enforce to refuse them");
+                    // the mode itself is said once at start as a notice (bootNotices): it is this release's default, not a
+                    // setting an operator got wrong. What makes its counts meaningless on this node is a warning (below).
                     if (!msgSigningRequired(c)) {
                         out.add(AUTHORITY_DIRECTION + "=log with msg_signing_required=false: the would-refuse count"
                                 + " (authz.direction.would_refuse) is NOT meaningful on this node for API callers and for other"
