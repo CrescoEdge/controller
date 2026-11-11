@@ -41,7 +41,7 @@ public class ParentLinkHealthCheck implements HealthCheck {
                 if (w == null) {
                     return new Result(Result.Status.TEMPORARILY_UNAVAILABLE, "agent watcher not ready");
                 }
-                return evaluate("regional", w.getLastParentPongTs(), w.getPingIntervalMs());
+                return refusedOr(w.parentPing().standing(), evaluate("regional", w.getLastParentPongTs(), w.getPingIntervalMs()), "regional");
             }
 
             // Region connected to a (remote) global -> global parent, judged by the age of the global's last pong (audit:
@@ -58,7 +58,7 @@ public class ParentLinkHealthCheck implements HealthCheck {
                 if (pong == null) {
                     return new Result(Result.Status.TEMPORARILY_UNAVAILABLE, "region watcher not ready");
                 }
-                return evaluateAgainst("global", pong[0], regionStaleThresholdMs(ce.getPluginBuilder(), pong[1]));
+                return refusedOr(globalRefusal(), evaluateAgainst("global", pong[0], regionStaleThresholdMs(ce.getPluginBuilder(), pong[1])), "global");
             }
 
             // GLOBAL / STANDALONE / transient states: no parent link to monitor.
@@ -103,6 +103,22 @@ public class ParentLinkHealthCheck implements HealthCheck {
     protected long[] globalPong() {
         RegionHealthWatcher w = ce.getRegionHealthWatcher();
         return w == null ? null : new long[]{w.getLastGlobalPongTs(), w.getPingIntervalMs()};
+    }
+
+    /** What this region's global refuses of it ({@link ParentPing#standing}), or null. */
+    protected String globalRefusal() {
+        RegionHealthWatcher w = ce.getRegionHealthWatcher();
+        return w == null ? null : w.parentPing().standing();
+    }
+
+    /**
+     * A parent that answers and REFUSES this node's pings is reachable, and no healthy link: WARN -- never OK, and never
+     * the way to CRITICAL, which tears the link down and joins again (that cures nothing a refusal names). A link that is
+     * stale by the age of its last answer stays what it is.
+     */
+    private static Result refusedOr(String refusal, Result byAge, String label) {
+        if (refusal == null || byAge.getStatus() != Result.Status.OK) return byAge;
+        return new Result(Result.Status.WARN, label + " link answers, and the parent " + refusal);
     }
 
     private Result evaluate(String label, long lastPongTs, long pingIntervalMs) {

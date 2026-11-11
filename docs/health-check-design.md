@@ -162,6 +162,10 @@ All checks implement `org.apache.felix.hc.api.HealthCheck` and are registered as
 ### 6.2 Link checks — tag `link` (verdict local, signal communicated)
 
 - `link:parent` — reads `lastPongAt` maintained by the (now transport-only) parent watcher.
+  A parent that answers a ping with its refusal (`401 unauthenticated`) is reachable and counts for
+  `lastPongAt`, but is no healthy link: `WARN` while its last answer was a refusal (never `OK`, never
+  the way to `CRITICAL`: joining again cures nothing a refusal names), with one WARN line a minute
+  that says what cures it; nothing of that answer is taken as the parent's word (`ParentPing`).
   `now - lastPongAt < interval` ⇒ `OK`; within grace ⇒ `TEMPORARILY_UNAVAILABLE`; beyond grace ⇒
   `CRITICAL` (auto-promoted by the executor). Uses `hc.keepNonOkResultsStickyForSec` so a flap that
   self-heals still surfaces in the record.
