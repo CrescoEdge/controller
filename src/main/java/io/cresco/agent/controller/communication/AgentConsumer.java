@@ -183,6 +183,12 @@ public class AgentConsumer {
 
 		MessageListener inbox = new MessageListener() {
 			public void onMessage(Message msg) {
+				// What became of each message is counted once (MsgCounts): refused (MsgSigning counts it), delivered to the
+				// call waiting for it, handed to the router (which counts it from there), held (it comes back here), or
+				// dropped under its cause. settled: that has happened; a failure after it is not counted again
+				final MsgCounts counts = controllerEngine.msgCounts();
+				boolean settled = false;
+				MsgEvent taken = null;
 				try {
 
 					sweepFileGroups();
@@ -194,6 +200,7 @@ public class AgentConsumer {
 						String msgEventString = ((TextMessage) msg).getText();
 
 						MsgEvent me = gson.fromJson(msgEventString,MsgEvent.class);
+						taken = me;
 						if(me != null) {
 							// Gson reads the parameters into a tree map (every getParam a string-comparing search, and a
 							// message's checks read dozens); a hash map holds the same entries
@@ -224,19 +231,25 @@ public class AgentConsumer {
 								TrustHold hold = trustHold;
 								long now = System.currentTimeMillis();
 								boolean mayHold = hold != null && hold.mayHold(now);
+								boolean noRoom = false;         // the hold could not take it (counted once, however often it is tried)
 								// what a held message takes of the hold's room: its text and the file list it carries
 								int heldChars = msgEventString.length() + (fileobjectString == null ? 0 : fileobjectString.length());
 								if (hold != null && trustWait.waiting(controllerEngine.trustReady(), now) && mayHold && !fromParentOrSelf(caller)) {
 									signing.wantTrust();                // the parent is asked now, not at the next ping
-									if (hold.hold(msg, heldChars, now, holdSender(caller))) return;
+									if (held(hold, msg, heldChars, now, caller)) return;
+									noRoom = true;
+									counts.notHeld();
 								}
 								MsgSigning.Verdict v = signing.verify(me, caller, controllerEngine.legacyNodesAdmitted(),
 										firstHand(msg, caller), mayHold);
 								if (!v.ok()) {
 									if (v.later) {
-										if (hold.hold(msg, heldChars, now, holdSender(caller))) return;
-										signing.refusedAfterHold(me, v.refusal);
+										if (held(hold, msg, heldChars, now, caller)) return;
+										if (!noRoom) counts.notHeld();
+										// the verdict was not counted when it was given: it is now, under its reason
+										signing.refusedAfterHold(me, v.reason, v.refusal);
 									}
+									settled = true;                     // refused: counted by MsgSigning
 									refuseUnauthenticated(me, v.refusal);
 									return;
 								}
@@ -258,8 +271,11 @@ public class AgentConsumer {
 							if((filegroup != null) && (me.getDstRegion().equals(plugin.getRegion())) && (me.getDstAgent().equals(plugin.getAgent()))) {
 								if(!registerIncomingFiles(me, fileobjectString, filegroup, caller)) {
 									logger.error("Unable to register files!");
+									settled = true;
+									counts.dropped(MsgCounts.Drop.FILE_GROUP_REFUSED, me);
 								}
-								//don't forward message until files have arrived
+								//don't forward message until files have arrived (then it is routed; a group that expires is counted then)
+								settled = true;
 								return;
 							}
 
@@ -282,6 +298,8 @@ public class AgentConsumer {
 									isMyRPC = true;
 									logger.trace("RPC Text Message: {}", io.cresco.agent.controller.communication.ParamLog.of(me));
 									plugin.receiveRPC(callId, me);
+									settled = true;
+									counts.delivered();                 // to the call waiting for it
 								}
 							}
 
@@ -289,10 +307,13 @@ public class AgentConsumer {
 								logger.trace("Text Message: {}", io.cresco.agent.controller.communication.ParamLog.of(me));
 								//create new thread service for incoming messages
 								controllerEngine.msgInThreaded(me);
+								settled = true;                         // the router counts what becomes of it
 							}
 
 						} else {
 							logger.error("non-MsgEvent message found!");
+							settled = true;
+							counts.dropped(MsgCounts.Drop.INBOX_ERROR, 1, "a text message that is no MsgEvent");
 						}
 
 					} else if( msg instanceof BytesMessage) {
@@ -310,8 +331,16 @@ public class AgentConsumer {
 
 						logger.debug("Byte Message: dst_region: " + dstRegion + " dst_agent: " + dstAgent);
 
-						if((filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null)
-								&& partFromGroupSender(filegroup, msg)) {
+						// a file part is no MsgEvent: one this node does not take is counted by itself (Drop.FILE_PART), never in
+						// the node's dropped messages. The message its group came with is: when the group expires
+						boolean wellFormed = (filegroup != null) && (dstRegion != null) && (dstAgent != null) && (dataName != null) && (dataPart != null);
+						if (!wellFormed) {
+							settled = true;
+							counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a part without its group, destination or name");
+						} else if (!partFromGroupSender(filegroup, msg)) {
+							settled = true;
+							counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a part not from its group's caller, group", filegroup);
+						} else {
 
 							//logger.info("MSG REGION: " + dstRegion + " MSG AGENT: " + dstAgent);
 
@@ -424,32 +453,53 @@ public class AgentConsumer {
 													}
 												}
 
+											} else {
+												// silent until now: the file is never complete, and its group expires
+												settled = true;
+												counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a combined file whose hash differs, group", filegroup);
 											}
 
 										} else {
 											logger.error("ERROR COMBINING FILE : " + combinedFileHash);
 											//System.out.println("ERROR COMBINING FILE : " + combinedFileHash);
+											settled = true;
+											counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a file that could not be combined, group", filegroup);
 										}
 
 									}
 
 
 
+								} else {
+									// silent until now: a part of a group that expired, completed or was never registered
+									settled = true;
+									counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a part for no file group this node holds, group", filegroup);
 								}
 
 
 							} else {
 								logger.error("MUST CREATE METHOD TO FORWARD DATA MESSAGES");
+								settled = true;
+								counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a part for another node");
 							}
 						}
 
 					} else if (msg instanceof BlobMessage) {
 						logger.error("Blob message recieved!");
+						settled = true;
+						counts.dropped(MsgCounts.Drop.INBOX_ERROR, 1, "a blob message");
 					} else {
 						logger.error("non-Text message recieved!");
+						settled = true;
+						counts.dropped(MsgCounts.Drop.INBOX_ERROR, 1, "neither a text nor a bytes message");
 					}
 				} catch(Exception ex) {
 					logger.error("AgentConsumer.onMessage Error : " + ex.getMessage(), ex);
+					if (!settled) {
+						if (msg instanceof BytesMessage) counts.dropped(MsgCounts.Drop.FILE_PART, 1, "a part this node failed on");
+						else if (taken != null) counts.dropped(MsgCounts.Drop.INBOX_ERROR, taken);
+						else counts.dropped(MsgCounts.Drop.INBOX_ERROR, 1, "a message that could not be read");
+					}
 				}
 			}
 		};
@@ -648,6 +698,17 @@ public class AgentConsumer {
 		return c.getRegion() != null && c.getAgent() != null ? c.getRegion() + "/" + c.getAgent() : String.valueOf(c.getPrincipal());
 	}
 
+	/**
+	 * Hold {@code msg} until this node can judge it ({@link TrustHold#hold}); false when the hold has no room for it. A
+	 * message is counted as held once, however often it is held again.
+	 */
+	private boolean held(TrustHold hold, Message msg, int chars, long now, io.cresco.library.security.Caller caller) {
+		boolean first = hold.since() == null;
+		if (!hold.hold(msg, chars, now, holdSender(caller))) return false;
+		if (first) controllerEngine.msgCounts().held();
+		return true;
+	}
+
 	/** Messages held because this node could not judge them yet (diagnostics, tests). */
 	long heldForTrust() { return trustHold == null ? 0 : trustHold.heldTotal.get(); }
 
@@ -728,6 +789,8 @@ public class AgentConsumer {
 			}
 			logger.warn("EXPIRED the file group {} of {}: no part arrived for {} min; {} file(s) deleted from the journal directory",
 					group.id, group.owner.isEmpty() ? "an unverified caller" : group.owner, IncomingFileGroups.IDLE_EXPIRY_MS / 60_000L, files);
+			// the message the group came with is never routed: it ends here
+			controllerEngine.msgCounts().dropped(MsgCounts.Drop.FILE_GROUP_EXPIRED, group.receiver == null ? null : group.receiver.getMsgEvent());
 		}
 	}
 
@@ -737,7 +800,8 @@ public class AgentConsumer {
 		closed = true;
 		if (trustHold != null) {
 			controllerEngine.msgSigning().removeTrustListener(trustListener);
-			trustHold.close();
+			int dropped = trustHold.close();
+			controllerEngine.msgCounts().dropped(MsgCounts.Drop.HOLD_CLOSED, dropped, "held for trust data");
 		}
 		synchronized (this) {
 			shutdownTransport();

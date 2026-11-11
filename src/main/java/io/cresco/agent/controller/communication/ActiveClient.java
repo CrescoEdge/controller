@@ -682,12 +682,18 @@ public class ActiveClient {
     /** The current producer (tests). */
     AgentProducer agentProducer() { return agentProducer; }
 
-    public void sendAPMessage(MsgEvent msg) {
+    /**
+     * Hand {@code msg} to the producer. False when it was not sent: counted as dropped, here when there is no producer
+     * (the link is being made anew), by the producer when its send failed.
+     */
+    public boolean sendAPMessage(MsgEvent msg) {
         AgentProducer p = agentProducer;
         if (p != null) {
-            p.sendMessage(msg);
+            return p.sendMessage(msg);
         } else {
             logger.error("sendAPMessage called but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(msg));
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, msg);
+            return false;
         }
     }
 
@@ -751,12 +757,14 @@ public class ActiveClient {
         logger.info("ActiveClient shutdown complete.");
     }
 
+    /** As {@link #sendAPMessage}: false when {@code sm} was not sent, which is then counted as dropped (once). */
     public boolean sendMessage(MsgEvent sm) {
         AgentProducer p = agentProducer;
         if (p != null) {
             return p.sendMessage(sm);
         } else {
             logger.error("sendMessage called directly on ActiveClient, but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, sm);
             return false;
         }
     }

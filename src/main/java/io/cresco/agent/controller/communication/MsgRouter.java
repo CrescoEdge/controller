@@ -86,74 +86,95 @@ public class MsgRouter {
     public static final String ROUTE_REFUSED = "route_refused";
     private static final long READY_POLL_MS = 50L;
 
+    // --- What became of each message (MsgCounts) ---------------------------------------------------
+    // Every message route() takes ends in exactly one count: delivered (handed to its recipient on this node),
+    // refused (MsgSigning counts it), dropped (under its cause) -- or it goes on to the broker, and its next node
+    // accounts for it. A hand-off is counted AFTER it returned: one that throws lands in route()'s catch, which
+    // counts the message once, as a routing failure; nothing below counts a message and then throws.
+
     private void forwardToLocalAgent(MsgEvent rm) {
         // D4: a message off the wire not verified on arrival (it was re-addressed to this node on the way) is verified now
-        if (!controllerEngine.admitDeferred(rm)) return;
+        if (!controllerEngine.admitDeferred(rm)) return;            // refused: counted by MsgSigning
         // PluginBuilder.msgIn -> the engine's AgentExecutor: both set once at construction, never replaced
         controllerEngine.getPluginBuilder().msgIn(rm);
+        controllerEngine.msgCounts().delivered();
     }
 
     private void forwardToLocalPlugin(MsgEvent rm) {
-        if (!controllerEngine.admitDeferred(rm)) return;
+        if (!controllerEngine.admitDeferred(rm)) return;            // refused: counted by MsgSigning
         io.cresco.agent.controller.agentcontroller.PluginAdmin admin = controllerEngine.getPluginAdmin();
         if (admin == null) {
-            unavailable(rm, Hop.LOCAL_PLUGIN, "plugin admin not available");
+            unavailable(rm, Hop.LOCAL_PLUGIN, "plugin admin not available", MsgCounts.Drop.PLUGIN_ADMIN_UNAVAILABLE);
             return;
         }
-        admin.msgIn(rm);
+        switch (admin.msgIn(rm)) {
+            case DELIVERED: controllerEngine.msgCounts().delivered(); break;
+            // one line per message at ERROR until now (260 a minute while a plugin loaded); counted, and logged at the
+            // first one and then at most every 10 s
+            case INACTIVE: controllerEngine.msgCounts().dropped(MsgCounts.Drop.PLUGIN_INACTIVE, rm); break;
+            // silent until now
+            default: controllerEngine.msgCounts().dropped(MsgCounts.Drop.PLUGIN_UNKNOWN, rm); break;
+        }
     }
 
-    private void forwardToLocalRegionalController(MsgEvent rm) {
+    private void forwardToLocalRegionalController(MsgEvent rm, boolean offWire) {
         NotReady notReady = awaitReady(() -> regionalControllerNotReady(rm));
         if (notReady != null) {
-            unavailable(rm, Hop.LOCAL_REGIONAL_CONTROLLER, notReady.reason);
+            unavailable(rm, Hop.LOCAL_REGIONAL_CONTROLLER, notReady.reason, notReady.cause);
             return;
         }
         // the engine's single RegionalExecutor, NOT getRegionHealthWatcher(): the watcher is null from a
         // global-link loss until the global is re-joined (and before the first join), while this region
         // keeps serving its agents -- an agent ping (20943) in that window used to NPE here and be lost
-        controllerEngine.getRegionalExecutor().dispatch(rm);
+        controllerEngine.getRegionalExecutor().dispatch(rm, offWire);       // counts what becomes of it, never throws
     }
 
-    private void forwardToRemoteRegionalController(MsgEvent rm) {
+    private void forwardToRemoteRegionalController(MsgEvent rm, boolean offWire) {
         // the agent's regional controller is unknown between setAgentFailed/setAgentInit and setAgentSuccess
         // (a re-init after the region was lost): forwarding then addressed the message to null_null
         NotReady notReady = awaitReady(() -> (controllerEngine.cstate.getRegionalRegion() == null
                 || controllerEngine.cstate.getRegionalAgent() == null)
-                ? NotReady.rebuilding("regional controller not known (state " + controllerEngine.cstate.getControllerState() + ")")
+                ? NotReady.rebuilding("regional controller not known (state " + controllerEngine.cstate.getControllerState() + ")",
+                        MsgCounts.Drop.PARENT_UNKNOWN)
                 : null);
         if (notReady != null) {
-            unavailable(rm, Hop.REMOTE_REGIONAL_CONTROLLER, notReady.reason);
+            unavailable(rm, Hop.REMOTE_REGIONAL_CONTROLLER, notReady.reason, notReady.cause);
             return;
         }
         //set remote regional controller address
         rm.setForwardDst(controllerEngine.cstate.getRegionalRegion(),controllerEngine.cstate.getRegionalAgent(),null);
-        send(rm, Hop.REMOTE_REGIONAL_CONTROLLER);
+        send(rm, Hop.REMOTE_REGIONAL_CONTROLLER, offWire);
     }
 
-    private void forwardToLocalRegion(MsgEvent rm) {
-        send(rm, Hop.LOCAL_REGION);
+    private void forwardToLocalRegion(MsgEvent rm, boolean offWire) {
+        send(rm, Hop.LOCAL_REGION, offWire);
     }
 
-    private void forwardToRemoteRegion(MsgEvent rm) {
-        send(rm, Hop.REMOTE_REGION);
+    private void forwardToRemoteRegion(MsgEvent rm, boolean offWire) {
+        send(rm, Hop.REMOTE_REGION, offWire);
     }
 
-    /** Hand {@code rm} to the broker; a send that cannot happen (producer torn down for a re-init) is reported. */
-    private void send(MsgEvent rm, Hop hop) {
+    /**
+     * Hand {@code rm} to the broker; a send that cannot happen (producer torn down for a re-init) is reported.
+     * {@code offWire}: this node took it off the wire, so sent on it is relayed.
+     */
+    private void send(MsgEvent rm, Hop hop, boolean offWire) {
         String crossTenant = tenantRefusal(rm);
         if (crossTenant != null) {
-            refuse(rm, crossTenant);
+            refuse(rm, crossTenant, MsgCounts.Drop.CROSS_TENANT);
             return;
         }
         ActiveClient client = controllerEngine.getActiveClient();
         if (client == null) {
-            unavailable(rm, hop, "broker client not available");
+            unavailable(rm, hop, "broker client not available", MsgCounts.Drop.NO_SENDER);
             return;
         }
         if (!client.sendMessage(rm)) {
-            unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed");
+            // counted where it failed, under what failed (no producer, no destination, the broker did not take it)
+            unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed", null);
+            return;
         }
+        if (offWire) controllerEngine.msgCounts().relayed();
     }
 
     /**
@@ -207,7 +228,7 @@ public class MsgRouter {
                 // a region with no global joined (global lost / not yet joined / region-first): nowhere to
                 // send a global message. Not a transient rebuild (a global can be gone for minutes), so
                 // this is answered at once rather than waited on.
-                return NotReady.settled("no global controller joined (state " + mode + ")");
+                return NotReady.settled("no global controller joined (state " + mode + ")", MsgCounts.Drop.NO_GLOBAL);
             }
         }
         return null;
@@ -217,11 +238,17 @@ public class MsgRouter {
     static final class NotReady {
         final String reason;
         final boolean worthWaiting;
-        private NotReady(String reason, boolean worthWaiting) { this.reason = reason; this.worthWaiting = worthWaiting; }
+        /** What a message dropped for this reason is counted under. */
+        final MsgCounts.Drop cause;
+        private NotReady(String reason, boolean worthWaiting, MsgCounts.Drop cause) {
+            this.reason = reason; this.worthWaiting = worthWaiting; this.cause = cause;
+        }
         /** A component being (re)built: wait up to route_ready_wait_ms for it. */
-        static NotReady rebuilding(String reason) { return new NotReady(reason, true); }
+        static NotReady rebuilding(String reason) { return rebuilding(reason, MsgCounts.Drop.CONTROLLER_NOT_READY); }
+        static NotReady rebuilding(String reason, MsgCounts.Drop cause) { return new NotReady(reason, true, cause); }
         /** Not going to change soon (shutdown, no global joined): answer at once. */
-        static NotReady settled(String reason) { return new NotReady(reason, false); }
+        static NotReady settled(String reason) { return settled(reason, MsgCounts.Drop.CONTROLLER_STOPPING); }
+        static NotReady settled(String reason, MsgCounts.Drop cause) { return new NotReady(reason, false, cause); }
         @Override public String toString() { return reason; }
     }
 
@@ -255,9 +282,11 @@ public class MsgRouter {
      * {@code rm} could not be delivered to {@code hop}: log it once, and answer an RPC request with an error
      * reply (params error + route_unavailable) through the normal reply path so the caller fails fast.
      * A reply, or a message that is itself such an error reply, is only logged (no reply loops); so is a
-     * liveness ping (an error reply would read as a pong).
+     * liveness ping (an error reply would read as a pong). The message ends here: it is counted as dropped under
+     * {@code cause} -- null when what failed has counted it already (a send).
      */
-    private void unavailable(MsgEvent rm, Hop hop, String reason) {
+    private void unavailable(MsgEvent rm, Hop hop, String reason, MsgCounts.Drop cause) {
+        if (cause != null) controllerEngine.msgCounts().dropped(cause, rm);
         String what = "type=" + rm.getMsgType() + " action=" + rm.getParam("action")
                 + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
                 + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin();
@@ -283,9 +312,14 @@ public class MsgRouter {
     /**
      * {@code rm} names a controller function on the wrong tier (see {@link ControllerTiers#refusal}): it is not run
      * anywhere. An RPC request is answered with an error reply (params error + route_refused), anything else is
-     * dropped with one log line.
+     * dropped with one log line. Either way it ends here, counted as dropped under {@code cause}.
      */
     void refuse(MsgEvent rm, String reason) {
+        refuse(rm, reason, MsgCounts.Drop.TIER_REFUSED);
+    }
+
+    void refuse(MsgEvent rm, String reason, MsgCounts.Drop cause) {
+        controllerEngine.msgCounts().dropped(cause, rm);
         String what = "type=" + rm.getMsgType() + " action=" + rm.getParam("action")
                 + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
                 + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin();
@@ -368,22 +402,31 @@ public class MsgRouter {
        
     }
 
-    private void forwardToLocalGlobal(MsgEvent rm) {
+    private void forwardToLocalGlobal(MsgEvent rm, boolean offWire) {
         logger.debug("forwardToLocalGlobal() {}", io.cresco.agent.controller.communication.ParamLog.of(rm));
-        forwardToLocalRegion(rm);
+        forwardToLocalRegion(rm, offWire);
     }
 
-    private void forwardToRemoteGlobal(MsgEvent rm) {
+    private void forwardToRemoteGlobal(MsgEvent rm, boolean offWire) {
         // an ordinary relay hop toward the global's region (every message for a region_alias address in that region
         // takes it, gfs#26): logged at ERROR with its params it flooded the log thousands of times a minute
         logger.trace("forwardToRemoteGlobal() {}", io.cresco.agent.controller.communication.ParamLog.of(rm));
-        forwardToRemoteRegion(rm);
+        forwardToRemoteRegion(rm, offWire);
     }
 
 
 
     public void route(MsgEvent rm) {
+        route(rm, false);
+    }
+
+    /**
+     * Route {@code rm}; {@code offWire}: this node's inbox took it off the wire (another node originated it), so when it
+     * goes on toward another node it is counted as relayed. Whatever becomes of it here is counted once (see above).
+     */
+    public void route(MsgEvent rm, boolean offWire) {
         long messageTimeStamp = System.nanoTime();
+        final MsgEvent taken = rm;
         try {
 
             rm = getTTL(rm);
@@ -424,7 +467,7 @@ public class MsgRouter {
                 // current head, pop-and-forward to the next waypoint. Returns true when the message was
                 // re-forwarded (nothing more to do here); false to continue to normal routing (either the
                 // final waypoint reached with the true dst restored, or no/irrelevant source route).
-                if (rm.getParam(SRCROUTE) != null && advanceSourceRoute(rm, sourceRouting(plugin))) {
+                if (rm.getParam(SRCROUTE) != null && advanceSourceRoute(rm, sourceRouting(plugin), offWire)) {
                     return; // forwarded to the next waypoint (or, source routing off here, not relayed); timer still recorded
                 }
 
@@ -461,18 +504,20 @@ public class MsgRouter {
                 switch (hop) {
                     case LOCAL_AGENT:                forwardToLocalAgent(rm); break;
                     case LOCAL_PLUGIN:               forwardToLocalPlugin(rm); break;
-                    case LOCAL_REGIONAL_CONTROLLER:  forwardToLocalRegionalController(rm); break;
-                    case REMOTE_REGIONAL_CONTROLLER: forwardToRemoteRegionalController(rm); break;
-                    case LOCAL_REGION:               forwardToLocalRegion(rm); break;
-                    case REMOTE_REGION:              forwardToRemoteRegion(rm); break;
-                    case LOCAL_GLOBAL:               forwardToLocalGlobal(rm); break;
-                    case REMOTE_GLOBAL:              forwardToRemoteGlobal(rm); break;
+                    case LOCAL_REGIONAL_CONTROLLER:  forwardToLocalRegionalController(rm, offWire); break;
+                    case REMOTE_REGIONAL_CONTROLLER: forwardToRemoteRegionalController(rm, offWire); break;
+                    case LOCAL_REGION:               forwardToLocalRegion(rm, offWire); break;
+                    case REMOTE_REGION:              forwardToRemoteRegion(rm, offWire); break;
+                    case LOCAL_GLOBAL:               forwardToLocalGlobal(rm, offWire); break;
+                    case REMOTE_GLOBAL:              forwardToRemoteGlobal(rm, offWire); break;
                 }
 
             }
 
         } catch (Exception ex) {
             logger.error("MsgRouter.route Route Failed " + ex + " " + (rm != null ? io.cresco.agent.controller.communication.ParamLog.describe(rm) : "rm=null"), ex);
+            // the message ends here, in none of the counts above (each counts after its hand-off returned)
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.ROUTE_ERROR, taken);
 
         }
         finally
@@ -544,10 +589,11 @@ public class MsgRouter {
      *
      * @param rm the message being routed
      * @param relay this node relays source routes (net_source_routing)
+     * @param offWire this node took the message off the wire: forwarded to the next waypoint, it is counted as relayed
      * @return true if this call consumed/forwarded the message (caller should stop), false to let normal
      *         routing proceed (final waypoint reached, not source-routed, or a defensive fallback)
      */
-    private boolean advanceSourceRoute(MsgEvent rm, boolean relay) {
+    private boolean advanceSourceRoute(MsgEvent rm, boolean relay, boolean offWire) {
         try {
             String path = rm.getParam(SRCROUTE);
             if (path == null || path.isEmpty()) return false;
@@ -567,7 +613,7 @@ public class MsgRouter {
             if (!hops.get(0).equals(me)) return false;
             if (!relay && hops.size() > 1) {
                 unavailable(rm, Hop.REMOTE_REGION, "source-routed on to " + hops.get(hops.size() - 1)
-                        + ", and this node does not relay source routes (net_source_routing is off)");
+                        + ", and this node does not relay source routes (net_source_routing is off)", MsgCounts.Drop.SOURCE_ROUTE_NOT_RELAYED);
                 return true;
             }
 
@@ -598,7 +644,7 @@ public class MsgRouter {
                 rm.setParam(SRCROUTE, String.join(";", hops));
                 rm.setForwardDst(nextRegion, nextAgent, null);
                 if (!loggedSrcRoute) { loggedSrcRoute = true; logger.info("source-routing: active (forwarding " + me + " -> " + next + ")"); }
-                send(rm, Hop.REMOTE_REGION);
+                send(rm, Hop.REMOTE_REGION, offWire);
                 return true; // consumed here
             }
         } catch (Exception ex) {
@@ -910,6 +956,7 @@ public class MsgRouter {
                     + " (ttl=" + rm.getParam("ttl") + "): type=" + rm.getMsgType() + " action=" + rm.getParam("action")
                     + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()
                     + " dst=" + rm.getDstRegion() + "_" + rm.getDstAgent() + "/" + rm.getDstPlugin());
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.TTL, rm);
             return null;
         }
         rm.setParam("ttl", String.valueOf(next));

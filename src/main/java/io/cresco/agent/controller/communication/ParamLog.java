@@ -86,12 +86,12 @@ public final class ParamLog {
     private static final java.util.regex.Pattern NAME = java.util.regex.Pattern.compile("[A-Za-z0-9_.:@/-]+");
 
     /** An action name is a short token; anything else is logged by its size only. */
-    private static String safeAction(String a) {
+    static String safeAction(String a) {
         if (a == null) return "null";
         return a.length() <= 64 && ACTION.matcher(a).matches() ? a : "(" + a.length() + " chars)";
     }
 
-    private static String safeName(String k) {
+    static String safeName(String k) {
         if (k == null) return "null";
         return k.length() <= 128 && NAME.matcher(k).matches() ? k : "(" + k.length() + " chars)";
     }

@@ -110,7 +110,7 @@ class ControllerTierBrokerTest {
             f.setAccessible(true);
             f.set(engine, new ActiveClient(engine) {
                 @Override public boolean sendMessage(MsgEvent sm) { return send(sm); }
-                @Override public void sendAPMessage(MsgEvent msg) { send(msg); }
+                @Override public boolean sendAPMessage(MsgEvent msg) { return send(msg); }
             });
         }
 

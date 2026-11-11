@@ -164,6 +164,11 @@ public class AgentProducer {
     /** The per-destination workers (tests). */
     Map<String, ActiveProducerWorker> workers() { return producerWorkers; }
 
+    /**
+     * Send {@code sm} to its forward destination. False when it was not sent after every attempt: the message is then
+     * counted as dropped here, once, under what failed (no destination, or the broker did not take it) -- a caller that
+     * reports the failure does not count it again.
+     */
     public boolean sendMessage(MsgEvent sm) {
         boolean isSent = false;
         long currentRetryDelay = INITIAL_RETRY_DELAY_MS;
@@ -171,6 +176,7 @@ public class AgentProducer {
         String dstPath = sm.getForwardDst();
         if (dstPath == null) {
             logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_DESTINATION, sm);
             return false; // Cannot proceed without a destination
         }
 
@@ -203,6 +209,7 @@ public class AgentProducer {
                 if (!ok) {
                     ControlPlaneFailures.SEND_LOST.incrementAndGet();
                     logger.error("Control-plane send failed to [{}] for {} message.", dstPath, sm.getMsgType());
+                    controllerEngine.msgCounts().dropped(MsgCounts.Drop.SEND_FAILED, sm);
                 }
                 return ok;
             }
@@ -307,6 +314,7 @@ public class AgentProducer {
         if (!isSent) {
             ControlPlaneFailures.PRODUCER_LOST.incrementAndGet();
             logger.error("Failed to send message to destination [{}] after {} attempts.", dstPath, MAX_SEND_RETRIES_CONFIG);
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.SEND_FAILED, sm);
         }
         return isSent;
     }

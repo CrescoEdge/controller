@@ -218,6 +218,7 @@ public class PerfMonitorNet {
 
                 controllerEngine.stampSelf(tick);          // delivered in-JVM to this controller: it is the caller
                 plugin.msgIn(tick);
+                controllerEngine.msgCounts().delivered(); // not through the router, which counts every other delivery
 
             }
         }

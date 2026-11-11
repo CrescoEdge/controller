@@ -160,11 +160,13 @@ final class TrustHold {
         }
     }
 
-    /** Stop; what is held is dropped (the inbox is closing). */
-    void close() {
+    /** Stop; what is held is dropped (the inbox is closing). Returns how many messages that was. */
+    int close() {
         ScheduledExecutorService t;
+        int dropped;
         synchronized (this) {
             closed = true;
+            dropped = held.size();
             held.clear();
             perSender.clear();
             chars = 0;
@@ -172,5 +174,6 @@ final class TrustHold {
             timer = null;
         }
         if (t != null) t.shutdownNow();
+        return dropped;
     }
 }

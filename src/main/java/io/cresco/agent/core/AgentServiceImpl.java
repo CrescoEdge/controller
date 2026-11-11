@@ -501,6 +501,12 @@ public class AgentServiceImpl implements AgentService {
             refused("send as a plugin the bundle does not run", bundle.getSymbolicName() + " sent as plugin " + id
                     + " (it runs " + (pluginAdmin == null ? "nothing yet" : pluginAdmin.pluginIdsOf(bundle.getBundleId())) + "); dropped "
                     + msg.printHeader());
+            // a message a sender on this node handed it, which ends here: counted as both, so that every message is
+            // accounted for (the line above is written once a minute)
+            if (controllerEngine != null) {
+                controllerEngine.msgCounts().originated();
+                controllerEngine.msgCounts().dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.SENDER_NOT_PLUGIN, msg);
+            }
             return;
         }
         try {
