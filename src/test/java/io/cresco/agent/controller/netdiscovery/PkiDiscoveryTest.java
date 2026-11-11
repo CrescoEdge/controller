@@ -103,6 +103,32 @@ class PkiDiscoveryTest {
         assertEquals("rc", na.discovered_agent);
     }
 
+    /**
+     * The PKI scopes its CAs per tenant and a tenant's CA can write any region name: a controller of tenant t2 whose
+     * certificate names tenant t1's region does not join the global as a controller of that region.
+     */
+    @Test
+    void aControllerOfAnotherTenantCannotJoinUnderARegionOfAnotherTenant() throws Exception {
+        ControllerEngine g = node(global, "glob", "gc", "is_global", true);
+        ControllerEngine r = node(regionA, "rgA", "rc", "is_region", true);
+        assertNotNull(exchange(r, g, DiscoveryType.GLOBAL), "precondition: region rgA (tenant t1) joined the global");
+        PkiTestSupport.Ca t2 = PkiTestSupport.tenant(root, "t2");
+        long from = System.currentTimeMillis() - 60_000;
+        PkiTestSupport.Node forged = PkiTestSupport.write(PkiTestSupport.node(t2, "t2", "rgA", "rc2", true, from, DAY), pki.resolve("t2_rgA_rc2"));
+        ControllerEngine x = node(forged, "rgA", "rc2", "is_region", true, "tenant_id", "t2");
+        DiscoveryNode joined = exchange(x, g, DiscoveryType.GLOBAL);
+        io.cresco.agent.controller.communication.PeerTrustRegistry atGlobal = g.getCertificateManager().getPeerTrust();
+        System.out.println("t2's controller naming t1's region rgA: joined=" + (joined != null) + ", speaks for rgA at the global="
+                + atGlobal.isJoinedController("t2", "rgA", "rc2"));
+        assertNull(joined, "tenant t2's controller joined the global as a controller of tenant t1's region rgA");
+        assertFalse(atGlobal.isJoinedController("t2", "rgA", "rc2"), "tenant t2's controller speaks for tenant t1's region at the global");
+        assertTrue(atGlobal.isJoinedController("t1", "rgA", "rc"));
+        // under a region name of its own it joins
+        PkiTestSupport.Node own = PkiTestSupport.write(PkiTestSupport.node(t2, "t2", "rgB", "rc", true, from, DAY), pki.resolve("t2_rgB_rc"));
+        assertNotNull(exchange(node(own, "rgB", "rc", "is_region", true, "tenant_id", "t2"), g, DiscoveryType.GLOBAL),
+                "a controller of tenant t2 could not join under its own region");
+    }
+
     @Test
     void theTwoKindsOfExchangeNeverMeet() throws Exception {
         ControllerEngine prodRegion = node(regionA, "rgA", "rc", "is_region", true);

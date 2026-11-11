@@ -293,6 +293,18 @@ public class CertificateManager {
     }
 
     /**
+     * Pre-provisioned: the controller presenting {@code chain} completed an authenticated REGION/GLOBAL discovery exchange
+     * with this node (it joined, or this node joined it; the checks above passed). It is recorded with its tenant
+     * ({@link PeerTrustRegistry#allowBridgePeer(String, String, String)}): its region's names belong to that tenant here
+     * from now on. Why it cannot be (the region is another tenant's here), or null.
+     */
+    public String provisionedControllerLearned(X509Certificate[] chain) {
+        CrescoIdentity id = chain == null || chain.length == 0 || chain[0] == null ? null : CrescoNames.identityOf(chain[0]);
+        if (id == null) return "its certificate names no valid identity";
+        return peerTrust.allowBridgePeer(id.getTenant(), id.getRegion(), id.getAgent());
+    }
+
+    /**
      * Pre-provisioned, as the client of a discovery exchange: why the responder presenting {@code chain} (answering as
      * {@code region/agent}) is refused, or null. It must be a controller of the PKI that names itself as it answered, and
      * (under {@code controller_trust_anchors}) chain to one of those too.
@@ -376,7 +388,12 @@ public class CertificateManager {
      */
     private synchronized void publishProvisioned(ProvisionedIdentity p, java.util.List<X509Certificate> anchors,
                                                  ProvisionedIdentity.Revocations rev, KeyStore trust) throws Exception {
-        if (peerTrust != null) peerTrust.setPki(anchors, rev);
+        if (peerTrust != null) {
+            peerTrust.setPki(anchors, rev);
+            // this node's region is its own tenant's: no other tenant's certificate names it here (PKI scopes are per tenant)
+            CrescoIdentity me = CrescoNames.identityOf(p.chain[0]);
+            if (me != null) peerTrust.setOwnRegion(me.getTenant(), me.getRegion());
+        }
         operatorRevocations = rev;
         this.trustStore = trust;
         presented = new NodeIdentityKeyManager.Identity(p.chain.clone(), p.key, IDENTITY_GEN.incrementAndGet());
@@ -604,6 +621,7 @@ public class CertificateManager {
             PeerTrustRegistry mem = new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
             mem.setKeyReplacedListener(this::dropReplacedAnchors);
             mem.setRevokedBatchListener(this::onKeysRevoked);
+            mem.setSuperuserTenants(superuserTenants());
             return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
@@ -625,6 +643,7 @@ public class CertificateManager {
         PeerTrustRegistry reg = PeerTrustRegistry.shared(file, o, m -> logger.error(m));
         reg.setKeyReplacedListener(this::dropReplacedAnchors);
         reg.setRevokedBatchListener(this::onKeysRevoked);
+        reg.setSuperuserTenants(superuserTenants());
         return reg;
     }
 

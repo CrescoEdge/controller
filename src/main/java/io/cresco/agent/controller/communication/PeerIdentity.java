@@ -25,8 +25,11 @@ import java.util.Objects;
  * name's region and tenant. A trusted chain alone is not enough: under per-node trust every peer generated its own
  * root CA and the node trusts all of them, so a peer that kept its CA key could mint any name.
  *
- * <p>The tenant is not compared: region/agent names are the fabric-wide routing identity (a global federates
- * several tenants), and tenant authorization is the broker's job ({@link TenantPolicy}).
+ * <p>The tenant is compared too: CAs are scoped per tenant, so a certificate that names the expected region and agent
+ * under ANOTHER tenant (issued by that tenant's CA) is another identity. The expected tenant is the one verified for the
+ * peer in discovery -- carried by {@link Expected}, else what the registry holds for the peer's region
+ * ({@link PeerTrustRegistry#regionTenant}) -- or a superuser tenant (the operator's own). What a verified peer may then
+ * read and write is the broker's job ({@link TenantPolicy}).
  */
 public final class PeerIdentity {
 
@@ -55,12 +58,19 @@ public final class PeerIdentity {
         }
     }
 
-    /** The peer a connection is meant to reach: its region and agent name. */
+    /** The peer a connection is meant to reach: its region and agent name, and its tenant when the caller holds it. */
     public static final class Expected {
+        /** The tenant verified for the peer in discovery; null: what the registry holds for the peer's region. */
+        public final String tenant;
         public final String region;
         public final String agent;
 
         public Expected(String region, String agent) {
+            this(null, region, agent);
+        }
+
+        public Expected(String tenant, String region, String agent) {
+            this.tenant = tenant;
             this.region = region;
             this.agent = agent;
         }
@@ -73,12 +83,12 @@ public final class PeerIdentity {
         @Override public boolean equals(Object o) {
             if (!(o instanceof Expected)) return false;
             Expected e = (Expected) o;
-            return Objects.equals(region, e.region) && Objects.equals(agent, e.agent);
+            return Objects.equals(tenant, e.tenant) && Objects.equals(region, e.region) && Objects.equals(agent, e.agent);
         }
 
-        @Override public int hashCode() { return Objects.hash(region, agent); }
+        @Override public int hashCode() { return Objects.hash(tenant, region, agent); }
 
-        @Override public String toString() { return "region=" + region + ", agent=" + agent; }
+        @Override public String toString() { return (tenant == null ? "" : "tenant=" + tenant + ", ") + "region=" + region + ", agent=" + agent; }
     }
 
     /** The outcome of {@link #verify}. */
@@ -120,8 +130,18 @@ public final class PeerIdentity {
             return Verdict.refuse(presented, "the certificate names region=" + presented.getRegion()
                     + ", agent=" + presented.getAgent());
         }
+        if (expected.tenant != null && !expected.tenant.equals(presented.getTenant())
+                && (pins == null || !pins.isSuperuserTenant(presented.getTenant()))) {
+            return Verdict.refuse(presented, "the certificate names the expected region and agent under tenant " + presented.getTenant()
+                    + ", not the tenant " + expected.tenant + " verified for this peer in discovery");
+        }
         if (pins == null) {
             return Verdict.ok(presented, "identity matches (name only: no registry)");
+        }
+        String regionTenant = expected.tenant != null ? null : pins.regionTenant(expected.region);
+        if (regionTenant != null && !regionTenant.equals(presented.getTenant()) && !pins.isSuperuserTenant(presented.getTenant())) {
+            return Verdict.refuse(presented, "the certificate names the expected region and agent under tenant " + presented.getTenant()
+                    + ", but region " + expected.region + " is tenant " + regionTenant + "'s here");
         }
         String[] why = new String[1];
         CrescoIdentity bound = pins.verifiedIdentity(chain, why);

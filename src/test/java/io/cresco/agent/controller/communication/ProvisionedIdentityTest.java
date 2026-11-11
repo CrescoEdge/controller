@@ -155,6 +155,89 @@ class ProvisionedIdentityTest {
         assertNull(reg.verifiedIdentity(a2.chain), "a key revoked by a signed list verified");
     }
 
+    // ------------------------------------------------------------------ the tenant is part of who a peer is
+
+    /**
+     * The PKI scopes its CAs per tenant, and a tenant's CA can write any region and agent name: tenant t2's CA issues a
+     * controller certificate naming t1's region and controller. An agent of t1 does not take it for its controller, and it
+     * neither becomes nor displaces who speaks for that region.
+     */
+    @Test
+    void anotherTenantsCertificateForThisRegionsControllerIsNotThatController() throws Exception {
+        Fabric f = new Fabric();
+        PkiTestSupport.Ca t2 = PkiTestSupport.tenant(f.root, "t2");
+        PkiTestSupport.Node forged = PkiTestSupport.node(t2, "t2", "rgr", "rc", true, System.currentTimeMillis() - 60_000, DAY);
+        PkiTestSupport.Node rc = f.node("rgr", "rc", true);
+        PeerTrustRegistry bare = new PeerTrustRegistry();
+        bare.setPki(java.util.List.of(f.root.cert), null);
+        assertNotNull(bare.verifiedIdentity(forged.chain), "precondition: the PKI itself accepts tenant t2's certificate for the names rgr/rc");
+        ControllerEngine a1 = engine("rgr", "a1", false, config(f, f.node("rgr", "a1", false)));
+        PeerTrustRegistry atAgent = a1.getCertificateManager().getPeerTrust();
+        PeerIdentity.Expected controller = new PeerIdentity.Expected("rgr", "rc");
+        assertTrue(PeerIdentity.verify(controller, rc.chain, atAgent).ok, "the agent refuses its own controller");
+        assertEquals(PeerTrustRegistry.ROLE_CONTROLLER, atAgent.roleOf("t1", "rgr", "rc"));
+        PeerIdentity.Verdict v = PeerIdentity.verify(controller, forged.chain, atAgent);
+        System.out.println("t2's certificate for rgr/rc at t1's agent: " + (v.ok ? "ACCEPTED as its controller" : "refused (" + v.reason + ")"));
+        assertFalse(v.ok, "an agent of tenant t1 accepted tenant t2's certificate as its controller rgr/rc");
+        assertNull(atAgent.verifiedIdentity(forged.chain), "tenant t2's certificate is a verified identity of t1's region");
+        assertEquals(PeerTrustRegistry.ROLE_CONTROLLER, atAgent.roleOf("t1", "rgr", "rc"), "t1's controller is no longer known as rgr/rc: t2's certificate displaced it");
+        assertNull(atAgent.roleOf("t2", "rgr", "rc"), "tenant t2's certificate is the controller of t1's region");
+        assertEquals("t1", atAgent.boundTenant("rgr", "rc"));
+    }
+
+    /**
+     * Another region's names belong to the tenant its controller completed discovery as (recorded): one tenant per region
+     * name, a superuser tenant's identity (the operator's own) excepted. And an expected peer that carries its tenant is
+     * matched on it wherever the registry knows nothing of its region.
+     */
+    @Test
+    void aRegionNameIsOwnedByOneTenant() throws Exception {
+        Fabric f = new Fabric();
+        PkiTestSupport.Ca t2 = PkiTestSupport.tenant(f.root, "t2");
+        long from = System.currentTimeMillis() - 60_000;
+        PkiTestSupport.Node rc = f.node("rgr", "rc", true);
+        PkiTestSupport.Node forged = PkiTestSupport.node(t2, "t2", "rgr", "rc", true, from, DAY);
+        PkiTestSupport.Node forged2 = PkiTestSupport.node(t2, "t2", "rgr", "rc2", true, from, DAY);
+        ControllerEngine gc = engine("glob", "gc", true, config(f, PkiTestSupport.write(PkiTestSupport.global(f.root, "t1", "glob", "gc", from, 30 * DAY),
+                f.dir.resolve("glob_gc")), "is_global", "true"));
+        CertificateManager cm = gc.getCertificateManager();
+        PeerTrustRegistry atGlobal = cm.getPeerTrust();
+        io.cresco.agent.controller.netdiscovery.DiscoveryType join = io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL;
+        // region rgr's controller joins as tenant t1
+        assertNull(cm.provisionedJoinerRefusal(rc.chain, join, "rgr", "rc"));
+        assertNull(cm.provisionedControllerLearned(rc.chain));
+        assertEquals("t1", atGlobal.regionTenant("rgr"));
+        // tenant t2's certificates for that region: not verified, not joined, under the same name or another
+        assertNotNull(cm.provisionedJoinerRefusal(forged.chain, join, "rgr", "rc"), "tenant t2 joined as region rgr's controller");
+        assertNotNull(cm.provisionedJoinerRefusal(forged2.chain, join, "rgr", "rc2"), "tenant t2 joined as a second controller of t1's region");
+        assertNotNull(cm.provisionedControllerLearned(forged2.chain));
+        assertNull(atGlobal.verifiedIdentity(forged.chain));
+        assertTrue(atGlobal.isJoinedController("t1", "rgr", "rc"));
+        assertFalse(atGlobal.isJoinedController("t2", "rgr", "rc2"));
+        // t2's own region is t2's
+        PkiTestSupport.Node other = PkiTestSupport.node(t2, "t2", "rgs", "rc", true, from, DAY);
+        assertNull(cm.provisionedJoinerRefusal(other.chain, join, "rgs", "rc"));
+        assertNull(cm.provisionedControllerLearned(other.chain));
+        assertNull(atGlobal.verifiedIdentity(PkiTestSupport.node(f.root, "t1", "rgs", "x", false, from, DAY).chain), "tenant t1 named t2's region");
+        // the operator's own (a superuser tenant) is not refused in a tenant's region
+        assertNotNull(atGlobal.verifiedIdentity(PkiTestSupport.node(f.root, "cresco-system", "rgr", "admin", false, from, DAY).chain));
+        // the record is durable: after a restart the region is still tenant t1's, before its controller connects again
+        Path file = Files.createTempDirectory("regown").resolve("security").resolve("peer-trust.json");
+        PeerTrustRegistry first = PeerTrustRegistry.open(file, java.util.List.of(), java.util.List.of(), 30, m -> { });
+        first.setPki(java.util.List.of(f.root.cert), null);
+        assertNull(first.allowBridgePeer("t1", "rgr", "rc"));
+        PeerTrustRegistry restarted = PeerTrustRegistry.open(file, java.util.List.of(), java.util.List.of(), 30, m -> { });
+        restarted.setPki(java.util.List.of(f.root.cert), null);
+        assertEquals("t1", restarted.regionTenant("rgr"));
+        assertNull(restarted.verifiedIdentity(forged.chain), "after a restart tenant t2's certificate names t1's region");
+        assertNotNull(restarted.verifiedIdentity(rc.chain));
+        // an expected peer that carries its tenant
+        PeerTrustRegistry bare = new PeerTrustRegistry();
+        bare.setPki(java.util.List.of(f.root.cert), null);
+        assertFalse(PeerIdentity.verify(new PeerIdentity.Expected("t1", "rgr", "rc"), forged.chain, bare).ok);
+        assertTrue(PeerIdentity.verify(new PeerIdentity.Expected("t1", "rgr", "rc"), rc.chain, bare).ok);
+    }
+
     // ------------------------------------------------------------------ discovery without enrollment
 
     @Test

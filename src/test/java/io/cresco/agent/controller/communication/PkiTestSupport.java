@@ -76,6 +76,21 @@ public final class PkiTestSupport {
         return new Ca(kp, sign(b, root.kp), new X509Certificate[]{root.cert});
     }
 
+    /** A tenant's CA under {@code root}: scoped to every region of that tenant ({@code cresco:ca:<tenant>/*}), nodes and controllers. */
+    public static Ca tenant(Ca root, String tenant) throws Exception {
+        KeyPair kp = TlsTestSupport.rsa();
+        long now = System.currentTimeMillis();
+        X500Name subject = new X500Name("CN=" + tenant + " CA,O=" + tenant);
+        JcaX509v3CertificateBuilder b = new JcaX509v3CertificateBuilder(X500Name.getInstance(root.cert.getSubjectX500Principal().getEncoded()), serial(),
+                new Date(now - DAY), new Date(now + 1825 * DAY), subject, kp.getPublic());
+        b.addExtension(Extension.basicConstraints, true, new BasicConstraints(0));
+        b.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.keyCertSign | KeyUsage.cRLSign));
+        b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(new GeneralName[]{
+                new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:ca:" + tenant + "/*"),
+                new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:ca-roles:node,controller")}));
+        return new Ca(kp, sign(b, root.kp), new X509Certificate[]{root.cert});
+    }
+
     /** A node leaf issued by {@code issuer}, valid from {@code from} for {@code validMs}. */
     public static Node node(Ca issuer, String tenant, String region, String agent, boolean controller, long from, long validMs) throws Exception {
         KeyPair kp = TlsTestSupport.rsa();
