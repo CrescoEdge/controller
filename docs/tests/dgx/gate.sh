@@ -14,7 +14,12 @@
 # the global's and region's CPU, heap and threads at steady state, refusals and errors in every log, and the control
 # plane again at each step (per-op cost as agents grow). One JSON per build in $GATE_OUT/<build>.json; report.py compares.
 #
-# Usage (inside the job): gate.sh <builds...>   builds: old | std | prod
+# Usage (inside the job): gate.sh <builds...>   builds: old | oldprod | std | prod
+#   old and std run the standard profile, oldprod and prod the production profile (pre-provisioned PKI, FIPS); old and
+#   oldprod run GATE_JAR_OLD, std and prod GATE_JAR_NEW. report.py judges like against like: std against old, prod
+#   against oldprod. Without an oldprod run, prod is judged against old and the report says that the two differ in
+#   profile as well as in build (the production profile's tail on the region probe is heavier in every release).
+#   oldprod needs an earlier build that has the production profile (agent release 1.3.374 or later).
 #   GATE_JAR_OLD, GATE_JAR_NEW: agent jars; GATE_OUT: results dir (shared filesystem); GATE_PY: python with pycrescolib's
 #   dependencies; GATE_PYCRESCOLIB: pycrescolib checkout; GATE_TESTS: controller docs/tests; GATE_PERF: dataplane_perf.py;
 #   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
@@ -57,10 +62,10 @@ d[k] = v
 json.dump(d, open(p, "w"), indent=1)
 EOF
   }
-  case $B in old) JAR="$GATE_JAR_OLD" ;; *) JAR="$GATE_JAR_NEW" ;; esac
+  case $B in old|oldprod) JAR="$GATE_JAR_OLD" ;; *) JAR="$GATE_JAR_NEW" ;; esac
   put build "\"$B\""; put jar "\"$(basename "$JAR") $(sha256sum "$JAR" | cut -c1-12)\""
   local KEY="" ; ident() { echo ""; }
-  if [ "$B" = prod ]; then
+  if [ "$B" = prod ] || [ "$B" = oldprod ]; then
     local PKI="$RD/pki"
     { bash "$PKI_TOOL" init "$PKI" --days 5 --key ec && bash "$PKI_TOOL" region "$PKI" t1 rgr --days 5 \
       && bash "$PKI_TOOL" node "$PKI" t1 glob gc --global --days 3 && bash "$PKI_TOOL" node "$PKI" t1 rgr rc --controller --days 3 \
@@ -72,7 +77,7 @@ EOF
       if [ $((i % 2)) = 1 ]; then bash "$PKI_TOOL" node "$PKI" t1 glob "s$i" --days 3; else bash "$PKI_TOOL" node "$PKI" t1 rgr "s$i" --days 3; fi
     done >> "$RD/pki.log" 2>&1 || { log "FATAL pki agents"; return 1; }
     bash "$PKI_TOOL" crl "$PKI" >> "$RD/pki.log" 2>&1
-    # FIPS approved-only keystores are BCFKS, converted with the candidate's own tool, 16 at a time
+    # FIPS approved-only keystores are BCFKS, converted with the tool of the build that will read them, 16 at a time
     local n c=0
     for n in "$PKI"/nodes/*/; do
       "$J" -jar "$JAR" --crypto convert-keystore "${n}node.p12" "${n}node.p12.pass" "${n}node.bcfks" >/dev/null 2>&1 &
