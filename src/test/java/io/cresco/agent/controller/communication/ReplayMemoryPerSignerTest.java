@@ -187,4 +187,24 @@ class ReplayMemoryPerSignerTest {
         assertEquals(1, mem.signers(), "silent signers kept their memories");
         assertTrue(mem.size() <= (AGE + 120_000L) / 1000, "their entries are still counted: " + mem.size());
     }
+
+    @Test
+    void aCallerWithAnOlderReadingOfTheClockDropsNobodysMemory() {
+        // two inbox threads read the clock a millisecond apart; the one with the older reading must not sweep away the
+        // memory of a signer the other just wrote to -- a replay of what that signer sent would then be accepted
+        ReplayMemory mem = new ReplayMemory(AGE, FUTURE, MAX, null);
+        Random rnd = new Random(8);
+        long t = 1_800_000_000_000L;
+        long d = rnd.nextLong() | 1;
+        for (long step = 0; step < 40; step++) {
+            long now = t + step * 40_000L;                       // past a bucket's time each step: a sweep is due
+            long sent = rnd.nextLong() | 1;
+            assertEquals(ReplayMemory.Result.FRESH, mem.record(sent, now, now, 1));
+            assertEquals(ReplayMemory.Result.FRESH, mem.record(rnd.nextLong() | 1, now - 1, now - 1, 2), "the other thread, a millisecond behind");
+            assertEquals(ReplayMemory.Result.FRESH, mem.record(rnd.nextLong() | 1, now - 5, now - 5, 3));
+            assertEquals(ReplayMemory.Result.REPLAY, mem.record(sent, now, now + 1, 1), "a replay was accepted at step " + step);
+        }
+        assertEquals(ReplayMemory.Result.FRESH, mem.record(d, t + 41 * 40_000L, t + 41 * 40_000L, 1));
+        assertEquals(3, mem.signers());
+    }
 }
