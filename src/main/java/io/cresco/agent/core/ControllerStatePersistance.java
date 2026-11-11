@@ -17,6 +17,8 @@ public class ControllerStatePersistance {
     private DBEngine dbe;
     private Gson gson;
 
+    // the registry listeners (the state exports of the nodes below this controller): one per role, its id kept, removed
+    // when the role is left (syncRegistryListeners)
     private String regionalListener = null;
     private String globalListener = null;
 
@@ -35,6 +37,40 @@ public class ControllerStatePersistance {
     }
 
     public boolean setControllerState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
+        boolean saved = saveControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
+        syncRegistryListeners(currentMode);
+        return saved;
+    }
+
+    /**
+     * The registry listeners the mode calls for, each held once. They were added on every entry to GLOBAL and
+     * REGION_GLOBAL and never removed (the id kept was always null): a global held two of each from boot and applied every
+     * region export twice -- an older export could then be applied after a newer one, and its reconcile deleted rows the
+     * newer one added --, a region gained one per global rejoin, and a region with no global took none of its agents'
+     * exports. A subscription the dataplane could not make leaves the id null and is tried again on the next state change.
+     */
+    private synchronized void syncRegistryListeners(ControllerMode mode) {
+        try {
+            if (takesAgentExports(mode)) {
+                if (regionalListener == null) regionalListener = registerRegionalListener();
+            } else if (regionalListener != null) {
+                String id = regionalListener;
+                regionalListener = null;
+                removeRegistryListener(id);
+            }
+            if (takesRegionExports(mode)) {
+                if (globalListener == null) globalListener = registerGlobalListener();
+            } else if (globalListener != null) {
+                String id = globalListener;
+                globalListener = null;
+                removeRegistryListener(id);
+            }
+        } catch (Exception ex) {
+            logger.error("syncRegistryListeners() " + mode, ex);
+        }
+    }
+
+    private boolean saveControllerState(ControllerMode currentMode, String currentDesc, String globalRegion, String globalAgent, String regionalRegion, String regionalAgent, String localRegion, String localAgent) {
 
         //logger.error(currentMode.name() + " " + currentDesc + " " + globalRegion + " " + globalAgent + " " + regionalRegion + " " + regionalAgent + " " + localRegion + " " + localAgent);
         // how we we save to the db
@@ -328,7 +364,6 @@ public class ControllerStatePersistance {
             //if(registerRegion(localRegion, globalRegion)) {
                 //add event
                 dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-                regionalListener = registerRegionalListener();
                 returnState = true;
             //}
 
@@ -359,8 +394,6 @@ public class ControllerStatePersistance {
 
             //add event
             dbe.addCStateEvent(System.currentTimeMillis(), currentMode.name(), currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
-            regionalListener = registerRegionalListener();
-            globalListener = registerGlobalListener();
             returnState = true;
 
         } catch (Exception ex) {
@@ -401,6 +434,35 @@ public class ControllerStatePersistance {
         }
     }
 
+    /** A region controller (with or without a global, joining one, having lost one, or the global itself) takes its agents' exports. */
+    static boolean takesAgentExports(ControllerMode mode) {
+        switch (mode) {
+            case REGION:
+            case REGION_GLOBAL_INIT:
+            case REGION_GLOBAL_FAILED:
+            case REGION_GLOBAL:
+            case GLOBAL_INIT:
+            case GLOBAL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Only the global takes the regions' exports. */
+    static boolean takesRegionExports(ControllerMode mode) {
+        return mode == ControllerMode.GLOBAL;
+    }
+
+    /** Subscribe {@code ml} to the state updates {@code selector} picks; the listener's id, or null when not subscribed. */
+    String addRegistryListener(MessageListener ml, String selector) {
+        return plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT, ml, selector);
+    }
+
+    void removeRegistryListener(String listenerId) {
+        plugin.getAgentService().getDataPlaneService().removeMessageListener(listenerId);
+    }
+
     public String registerRegionalListener() {
         String lid = null;
         try {
@@ -434,7 +496,7 @@ public class ControllerStatePersistance {
                 };
 
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
-                plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT' AND region_id = '" + plugin.getRegion() + "'");
+                lid = addRegistryListener(ml, "update_mode = 'AGENT' AND region_id = '" + plugin.getRegion() + "'");
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
@@ -475,7 +537,7 @@ public class ControllerStatePersistance {
                 };
 
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
-                plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'REGION'");
+                lid = addRegistryListener(ml, "update_mode = 'REGION'");
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {
