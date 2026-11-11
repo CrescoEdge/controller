@@ -142,6 +142,23 @@ public class ControllerEngine {
      */
     public io.cresco.agent.controller.communication.MsgCounts msgCounts() { return msgCounts; }
 
+    private volatile io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal;
+
+    /**
+     * The global this region is joining now: authenticated in discovery, the bridge to it being built, the join not yet
+     * recorded in the controller state (that follows about a second later, when the bridge carries). Its broker treats it
+     * as this node's parent from this moment: what the global's bridge brings in that second -- another region's advert it
+     * relays -- is the fabric's, and was stripped as if a peer region had brought it. Null arguments: the join ended
+     * (recorded, or failed).
+     */
+    public void setJoiningGlobal(String region, String agent) {
+        this.joiningGlobal = (region == null || agent == null) ? null
+                : new io.cresco.agent.controller.communication.PeerIdentity.Expected(region, agent);
+    }
+
+    /** The global this region is joining ({@link #setJoiningGlobal}), or null. */
+    public io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal() { return joiningGlobal; }
+
     /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
     private volatile boolean refusedByConfiguration;
 
