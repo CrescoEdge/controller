@@ -142,6 +142,32 @@ class RpcExpiryTest {
     }
 
     @Test
+    void everyTimedCallInTheControllersSourcesGoesThroughRpcExpiry() throws Exception {
+        // a timed call made with plugin.sendRPC(request, timeout) states no timeout: its request lives five minutes again.
+        // (The library's RPC.call is to state it itself; until every node runs that library this is what keeps the twelve
+        // calls of the controller -- pings, peer probes, inventories, plugin disable -- from slipping back.)
+        java.util.regex.Pattern timed = java.util.regex.Pattern.compile("\\.sendRPC\\(\\s*[A-Za-z_][A-Za-z0-9_]*\\s*,");
+        java.util.regex.Pattern stated = java.util.regex.Pattern.compile("RpcExpiry\\.call\\(");
+        java.util.List<String> bare = new java.util.ArrayList<>();
+        int through = 0;
+        try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(java.nio.file.Paths.get("src", "main", "java"))) {
+            for (java.nio.file.Path file : (Iterable<java.nio.file.Path>) files.filter(p -> p.toString().endsWith(".java"))::iterator) {
+                String name = file.getFileName().toString();
+                int n = 0;
+                for (String line : java.nio.file.Files.readAllLines(file)) {
+                    n++;
+                    String code = line.trim();
+                    if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
+                    if (timed.matcher(line).find() && !name.equals("RpcExpiry.java")) bare.add(name + ":" + n);
+                    if (stated.matcher(line).find() && !name.equals("RpcExpiry.java")) through++;
+                }
+            }
+        }
+        assertTrue(bare.isEmpty(), "timed calls that do not say how long their caller waits: " + bare);
+        assertEquals(12, through, "the controller's timed calls (a new one is welcome: count it here)");
+    }
+
+    @Test
     void theControllersOwnTimedCallsSayHowLongTheyWait() {
         java.util.List<MsgEvent> out = new java.util.concurrent.CopyOnWriteArrayList<>();
         PluginBuilder plugin = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), new HashMap<>(), out::add);
