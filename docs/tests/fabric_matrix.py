@@ -162,14 +162,15 @@ RESTARTS = ("restart-agent", "restart-region", "restart-global", "global-outage"
 
 KNOWN: list[Known] = [
     # ---- messages refused
-    Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 3,
-          "after a node restarts, its peers' messages under the session it lost are refused until they notice and sign again"),
+    Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 2,
+          "a restarted node refuses what a peer sent it under the session it lost and tells that peer, which signs again within"
+          " one round trip: at most 2 per peer per restart (bound 3 until 2026-11-11, when a peer went on for up to 30 s)."
+          " By the log's count; what a broker stored for the node while it was down is refused as it arrives and shows in the"
+          " counters only (refused.session_key: 10 at a global that was down 60 s, before and after)"),
     Known("refused-stale-unsigned", "refused", r"an unsigned message \(from null, not delivered first hand\)",
           ("restart-region", "restart-global", "global-outage", "cut-bridge"), 2,
           "one stale unsigned ping or WATCHDOG reaches a parent that restarted"),
     # ---- messages dropped (logged by builds from controller 983407f on; the cause is the last word before the ';')
-    Known("dropped-no-sender", "dropped", r"of this kind, no_sender;", ("*",), 2,
-          "a node asked for an answer in its first moments (or while it joins again) has no sender yet"),
     Known("dropped-no-global", "dropped", r"of this kind, no_global;", ("restart-global", "global-outage"), 4,
           "a region's ping for the global is dropped while it has joined none"),
     Known("dropped-send-failed", "dropped", r"of this kind, send_failed;", PARENT_AWAY, 5,
@@ -204,8 +205,6 @@ KNOWN: list[Known] = [
           "an agent's ping or watchdog cannot be sent while its controller is away"),
     Known("error-dataplane-restore", "error", r"DataPlaneServiceImpl\] (Restoring DataPlane|Removing old listenerId)", PARENT_AWAY, 4,
           "an agent that found its controller again rebuilds its dataplane listeners (logged at ERROR)"),
-    Known("error-producer-null", "error", r"AgentProducer is null\. Message not sent", ("*",), 2,
-          "a node asked for an answer in its first moments (or while it joins again) has no sender yet"),
     Known("error-inactive-plugin", "error", r"MESSAGE SENT TO INACTIVE PLUGIN", ("*",), 2,
           "a message reaches a node whose plugin is still loading (on the owner's list of known lines, not seen in these runs)"),
     Known("error-agent-lost", "error", r"Agent NodeID: \S+ (is STALE\. Setting to LOST|lost\. Setting Plugin NodeID: \S+ to LOST)",
@@ -1122,7 +1121,7 @@ def counter_gains(fab, counters) -> dict:
     for node, m in counters.items():
         base = fab.prev_counters.get(node, {}) if fab.prev_launches.get(node) == launches.get(node) else {}
         for k, v in m.items():
-            if k.startswith(("msg.refused.", "msg.dropped.", "broker.")):
+            if k.startswith(("msg.refused.", "msg.dropped.", "msg.session.lost.", "msg.send.held", "broker.")):
                 gain = int(v - base.get(k, 0.0))
                 if gain > 0:
                     out.setdefault(k, {})[node] = gain
