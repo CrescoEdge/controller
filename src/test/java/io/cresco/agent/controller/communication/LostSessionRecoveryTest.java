@@ -757,6 +757,73 @@ class LostSessionRecoveryTest {
         }
     }
 
+    // ================================================================ a link known to be down
+
+    @Test
+    void whenTheWayToAPeerIsKnownDownWhatIsSentItIsSignedAndVerifiesAfterItsRestart() throws Exception {
+        // the stored backlog: a sender went on under a session for 30 s after its peer last confirmed it, also when its own
+        // broker had just lost the way to that peer; what a broker stored of that for a peer that restarted was refused
+        ControllerEngine a = agent("a50", Map.of()), b = agent("b50", Map.of()), c = agent("b51", Map.of());
+        established(a, b);
+        established(a, c);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        a.msgSigning().inboxConsumerLeft("rgB_b50");             // a's broker lost the consumer of b's inbox
+        MsgEvent stored = sent(a, b);                            // what a sends now waits in a broker for b
+        assertTrue(signed(stored), "signed: not under the session");
+        assertEquals(sid, stored.getParam(MsgSessions.HELD), "the session is kept, not dropped");
+        assertNull(stored.getParam(MsgSessions.KX), "and nothing is agreed anew");
+        assertTrue(macd(sent(a, c)), "the session with another peer is not touched: one peer per event");
+        long refused = b.msgSigning().refusedCount();
+        b.msgSigning().restartSessions();                        // b restarts
+        assertEquals(Arrival.HANDED, arrive(b, stored, plugin(a)), "what was stored for it verifies when it is back");
+        assertEquals(refused, b.msgSigning().refusedCount(), "nothing is refused");
+    }
+
+    @Test
+    void aPeerThatDidNotRestartGoesOnWithTheSessionOnceItConfirmsIt() throws Exception {
+        ControllerEngine a = agent("a52", Map.of()), b = agent("b52", Map.of());
+        established(a, b);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        long made = a.msgSigning().sessionsMadeCount() + b.msgSigning().sessionsMadeCount();
+        a.msgSigning().inboxConsumerLeft("rgB_b52");             // the way to b went, and came back
+        MsgEvent first = sent(a, b);
+        assertTrue(signed(first));
+        assertEquals(Arrival.HANDED, arrive(b, first, plugin(a)));
+        MsgEvent word = sent(b, a);                              // b's next word names the session it still holds
+        assertEquals(Arrival.HANDED, arrive(a, word, plugin(b)));
+        MsgEvent next = sent(a, b);
+        assertTrue(macd(next), "a sends under it again");
+        assertEquals(sid, next.getParam(MsgSessions.SID), "the same session");
+        assertEquals(Arrival.HANDED, arrive(b, next, plugin(a)));
+        assertEquals(made, a.msgSigning().sessionsMadeCount() + b.msgSigning().sessionsMadeCount(), "nothing was agreed anew");
+    }
+
+    @Test
+    void anAgentWhoseLinkToItsControllerIsInterruptedUsesNoneOfItsSessionsAndAControllerIsToldNodeByNode() throws Exception {
+        ControllerEngine a = agent("a53", Map.of()), b = agent("b53", Map.of()), c = agent("b54", Map.of());
+        established(a, b);
+        established(a, c);
+        a.msgSigning().parentLinkDown();                         // the agent's one link: every session ran over it
+        assertTrue(signed(sent(a, b)));
+        assertTrue(signed(sent(a, c)));
+        // each resumes with its peer's next word
+        assertEquals(Arrival.HANDED, arrive(a, sent(b, a), plugin(b)));
+        assertTrue(macd(sent(a, b)));
+        assertTrue(signed(sent(a, c)), "c has not confirmed yet");
+
+        // a controller's own broker tells it node by node: its link to the node above it says nothing about the others
+        established(rA, rB);
+        rA.msgSigning().parentLinkDown();
+        assertTrue(macd(sent(rA, rB)), "a controller's sessions are ended by its broker's events, one node each");
+        rA.msgSigning().inboxConsumerLeft("rgB_rc2");
+        assertTrue(signed(sent(rA, rB)));
+        // and when the node whose inbox consumer left is its own parent, what it sends it is signed too (no direct link)
+        rA.msgSigning().inboxConsumerLeft("rgG_gc");
+        MsgEvent up = sent(rA, g);
+        assertTrue(signed(up), "to the global: signed, not unsigned over a link that is gone");
+        assertNull(up.getParam(MsgSigning.DIRECT));
+    }
+
     @Test
     void aPluginCannotMakeItsNodeSayASessionIsLost() throws Exception {
         ControllerEngine a = agent("a9", Map.of()), b = agent("b9", Map.of());

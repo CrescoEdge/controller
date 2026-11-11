@@ -206,8 +206,41 @@ final class MsgSessions {
     Session usable(String peerNode, long now) {
         Peer p = peers.getIfPresent(peerNode);
         Session s = p == null ? null : p.current;
-        return s != null && s.confirmedAt > 0 && now - s.confirmedAt < CONFIRM_MS && now < s.expires - USABLE_MARGIN_MS
-                && s.endedNanos == 0 ? s : null;
+        if (s == null || s.confirmedAt <= 0 || now - s.confirmedAt >= CONFIRM_MS || now >= s.expires - USABLE_MARGIN_MS || s.endedNanos != 0) {
+            return null;
+        }
+        // every session of this node ran over a link that went down after the peer last confirmed it (linkDown)
+        return s.confirmedAt > unconfirmedUpTo ? s : null;
+    }
+
+    // ------------------------------------------------------------------ a link known to be down
+
+    /** Sessions their peers confirmed at or before this moment are not sent under ({@link #linkDown(long)}); 0: none. */
+    private volatile long unconfirmedUpTo;
+
+    /**
+     * This node knows that its way to {@code peerNode} is gone (its broker lost the consumer of that node's inbox: the
+     * node's connection broke, or the bridge that carried it went). The session with THAT peer is not sent under from now
+     * on, until the peer confirms it again -- its next message that names or uses it, which it can only send once the way
+     * is back. The session is not dropped: a peer that did not restart goes on with it. Until now this node went on
+     * sending under it for 30 s, and what a broker stored of that for a peer that restarted was refused when it arrived;
+     * a signed message stored so verifies. O(1): one entry.
+     */
+    void linkDown(String peerNode) {
+        Peer p = peerNode == null ? null : peers.getIfPresent(peerNode);
+        if (p == null) return;
+        synchronized (p) {
+            Session s = p.current;
+            if (s != null) s.confirmedAt = 0;
+        }
+    }
+
+    /**
+     * The one link EVERY session of this node ran over is down (an agent's connection to its controller's broker): none
+     * is sent under until its peer confirms it again after {@code now}. O(1): a time is noted, no session is walked.
+     */
+    void linkDown(long now) {
+        if (now > unconfirmedUpTo) unconfirmedUpTo = now;
     }
 
     /**
