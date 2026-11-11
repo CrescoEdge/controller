@@ -27,7 +27,16 @@ A controller with `security_profile=production` **refuses to start** (exit 78) a
 |---|---|
 | `revocation_file` | an operator CRL or deny list (must be readable when set) |
 | `controller_trust_anchors` | restrict which controllers a node joins (fingerprints) |
-| `authority_direction` | `log` (the default, also in production in this release), `enforce` or `off`: whether a management action is honoured only from the node itself or a controller above it. In `log` what `enforce` would refuse is allowed, counted (`authz.direction.would_refuse`) and logged (`AUTHORITY: WOULD REFUSE`); turn `enforce` on once those read zero for what the fabric is meant to keep doing (caller-authorization.md, section 3a) |
+| `authority_direction` | `log` (the default, also in production in this release), `enforce` or `off`: whether a management action is honoured only from the node itself or a controller above it. In `log` what `enforce` would refuse is allowed, counted (`authz.direction.would_refuse`) and logged (`AUTHORITY: WOULD REFUSE`); turn `enforce` on once those read zero for what the fabric is meant to keep doing; what `enforce` refuses is counted in `authz.direction.refused` (caller-authorization.md, section 3a). `enforce` needs message signing and `peer_identity_mode` other than `off`, which production has |
+
+**Gateway credentials are per node (required).** Authority follows the tree: a management action is honoured only
+from the node itself or a controller above it, and an API user's word is that of the gateway it logged in to. That
+is exactly as strong as each gateway's credentials are its own. A controller's wsapi credentials -- its service key,
+its users and their tokens, the CA its gateway accepts client certificates from -- must not exist on any node below
+it. A leaf that holds the global's service key logs in at the global's gateway and is vouched for from above every
+node of the fabric: nothing in the fabric can tell that from the operator. So: one service key and one set of users
+per gateway; a gateway's client-certificate CA on that gateway only; no key shared across tiers; and a controller's
+gateway configuration never copied to, or baked into the image of, the agents under it.
 
 | Refused in production | why |
 |---|---|

@@ -628,13 +628,27 @@ public class AgentServiceImpl implements AgentService {
 
     /**
      * Where a message's speaker stands relative to this node and what a call from the wrong place meets
-     * ({@code authority_direction}): the engine's answer, the same for the controller's tiers and for every plugin. Before
-     * the engine exists nobody can say: every action with a direction is refused (fail closed).
+     * ({@code authority_direction}): the engine's answer, the same for the controller's tiers and for every plugin.
+     *
+     * <p>While there is no engine (the node is starting or stopping) nobody can place a speaker, and the node's mode
+     * decides: {@code enforce} refuses every action with a direction (fail closed); {@code off} and {@code log} (the
+     * default) decide by role and tenant only, as before directions existed, and count nothing -- a node that does not
+     * enforce loses no keep-alive around its start and stop. A value that is no mode, or no configuration to read: closed.
      */
     @Override
     public io.cresco.library.security.ActionAuthorizer.Authority authority() {
         ControllerEngine engine = controllerEngine;
-        return engine == null ? io.cresco.library.security.ActionAuthorizer.Authority.CLOSED : engine.authority();
+        if (engine != null) return engine.authority();
+        PluginBuilder pb = plugin;
+        try {
+            if (pb != null && io.cresco.agent.controller.communication.SecuritySettings.authorityDirection(pb.getConfig())
+                    != io.cresco.library.security.ActionAuthorizer.Mode.ENFORCE) {
+                return io.cresco.library.security.ActionAuthorizer.Authority.NONE;
+            }
+        } catch (RuntimeException unreadable) {
+            // closed
+        }
+        return io.cresco.library.security.ActionAuthorizer.Authority.CLOSED;
     }
 
     @Override

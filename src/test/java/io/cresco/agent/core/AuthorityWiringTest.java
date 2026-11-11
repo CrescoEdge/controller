@@ -70,10 +70,49 @@ class AuthorityWiringTest {
         assertSame(engine.authority(), core.authority());
         assertSame(engine.authority(), new BundleAgentService(core, new MockBundle("io.cresco.executor", "1.3")).authority());
         assertEquals(ActionAuthorizer.Mode.ENFORCE, core.authority().mode());
-        // before the engine exists nobody can say where a caller stands: fail closed, never the permissive default
-        Authority none = new AgentServiceImpl().authority();
-        assertEquals(ActionAuthorizer.Mode.ENFORCE, none.mode());
-        assertEquals(ActionAuthorizer.Position.UNKNOWN, none.positionOf(null, null));
+    }
+
+    /** The controller's AgentService before its engine exists (the node is starting, or has stopped), with the node's config. */
+    private static AgentServiceImpl withoutAnEngine(String mode) throws Exception {
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("broker_security_enabled", "true");
+        if (mode != null) cfg.put("authority_direction", mode);
+        PluginBuilder pb = io.cresco.agent.test.TestAgentService.plugin(System.getProperty("java.io.tmpdir"), cfg);
+        AgentServiceImpl core = new AgentServiceImpl();
+        Field field = AgentServiceImpl.class.getDeclaredField("plugin");
+        field.setAccessible(true);
+        field.set(core, pb);
+        return core;
+    }
+
+    @Test
+    void whileThereIsNoEngineTheNodesModeDecides() throws Exception {
+        // enforce: nobody can place a caller, so every action with a direction is refused
+        Authority enforce = withoutAnEngine("enforce").authority();
+        assertSame(Authority.CLOSED, enforce);
+        assertEquals(ActionAuthorizer.Mode.ENFORCE, enforce.mode());
+        assertEquals(ActionAuthorizer.Position.UNKNOWN, enforce.positionOf(null, null));
+        // off, log and the default (log): role and tenant only, as before directions existed -- no keep-alive is refused
+        // around a node's start and stop, and nothing is counted
+        for (String mode : new String[]{"off", "log", null}) {
+            Authority a = withoutAnEngine(mode).authority();
+            assertSame(Authority.NONE, a, "authority_direction=" + mode);
+            assertEquals(ActionAuthorizer.Mode.OFF, a.mode());
+        }
+        // a value that is no mode, and no configuration at all: closed
+        assertSame(Authority.CLOSED, withoutAnEngine("enforced").authority());
+        assertSame(Authority.CLOSED, new AgentServiceImpl().authority());
+        // and through a bundle's AgentService, a keep-alive at a region whose engine is not there yet
+        ActionAuthorizer region = io.cresco.agent.controller.communication.ControllerActionRoles.regionalTier();
+        MsgEvent watchdog = new MsgEvent(MsgEvent.Type.WATCHDOG, "rgA", "a1", null, "rgA", "rc", null, true, false);
+        Caller.controller("t1", "rgA", "a1").stamp(watchdog);
+        for (String mode : new String[]{"log", null, "off"}) {
+            Authority a = new BundleAgentService(withoutAnEngine(mode), new MockBundle("io.cresco.executor", "1.3")).authority();
+            ActionAuthorizer.Decision d = region.decide(watchdog, "t1", java.util.Set.of(), a);
+            assertTrue(d.allowed, "authority_direction=" + mode + " refused a keep-alive while the node was starting");
+            assertFalse(d.wouldRefuse);
+        }
+        assertFalse(region.decide(watchdog, "t1", java.util.Set.of(), withoutAnEngine("enforce").authority()).allowed);
     }
 
     @CrescoAction(name = "run_process", type = "CONFIG", summary = "x", roles = {"infra", "admin"})

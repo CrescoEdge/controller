@@ -17,7 +17,8 @@ import io.cresco.library.security.ActionAuthorizer.Direction;
  * <p>Every action also has a direction, declared here on purpose ({@link ActionAuthorizer.Direction}; authority follows the
  * tree): {@code DOWN} for management -- honoured only from this node itself or a controller above it; {@code UP} for what
  * a child reports to its parent -- only from this node itself or a node below it; {@code ANY} for what is open or only
- * read, and what controllers ask each other. An action nobody listed is {@code DOWN} when it is of the privileged floor
+ * read, and what controllers ask each other. Nothing that runs code, changes a node or reads its files or logs is
+ * {@code ANY}, whatever its roles: a role says who, never from where. An action nobody listed is {@code DOWN} when it is of the privileged floor
  * and {@code ANY} otherwise. {@code EveryActionHasADirectionTest} holds every action to a direction and the whole table
  * to a checked-in copy, so a change is deliberate.
  */
@@ -50,7 +51,7 @@ public final class ControllerActionRoles {
             a.require(C, f, INFRA, ADMIN);
         }
         a.require(C, "getislogdp", INFRA, ADMIN);
-        // CEP queries run inside this controller over the tenant's dataplane
+        // CEP queries run inside this controller's JVM over the tenant's dataplane (a Siddhi app: code)
         a.require(C, "cepadd", INFRA, ADMIN, PLUGIN);
         a.require(C, "cepremove", INFRA, ADMIN, PLUGIN);
         a.require(C, "cepinput", INFRA, ADMIN, PLUGIN);
@@ -84,11 +85,14 @@ public final class ControllerActionRoles {
         down(a, C, "pluginadd", "pluginremove", "pluginupload", "pluginrepopull", "controllerupdate", "stopcontroller",
                 "restartcontroller", "restartframework", "killjvm", "setloglevel", "setlogdp", "getislogdp", "getagentinfo");
         down(a, E, "getlog", "getfileinfo", "getfiledata", "getbroadcastdiscovery");
+        // a CEP query is a Siddhi app run in THIS controller's JVM (AgentExecutor.cepAdd): its role admits any plugin and
+        // any controller of the tenant, so without a direction a leaf could run one on its region controller or the
+        // global. A node's own plugins (SELF) and the controllers above it keep it
+        down(a, C, "cepadd", "cepremove", "cepinput");
         // this node's view of the whole mesh (every tenant's links and coordinators), for infra and admin only: narrow
         down(a, E, "getnetworkstate", "getcoordinators");
-        // open and read-only: status, lists, inventories; a local plugin's CEP queries (their role confines them); what
-        // controllers ask each other
-        any(a, C, "pluginlist", "pluginstatus", "cepadd", "cepremove", "cepinput");
+        // open and read-only: status, lists, inventories; what controllers ask each other
+        any(a, C, "pluginlist", "pluginstatus");
         any(a, E, "listagents", "getcontrollerstatus", "iscontrolleractive", "getcryptopolicy", "ping", "indirectprobe",
                 "getmetricinventory", "gethealthinventory", "getcapabilities", "getcapabilityinventory");
         for (String t : new String[]{"INFO", "DISCOVER", "ERROR"}) any(a, t, "*");

@@ -14,14 +14,17 @@ import java.util.TreeSet;
 
 /**
  * Authority follows the tree, in the unified metric inventory ({@code getmetricinventory}, group {@value #GROUP}): the
- * calls this node allowed in {@code authority_direction=log} that {@code enforce} would refuse. An operator reads them
- * before turning {@code enforce} on: each is a call that will then be answered 403.
+ * calls this node allowed in {@code authority_direction=log} that {@code enforce} would refuse -- an operator reads them
+ * before turning {@code enforce} on: each is a call that will then be answered 403 -- and, in {@code enforce}, the calls
+ * it refused for where their speaker stands (until now only in the generic {@code cresco.authz.denied}, with every
+ * refusal for a role).
  *
  * <p>As {@link MsgMetrics} names its meters (the inventory names a meter by its name alone), the action is the last part
- * of the name, not a tag: {@code authz.direction.would_refuse} (every one), {@code authz.direction.would_refuse.<action>}
- * for every action the controller's tiers and the privileged floor of every bundle give a direction ({@code watchdog} and
- * {@code kpi} for those whole types), and {@code authz.direction.would_refuse.other} for an action a plugin gave a
- * direction of its own. Every meter reads a count that is kept anyway.
+ * of the name, not a tag: {@code authz.direction.would_refuse} and {@code authz.direction.refused} (every one), then
+ * {@code .<action>} under each for every action the controller's tiers and the privileged floor of every bundle give a
+ * direction ({@code watchdog} and {@code kpi} for those whole types), and {@code .other} for an action a plugin gave a
+ * direction of its own. The names are bounded by what is declared, never by what a sender writes. Every meter reads a
+ * count that is kept anyway.
  */
 public final class AuthorityMetrics {
 
@@ -29,6 +32,7 @@ public final class AuthorityMetrics {
 
     public static final String GROUP = "authz";
     public static final String WOULD_REFUSE = "authz.direction.would_refuse";
+    public static final String REFUSED = "authz.direction.refused";
 
     /**
      * The actions counted under their own name: every action a controller tier declares DOWN or UP (a whole type under the
@@ -68,6 +72,20 @@ public final class AuthorityMetrics {
         FunctionCounter.builder(WOULD_REFUSE + ".other", ce, e -> e.authority().wouldRefuseCountBesides(actions))
                 .description("Would-refuse calls of an action a plugin gave a direction of its own.").register(registry);
         names.put(WOULD_REFUSE + ".other", GROUP);
+
+        FunctionCounter.builder(REFUSED, ce, e -> e.authority().refusedCount())
+                .description("Calls this node refused (authority_direction=enforce): their speaker is not where the action is"
+                        + " honoured from.").register(registry);
+        names.put(REFUSED, GROUP);
+        for (String action : actions) {
+            String name = REFUSED + "." + action.toLowerCase(Locale.ROOT);
+            FunctionCounter.builder(name, ce, e -> e.authority().refusedCount(action))
+                    .description("Calls of " + action + " refused for where their speaker stands.").register(registry);
+            names.put(name, GROUP);
+        }
+        FunctionCounter.builder(REFUSED + ".other", ce, e -> e.authority().refusedCountBesides(actions))
+                .description("Refused calls of an action a plugin gave a direction of its own.").register(registry);
+        names.put(REFUSED + ".other", GROUP);
         return names;
     }
 }

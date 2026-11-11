@@ -112,11 +112,18 @@ every message a **speaker**.
 | `ELSEWHERE` | a sibling, any other node | any other node | a node of a region that has not joined |
 | `UNKNOWN` | no speaker can be named | | |
 
-An agent takes the global only from the bundle its present parent signed (not an entry kept for its grace period, not a
-bundle of a parent it had before). The global holds a region as joined once that region's controller presented its
-certificate on a ping (section 10) -- and the controller itself already from its join, as discovery recorded it (the
-same record `RegistryBinding` asks, section 3). A message a region controller only carries on for one of its agents
-keeps the agent as its speaker: carrying lends no authority.
+An agent takes the global only from the bundle its present parent signed (not a bundle of a parent it had before). A
+region that changed globals keeps the old global's key for the bundle's grace period (`msg_signing_bundle_grace_ms`,
+15 min: messages on their way still verify) and serves it to its agents as `former-global`, never as `global`: from
+their next pong its agents place the old global `ELSEWHERE` and the new one `ABOVE`. The global holds a region as joined
+once that region's controller presented its certificate on a ping (section 10) -- and the controller itself already
+from its join, as discovery recorded it (the same record `RegistryBinding` asks, section 3). A message a region
+controller only carries on for one of its agents keeps the agent as its speaker: carrying lends no authority.
+
+A node's own state (its name, whether it is a region controller or the global, its parent) is read as one immutable
+snapshot that every state change replaces whole (`ControllerStateImp.standing()`): placing a speaker enters no lock --
+it runs for every WATCHDOG and KPI -- and a state change meanwhile gives the position of the state before or after,
+never a mix of the two.
 
 **The direction** of an action (`ActionAuthorizer.Direction`):
 
@@ -125,27 +132,44 @@ keeps the agent as its speaker: carrying lends no authority.
 - `ANY`: from anywhere (role and tenant only).
 
 Role and tenant are checked first and are unchanged; direction only ever refuses more. Every action of the privileged
-floor (section 3: the controller's, the executor's, filerepo's and repo's) is `DOWN` unless declared otherwise; every
-other action is `ANY` unless declared. A plugin declares its own with `@CrescoAction(direction = "down" | "up" | "any")`
-(an unknown value fails the plugin's start). The controller's tables declare every action on purpose
-(`ControllerActionRoles`; `EveryActionHasADirectionTest` holds them to `src/test/resources/authority-directions.txt`):
+floor (section 3: the controller's, the executor's, filerepo's and repo's) is `DOWN`, and like its roles that can only
+be narrowed, never widened: a declaration for a whole message type does not reach a floor action, nothing declares one
+`ANY`, and a plugin whose annotation says `any` or `up` on one of its floor actions does not start (the error names the
+action). Only the controller's own table names two of its floor actions `UP`: the registrations an agent sends its
+region controller. Every other action is `ANY` unless declared. A plugin declares its own with
+`@CrescoAction(direction = "down" | "up" | "any")` (an unknown value fails the plugin's start). The controller's tables
+declare every action on purpose (`ControllerActionRoles`; `EveryActionHasADirectionTest` holds them to
+`src/test/resources/authority-directions.txt`):
 
 - `DOWN` on every tier: `pluginadd`, `pluginremove`, `pluginupload`, `pluginrepopull`, `controllerupdate`,
   `stopcontroller`, `restartcontroller`, `restartframework`, `killjvm`, `setloglevel`, `setlogdp`, `getislogdp`,
   `getlog`, `getfileinfo`, `getfiledata`, `getbroadcastdiscovery`, `getagentinfo`, `getnetworkstate`,
-  `getcoordinators`; at a region `rpipelinesubmit`; at the global `addplugin`, `removeplugin`, `gpipelinesubmit`,
-  `gpipelineremove`, `plugindownload`, `savetorepo`, `setinodestatus`.
+  `getcoordinators`, `cepadd`, `cepremove`, `cepinput`; at a region `rpipelinesubmit`; at the global `addplugin`,
+  `removeplugin`, `gpipelinesubmit`, `gpipelineremove`, `plugindownload`, `savetorepo`, `setinodestatus`.
+  A CEP query is a Siddhi app the receiving controller compiles and runs in its own JVM; its roles admit any plugin
+  and any controller of the tenant, so only its direction keeps a leaf from running one on its region controller or
+  the global. A node's own plugins (`SELF`) and the controllers above it keep it.
 - `UP`: `agent_enable`, `agent_disable` (region tier), every WATCHDOG and KPI message; at the global `region_enable`,
   `region_disable`, `regionalimport`.
 - `ANY`: what is open or only read (`ping`, status, inventories, lists, the global's registry reads,
-  `getcryptopolicy`), `cepadd`/`cepremove`/`cepinput` (a local plugin's; their role confines them), `indirectprobe`
-  (controllers ask each other), INFO/DISCOVER/ERROR.
+  `getcryptopolicy`), `indirectprobe` (controllers ask each other), INFO/DISCOVER/ERROR. Nothing that runs code,
+  changes a node or reads its files or logs is `ANY`, whatever its roles: a role says who, never from where.
 
 **What this means for an administrator.** A management call must enter the fabric at the node it manages or at a
 controller above it: the global's gateway for anything; a region controller's gateway for that controller and its
 agents; a leaf's own gateway for that leaf only. Scheduling, the repository and an iNode's state (`addplugin`,
 `gpipelinesubmit`, ...) are managed at the global's own gateway: nothing is above the global. An admin connected to a
 leaf still reads the fabric (lists, inventories, status) from there.
+
+**Deployment requirement: gateway credentials are per node.** The control is exactly as strong as each gateway's
+credentials are its own. Whoever can log in to a controller's gateway is vouched for by that controller, from `ABOVE`
+everything below it. So a controller's wsapi credentials -- its service key (`cresco_service_key`), its users and
+their passwords or tokens, and the CA its gateway accepts client certificates from -- must not exist on any node
+below it: not in a leaf's configuration, files, environment or images. A leaf that holds the global's service key
+logs in at the global's gateway and manages the whole fabric with the global's word; nothing in this section stops
+that, because the global really did vouch for it. Give every gateway its own service key and its own users; give a
+gateway's client-certificate CA to that gateway only; never share one key across tiers, and never copy a controller's
+gateway configuration to the agents under it (production-deployment.md).
 
 **The mode**, `authority_direction` (`SecuritySettings.authorityDirection`; read again at most once a second):
 
@@ -163,18 +187,48 @@ leaf still reads the fabric (lists, inventories, status) from there.
   fabric is meant to keep doing.
 - `enforce`: such a call is answered `status_code=403`, `status_desc=unauthorized: <action> is honoured only from the
   node itself or a controller above it (caller <caller> speaks from a node elsewhere)` -- `or a node below it` for an
-  `UP` action -- counted in `cresco.authz.denied` and logged like every refusal. A speaker the node cannot place
-  (`UNKNOWN`) is refused too.
+  `UP` action -- and logged like every refusal. It is counted by itself, in `authz.direction.refused` and
+  `authz.direction.refused.<action>` (named as the would-refuse meters are), and in the node's `cresco.authz.denied`
+  with every other refusal. A speaker the node cannot place (`UNKNOWN`) is refused too.
 - `off`: direction is not looked at; a WARNING on every boot.
 - any other value: the node refuses to start.
+
+**`enforce` stands on message signing and on recorded joins.** Without verified signatures there is no speaker: the
+node cannot tell which node vouched for an API user, and takes every other node's name from an unverified stamp. And
+with `peer_identity_mode=off` nothing records which region controllers joined a global, so a global cannot place a
+region's controller below it. So `authority_direction=enforce` refuses to start (one `REFUSING TO START` line each)
+with `msg_signing_required=false`, with `peer_identity_mode=off`, and in insecure development mode
+(`broker_security_enabled=false`, where no caller is checked at all). `log` starts with either, and says on every boot
+that its would-refuse count is then not meaningful on that node: for API callers and other regions' nodes without
+signing, for the controllers of its regions at a global with `peer_identity_mode=off`. Production has both
+(production-deployment.md).
+
+**While the controller cannot be asked** (a node starting or stopping: no engine yet, or its `AgentService` gone), the
+node's mode decides. `enforce`: every action with a direction is refused (nobody can place its caller). `off` and
+`log`: role and tenant only, as before directions existed, and nothing is counted -- a node that does not enforce loses
+no keep-alive around its start and stop. A bundle whose controller is gone reads `authority_direction` from its own
+configuration (not set: `log`; a value that is no mode: closed).
 
 A plugin asks through the `AgentService` its bundle is given (`AgentService.authority()`); a controller of an earlier
 release does not answer, and a plugin built against this library then behaves as before. Nothing changes on the wire.
 
+**Limits.**
+
+- Gateway credentials shared across tiers undo it (the deployment requirement above).
+- A region that left a global, and whose certificate still verifies there, stays `BELOW` that global until it is
+  revoked: the global drops a region it placed below only when its controller's certificate stops verifying. `BELOW`
+  honours reports (`UP`) only, which `RegistryBinding` confines to the reporter's own records -- no wider than before
+  directions existed.
+- An agent learns of a change of its region's global on its next pong from its region controller (seconds); until
+  then it holds the bundle from before.
+- An agent knows the global on its region controller's signed word only. A region controller is above its agents
+  anyway.
+
 **Known to be caught in `log` mode on a healthy fabric** (legitimate today; each needs its own answer before `enforce`):
 agent-to-agent file pulls (`DataPlaneServiceImpl` sends `getfileinfo`/`getfiledata` to the node that holds the file:
-transfer tickets, the next step); an admin's `setloglevel`/`setlogdp` (the log streamer), `getlog`, `getnetworkstate`
-and plugin management through a gateway that is neither the target nor above it.
+transfer tickets, the next step); an admin's `setloglevel`/`setlogdp` (the log streamer), `getlog`, `getnetworkstate`,
+CEP queries (`cepadd`, `cepremove`, `cepinput`) and plugin management through a gateway that is neither the target nor
+above it.
 
 ## 4. Defaults
 

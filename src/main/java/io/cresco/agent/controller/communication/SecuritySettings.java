@@ -65,6 +65,25 @@ public final class SecuritySettings {
         String direction = c == null ? null : c.getStringParam(AUTHORITY_DIRECTION);
         if (io.cresco.library.security.ActionAuthorizer.Mode.parse(direction) == null) {
             out.add(AUTHORITY_DIRECTION + "=" + direction + " is not a mode: off, log (the default) or enforce");
+        } else if (authorityDirection(c) == io.cresco.library.security.ActionAuthorizer.Mode.ENFORCE) {
+            // enforce places every caller's speaker; a node that cannot would refuse what it should honour, or honour
+            // what it cannot verify. It stands on message signing and on recorded joins: without them it does not start
+            if (!brokerSecurity(c)) {
+                out.add(AUTHORITY_DIRECTION + "=enforce with broker_security_enabled=false: in insecure development mode no caller is"
+                        + " verified and no action is refused, so nothing would be enforced. Remove broker_security_enabled=false, or"
+                        + " remove " + AUTHORITY_DIRECTION + "=enforce");
+            } else {
+                if (!msgSigningRequired(c)) {
+                    out.add(AUTHORITY_DIRECTION + "=enforce with msg_signing_required=false: without verified message signatures there"
+                            + " is no speaker -- this node cannot tell which node vouched for an API user, and takes every other node's"
+                            + " name from an unverified stamp. Remove msg_signing_required=false, or run " + AUTHORITY_DIRECTION + "=log");
+                }
+                if (peerIdentityOff(c)) {
+                    out.add(AUTHORITY_DIRECTION + "=enforce with peer_identity_mode=off: nothing records which region controllers"
+                            + " joined a global, so a global cannot place a region's controller below it and would refuse its reports."
+                            + " Set peer_identity_mode=enforce, or run " + AUTHORITY_DIRECTION + "=log");
+                }
+            }
         }
         out.addAll(profileRefusals(c, System.currentTimeMillis()));
         return out;
@@ -73,18 +92,33 @@ public final class SecuritySettings {
     // ------------------------------------------------------------------ authority follows the tree
 
     /** {@code authority_direction}: {@code off}, {@code log} (default) or {@code enforce}. */
-    public static final String AUTHORITY_DIRECTION = "authority_direction";
+    public static final String AUTHORITY_DIRECTION = io.cresco.library.security.ActionAuthorizer.Mode.KEY;
 
     /**
      * What a call from the wrong place in the tree meets on this node (docs/caller-authorization.md section 3a):
      * {@code log} when unset -- it is allowed, counted and logged -- in every profile ({@code security_profile=production}
      * does not force {@code enforce} in this release). A value that is no mode reads as {@code ENFORCE} here (fail
-     * closed) and refuses the node's start in {@link #startupRefusals}.
+     * closed) and refuses the node's start in {@link #startupRefusals}; so does {@code enforce} on a node that cannot place
+     * a speaker: with {@code msg_signing_required=false}, with {@code peer_identity_mode=off}, or in insecure mode.
      */
     public static io.cresco.library.security.ActionAuthorizer.Mode authorityDirection(Config c) {
         io.cresco.library.security.ActionAuthorizer.Mode m = io.cresco.library.security.ActionAuthorizer.Mode.parse(
                 c == null ? null : c.getStringParam(AUTHORITY_DIRECTION));
         return m == null ? io.cresco.library.security.ActionAuthorizer.Mode.ENFORCE : m;
+    }
+
+    /**
+     * Messages are signed by their origin and checked where they are dispatched (MsgSigning): in production always, else
+     * with broker security unless {@code msg_signing_required=false} is set (development). Where a caller's word comes
+     * from -- its speaker -- is only known with it.
+     */
+    public static boolean msgSigningRequired(Config c) {
+        return production(c) || (brokerSecurity(c) && (c == null || c.getBooleanParam("msg_signing_required", true)));
+    }
+
+    /** {@code peer_identity_mode=off}: nothing binds a peer's name to its key, and nothing records which controllers joined. */
+    public static boolean peerIdentityOff(Config c) {
+        return c != null && PeerIdentity.Mode.parse(c.getStringParam(PeerIdentity.MODE_KEY, "enforce")) == PeerIdentity.Mode.OFF;
     }
 
     // ------------------------------------------------------------------ the security profile
@@ -223,6 +257,18 @@ public final class SecuritySettings {
                             + " node or a controller above it, and a report from a node that is not below it, is still ALLOWED --"
                             + " counted (authz.direction.would_refuse) and logged once per action and position (AUTHORITY: WOULD"
                             + " REFUSE). Set " + AUTHORITY_DIRECTION + "=enforce to refuse them");
+                    if (!msgSigningRequired(c)) {
+                        out.add(AUTHORITY_DIRECTION + "=log with msg_signing_required=false: the would-refuse count"
+                                + " (authz.direction.would_refuse) is NOT meaningful on this node for API callers and for other"
+                                + " regions' nodes -- without verified message signatures it cannot tell which node their word comes"
+                                + " from. " + AUTHORITY_DIRECTION + "=enforce refuses to start on this setting");
+                    }
+                    if (peerIdentityOff(c)) {
+                        out.add(AUTHORITY_DIRECTION + "=log with peer_identity_mode=off: the would-refuse count"
+                                + " (authz.direction.would_refuse) is NOT meaningful at a global for the controllers of its regions --"
+                                + " nothing records which of them joined. " + AUTHORITY_DIRECTION + "=enforce refuses to start on this"
+                                + " setting");
+                    }
                     break;
                 default:
                     break;

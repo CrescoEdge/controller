@@ -27,10 +27,13 @@ import java.util.function.Consumer;
  *
  * <p><b>The mode</b> is {@code authority_direction} ({@link SecuritySettings#authorityDirection}), read again at most
  * once a second. In {@code log} a call {@code enforce} would refuse is allowed, counted ({@link #wouldRefuseCount()};
- * {@code authz.direction.would_refuse} in the metric inventory) and logged once per action and position.
+ * {@code authz.direction.would_refuse} in the metric inventory) and logged once per action and position. In
+ * {@code enforce} it is refused, and counted ({@link #refusedCount()}; {@code authz.direction.refused}).
  *
- * <p>On the path of every message with a direction: a position costs a few comparisons (and at the global one map
- * lookup); nothing is allocated for a controller's or a plugin's message.
+ * <p>On the path of every message with a direction (every WATCHDOG and KPI among them): a position is one volatile read
+ * of this node's standing ({@code ControllerStateImp.standing()}), a few comparisons and, at the global, one concurrent
+ * map lookup. No monitor is entered -- never the controller state's synchronized getters -- and nothing is allocated
+ * for a controller's or a plugin's message.
  */
 public final class DirectionAuthority implements ActionAuthorizer.Authority {
 
@@ -44,16 +47,21 @@ public final class DirectionAuthority implements ActionAuthorizer.Authority {
     private final SpeakerPosition.Node node;
     private volatile Mode mode;
     private volatile long modeReadAt = Long.MIN_VALUE / 2;
+    /** This node's tenant (configuration), read with the mode: placing a speaker reads no configuration. */
+    private volatile String tenant;
 
     /** Would-refuse calls by action (as the tables bound it: {@link Decision#directed}) and position; each pair's line once. */
     private final ConcurrentHashMap<String, KindTally> wouldRefuse = new ConcurrentHashMap<>();
     private final LongAdder wouldRefuseTotal = new LongAdder();
+    /** Calls refused for their direction (mode {@code enforce}), counted the same way. */
+    private final ConcurrentHashMap<String, KindTally> refused = new ConcurrentHashMap<>();
+    private final LongAdder refusedTotal = new LongAdder();
     /** Tests: every would-refuse line this node logs is handed here as well. */
     volatile Consumer<String> lineTap;
 
     public DirectionAuthority(ControllerEngine ce) {
         this.ce = ce;
-        this.node = new EngineNode(ce);
+        this.node = new EngineNode();
     }
 
     /** What this node knows when it places a speaker (its state, the trust bundle, who joined). */
@@ -65,10 +73,21 @@ public final class DirectionAuthority implements ActionAuthorizer.Authority {
         Mode m = mode;
         if (m == null || now - modeReadAt >= MODE_READ_EVERY_MS || now < modeReadAt) {
             m = SecuritySettings.authorityDirection(ce.getPluginBuilder().getConfig());
+            tenant = ce.tenant();
             mode = m;
             modeReadAt = now;
         }
         return m;
+    }
+
+    /** This node's tenant, as last read with the mode (read now when it never was). */
+    private String tenant() {
+        String t = tenant;
+        if (t == null) {
+            t = ce.tenant();
+            tenant = t;
+        }
+        return t;
     }
 
     @Override
@@ -108,13 +127,7 @@ public final class DirectionAuthority implements ActionAuthorizer.Authority {
     public void wouldRefuse(MsgEvent msg, Decision d) {
         if (msg == null || d == null || d.position == null) return;
         wouldRefuseTotal.increment();
-        String action = d.directed == null ? OTHER : d.directed;
-        KindTally tally = wouldRefuse.get(action);
-        if (tally == null) {
-            if (wouldRefuse.size() >= ACTIONS_MAX) action = OTHER;
-            tally = wouldRefuse.computeIfAbsent(action, a -> new KindTally(POSITIONS.length, Long.MAX_VALUE));
-        }
-        if (!tally.count(d.position.ordinal())) return;
+        if (!count(wouldRefuse, d)) return;
         String line = "AUTHORITY: WOULD REFUSE " + msg.getMsgType() + " " + d.action + " from " + d.caller + ", the word of "
                 + speakerName(msg, d.caller) + " (" + d.position + ")"
                 + (msg.getDstPlugin() == null ? "" : " for plugin " + msg.getDstPlugin())
@@ -130,17 +143,65 @@ public final class DirectionAuthority implements ActionAuthorizer.Authority {
         if (tap != null) tap.accept(line);
     }
 
-    /** Calls allowed in mode {@code log} that {@code enforce} would refuse, so far. */
-    public long wouldRefuseCount() { return wouldRefuseTotal.sum(); }
+    /**
+     * Count {@code d} in {@code tallies} under its action (as the tables bound it) and position; true the first time that
+     * action is counted from that position. The actions are bounded by what is declared, and by {@link #ACTIONS_MAX}.
+     */
+    private static boolean count(ConcurrentHashMap<String, KindTally> tallies, Decision d) {
+        String action = d.directed == null ? OTHER : d.directed;
+        KindTally tally = tallies.get(action);
+        if (tally == null) {
+            if (tallies.size() >= ACTIONS_MAX) action = OTHER;
+            tally = tallies.computeIfAbsent(action, a -> new KindTally(POSITIONS.length, Long.MAX_VALUE));
+        }
+        return tally.count(d.position.ordinal());
+    }
 
-    /** As {@link #wouldRefuseCount()}, of one action ({@link Decision#directed}; {@link #OTHER} past {@link #ACTIONS_MAX} actions). */
-    public long wouldRefuseCount(String action) {
-        KindTally t = action == null ? null : wouldRefuse.get(action);
+    private static long of(ConcurrentHashMap<String, KindTally> tallies, String action) {
+        KindTally t = action == null ? null : tallies.get(action);
         if (t == null) return 0L;
         long n = 0;
         for (int i = 0; i < t.kinds(); i++) n += t.of(i);
         return n;
     }
+
+    private static long besides(ConcurrentHashMap<String, KindTally> tallies, java.util.Set<String> names) {
+        long n = 0;
+        for (String action : tallies.keySet()) if (!names.contains(action)) n += of(tallies, action);
+        return n;
+    }
+
+    /**
+     * A call was refused for where its speaker stands (mode {@code enforce}; the 403 and its log line are
+     * {@code PluginBuilder.admit}'s): counted under its action -- {@code authz.direction.refused} in the metric inventory.
+     */
+    @Override
+    public void refused(MsgEvent msg, Decision d) {
+        if (d == null || d.position == null || !d.directionRefused) return;
+        refusedTotal.increment();
+        count(refused, d);
+    }
+
+    /** Calls refused for their direction (mode {@code enforce}), so far. */
+    public long refusedCount() { return refusedTotal.sum(); }
+
+    /** As {@link #refusedCount()}, of one action ({@link Decision#directed}; {@link #OTHER} past {@link #ACTIONS_MAX} actions). */
+    public long refusedCount(String action) { return of(refused, action); }
+
+    /** As {@link #refusedCount(String)}, from one position. */
+    public long refusedCount(String action, Position position) {
+        KindTally t = action == null ? null : refused.get(action);
+        return t == null ? 0L : t.of(position.ordinal());
+    }
+
+    /** Refused calls of actions that have no meter of their own ({@code names}: the actions that have one). */
+    public long refusedCountBesides(java.util.Set<String> names) { return besides(refused, names); }
+
+    /** Calls allowed in mode {@code log} that {@code enforce} would refuse, so far. */
+    public long wouldRefuseCount() { return wouldRefuseTotal.sum(); }
+
+    /** As {@link #wouldRefuseCount()}, of one action ({@link Decision#directed}; {@link #OTHER} past {@link #ACTIONS_MAX} actions). */
+    public long wouldRefuseCount(String action) { return of(wouldRefuse, action); }
 
     /** As {@link #wouldRefuseCount(String)}, from one position. */
     public long wouldRefuseCount(String action, Position position) {
@@ -149,40 +210,20 @@ public final class DirectionAuthority implements ActionAuthorizer.Authority {
     }
 
     /** Would-refuse calls of actions that have no meter of their own ({@code names}: the actions that have one). */
-    public long wouldRefuseCountBesides(java.util.Set<String> names) {
-        long n = 0;
-        for (String action : wouldRefuse.keySet()) if (!names.contains(action)) n += wouldRefuseCount(action);
-        return n;
-    }
+    public long wouldRefuseCountBesides(java.util.Set<String> names) { return besides(wouldRefuse, names); }
 
-    /** The receiving node as the engine knows it: its state, its trust bundle, who joined it. */
-    private static final class EngineNode implements SpeakerPosition.Node {
-        private final ControllerEngine ce;
+    /**
+     * The receiving node as the engine knows it: its standing (one volatile read of the controller state's immutable
+     * snapshot -- never its synchronized getters), its tenant as last read, its trust bundle, who joined it.
+     */
+    private final class EngineNode implements SpeakerPosition.Node {
 
-        EngineNode(ControllerEngine ce) { this.ce = ce; }
-
-        @Override public String tenant() { return ce.tenant(); }
-
-        @Override public String region() { ControllerStateImp cs = ce.cstate; return cs == null ? null : cs.getRegion(); }
-
-        @Override public String agent() { ControllerStateImp cs = ce.cstate; return cs == null ? null : cs.getAgent(); }
-
-        @Override public boolean regionController() { ControllerStateImp cs = ce.cstate; return cs != null && cs.isRegionalController(); }
-
-        @Override public boolean global() { ControllerStateImp cs = ce.cstate; return cs != null && cs.isGlobalController(); }
+        @Override public String tenant() { return DirectionAuthority.this.tenant(); }
 
         @Override
-        public String parentRegion() {
+        public SpeakerPosition.Standing standing() {
             ControllerStateImp cs = ce.cstate;
-            if (cs == null) return null;
-            return cs.isRegionalController() ? cs.getGlobalRegion() : cs.getRegionalRegion();
-        }
-
-        @Override
-        public String parentAgent() {
-            ControllerStateImp cs = ce.cstate;
-            if (cs == null) return null;
-            return cs.isRegionalController() ? cs.getGlobalAgent() : cs.getRegionalAgent();
+            return cs == null ? null : cs.standing();
         }
 
         @Override

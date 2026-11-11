@@ -144,18 +144,38 @@ class EveryActionHasADirectionTest {
     }
 
     @Test
+    void nothingThatRunsCodeIsHonouredFromAnywhere() {
+        // whatever its roles: every action of the three tiers that installs or runs code, or stops or restarts a node
+        for (Map.Entry<String, ActionAuthorizer> tier : tiers().entrySet()) {
+            for (Map.Entry<String, Direction> d : tier.getValue().directions().entrySet()) {
+                String action = d.getKey().substring(d.getKey().indexOf('|') + 1);
+                if (action.startsWith("cep") || action.startsWith("plugin") && !action.equals("pluginlist") && !action.equals("pluginstatus")
+                        && !action.equals("plugininfo") && !action.equals("pluginkpi") && !action.equals("plugininventory")
+                        || action.contains("pipelinesubmit") || action.contains("pipelineremove") || action.equals("addplugin")
+                        || action.equals("removeplugin") || action.equals("killjvm") || action.startsWith("restart")
+                        || action.equals("stopcontroller") || action.equals("controllerupdate")) {
+                    assertEquals(Direction.DOWN, d.getValue(), tier.getKey() + " " + d.getKey());
+                }
+            }
+        }
+    }
+
+    @Test
     void whatTheBriefNamesIsWhatTheTablesSay() {
         Map<String, ActionAuthorizer> t = tiers();
         for (String tier : new String[]{"agent", "region"}) {
             ActionAuthorizer a = t.get(tier);
             for (String down : new String[]{"pluginadd", "pluginremove", "pluginupload", "pluginrepopull", "controllerupdate", "stopcontroller",
-                    "restartcontroller", "restartframework", "killjvm", "setloglevel", "setlogdp", "getislogdp", "getagentinfo"}) {
+                    "restartcontroller", "restartframework", "killjvm", "setloglevel", "setlogdp", "getislogdp", "getagentinfo",
+                    // a CEP query runs in the controller's JVM: its role admits any plugin and controller of the tenant, so
+                    // only its direction keeps a leaf from running one on its region controller or the global
+                    "cepadd", "cepremove", "cepinput"}) {
                 assertEquals(Direction.DOWN, a.directionOf("CONFIG", down), tier + " " + down);
             }
             for (String down : new String[]{"getlog", "getfileinfo", "getfiledata", "getbroadcastdiscovery"}) {
                 assertEquals(Direction.DOWN, a.directionOf("EXEC", down), tier + " " + down);
             }
-            for (String any : new String[]{"cepadd", "cepremove", "cepinput", "pluginlist", "pluginstatus"}) {
+            for (String any : new String[]{"pluginlist", "pluginstatus"}) {
                 assertEquals(Direction.ANY, a.directionOf("CONFIG", any), tier + " " + any);
             }
             for (String any : new String[]{"ping", "indirectprobe", "getcontrollerstatus", "getmetricinventory", "listagents"}) {
