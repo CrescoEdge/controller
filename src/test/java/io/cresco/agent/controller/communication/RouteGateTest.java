@@ -92,13 +92,45 @@ class RouteGateTest {
         RouteGate g = bound(1_000);
         assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.some.other.queue", NOW), "not a node's inbox");
         assertEquals(RouteGate.ROUTE, g.noRouteFrom("r2", NOW), "a region's name is no inbox");
-        ConsumerId everything = consumer();
-        g.consumerAdded(everything, new ActiveMQQueue("T.t1.>"));
-        assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW), "a pattern the gate does not read may match any inbox");
-        g.consumerRemoved(everything, 2_000);
-        assertNotEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW));
         g.unbound();
         assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW), "the broker stopped");
+    }
+
+    @Test
+    void aPatternTheGateDoesNotCountStopsItForTheQueuesThatPatternCanMatchOnlyAndIsReported() {
+        RouteGate g = bound(1_000);
+        java.util.List<String> warned = new java.util.ArrayList<>();
+        g.setWarn(warned::add);
+        assertEquals(0, g.unreadPatterns());
+        ConsumerId everything = consumer(), again = consumer();
+        g.consumerAdded(everything, new ActiveMQQueue("T.t1.>"));             // a tenant's node reading every queue of its tenant
+        g.consumerAdded(again, new ActiveMQQueue("T.t1.>"));
+        assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW), "a pattern the gate does not count may take this inbox");
+        assertNotEquals(RouteGate.ROUTE, g.noRouteFrom("T.t2.r2_a21", NOW), "one tenant's pattern switched the gate off for another's inboxes");
+        assertNotEquals(RouteGate.ROUTE, g.noRouteFrom("r2_a21", NOW));
+        assertEquals(2, g.unreadPatterns(), "the gauge: consumers that read by such a pattern");
+        assertEquals(1, warned.size(), "one WARN while such a pattern is present: " + warned);
+        assertTrue(warned.get(0).contains("'T.t1.>'"), warned.get(0));
+        g.consumerRemoved(everything, 2_000);
+        assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW), "one of the two consumers is left");
+        g.consumerRemoved(again, 2_000);
+        assertNotEquals(RouteGate.ROUTE, g.noRouteFrom("T.t1.r2_a21", NOW), "the pattern is gone: the gate judges again");
+        assertEquals(0, g.unreadPatterns());
+        // more patterns than the gate asks one by one: nothing is judged
+        for (int i = 0; i <= RouteGate.PATTERNS_MAX; i++) g.consumerAdded(consumer(), new ActiveMQQueue("T.x" + i + ".>"));
+        assertEquals(RouteGate.ROUTE, g.noRouteFrom("T.t2.r2_a21", NOW));
+    }
+
+    @Test
+    void aConsumerTheBrokerHasAndTheGateDoesNotIsReported() {
+        RouteGate g = bound(1_000);
+        java.util.List<String> warned = new java.util.ArrayList<>();
+        g.setWarn(warned::add);
+        g.mismatch("T.t1.r2_a21");
+        g.mismatch("T.t1.r2_a21");
+        assertEquals(2, g.mismatchCount());
+        assertEquals(1, warned.size(), "logged at most every 10 s");
+        assertTrue(warned.get(0).contains("T.t1.r2_a21"));
     }
 
     @Test
@@ -151,6 +183,26 @@ class RouteGateTest {
         g.stop();                                                            // the node stops: every held request is answered
         assertEquals(4, gaveUp.get());
         assertEquals(0, g.heldNow());
+        // ... and none is held from now on: its caller answers it at once, and no thread is started for it
+        assertFalse(g.hold("T.t1.r2_a21", "r2_a21", now + 60_000, System.currentTimeMillis(), sent::incrementAndGet, gaveUp::incrementAndGet),
+                "a request was held by a gate that had stopped");
+        assertEquals(4, gaveUp.get());
+    }
+
+    @Test
+    void oneDeadNodesCallersCannotTakeEveryPlace() {
+        RouteGate g = new RouteGate(GRACE, 10, 3);                           // ten places, three a node
+        g.bound(1_000);
+        AtomicInteger sent = new AtomicInteger(), gaveUp = new AtomicInteger();
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < 3; i++) assertTrue(g.hold("T.t1.r2_a21", "r2_a21", now + 60_000, now, sent::incrementAndGet, gaveUp::incrementAndGet));
+        assertFalse(g.hold("T.t1.r2_a21", "r2_a21", now + 60_000, now, sent::incrementAndGet, gaveUp::incrementAndGet),
+                "a fourth request for one node was held where three a node are the most");
+        assertTrue(g.hold("T.t1.r3_a31", "r3_a31", now + 60_000, now, sent::incrementAndGet, gaveUp::incrementAndGet),
+                "the callers of one node left no place for another's");
+        assertEquals(4, g.heldNow());
+        g.stop();
+        assertEquals(4, gaveUp.get());
     }
 
     @Test

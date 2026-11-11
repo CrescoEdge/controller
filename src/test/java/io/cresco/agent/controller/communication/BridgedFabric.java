@@ -112,6 +112,7 @@ final class BridgedFabric implements AutoCloseable {
         CrescoAuthorizationBroker a = new CrescoAuthorizationBroker(pb, peers);
         RouteGate gate = new RouteGate(1500, 16);
         List<String> warned = new java.util.concurrent.CopyOnWriteArrayList<>();
+        gate.setWarn(warned::add);
         ExpiredMessages exp = new ExpiredMessages();
         exp.setWarn(warned::add);
         String controller = controllerName(region);

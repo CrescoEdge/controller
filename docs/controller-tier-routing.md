@@ -138,9 +138,22 @@ Agent and plugin messages are not controller messages and are routed by address 
   `route unavailable at <node>: <hop>: no route to <region>_<agent> ...` (the caller's call fails with status 503); if
   the consumer left less than that ago, or the broker never had one (a bridge just being built), the request is held on
   the controller -- not in the broker -- and goes on the moment a consumer of that inbox joins, or is answered when the
-  grace ends (at most half of the caller's stated timeout). At most `route_hold_max` requests are held. Counted as
-  `msg.dropped.no_route` (and `msg.route.held`). A ping is dropped, not answered. Messages that are not RPC requests are
-  handed to the broker as before. An agent has no broker and judges nothing: its request waits at its region's broker.
+  grace ends (at most half of the caller's stated timeout). At most `route_hold_max` requests are held, and at most
+  `route_hold_max_per_node` for one node; one more is answered at once; a held request whose send then fails is answered
+  too, and a stopping node answers what it holds first. Counted as `msg.dropped.no_route` (and `msg.route.held`). A ping
+  is dropped, not answered. Messages that are not RPC requests are handed to the broker as before. An agent has no broker
+  and judges nothing: its request waits at its region's broker.
+  - *The broker has the last word.* Before a request is held or answered, the broker itself is asked for a consumer of
+    the queue (one lookup; a queue that does not exist yet is created, as sending to it would). A consumer the gate did
+    not count sends the request: `msg.route.mismatch`, one WARN every 10 s at most.
+  - *Patterns.* A consumer that reads queues by a pattern other than a controller's `T.*.<region>_<agent>` (a tenant's
+    node may consume `T.<tenant>.>` today) cannot be counted per inbox: requests for the queues that pattern can match
+    are not judged (sent as before). The gauge `msg.route.unread.patterns` and one WARN say so while such a consumer is
+    there.
+  - *Another tenant's caller.* A caller of a tenant that is not a superuser's, asking for a node this node does not know
+    to be of the caller's own tenant, gets one answer and one timing whatever this node knows of that node: held for one
+    grace from the request's arrival, then `route unavailable at <node>: <hop>: no route to <region>_<agent>` and nothing
+    more -- whether the node left long ago, a moment ago, or was never there.
 - **How long a request lives.** An RPC request that states its caller's timeout (`rpc_timeout_ms`, milliseconds; the
   controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
   `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing
@@ -215,6 +228,7 @@ How it is measured:
 | `lost_node_sweep_interval_ms` | long | `3600000` | Minimum time between two retention sweeps of one controller's DB. |
 | `route_rebuild_grace_ms` | long | `1500` | How long after a node's inbox lost its last consumer at this node's broker (or, for an inbox the broker never served, after a request for it arrived) an RPC request for it is held for the route to come back before it is answered `route unavailable`. |
 | `route_hold_max` | int | `1024` | The most RPC requests a controller holds for routes being rebuilt; one more is answered at once. |
+| `route_hold_max_per_node` | int | `64` | The most of them for one node. |
 | `broker_dlq_expiry_ms` | long | `3600000` | How long a dead letter (a persistent message a consumer refused) stays in `ActiveMQ.DLQ`; at least a minute. Expired messages are never put there. |
 | `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |

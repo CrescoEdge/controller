@@ -934,6 +934,31 @@ public class ActiveBroker {
 	}
 
 	/**
+	 * Does anything consume the queue {@code name} at this broker now -- by the broker's own account, not the RouteGate's?
+	 * One lookup of the queue. A queue that does not exist yet is created, as sending to it would: the broker then attaches
+	 * every subscription that matches it (a controller's {@code T.*.<inbox>}, any other pattern), and an empty queue with
+	 * no consumer is collected again after activemq_inactive_timeout_before_gc. True when it cannot be told (send as before).
+	 */
+	public boolean queueHasConsumer(String name) {
+		return queueHasConsumer(broker, name);
+	}
+
+	static boolean queueHasConsumer(BrokerService service, String name) {
+		try {
+			if (service == null || name == null) return true;
+			org.apache.activemq.broker.region.Destination d = queue(service, name);
+			if (d == null) {
+				Broker b = service.getRegionBroker();
+				if (!(b instanceof org.apache.activemq.broker.region.RegionBroker)) return true;
+				d = b.addDestination(service.getAdminConnectionContext(), new org.apache.activemq.command.ActiveMQQueue(name), false);
+			}
+			return d == null || !d.getConsumers().isEmpty();
+		} catch (Exception e) {
+			return true;
+		}
+	}
+
+	/**
 	 * This node's parent controller, whose bridge carries the whole fabric below it: the global a region has joined, or --
 	 * while its state does not name one yet -- the global it is joining ({@code joining}: authenticated in discovery, its
 	 * bridge up before the join is recorded). None for the global itself, and for a region that has no global.
