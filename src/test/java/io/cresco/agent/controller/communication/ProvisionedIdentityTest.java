@@ -137,7 +137,12 @@ class ProvisionedIdentityTest {
         assertEquals(CrescoIdentity.of("t1", "rgr", "b1", null), reg.verifiedIdentity(b1.chain));
         assertFalse(reg.isBridgePeer(CrescoIdentity.of("t1", "rgr", "b1", null)), "an agent's certificate made a bridge peer");
         assertEquals(CrescoIdentity.of("t1", "glob", "gc", null), reg.verifiedIdentity(gc.chain));
-        assertTrue(reg.isBridgePeer(CrescoIdentity.of("t1", "glob", "gc", null)), "a controller of the PKI is not a bridge peer");
+        // a controller's certificate alone makes no bridge peer of this broker: only one that completed discovery with this node
+        assertFalse(reg.isBridgePeer(CrescoIdentity.of("t1", "glob", "gc", null)), "any controller of the PKI is a bridge peer of this broker");
+        assertFalse(reg.isBridgePeer(CrescoIdentity.of("t1", "glob", "gc", null), gc.chain[0]));
+        assertNull(rc.getCertificateManager().provisionedControllerLearned(gc.chain));
+        assertTrue(reg.isBridgePeer(CrescoIdentity.of("t1", "glob", "gc", null)), "the global this node joined is not a bridge peer");
+        assertTrue(reg.isBridgePeer(CrescoIdentity.of("t1", "glob", "gc", null), gc.chain[0]));
         // a different key for b1, also issued by the PKI (the operator re-issued it): accepted -- the PKI decides, not first use
         PkiTestSupport.Node b1again = f.node("rgr", "b1", false);
         assertNotNull(reg.verifiedIdentity(b1again.chain));

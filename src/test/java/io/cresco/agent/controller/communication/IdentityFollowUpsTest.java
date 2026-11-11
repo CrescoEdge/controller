@@ -174,6 +174,9 @@ class IdentityFollowUpsTest {
         PeerTrustRegistry reg = new PeerTrustRegistry();
         reg.setPki(List.of(root.cert), ProvisionedIdentity.Revocations.NONE);
         CrescoIdentity id = CrescoIdentity.of("t1", "rgA", "rx", null);
+        assertNotNull(reg.verifiedIdentity(asController.chain));
+        assertFalse(reg.isBridgePeer(id, asController.chain[0]), "a controller certificate alone made a bridge peer (no discovery with this node)");
+        assertNull(reg.allowBridgePeer("t1", "rgA", "rx"));                          // rgA/rx completed discovery with this node
         for (int round = 0; round < 2; round++) {
             // whichever was verified last, each connection is judged by its own certificate
             assertNotNull(reg.verifiedIdentity(round == 0 ? asController.chain : asAgent.chain));

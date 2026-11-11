@@ -1347,15 +1347,28 @@ public final class PeerTrustRegistry {
         if (id == null || leaf == null || !CrescoNames.isValid(id.getRegion()) || !CrescoNames.isValid(id.getAgent())) return false;
         CrescoIdentity named = CrescoNames.identityOf(leaf);
         if (named == null || !named.getTenant().equals(id.getTenant())) return false;
-        return ROLE_CONTROLLER.equals(pkiRoleOf(id.getRegion(), id.getAgent(), leaf));
+        return ROLE_CONTROLLER.equals(pkiRoleOf(id.getRegion(), id.getAgent(), leaf)) && bridgeRecorded(id);
+    }
+
+    /**
+     * Pre-provisioned: is the controller {@code id} one that completed a REGION/GLOBAL discovery exchange with this node
+     * (this node's parent, a child, a peer region), recorded with its tenant, not revoked and not pruned? A controller's
+     * certificate alone does not make its holder a bridge peer of every broker of the fabric.
+     */
+    private boolean bridgeRecorded(CrescoIdentity id) {
+        String n = name(id.getRegion(), id.getAgent());
+        if (revokedBridges.contains(n)) return false;
+        Binding b = bridges.get(n);
+        return b != null && id.getTenant().equals(b.tenant) && (bridgePruneMs <= 0 || System.currentTimeMillis() - b.lastSeen <= bridgePruneMs);
     }
 
     public boolean isBridgePeer(CrescoIdentity id) {
         if (id == null || !CrescoNames.isValid(id.getRegion()) || !CrescoNames.isValid(id.getAgent())) return false;
         if (pki != null) {
-            // pre-provisioned: a controller is whoever the PKI says is one (SAN cresco:role:controller), verified on its connection
+            // pre-provisioned: a controller is whoever the PKI says is one (SAN cresco:role:controller), verified on its
+            // connection; a bridge peer is such a controller that completed discovery with this node
             PkiSeen s = pkiSeenOf(id.getTenant(), id.getRegion(), id.getAgent());
-            return s != null && ROLE_CONTROLLER.equals(s.role);
+            return s != null && ROLE_CONTROLLER.equals(s.role) && bridgeRecorded(id);
         }
         String n = name(id.getRegion(), id.getAgent());
         if (revokedBridges.contains(n)) return false;
@@ -1373,7 +1386,7 @@ public final class PeerTrustRegistry {
         if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return false;
         if (pki != null) {
             PkiSeen s = pkiSeenOf(tenant, region, agent);
-            return s != null && ROLE_CONTROLLER.equals(s.role);
+            return s != null && ROLE_CONTROLLER.equals(s.role) && tenant != null && bridgeRecorded(CrescoIdentity.of(tenant, region, agent, null));
         }
         String n = name(region, agent);
         Binding id = identities.get(n);
