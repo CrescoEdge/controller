@@ -74,6 +74,17 @@ class RegistryListenerPerRoleTest {
     }
 
     @Test
+    void onlyAGlobalOfASuperuserTenantTakesEveryTenantsRegionExports() {
+        java.util.Set<String> su = java.util.Set.of("cresco-system");
+        assertTrue(ControllerStatePersistance.takesEveryTenantsRegionExports(true, "cresco-system", su),
+                "the global the tenants' regions join listened in its own tenant's namespace only: no tenant's region registered");
+        assertFalse(ControllerStatePersistance.takesEveryTenantsRegionExports(true, "ta", su), "a tenant's global takes its own tenant's regions only");
+        assertFalse(ControllerStatePersistance.takesEveryTenantsRegionExports(false, "cresco-system", su), "without namespacing there is one topic");
+        assertFalse(ControllerStatePersistance.takesEveryTenantsRegionExports(true, null, su));
+        assertFalse(ControllerStatePersistance.takesEveryTenantsRegionExports(true, "ta", java.util.Set.of()));
+    }
+
+    @Test
     void aGlobalHoldsOneListenerOfEachKindHoweverOftenItEntersTheRole() {
         Recording p = persistence();
         p.enter(ControllerMode.REGION);

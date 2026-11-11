@@ -458,9 +458,38 @@ public class ControllerStatePersistance {
         return mode == ControllerMode.GLOBAL;
     }
 
+    /**
+     * Does the global of {@code tenant} take the region exports of every tenant? A node exports in its OWN tenant's
+     * namespace ({@code T.<tenant>.agent.event}); a controller listened in its own only, so the global of a superuser
+     * tenant -- the one global the tenants' regions join -- never saw a tenant's region and none registered. A tenant's
+     * global takes its own tenant's regions and no other's.
+     */
+    static boolean takesEveryTenantsRegionExports(boolean tenantNamespacing, String tenant, java.util.Set<String> superuserTenants) {
+        return tenantNamespacing && tenant != null && superuserTenants != null && superuserTenants.contains(tenant);
+    }
+
     /** Subscribe {@code ml} to the state updates {@code selector} picks; the listener's id, or null when not subscribed. */
     String addRegistryListener(MessageListener ml, String selector) {
         return plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT, ml, selector);
+    }
+
+    /**
+     * {@link #addRegistryListener} for the regions' exports at the global: in every tenant's namespace when this global is
+     * of a superuser tenant ({@link #takesEveryTenantsRegionExports}). Every export is still judged by its verified writer
+     * (RegistryBinding: the controller of the region it reports), whatever namespace it came in. The agents' exports of
+     * this node's own region stay in its own tenant's namespace: an agent joins only a controller of its own tenant.
+     */
+    String addRegionExportListener(MessageListener ml, String selector) {
+        Object dps = plugin.getAgentService().getDataPlaneService();
+        if (dps instanceof io.cresco.agent.data.DataPlaneServiceImpl && takesEveryTenantsRegionExports(
+                io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig()),
+                io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig()),
+                io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()))) {
+            logger.info("registry listener (" + selector + "): this global is of a superuser tenant and takes the region exports of"
+                    + " every tenant (T.*.agent.event)");
+            return ((io.cresco.agent.data.DataPlaneServiceImpl) dps).addMessageListenerEveryTenant(TopicType.AGENT, ml, selector);
+        }
+        return addRegistryListener(ml, selector);
     }
 
     void removeRegistryListener(String listenerId) {
@@ -548,7 +577,7 @@ public class ControllerStatePersistance {
                 };
 
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"region_id IS NOT NULL AND agent_id IS NOT NULL and plugin_id IS NOT NULL AND pluginname LIKE 'io.cresco.%'");
-                lid = addRegistryListener(ml, "update_mode = 'REGION'");
+                lid = addRegionExportListener(ml, "update_mode = 'REGION'");
                 //plugin.getAgentService().getDataPlaneService().addMessageListener(TopicType.AGENT,ml,"update_mode = 'AGENT'");
 
             } catch (Exception e) {

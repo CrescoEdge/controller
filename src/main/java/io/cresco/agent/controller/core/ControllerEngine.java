@@ -856,7 +856,38 @@ public class ControllerEngine {
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
     public void markForSigning(MsgEvent msg) {
         msgCounts.originated();             // every stamping point passes here: the message is this node's from now on
+        stampTravelTenant(msg);
         msgSigning().markForSigning(msg, tenant());
+    }
+
+    /**
+     * The namespace a message this node originates travels in ({@code cresco_tenant}), set before the message is signed:
+     * its caller's tenant; for a superuser tenant's caller the stamp it carries, else the tenant of the region it is
+     * addressed to (MsgRouter.travelTenant). Nothing without security or tenant namespacing, or for a message with no caller.
+     */
+    private void stampTravelTenant(MsgEvent msg) {
+        if (msg == null || msg.getParams() == null || !securityOn()
+                || !io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())) return;
+        io.cresco.library.security.Caller c = io.cresco.library.security.Caller.fromMsgEvent(msg);
+        if (c == null || c.isAnonymous()) return;
+        String carried = msg.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
+        String t = io.cresco.agent.controller.communication.MsgRouter.travelTenant(c, carried, tenant(),
+                io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()),
+                () -> tenantOfRegion(msg.getDstRegion()));
+        if (t != null && !t.equals(carried)) msg.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, t);
+    }
+
+    /**
+     * The tenant whose namespace reaches the nodes of {@code region}, as this node knows it first hand: its own for its own
+     * region; else the tenant of that region's controllers that completed discovery with this node
+     * (PeerTrustRegistry.tenantOfRegion). Null when it is not known.
+     */
+    public String tenantOfRegion(String region) {
+        if (region == null || region.isEmpty()) return null;
+        if (cstate != null && region.equals(cstate.getRegion())) return tenant();
+        CertificateManager cm = getCertificateManager();
+        io.cresco.agent.controller.communication.PeerTrustRegistry peers = cm == null ? null : cm.getPeerTrust();
+        return peers == null ? null : peers.tenantOfRegion(region);
     }
 
     /**

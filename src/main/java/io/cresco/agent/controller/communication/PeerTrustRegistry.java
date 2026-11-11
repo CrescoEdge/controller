@@ -1308,6 +1308,57 @@ public final class PeerTrustRegistry {
         return one;
     }
 
+    /** Region -> the one tenant its recorded controllers are of ({@link #tenantOfRegion}), as of {@code builtAt}. */
+    private static final class ReachIndex {
+        final long builtAt;
+        final Map<String, String> tenant;
+        ReachIndex(long builtAt, Map<String, String> tenant) { this.builtAt = builtAt; this.tenant = tenant; }
+    }
+
+    private volatile ReachIndex reachIndex;
+    /** How long {@link #tenantOfRegion} answers from one reading of the bridge peers. */
+    static final long REACH_INDEX_MS = 1000L;
+
+    /**
+     * The tenant whose namespace reaches the nodes of {@code region}, as this node knows it first hand: the one tenant of
+     * the controllers of that region that completed discovery with this node (its bridge peers) -- the tenant recorded with
+     * the bridge peer (pre-provisioned), else the tenant bound to that controller's name by the certificate it proved. A
+     * region's nodes are of its controller's tenant: an agent joins only a controller of its own tenant. When a superuser
+     * tenant's controller is recorded besides a tenant's, the tenant's. Null when no controller of the region is recorded,
+     * or when the records name several tenants: never a guess, because a superuser tenant's node sends into the tenant
+     * this names (MsgRouter.travelTenant), and a second tenant that claimed the region's name would otherwise be handed
+     * the first one's messages. O(1): one reading of the bridge peers serves every question for {@link #REACH_INDEX_MS}.
+     */
+    public String tenantOfRegion(String region) {
+        if (region == null) return null;
+        long now = System.currentTimeMillis();
+        ReachIndex ix = reachIndex;
+        if (ix == null || now - ix.builtAt >= REACH_INDEX_MS || now < ix.builtAt) {
+            Map<String, Set<String>> seen = new java.util.HashMap<>();
+            for (Map.Entry<String, Binding> e : bridges.entrySet()) {
+                int slash = e.getKey().indexOf('/');
+                if (slash <= 0) continue;
+                String r = e.getKey().substring(0, slash);
+                String t = e.getValue().tenant != null ? e.getValue().tenant : boundTenant(r, e.getKey().substring(slash + 1));
+                if (t != null) seen.computeIfAbsent(r, k -> new HashSet<>()).add(t);
+            }
+            Map<String, String> one = new java.util.HashMap<>();
+            for (Map.Entry<String, Set<String>> e : seen.entrySet()) {
+                Set<String> ts = e.getValue();
+                String tenant = null;
+                int tenants = 0;
+                for (String t : ts) {
+                    if (ts.size() > 1 && isSuperuserTenant(t)) continue;
+                    tenant = t;
+                    tenants++;
+                }
+                if (tenants == 1) one.put(e.getKey(), tenant);
+            }
+            reachIndex = ix = new ReachIndex(now, one);
+        }
+        return ix.tenant.get(region);
+    }
+
     /**
      * Why an identity of {@code tenant} may not carry a name of {@code region} here, or null: the region's names belong to
      * another tenant (CAs are scoped per tenant, and a tenant's CA can write any region name into a certificate). A
