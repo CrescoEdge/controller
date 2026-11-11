@@ -22,7 +22,8 @@
 #   oldprod needs an earlier build that has the production profile (agent release 1.3.374 or later).
 #   GATE_JAR_OLD, GATE_JAR_NEW: agent jars; GATE_OUT: results dir (shared filesystem); GATE_PY: python with pycrescolib's
 #   dependencies; GATE_PYCRESCOLIB: pycrescolib checkout; GATE_TESTS: controller docs/tests; GATE_PERF: dataplane_perf.py;
-#   GATE_PKI: tools/cresco-pki.sh. Ports 36000-36999 only (P0, default 36000). GATE_PHASES (default "cp dp scale") picks
+#   GATE_PKI: tools/cresco-pki.sh. Ports P0 .. P0+500 and P0+100+<light agents> (P0, default 30000: below the range the
+#   kernel gives outgoing connections). GATE_PHASES (default "cp dp scale") picks
 #   the phases; GATE_EXTRA_FLAGS is added to every node's flags (e.g. -Dactivemq_topic_memory_limit=67108864).
 #   DP_SIZES (default "262144 4194304"), DP_FLOWS (default "1 4") and DP_RUNS (default "fire:1 fire:2 fire:3 paced:1
 #   paced:2") pick the dataplane lines, so one line can be run again alone. Each line keeps every flow's own figures
@@ -34,7 +35,13 @@ J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
 PY="${GATE_PY:?}"; export PYTHONPATH="${GATE_PYCRESCOLIB:?}"
 T="${GATE_TESTS:-$HERE/..}"; PERF="${GATE_PERF:?}"; PKI_TOOL="${GATE_PKI:?}"
 OUT="${GATE_OUT:?}"; mkdir -p "$OUT"
-P0="${P0:-36000}"; STEPS="${SCALE_STEPS:-50 100 200}"
+P0="${P0:-30000}"; STEPS="${SCALE_STEPS:-50 100 200}"
+# every listener's port must lie below the kernel's range for outgoing connections, or a connection of any process on
+# the host can hold the port a node wants ("Address already in use"); the block is P0 .. P0+500 and P0+100+<agents>
+read -r EPH_LO _ < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || EPH_LO=32768
+top_step=0; for s in $STEPS; do top_step=$s; done
+[ $((P0 + 100 + top_step)) -lt "$EPH_LO" ] && [ $((P0 + 500)) -lt "$EPH_LO" ] \
+  || { echo "FATAL: ports $P0..$((P0 + 100 + top_step)) reach this host's range for outgoing connections ($EPH_LO up): set P0 lower"; exit 2; }
 HOSTS=( $(scontrol show hostnames "$SLURM_JOB_NODELIST") )
 [ "${#HOSTS[@]}" -ge 4 ] || { echo "FATAL: the gate needs 4 hosts, the job has ${#HOSTS[@]}"; exit 2; }
 H1=${HOSTS[0]}; H2=${HOSTS[1]}; H3=${HOSTS[2]}; H4=${HOSTS[3]}

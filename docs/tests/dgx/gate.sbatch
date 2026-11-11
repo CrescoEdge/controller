@@ -6,7 +6,7 @@
 #     controller/docs/tests/dgx/gate.sbatch old oldprod std prod
 #
 # Everything a run writes lands under GATE_OUT (shared filesystem, 0700) and node-local /tmp (removed at the end); it
-# signals only its own JVMs and uses ports 36000-36999.
+# signals only its own JVMs and uses ports from P0 (30000) up, below the kernel's range for outgoing connections.
 #SBATCH -J cresco-gate
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1

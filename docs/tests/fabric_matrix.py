@@ -341,7 +341,8 @@ class Fabric:
         d = self.dir(n)
         d.mkdir(parents=True, exist_ok=True)
         heap = self.a.agent_heap if n.role == "agent" else self.a.heap
-        cmd = ["java"] + COMMON + ["-Xmx" + heap] + self.profile.flags(self, n) + self.flags(n) + n.extra + ["-jar", n.jar]
+        cmd = (["java"] + COMMON + ["-Xmx" + heap] + self.profile.flags(self, n) + self.flags(n) + n.extra
+               + list(self.a.flag) + ["-jar", n.jar])
         n.launches += 1
         with open(self.log(n), "ab") as f:
             f.write(("### fabric_matrix launch %d of %s at %s\n" % (n.launches, n.path, now_iso())).encode())
@@ -1266,6 +1267,9 @@ def main():
     ap.add_argument("--heap", default="512m", help="-Xmx of a controller")
     ap.add_argument("--agent-heap", default="320m", help="-Xmx of an agent")
     ap.add_argument("--stagger", type=float, default=1.0, help="seconds between two launches of the start event")
+    ap.add_argument("--flag", action="append", default=[], metavar="-Dkey=value",
+                    help="a JVM flag added last to every node, repeatable (e.g. --flag=-Dauthority_direction=enforce: "
+                         "the whole cell with the authority rule enforced)")
     ap.add_argument("--light", action="store_true", help="nodes without the default plugins (sysinfo, executor, repo, ...)")
     ap.add_argument("--converge", type=float, default=240.0, help="seconds an event may take until the listing is right")
     a = ap.parse_args()
@@ -1287,6 +1291,15 @@ def main():
     for j in (a.jar, a.old_jar):
         if j and not os.path.isfile(j):
             ap.error("no such jar: " + j)
+    # Linux gives outgoing connections a port of ip_local_port_range: a listener whose port lies in it can find the port
+    # taken by a connection of any process on the host ("Address already in use": seen on the DGX, two of ten nodes)
+    try:
+        lo, hi = (int(x) for x in open("/proc/sys/net/ipv4/ip_local_port_range").read().split())
+        if a.base_port <= hi and a.base_port + SLOT * MAX_SLOTS >= lo:
+            ap.error("--base-port %d: the block %d..%d overlaps this host's range for outgoing connections (%d..%d); "
+                     "choose a block below %d" % (a.base_port, a.base_port, a.base_port + SLOT * MAX_SLOTS, lo, hi, lo))
+    except (OSError, ValueError):
+        pass                                 # not Linux (macOS takes outgoing ports from 49152 up)
     logging.disable(logging.CRITICAL)        # the client library's own logging: the harness reports what it judges
 
     work = Path(a.work).resolve()
