@@ -70,6 +70,10 @@ public final class MsgCounts {
         PARENT_LINK_DOWN("parent_link_down", "a message held for the parent link, which stayed down until the wait ended or the sender gave up"),
         /** This node has no producer (or broker client) now: its link is being made anew. */
         NO_SENDER("no_sender", "a message to send while this node has no producer (AgentProducer is null. Message not sent)"),
+        /** Behind messages this node holds to be sent first, and the hold has no room: sending it now would overtake them. */
+        HOLD_FULL("hold_full", "a message to send behind those this node holds to be sent first, with no room left to hold it"),
+        /** Held while this node had no link, for the controller it had then; it has joined another since. */
+        PARENT_CHANGED("parent_changed", "a message held for the controller this node had, which it has left for another"),
         /** A message to send that names no destination. */
         NO_DESTINATION("no_destination", "a message to send that names no destination"),
         /** Every attempt to hand it to the broker failed. */
@@ -141,6 +145,12 @@ public final class MsgCounts {
 
     /** A message this node took off the wire went on toward another node. */
     public void relayed() { relayed.increment(); }
+
+    /**
+     * A message counted as relayed when it was held to be sent did not go on after all (it is counted as dropped, under
+     * its cause): it ends in ONE count, not two.
+     */
+    public void notRelayed() { relayed.decrement(); }
 
     /** A message was handed to its recipient on this node. */
     public void delivered() { delivered.increment(); }

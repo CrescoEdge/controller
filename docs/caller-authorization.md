@@ -759,55 +759,66 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   `msg_signing_sessions=false`, never reads them and is always sent signatures. A provider that refuses any of it (a FIPS
   module raising an error) turns session keys off on that node, logged once: it stays with signatures.
 - **A lost session is recovered in one round trip (the notice).** Until 2026-11-11 a peer of a restarted node went on
-  sending under the lost session until that node happened to send it something, or 30 s passed: every such message was
-  refused (90 to 100 per storage node per restart in a three-site storage test). Now a node that refuses a message
-  because it does not hold the session it came under tells the node the message names as its signer, on a **signed**
-  message that names the session (`cresco_sig_lost`): the `401` that answers an RPC request carries it, and a message
-  with no answer gets a notice of its own (`EXEC sessionlost`, shaped as the reply to a call nobody made, so that a
-  node of an earlier build authenticates it -- which is where it learns the sender's new incarnation -- and then drops
-  it as a late reply, without a line). The sender acts on a notice only under a verified signature of the peer it
-  holds that session with (never under a MAC, least of all the MAC of the session it speaks of) and only when it names
-  the session it sends under now: it moves that session aside, signs to the peer again and offers a new session on its
-  next message. A forged notice does not verify; another node's notice speaks for that node's sessions only; a notice
-  replayed is refused by the replay memory, and one delivered late names a session that is no longer current and is
-  ignored (like any message its peer signed before the two agreed the session, it makes the node wait for the peer's
-  next word before it sends under the session again: the rule above, nothing agreed anew). A notice of its own is sent
-  at most once a second per peer and `msg_signing_lost_notices_per_second` (100) times a second per node, is never
-  answered, and is addressed only to a signer whose tenant, region and agent are names as the controller issues them.
-  A node says "not held" only of a session it does not hold (a forged message naming a session it does hold fails its
-  MAC instead), so what an attacker can obtain is the truth about a session nobody can use. Dropping a session only
-  ever makes a node **sign**: it changes nothing in what the node accepts, and nothing about direct links.
-  **An RPC request refused so is sent again once, signed, by the caller's own node** (`msg_signing_lost_retry`), from
-  the copy it kept when it first sent it (at most 4,096 requests and 8 M characters, 30 s each, gone when the reply
-  arrives): the application sees the answer, not the refusal. Nothing runs twice: the refusal is made where the message
-  is verified, before any handler; the peer's signed word names the call and the session; a session a node does not
-  hold is never held again (an ended one is forgotten before the node says so), so the first copy can never be
-  accepted; and the copy sent again is a new signed message that the replay memory remembers like any other. What the
-  retry cannot know is what a node did BEFORE it restarted: a request that ran there and whose answer was lost in the
-  crash is, like a request an application repeats after a timeout, run again if a copy of it reaches the restarted
-  node. A peer of an earlier build sends no notice and its `401` names no session: recovery with it is as before, and
-  nothing is sent again. Counted in the metric inventory: `msg.session.lost.told`, `msg.session.lost.heard`,
-  `msg.session.lost.retried`. **What the notice cannot do:** a message a broker stored for a node while it was down was
-  sent under the lost session before anybody could know, and is refused when it arrives (an RPC request among them is
-  sent again when it is younger than 30 s; a one-way message is lost, as before) -- a sender stops sending under a
-  session only 30 s after its peer last confirmed it, so up to 30 s of one-way traffic per peer can be stored so. And a
-  node that moved regions (`region_alias`) signs under its new name, while its peers hold the session under its former
-  one: its word does not match, and recovery with it is as before.
+  sending under the lost session until that node happened to send it something, or 30 s passed, and every such message
+  was refused. Now a node that refuses a message because it does not hold the session it came under tells the node the
+  message names as its signer, on a **signed** message: the session (`cresco_sig_lost`), the signer name of the message
+  it refused (`cresco_sig_lost_by`) and for how long it has not held that session (`cresco_sig_lost_for`, milliseconds
+  by its own monotonic clock at the moment it signs). The `401` that answers an RPC request carries it; a message with
+  no answer gets a notice of its own (`EXEC sessionlost`, shaped as the reply to a call nobody made, so that a node of
+  an earlier build authenticates it -- which is where it learns the sender's new incarnation -- and then drops it as a
+  late reply, without a line).
+  *What the refusing node guarantees.* It looks the session up by the node and the session id, never by the signer name
+  a message declares: a message with a genuine session id and another name written over the signer's is refused as "a
+  session this node holds with another signer", and nothing is said about the session to anybody. So "not held" is
+  said only of an id that is in no slot of that node's entry, or is kept there as ended (an ended session is not
+  forgotten: it stays, as ended at the instant it was first refused). A notice of its own is sent only for a message the
+  node's broker stamped as coming from the very node it names (no stamp: no notice, the old 30 s), at most once a second
+  per peer and `msg_signing_lost_notices_per_second` (100) times a second per node, is never answered, and is addressed
+  only to a signer whose tenant, region and agent are names as the controller issues them.
+  *What the receiver does.* It acts only on a notice that passed every refusal (signature, credential, revocation,
+  recipient, age, replay memory, the tenant rule), that comes from the peer it holds the session with, and that names
+  **its own name** as the signer of the refused message. When the notice names the session it sends under now, it moves
+  that session aside, signs to the peer again and offers a new session on its next message. A notice delivered late
+  names a session that is no longer current and drops nothing (like any message its peer signed before the two agreed
+  the session, it makes the node wait for the peer's next word before it sends under the session again).
+  **An RPC request refused so is sent again once, signed, by the caller's own node, only when it provably never ran**
+  (`msg_signing_lost_retry`). The caller's node remembers each request it sends under a session (nothing is copied: its
+  caller's message, when it left, the MAC it left with; at most 4,096 requests and 8 M characters, 30 s each, gone when
+  the peer answers). The peer's `401` states for how long, D, it has not held the session: since it started, since it
+  last let go of anything it held with that node, or since it first refused the session as ended (0 when it cannot
+  say). The caller's node sends the request again only when the request is **younger than D** by its own monotonic
+  clock (less D/64 + 5 ms): then it was sent after the peer stopped holding the session, no copy of it can have been
+  accepted, and none can be (a session a node does not hold is never held again). No wall clocks are compared; a relay
+  that delays the `401` only makes the retry less likely. A request sent before that -- one that may have run at a peer
+  that then restarted, and whose copy a broker delivers again -- is not sent again: its caller sees the `401`, exactly
+  as on 1.3.378. So does the caller of every request refused by a peer of an earlier build. The offerer of a session
+  counts its end from its offer (the acceptor from when it took the offer, which is later), so the node that sends under
+  a session always stops before the other's end. Counted in the metric inventory: `msg.session.lost.told`,
+  `msg.session.lost.heard`, `msg.session.lost.retried`.
+  **What the notice cannot do:** a message a broker stored for a node while it was down was sent under the lost session
+  before anybody could know, and is refused when it arrives. And a node that moved regions (`region_alias`) signs under
+  its new name, while its peers hold the session under its former one: its word does not match, and recovery with it is
+  as before.
 - **A node answers from its first message on (2026-11-11).** A node could be asked before it could answer: its inbox
   consumer was made some 20 ms before its producer (at its start, and each time it joined a controller again), so a
   request waiting in its inbox was served and answered into nothing (`AgentProducer is null. Message not sent`, at
   ERROR; the caller timed out), and so was whatever a plugin sent in that moment. And an agent is attested by its
   controller's first pong, some tens of milliseconds after its inbox opens: what it signed before that carried its
   certificate, which a node beyond its controller refuses (`the signer's credential does not verify here`) -- hidden
-  until then by the missing producer. Now (a) the producer is made before the inbox consumer; (b) a message for a node
-  beyond its controller that an agent would sign before it holds its attestation waits for it, at most
-  `msg_signing_hold_ms` (5 s; then it is sent as it stands, so a controller that never attests does not silence its
-  agent); (c) a message that still meets a node without a producer (its link to a controller is being made anew) is
-  held for it, at most `msgin_fault_wait_ms` (20 s), and sent in order when the producer exists -- except an RPC
-  request, whose caller is answered with the router's error at once. What is held is bounded (1,024 messages and 8 M
-  characters in all); a message there is no room for, or whose hold ends with no producer, is counted
-  (`msg.dropped.no_sender`) and logged (`NOT SENT: ...`). No thread waits: one timer thread sends what was held.
-  `msg.send.held` counts the messages held.
+  until then by the missing producer. Now (a) the producer is made before the inbox consumer; (b) what an agent would
+  sign for a node beyond its controller before it holds its attestation waits for it, at most `msg_signing_hold_ms`
+  (5 s; then it is sent as it stands, so a controller that never attests does not silence its agent); (c) a message that
+  still meets a node without a producer (its link to a controller is being made anew) is held for it, at most
+  `msgin_fault_wait_ms` (20 s) -- except an RPC request, whose caller is answered with the router's error at once.
+  What is held is two queues, each first in, first out (what waits for the attestation too, and everything else: the
+  ping to the controller that brings the attestation never waits behind what waits for it), each of at most 1,024
+  messages and 8 M characters. A stretch has one end, set when its first message is held; while anything is held, a
+  later message of its kind goes behind it, also while the timer thread is sending what was held; a message there is
+  no room for behind held ones is not sent (`msg.dropped.hold_full`). When a stretch ends with no producer, what is
+  held is counted (`msg.dropped.no_sender`) and logged (`NOT SENT: ...`), once (a message this node only carried on is
+  not also counted as relayed), and a held RPC request's caller is answered with the router's error. A message held
+  for the controller the node had is not sent to it after the node joined another (`msg.dropped.parent_changed`). No
+  thread waits: one timer thread sends what was held. `msg.send.held` counts the messages held.
 - **Cost.** Between two nodes that talk both ways, one ECDH agreement per pair and hour, then an HMAC per message (about
   15 us to check, 0.7 KB on the wire); otherwise one signature per message a node originates to anything but its parent
   or children (RSA-3072 private key: about 2 ms of one core, shared by a batch under load) and one signature check per

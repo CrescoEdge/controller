@@ -124,6 +124,19 @@ public final class MsgSigning {
      */
     public static final String LOST = "cresco_sig_lost";
     /**
+     * Beside {@link #LOST}, under the same signature: the signer NAME ({@code tenant/region/agent}) of the message that was
+     * refused, as that message declared it. The receiver acts on the notice (drops the session, sends a request again)
+     * only when that is its own name: a message this node never signed, refused under whatever name a relay wrote into
+     * it, is not this node's business.
+     */
+    public static final String LOST_BY = "cresco_sig_lost_by";
+    /**
+     * Beside {@link #LOST}, under the same signature: for how many milliseconds, by its sender's own monotonic clock at the
+     * moment it signed, the sender has NOT held that session ({@link MsgSessions#notHeldSince}; an ended session: since it
+     * first refused it as ended; 0 when it cannot say). What a request is sent again on ({@link #afterVerified}).
+     */
+    public static final String LOST_FOR = "cresco_sig_lost_for";
+    /**
      * The notice that is a message of its own: an EXEC {@value #LOST_ACTION} shaped as the reply to a call nobody made
      * (the receiver's controller call id {@value #LOST_CALL}). A node of this build takes it where it is verified
      * ({@link #afterVerified}). A node of an earlier build (1.3.378) verifies it like any signed message -- which is where
@@ -205,14 +218,32 @@ public final class MsgSigning {
     private int lostNoticesThisSecond;
     /**
      * What this node's signing layer itself decided about a message it is about to send, by the message's identity (weak:
-     * a message that never reaches {@link #signIfPending} takes its entry with it): the session a notice names, or ""
-     * for a request sent again, which is signed whatever session this node holds. Nothing a sender can write into a
-     * message puts it here. An entry goes when the message is signed, when the message is collected, or after a minute;
-     * {@link #ownMarked} counts the entries (0 nearly always: then a message leaving costs one counter read).
+     * a message that never reaches {@link #signIfPending} takes its entry with it): the notice it carries ({@link Word}),
+     * or {@link #RESEND} for a request sent again, which is signed whatever session this node holds. Nothing a sender can
+     * write into a message puts it here. An entry goes when the message is signed, when the message is collected, or
+     * after a minute; {@link #ownMarked} counts the entries (0 nearly always: then a message leaving costs one counter read).
      */
     private final java.util.concurrent.atomic.AtomicInteger ownMarked = new java.util.concurrent.atomic.AtomicInteger();
-    private final Cache<MsgEvent, String> ownMarks = CacheBuilder.newBuilder().weakKeys().expireAfterWrite(Duration.ofMinutes(1))
-            .removalListener((com.google.common.cache.RemovalNotification<MsgEvent, String> gone) -> ownMarked.decrementAndGet()).build();
+    private final Cache<MsgEvent, Word> ownMarks = CacheBuilder.newBuilder().weakKeys().expireAfterWrite(Duration.ofMinutes(1))
+            .removalListener((com.google.common.cache.RemovalNotification<MsgEvent, Word> gone) -> ownMarked.decrementAndGet()).build();
+
+    /**
+     * A notice this node is about to sign: the session it does not hold, the signer name of the message it refused for
+     * it, and since when it has not held it ({@link System#nanoTime}; {@code known} false: it cannot say, and states 0).
+     */
+    private static final class Word {
+        final String sid, refused;
+        final long sinceNanos;
+        final boolean known;
+        Word(String sid, String refused, long sinceNanos, boolean known) {
+            this.sid = sid; this.refused = refused; this.sinceNanos = sinceNanos; this.known = known;
+        }
+    }
+
+    private static final Word RESEND = new Word(null, null, 0L, false);
+    /** When this signing layer was made ({@link System#nanoTime}): a node without session keys has held none since. */
+    private final long startedNanos = System.nanoTime();
+
     /**
      * RPC requests this node sent under a session, by call id, until their reply arrives ({@link #afterVerified}) or
      * {@value #LOST_RETRY_MS} ms pass: at most {@value #LOST_RETRY_MAX} of them and {@value #LOST_RETRY_CHARS_MAX}
@@ -221,18 +252,25 @@ public final class MsgSigning {
      */
     private final Cache<String, Retry> lostRetries;
     private final AtomicLong lostTold = new AtomicLong(), lostWithheld = new AtomicLong(), lostHeard = new AtomicLong(),
-            lostIgnored = new AtomicLong(), lostRetried = new AtomicLong();
+            lostIgnored = new AtomicLong(), lostRetried = new AtomicLong(), lostNotRetried = new AtomicLong();
     /** Tests: a request sent again is handed here instead of to the producer (true: sent). */
     volatile java.util.function.Predicate<MsgEvent> resendTap;
 
-    /** An RPC request sent under the session {@code sid} with {@code peerNode}: what is sent again if that peer says it does not hold it. */
+    /**
+     * An RPC request sent under the session {@code sid} with {@code peerNode}. Nothing is copied when it is sent: the
+     * record holds the caller's own message (which the caller holds until its call returns), when it left by this node's
+     * monotonic clock, and the MAC it left with -- by which, with the session's key, this node sees at the moment of a
+     * retry that the message is still, parameter for parameter, the one it sent.
+     */
     private static final class Retry {
-        final String peerNode, sid;
-        /** The request as it was handed to the producer, without what authenticated it, marked to be signed. */
-        final MsgEvent request;
+        final String peerNode, sid, mac;
+        final MsgSessions.Session session;
+        final MsgEvent sent;
+        final long sentNanos;
         final int weight;
-        Retry(String peerNode, String sid, MsgEvent request, int weight) {
-            this.peerNode = peerNode; this.sid = sid; this.request = request; this.weight = weight;
+        Retry(String peerNode, MsgSessions.Session session, String mac, MsgEvent sent, long sentNanos, int weight) {
+            this.peerNode = peerNode; this.session = session; this.sid = session.sid; this.mac = mac; this.sent = sent;
+            this.sentNanos = sentNanos; this.weight = weight;
         }
     }
 
@@ -245,12 +283,16 @@ public final class MsgSigning {
     public long lostHeardCount() { return lostHeard.get(); }
     public long lostIgnoredCount() { return lostIgnored.get(); }
     public long lostRetriedCount() { return lostRetried.get(); }
+    /** Refusals that named a call of this node's and were NOT answered by sending it again: it may have run (its caller sees the 401). */
+    public long lostNotRetriedCount() { return lostNotRetried.get(); }
     /** Requests held to be sent again (diagnostics, tests). */
     long lostRetriesHeld() { if (lostRetries == null) return 0; lostRetries.cleanUp(); return lostRetries.size(); }
     /** Peers whose last notice is remembered (tests). */
     long lostNoticePeers() { lostNoticeAt.cleanUp(); return lostNoticeAt.size(); }
     /** The session this node sends to {@code peerNode} under now, or null (tests). */
     MsgSessions.Session sessionWith(String peerNode) { return sessions == null ? null : sessions.usable(peerNode, System.currentTimeMillis()); }
+    /** As when this node's clock passes the session's end (tests). */
+    void endSession(MsgSessions.Session s) { sessions.ended(s); }
     /** Batch root signatures verified here (digest of signature, key, root and count): one key operation per batch. Bounded LRU. */
     private final Cache<String, Boolean> batchVerified = CacheBuilder.newBuilder().maximumSize(BATCH_VERIFIED_MAX)
             .expireAfterWrite(Duration.ofMinutes(15)).build();
@@ -963,7 +1005,8 @@ public final class MsgSigning {
 
     /** What a node writes to authenticate a message it originates. */
     private static final String[] AUTH_PARAMS = {SIG, BY, TS, CRED, S_CALLER, S_TENANT, S_ROLES, CAPS, TO, MsgBatchSigner.TREE,
-            MsgSessions.SID, MsgSessions.MAC, MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.HELD, MsgSessions.INC, LOST};
+            MsgSessions.SID, MsgSessions.MAC, MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.HELD, MsgSessions.INC, LOST,
+            LOST_BY, LOST_FOR};
 
     /** Remove every signature parameter. */
     public static void clear(MsgEvent m) {
@@ -1005,13 +1048,15 @@ public final class MsgSigning {
         m.removeParam(SPEAKER);
         // what this node's own signing layer decided about this very message (one counter read when it decided nothing):
         // the session a notice names, or "" for a request sent again
-        String own = ownMarked.get() == 0 ? null : takeMark(m);
+        Word own = ownMarked.get() == 0 ? null : takeMark(m);
         if (m.getParam(PENDING) == null) return;
         m.removeParam(PENDING);
         if (!required) return;
         // a notice is this node's signing layer's word and nobody else's: whatever is in that parameter of a message this
         // node originates (every stamping point removed it already) goes, and the notice is written below
         m.removeParam(LOST);
+        m.removeParam(LOST_BY);
+        m.removeParam(LOST_FOR);
         Caller c = Caller.fromMsgEvent(m);
         if (c == null || c.isAnonymous()) return;
         String to = recipient(m);
@@ -1062,7 +1107,15 @@ public final class MsgSigning {
                         if (macSent.incrementAndGet() == 1) info("session keys ON: messages to the nodes this node holds a session with"
                                 + " carry a MAC under it instead of a signature (first: " + m.getMsgType() + " " + m.getParam("action")
                                 + " to " + m.getDstRegion() + "/" + m.getDstAgent() + ")");
-                        if (lostRetries != null) sentUnderSession(m, node, ss.sid);
+                        if (lostRetries != null && m.getParam("is_rpc") != null) {
+                            // its own try: a failure of this bookkeeping is no failure of the session keys (the catch
+                            // below would turn them off for the whole node); the request simply is not sent again
+                            try {
+                                sentUnderSession(m, node, ss);
+                            } catch (RuntimeException notKept) {
+                                // nothing to do: its caller sees a refusal, as before
+                            }
+                        }
                         return;
                     }
                 } catch (Exception | Error e) {
@@ -1072,8 +1125,13 @@ public final class MsgSigning {
                     for (String k : new String[]{MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.SID, MsgSessions.MAC}) m.removeParam(k);
                 }
             }
-            if (own != null && !own.isEmpty()) {
-                m.setParam(LOST, own);                               // under the signature made below
+            if (own != null && own != RESEND) {
+                // under the signature made below: the session, whose message was refused for it, and for how long this
+                // node has not held it AS OF THIS INSTANT, by its monotonic clock (what its receiver measures a request's
+                // age against: the later this is signed, the longer -- and it stays true, a session is never held again)
+                m.setParam(LOST, own.sid);
+                m.setParam(LOST_BY, own.refused);
+                m.setParam(LOST_FOR, own.known ? Long.toString(Math.max(0L, (System.nanoTime() - own.sinceNanos) / 1_000_000L)) : "0");
                 if (lostTold.incrementAndGet() == 1) info("lost sessions: this node tells the sender of a message under a session it"
                         + " does not hold, on a signed message -- in the 401 that answers a request, else in a notice of its own, at"
                         + " most once a second per peer and " + lostNoticesPerSecond + " times a second in all (first: to " + to + ")");
@@ -1102,38 +1160,54 @@ public final class MsgSigning {
         }
     }
 
-    /** This node's signing layer says of {@code m}, which it sends now: a notice of the session {@code what}; "": sign it. */
-    private void mark(MsgEvent m, String what) {
+    /** This node's signing layer says of {@code m}, which it sends now: it carries the notice {@code what}; {@link #RESEND}: sign it. */
+    private void mark(MsgEvent m, Word what) {
         ownMarked.incrementAndGet();             // before the entry exists: its removal (whatever the cause) takes it back
         ownMarks.put(m, what);
     }
 
-    private String takeMark(MsgEvent m) {
+    private Word takeMark(MsgEvent m) {
         return ownMarks.asMap().remove(m);
     }
 
     /**
-     * {@code m} leaves under the session {@code sid} with {@code node}. When it is an RPC request, keep what it takes to
-     * send it again, signed, should that node answer that it does not hold the session ({@link #afterVerified}): the
-     * message as the producer was handed it, without what authenticated it. A copy of the parameter map (the values are
-     * shared with the message, which its caller holds until the call returns), and only for a request: a reply or a
-     * one-way message is never sent again. Bounded ({@link #lostRetries}); a request with files, or one that would take
-     * more than an eighth of the room, is not kept: its caller sees the refusal, as before.
+     * {@code m}, an RPC request, leaves under the session {@code ss} with {@code node}: remember it, so that it can be
+     * sent again, signed, should that node answer that it has not held the session since before this moment
+     * ({@link #afterVerified}). Nothing is copied here (see {@link Retry}); a reply or a one-way message is never sent
+     * again. Bounded ({@link #lostRetries}); a request with files, or one that would take more than an eighth of the
+     * room, is not kept: its caller sees the refusal, as before.
      */
-    private void sentUnderSession(MsgEvent m, String node, String sid) {
-        if (m.getParam("is_rpc") == null || !MsgRouter.isRpcRequest(m) || m.hasFiles()) return;
+    private void sentUnderSession(MsgEvent m, String node, MsgSessions.Session ss) {
+        if (!MsgRouter.isRpcRequest(m) || m.hasFiles()) return;
         String callId = m.getParam("callId-" + m.getSrcRegion() + "-" + m.getSrcAgent() + "-" + m.getSrcPlugin());
-        java.util.HashMap<String, String> params = new java.util.HashMap<>(m.getParams());
-        for (String k : AUTH_PARAMS) params.remove(k);
         long chars = 0;
-        for (Map.Entry<String, String> e : params.entrySet()) chars += e.getKey().length() + (e.getValue() == null ? 0 : e.getValue().length());
+        for (Map.Entry<String, String> e : m.getParams().entrySet()) chars += e.getKey().length() + (e.getValue() == null ? 0 : e.getValue().length());
         if (chars > LOST_RETRY_CHARS_MAX / 8) return;
-        params.put(PENDING, "1");
-        MsgEvent again = new MsgEvent(m.getMsgType(), m.getSrcRegion(), m.getSrcAgent(), m.getSrcPlugin(), m.getDstRegion(),
-                m.getDstAgent(), m.getDstPlugin(), m.isRegional(), m.isGlobal());
-        again.setParams(params);
         // each entry weighs at least a 4096th of the room: at most LOST_RETRY_MAX of them
-        lostRetries.put(callId, new Retry(node, sid, again, (int) Math.max(chars, LOST_RETRY_CHARS_MAX / LOST_RETRY_MAX)));
+        lostRetries.put(callId, new Retry(node, ss, m.getParam(MsgSessions.MAC), m, System.nanoTime(),
+                (int) Math.max(chars, LOST_RETRY_CHARS_MAX / LOST_RETRY_MAX)));
+    }
+
+    /**
+     * The request of {@code r} as it is sent again: what its caller's message holds now, without what authenticated it,
+     * marked to be signed -- or null when that message is no longer, parameter for parameter, the one this node sent
+     * (its MAC under the session's key no longer matches: the caller has written into it since), in which case nothing
+     * is sent again.
+     */
+    private MsgEvent again(Retry r) throws Exception {
+        MsgEvent m = r.sent;
+        java.util.HashMap<String, String> params = new java.util.HashMap<>(m.getParams());
+        MsgEvent copy = new MsgEvent(m.getMsgType(), m.getSrcRegion(), m.getSrcAgent(), m.getSrcPlugin(), m.getDstRegion(),
+                m.getDstAgent(), m.getDstPlugin(), m.isRegional(), m.isGlobal());
+        copy.setParams(params);
+        String by = params.get(BY);
+        if (by == null || !r.mac.equals(params.get(MsgSessions.MAC)) || !MessageDigest.isEqual(Base64.getDecoder().decode(r.mac),
+                MsgSessions.mac(r.session.key, by, canonical(copy)))) {
+            return null;
+        }
+        for (String k : AUTH_PARAMS) params.remove(k);
+        params.put(PENDING, "1");
+        return copy;
     }
 
     private String selfName() {
@@ -1212,48 +1286,73 @@ public final class MsgSigning {
      * never attests does not silence its agent.
      */
     private final TrustWait attestWait;
-    /** Told when this node takes an attestation (ActiveClient: what waited for it is sent). */
-    private volatile Runnable attestedListener;
-
-    public void onAttested(Runnable listener) { attestedListener = listener; }
+    /**
+     * Is {@code m} a message this node is about to originate that should wait for this node's attestation
+     * ({@link #attestationPending} and {@link #needsAttestation})?
+     */
+    public boolean awaitsAttestation(MsgEvent m) {
+        return attestationPending() && needsAttestation(m);
+    }
 
     /**
-     * Is {@code m} a message this node is about to originate that should wait for this node's attestation? True only for
-     * an AGENT that holds no attestation it could sign with now and is still within the wait of this stretch; and only
-     * for a message the attestation would sign: one for a node beyond its controller, not over a direct link, with no
-     * session to send it under. False for every message a node only carries on, for a controller (it signs with its
-     * certificate, which the trust bundle carries), and for an agent with its attestation -- a few field reads and
-     * comparisons, no lock of this class, nothing allocated.
+     * Is this node an AGENT that holds no attestation it could sign with now, and still within the wait of this stretch?
+     * False on a controller (it signs with its certificate, which the trust bundle carries) and on an agent with its
+     * attestation: the node as it stands is read with no lock (one volatile read: never the state's synchronized getters,
+     * which every message this node originates would otherwise enter), a few comparisons, nothing allocated.
      *
      * <p>An agent's inbox consumes from the moment its channels are up, which is BEFORE the node records the controller it
      * joins (ControllerSMHandler: initIOChannels, then setAgentSuccess, then the registration and the first ping): in
-     * that window the controller is not known here yet, so nothing is taken for a message to it and everything a
-     * signature would leave with waits -- for the tens of milliseconds until the first pong.
+     * that window the controller is not known here yet, and the wait holds all the same.
      */
-    public boolean awaitsAttestation(MsgEvent m) {
+    public boolean attestationPending() {
+        if (!required) return false;
+        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        if (st == null || st.regionController || st.region == null) return false;
+        long now = System.currentTimeMillis();
+        OwnAttestation a = ownAttestation;
+        if (a != null) {
+            if (ownKeyB64 == null) {
+                try {
+                    ownCert();                                   // this node's key was not read yet: the comparison below needs it
+                } catch (Exception | Error e) {
+                    if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
+                    return false;
+                }
+            }
+            if (!current(a, st)) a = null;
+        }
+        return attestWait.waiting(a != null && now < a.exp - attestationMs / 10, now);
+    }
+
+    /**
+     * Would {@code m}, which this node originates, be signed with a credential that an agent's attestation is: one for a
+     * node beyond its controller, not over a direct link, with no session to send it under? What such a message is held
+     * with while the attestation is awaited, and what it queues behind ({@link ActiveClient}). False for a message a node
+     * only carries on, on a controller, and for what goes to the agent's own controller (which verifies its certificate).
+     * While the controller is not recorded yet (see {@link #attestationPending}) nothing is taken for a message to it.
+     */
+    public boolean needsAttestation(MsgEvent m) {
         if (!required || m == null || m.getParams() == null || m.getParam(PENDING) == null) return false;
         io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
-        if (cs == null || cs.isRegionalController()) return false;
-        long now = System.currentTimeMillis();
-        OwnAttestation a = ownAttestation == null ? null : currentAttestation();
-        if (a == null && ownAttestation != null && ownKeyB64 == null) {
-            try {
-                ownCert();                                       // this node's key was not read yet: currentAttestation compares it
-            } catch (Exception | Error e) {
-                if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
-                return false;
-            }
-            a = currentAttestation();
-        }
-        if (!attestWait.waiting(a != null && now < a.exp - attestationMs / 10, now)) return false;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        if (st == null || st.regionController || st.region == null) return false;
         Caller c = Caller.fromMsgEvent(m);
         if (c == null || c.isAnonymous()) return false;          // it is not signed at all
         String to = recipient(m);
         if (to == null || directTo(m, to)) return false;
-        String node = recipientNode(to), pr = cs.getRegionalRegion(), pa = cs.getRegionalAgent();
+        String node = recipientNode(to), pr = st.parentRegion, pa = st.parentAgent;
         if (node != null && pr != null && pa != null && node.length() == pr.length() + 1 + pa.length() && node.startsWith(pr)
                 && node.endsWith(pa) && node.charAt(pr.length()) == '_') return false;     // its own controller verifies its certificate
-        return node == null || sessions == null || sessionsBroken || sessions.usable(node, now) == null;
+        return node == null || sessions == null || sessionsBroken || sessions.usable(node, System.currentTimeMillis()) == null;
+    }
+
+    /** {@link #currentAttestation} for the node as it stands in {@code st}: no lock, nothing allocated. */
+    private boolean current(OwnAttestation a, SpeakerPosition.Standing st) {
+        if (!a.region.equals(st.region) || !a.agent.equals(st.agent) || !a.key.equals(ownKeyB64)) return false;
+        String pr = st.parentRegion, pa = st.parentAgent, iss = a.issuer;
+        return pr == null || pa == null || (iss.length() == pr.length() + 1 + pa.length() && iss.startsWith(pr) && iss.endsWith(pa)
+                && iss.charAt(pr.length()) == '/');
     }
 
     /** Guards the replacement of {@link #ownAttestation}: one that just arrived is never dropped for the one before it. */
@@ -1328,26 +1427,37 @@ public final class MsgSigning {
         public final Refusal reason;
         /**
          * Refused: an RPC request under a session this node does not hold (its id). The {@code 401} that answers it names
-         * that session ({@link #answerRefused}), so that its caller's node sends it again, signed. Else null.
+         * that session ({@link #answerRefused}), so that its caller's node may send it again, signed. Else null.
          */
         public final String notHeld;
+        final Word word;
         /**
-         * Accepted, and its signer said under its signature that it does not hold this session ({@link #LOST}); null: it
-         * said nothing of the kind. {@link #lostBy}: the node ({@code region_agent}) the signature verified as.
+         * Accepted, and its signer said under its signature that it does not hold this session ({@link #LOST}) -- with the
+         * signer name of the message it refused ({@link #LOST_BY}) and for how long it has not held it ({@link #LOST_FOR},
+         * ms); null: it said nothing of the kind. {@code lostNamedCurrent}: it was the session this node sent that signer
+         * messages under when the notice was verified. Nothing has been acted on yet: {@link #afterVerified} does that,
+         * once the message has passed every refusal.
          */
         public final String lost;
-        final String lostBy;
+        final String lostName;
+        final long lostForMs;
+        final boolean lostNamedCurrent;
+        /** Accepted under a signature or a MAC: the signer ({@code tenant/region/agent}) and its node ({@code region_agent}); else null. */
+        final String signerName, signerNode;
         /** Accepted, as {@code caller}. */
-        Verdict(Caller caller) { this(caller, null, null); }
-        Verdict(Caller caller, String lost, String lostBy) {
-            this.caller = caller; this.refusal = null; this.reason = null; this.later = false; this.notHeld = null;
-            this.lost = lost; this.lostBy = lostBy;
+        Verdict(Caller caller) { this(caller, null, null, null, null, 0L, false); }
+        Verdict(Caller caller, String signerName, String signerNode, String lost, String lostName, long lostForMs, boolean lostNamedCurrent) {
+            this.caller = caller; this.refusal = null; this.reason = null; this.later = false; this.notHeld = null; this.word = null;
+            this.signerName = signerName; this.signerNode = signerNode;
+            this.lost = lost; this.lostName = lostName; this.lostForMs = lostForMs; this.lostNamedCurrent = lostNamedCurrent;
         }
         /** Not accepted. */
         Verdict(Refusal reason, String refusal, boolean later) { this(reason, refusal, later, null); }
-        Verdict(Refusal reason, String refusal, boolean later, String notHeld) {
-            this.caller = null; this.refusal = refusal; this.reason = reason; this.later = later; this.notHeld = notHeld;
-            this.lost = null; this.lostBy = null;
+        Verdict(Refusal reason, String refusal, boolean later, Word word) {
+            this.caller = null; this.refusal = refusal; this.reason = reason; this.later = later;
+            this.word = word; this.notHeld = word == null ? null : word.sid;
+            this.signerName = null; this.signerNode = null;
+            this.lost = null; this.lostName = null; this.lostForMs = 0L; this.lostNamedCurrent = false;
         }
         public boolean ok() { return refusal == null; }
     }
@@ -1405,7 +1515,11 @@ public final class MsgSigning {
         String sigB64 = m.getParam(SIG);
         String macB64 = sigB64 == null ? m.getParam(MsgSessions.MAC) : null;
         if (sigB64 == null && macB64 == null) {
-            m.removeParam(LOST);                     // a notice counts under a signature: an unsigned message carries none on
+            if (m.getParam(LOST) != null) {         // a notice counts under a signature: an unsigned message carries none on
+                m.removeParam(LOST);
+                m.removeParam(LOST_BY);
+                m.removeParam(LOST_FOR);
+            }
             if (legacyAdmitted && fromBroker != null && fromBroker.getKind() == Caller.Kind.AGENT) return new Verdict(fromBroker);
             if (direct && firstHand != null && fromBroker != null && !fromBroker.isAnonymous() && vouchRefusal(firstHand, fromBroker,
                     ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig())) == null) {
@@ -1438,14 +1552,27 @@ public final class MsgSigning {
             Signer who;
             if (macB64 != null) {
                 String peerNode = nodeOf(by), sid = m.getParam(MsgSessions.SID);
-                under = sessions == null || peerNode == null ? null : sessions.lookup(peerNode, by, sid);
-                if (under == null) return notHeld(m, by, peerNode, sid, now, "a message under a session key this node does not hold (from " + by
-                        + ": this node restarted or the session ended; its sender returns to signatures)");
-                if (now > under.session.expires) {
-                    // forgotten BEFORE this node says it does not hold it: whatever its clock does from here on, no message
-                    // under that session is accepted again (what the sender's retry of an RPC request relies on)
-                    sessions.forget(peerNode, sid);
-                    return notHeld(m, by, peerNode, sid, now, "a message under an ended session key (" + by + ")");
+                // by the NODE and the session id, never by the name the message declares (MsgSessions.find)
+                under = sessions == null || peerNode == null ? null : sessions.find(peerNode, sid);
+                if (under == null) {
+                    return notHeld(m, fromBroker, by, peerNode, sid, sessions == null ? startedNanos : sessions.notHeldSince(peerNode), now,
+                            "a message under a session key this node does not hold (from " + by
+                                    + ": this node restarted or the session ended; its sender returns to signatures)");
+                }
+                if (!by.equals(under.peer.name)) {
+                    // This node HOLDS that session, with another signer than the message declares. Refused -- and nothing is
+                    // said about the session to anybody: no notice, no word in a 401. A relay that reads a session id off
+                    // the wire and writes another tenant's name over the signer's gets a refusal and nothing it can use
+                    // (it used to get this node's signed "not held" of a session it held: the true peer dropped it, and
+                    // sent a request that had already run a second time).
+                    return refuse(m, Refusal.SESSION_KEY, "a message under a session key this node holds with " + under.peer.name
+                            + ", not with the signer it declares (" + by + ")");
+                }
+                if (under.session.endedNanos != 0 || now > under.session.expires) {
+                    // KEPT as ended at this instant (its first refusal as ended), not forgotten: from here on nothing is
+                    // accepted under it whatever this node's clock does, and this node can say for how long that has been so
+                    return notHeld(m, fromBroker, by, peerNode, sid, sessions.ended(under.session), now,
+                            "a message under an ended session key (" + by + ")");
                 }
                 who = under.peer.signer;
                 if (who == null) return refuse(m, Refusal.SESSION_KEY, "a message under a session key whose peer no longer verifies (" + by + ")");
@@ -1524,28 +1651,30 @@ public final class MsgSigning {
             int caps = parseCaps(m.getParam(CAPS));
             Integer had = peerCaps.getIfPresent(peerNode);
             if (had == null || had != caps) peerCaps.put(peerNode, caps);
-            // A lost-session notice (LOST). What an attacker could try with one, and why it does not work:
-            //  - forge it: it is read here only, after the signature verified (under == null: never under a session MAC,
-            //    so never under the session it declares lost) with the signer's credential resolved, its revocation
-            //    checked, the recipient this node and the signed time in its window. A relay holds no node's key.
-            //  - have another node say it: the session looked at is the one this node holds with the node the signature
-            //    verified as (peerNode is who.node(), and `by` is who's name): a node speaks for its own sessions only.
-            //  - replay it: the replay memory above refused a second copy; a copy older than the signature age was refused
-            //    before that; and a notice delivered late (or kept and sent after this node agreed a new session) names a
-            //    session that is no longer the current one, which lostAtPeer ignores.
-            //  - turn "the session is gone" into "accept anything": dropping a session only makes this node SIGN to that
-            //    peer again (signIfPending falls through to the signature when no session is usable). It changes nothing in
-            //    what this node accepts, and nothing about direct links.
-            // The parameter is this message's own: it is removed, so that an answer made from this message never carries it.
-            String said = m.getParam(LOST);
-            if (said != null) m.removeParam(LOST);
-            String lost = said != null && under == null && sessions != null && !sessionsBroken && !to.startsWith("^") ? said : null;
-            if (lost != null) {
-                if (sessions.lostAtPeer(peerNode, by, lost)) {
-                    if (lostHeard.incrementAndGet() == 1) info("session with " + by + " DROPPED: it says it does not hold it (it restarted, or the"
-                            + " session ended there); this node signs to it again and agrees a new session (first of this kind)");
+            // A lost-session notice (LOST) is only READ here, after the signature verified (under == null: never under a
+            // session MAC, so never under the session it declares lost), and taken out of the message, so that an answer
+            // made from this message never carries it. Nothing is acted on: afterVerified does that, once the message has
+            // passed every refusal (the one below for a signer whose key was replaced, and the inbox's own).
+            String said = m.getParam(LOST), saidBy = null;
+            long saidFor = 0L;
+            boolean saidCurrent = false;
+            if (said != null) {
+                saidBy = m.getParam(LOST_BY);
+                String f = m.getParam(LOST_FOR);
+                m.removeParam(LOST);
+                m.removeParam(LOST_BY);
+                m.removeParam(LOST_FOR);
+                if (under != null || saidBy == null || to.startsWith("^")) {
+                    said = null;
                 } else {
-                    lostIgnored.incrementAndGet();           // not the session this node sends under: nothing changes
+                    try {
+                        saidFor = f == null ? 0L : Math.max(0L, Long.parseLong(f));
+                    } catch (NumberFormatException notANumber) {
+                        saidFor = 0L;
+                    }
+                    // before the session table takes this message's word on the peer's incarnation (which may move the
+                    // session aside by itself): was it the session this node sends that peer messages under?
+                    saidCurrent = sessions != null && !sessionsBroken && sessions.isCurrent(peerNode, by, said);
                 }
             }
             if (sessions != null && !sessionsBroken && !to.startsWith("^")) {
@@ -1578,7 +1707,7 @@ public final class MsgSigning {
             // a controller that signs with its certificate shows the key it holds now: an attestation of this node that
             // another key of that controller made is dropped (not under a session: its signer is the session's first)
             if (under == null && who.issuer == null && !who.self && ownAttestation != null) issuerKeySeen(who.region, who.agent, who.key, who.fp);
-            return lost == null ? new Verdict(signed) : new Verdict(signed, lost, peerNode);
+            return new Verdict(signed, by, peerNode, said, saidBy, saidFor, saidCurrent);
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             return refuse(m, Refusal.OTHER, "an unreadable signature (" + e.getClass().getSimpleName() + ")");
@@ -1671,28 +1800,30 @@ public final class MsgSigning {
     }
 
     /**
-     * Refuse {@code m}: it came under the MAC of a session ({@code sid}) this node does not hold -- it restarted, the
-     * session ended here, or it dropped that peer's sessions -- so it cannot be checked at all. Counted and logged like
-     * every refusal; and the node {@code by} names is told, so that it stops sending under that session now and not in
-     * up to 30 s (it returns to signatures and agrees a new session the usual way):
+     * Refuse {@code m}: it came under the MAC of a session ({@code sid}) this node does NOT hold with the node it names --
+     * no slot of that node's entry holds that id ({@link MsgSessions#find}: by node and id, whatever name the message
+     * declares), or the session is kept there as ended -- so it cannot be checked at all. {@code sinceNanos}: since when
+     * this node has certainly not held it. Counted and logged like every refusal; and the node {@code by} names is told,
+     * so that it stops sending under that session now and not in up to 30 s:
      * <ul>
-     * <li>an RPC request is answered {@code 401} as before; the verdict carries the session, and the answer names it
-     *     ({@link #answerRefused}). One answer per request, as before: nothing is added to the wire but a parameter;</li>
+     * <li>an RPC request is answered {@code 401} as before; the verdict carries the notice, and the answer bears it
+     *     ({@link #answerRefused}). One answer per request, as before: nothing is added to the wire but three parameters;</li>
      * <li>anything else has no answer: a notice of its own is sent ({@link #tellLost}), at most one a second per peer.</li>
      * </ul>
      * This runs BEFORE the message is authenticated -- that is the point: it cannot be -- so everything here is decided
      * on an attacker's word, and is written so that it gives one nothing:
      * <ul>
-     * <li><b>No forged drop.</b> The notice names the session id the refused message carried, and its receiver acts on it
-     *     only when that is the session it sends to this node under ({@link MsgSessions#lostAtPeer}). This node says "not
-     *     held" only of a session it does not hold: a forged message that names a session this node DOES hold passes the
-     *     lookup and fails its MAC (refused as a bad signature, no notice). So an attacker can obtain this node's signed
-     *     word only about sessions this node really cannot use -- which is the truth, and all a sender needs to know.</li>
-     * <li><b>No amplification.</b> A notice of its own is sent at most once a second per peer name and
-     *     {@code msg_signing_lost_notices_per_second} times a second for the whole node, whatever the flood; a peer's
-     *     second is looked up before the node's budget is touched, so a flood under one name costs one map read a message.
-     *     A notice is one small message for one refused message at the most, and the message it answers was already paid
-     *     for by its sender.</li>
+     * <li><b>Never "not held" of a session this node holds.</b> The lookup is by the node and the session id. A message
+     *     with a genuine session id is found whatever signer name was written over it: it then fails as a session held
+     *     with another signer, or fails its MAC, and in both cases this node says nothing about the session. So a notice
+     *     exists only for an id that is in no slot of that node's entry, or is kept there as ended.</li>
+     * <li><b>The notice says whose message was refused</b> ({@link #LOST_BY}: the name the refused message declared),
+     *     under this node's signature. Its receiver acts only when that is its own name: a notice provoked with another
+     *     name (the same region and agent under another tenant, say) is addressed to that node and is none of its business.</li>
+     * <li><b>No amplification, and nobody else's budget.</b> A notice of its own is sent only for a message this node's
+     *     broker stamped as coming from the very node it names (no stamp, or another node's: no notice, and the sender
+     *     recovers as it did before there were notices), so a node can spend only its own second -- one notice a second
+     *     per peer -- and the node-wide bound ({@code msg_signing_lost_notices_per_second}) only by being that many nodes.</li>
      * <li><b>No loop.</b> A notice is always signed, never under a session, so it can never come here itself; a message
      *     under a MAC that carries the notice parameter (no node of this build makes one) is refused and not answered
      *     with a notice; a notice is not an RPC request, so its refusal for any other reason is answered by nothing.</li>
@@ -1703,35 +1834,47 @@ public final class MsgSigning {
      *     entry per notice SENT, never one per message refused.</li>
      * </ul>
      */
-    private Verdict notHeld(MsgEvent m, String by, String peerNode, String sid, long now, String why) {
+    private Verdict notHeld(MsgEvent m, Caller fromBroker, String by, String peerNode, String sid, long sinceNanos, long now, String why) {
         refusal(Refusal.SESSION_KEY, m, why);
-        io.cresco.agent.core.ControllerStateImp cs = ce.cstate;
-        if (lostNoticesPerSecond <= 0 || peerNode == null || cs == null || m.getParam(LOST) != null || !plausibleSid(sid)) {
+        SpeakerPosition.Standing st = ce.cstate == null ? null : ce.cstate.standing();
+        if (lostNoticesPerSecond <= 0 || peerNode == null || st == null || st.region == null || m.getParam(LOST) != null || !plausibleSid(sid)) {
             return new Verdict(Refusal.SESSION_KEY, why, false);
         }
         int a = by.indexOf('/'), b = by.indexOf('/', a + 1);         // tenant/region/agent: peerNode != null says it parses
         String tenant = by.substring(0, a), region = by.substring(a + 1, b), agent = by.substring(b + 1);
         if (!CrescoIdentity.isValidTenant(tenant) || !CrescoIdentity.isValidName(region) || !CrescoIdentity.isValidName(agent)
-                || (region.equals(cs.getRegion()) && agent.equals(cs.getAgent()))) {
+                || (region.equals(st.region) && agent.equals(st.agent))) {
             return new Verdict(Refusal.SESSION_KEY, why, false);
         }
+        Word word = new Word(sid, by, sinceNanos, true);
         if (MsgRouter.isRpcRequest(m)) {
-            // its 401 goes where the request says it came from (as before); it names the session only when that is the
+            // its 401 goes where the request says it came from (as before); it bears the notice only when that is the
             // node the request names as its signer -- the one node the notice is for, and the one that can send it again
             return region.equals(m.getSrcRegion()) && agent.equals(m.getSrcAgent())
-                    ? new Verdict(Refusal.SESSION_KEY, why, false, sid) : new Verdict(Refusal.SESSION_KEY, why, false);
+                    ? new Verdict(Refusal.SESSION_KEY, why, false, word) : new Verdict(Refusal.SESSION_KEY, why, false);
         }
-        tellLost(tenant, region, agent, sid, now);
+        // a notice of its own only for what this node's broker stamped as that very node's: the rate bounds below are
+        // then spent by the node they belong to, and by nobody who merely writes its name
+        if (fromBroker == null || fromBroker.isAnonymous() || fromBroker.getKind() == Caller.Kind.API
+                || !tenant.equals(fromBroker.getTenant()) || !region.equals(fromBroker.getRegion()) || !agent.equals(fromBroker.getAgent())) {
+            return new Verdict(Refusal.SESSION_KEY, why, false);
+        }
+        tellLost(tenant, region, agent, word, now);
         return new Verdict(Refusal.SESSION_KEY, why, false);
     }
 
+    /** As the refusal path does it, for a notice about {@code sid} refused from {@code refused} (tests). */
+    void tellLost(String tenant, String region, String agent, String sid, String refused, long now) {
+        tellLost(tenant, region, agent, new Word(sid, refused, sessions == null ? startedNanos : sessions.notHeldSince(region + "_" + agent), true), now);
+    }
+
     /**
-     * Send the node {@code tenant/region/agent} the notice that this node does not hold the session {@code sid}:
-     * unless that peer was sent one within the last {@value #LOST_NOTICE_EVERY_MS} ms, or this node sent
-     * {@code msg_signing_lost_notices_per_second} of them this second. A peer that gets none goes on as it did before
-     * there were notices (its next refused message a second later gets one). No lock is held while the notice is sent.
+     * Send the node {@code tenant/region/agent} the notice {@code word}: unless that peer was sent one within the last
+     * {@value #LOST_NOTICE_EVERY_MS} ms, or this node sent {@code msg_signing_lost_notices_per_second} of them this
+     * second. A peer that gets none goes on as it did before there were notices (its next refused message a second later
+     * gets one). No lock is held while the notice is sent.
      */
-    void tellLost(String tenant, String region, String agent, String sid, long now) {
+    private void tellLost(String tenant, String region, String agent, Word word, long now) {
         String peerNode = region + "_" + agent;
         Long last = lostNoticeAt.getIfPresent(peerNode);
         if (last != null && now - last < LOST_NOTICE_EVERY_MS && now >= last) {
@@ -1763,7 +1906,7 @@ public final class MsgSigning {
             n.setParam("callId-" + region + "-" + agent + "-" + ce.getPluginBuilder().getPluginID(), LOST_CALL);
             // the namespace the named node reads (a tenant's node travels in its own whatever this says: ControllerEngine.originated)
             n.setParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM, tenant);
-            mark(n, sid);
+            mark(n, word);
             ce.getPluginBuilder().msgOut(n);                       // stamped as this controller, routed, signed as it leaves
         } catch (RuntimeException e) {
             lostWithheld.incrementAndGet();                         // not sent: the peer goes on as before there were notices
@@ -1773,79 +1916,110 @@ public final class MsgSigning {
     /**
      * Answer {@code rm}, which {@link #verify} refused with {@code v}: an RPC request is answered {@code 401
      * unauthenticated}, anything else is dropped (as {@link MsgRouter#answerUnauthenticated}). When it was refused for a
-     * session this node does not hold ({@link Verdict#notHeld}), the answer names that session: it is marked here, and
-     * the notice is written when the answer is signed ({@link #signIfPending}) -- signed, never under a session. False
-     * when the answer could not be sent.
-     *
-     * <p>The refusal was produced where the message was verified: on arrival, or before it was dispatched
-     * ({@link #verifyIfDeferred}), in both cases before any handler saw it. That is what lets its caller's node send it
-     * again: nothing of it ran here.
+     * session this node does not hold ({@link Verdict#notHeld}), the answer bears the notice: it is marked here, and the
+     * notice is written when the answer is signed ({@link #signIfPending}) -- signed, never under a session. False when
+     * the answer could not be sent.
      */
     public boolean answerRefused(MsgEvent rm, Verdict v) {
-        if (v != null && v.notHeld != null && MsgRouter.isRpcRequest(rm)) mark(rm, v.notHeld);
+        if (v != null && v.word != null && MsgRouter.isRpcRequest(rm)) mark(rm, v.word);
         return MsgRouter.answerUnauthenticated(ce.getPluginBuilder(), rm, v == null ? null : v.refusal);
     }
 
     /**
-     * Right after {@link #verify} accepted {@code m}, off the wire and for this node, with {@code v}. True: the message
-     * ends here -- it was a lost-session notice of its own (verify acted on it), or the {@code 401} of a call this node
-     * has now sent again; it is handed to nobody. False: it goes on as usual.
+     * Right after {@link #verify} accepted {@code m} with {@code v}, off the wire and for this node, and after the inbox's
+     * own refusals (the tenant rule): the one place a notice is ACTED on. True: the message ends here -- it was a
+     * lost-session notice of its own, or the {@code 401} of a call this node has now sent again; it is handed to nobody.
+     * False: it goes on as usual.
      *
-     * <p><b>The retry.</b> An RPC request this node sent under a session ({@link #sentUnderSession}) and that its peer
-     * refused because it does not hold that session is sent again, signed, so that the application never sees a refusal
-     * that only says "this node restarted". Why this cannot be turned against the fabric:
-     * <ul>
-     * <li><b>Nothing runs twice.</b> The peer's word is its signature on "I refused this call ({@code callId}) because I
-     *     do not hold session S", checked here like any signed message (credential, revocation, recipient, age, replay
-     *     memory), from the very node the request went to, about the very session it went under. A node says that only of
-     *     a session it does not hold, before any handler ran (the refusal is made where the message is verified), and a
-     *     session once not held is never held again (its key came from two ephemeral keys that are gone; an ended one is
-     *     forgotten before the node says so). So no copy of the first message can ever be accepted there: the second is
-     *     the only one that can run. A relay cannot forge that word to obtain a second copy while it delivers the first.</li>
-     * <li><b>At most once per call.</b> The record of a call is removed as it is used (one atomic removal), by any
-     *     reply to that call, and after {@value #LOST_RETRY_MS} ms; the request sent again is signed, so it cannot be
-     *     refused for a session and is never recorded again.</li>
-     * <li><b>Replay protection is untouched.</b> What is sent again is a new message: signed now, with a new signature,
-     *     remembered by its receiver's replay memory like any other. The peer's refusal is itself remembered here: a
-     *     second copy of it is refused as a replay before this method sees it.</li>
-     * <li><b>This node signs only what it wrote.</b> The request sent again is the copy this node kept when it first sent
-     *     it, never the parameters the refusal carried back.</li>
-     * </ul>
-     * A peer of an earlier build never names the session: its {@code 401} reaches the caller as before.
+     * <p><b>Whose notice.</b> Nothing happens unless the notice names THIS node as the signer of the message that was
+     * refused ({@link #LOST_BY}). Then, when it names the session this node sends that peer messages under, that session
+     * is moved aside and this node signs to the peer again.
+     *
+     * <p><b>The retry: a request is sent again only when it provably never ran.</b> The peer's {@code 401} names the
+     * call and the session, and states for how long (D, by ITS monotonic clock, at the instant it signed) it has not
+     * held that session: since it started, since the last time it let go of anything it held with this node, or since it
+     * first refused the session as ended. This node knows how long ago (A, by ITS monotonic clock, now) it sent the
+     * request. It sends the request again only when {@code A < D} (less a margin for two clocks' rates: D/64 + 5 ms):
+     * <pre>
+     *   the peer signed at T, and did not hold the session during [T - D, T] -- nor ever after: a session a node does not
+     *     hold is never held again (its key came of two ephemeral keys that are gone; an ended one stays ended);
+     *   the 401 arrives here at R &gt;= T; the request was sent at R - A &gt; R - D &gt;= T - D;
+     *   so the request was sent AFTER the peer stopped holding the session: every copy of it -- the one refused, one a
+     *     broker delivers again, one a relay kept -- reaches the peer when it cannot be accepted. It never ran, and
+     *     cannot run. The copy sent now, signed, is the only one that can.
+     * </pre>
+     * No wall clock is read and no two clocks are compared with each other: each side measures a duration on its own. A
+     * relay that delays the 401 makes A larger and the retry less likely; it cannot make D larger (it is under the peer's
+     * signature, and a second copy of the 401 is refused by the replay memory before this method sees it). A request
+     * sent BEFORE the peer stopped holding the session -- before it restarted, say -- may have run there (it ran, the
+     * peer crashed before it answered, the broker delivered the unacknowledged copy again): it is NOT sent again, and its
+     * caller sees the 401, exactly as on release 1.3.378. So is every request whose peer cannot say (D = 0), and every
+     * request of a peer of an earlier build (its 401 bears no notice).
+     *
+     * <p>One decision per call: the record goes as it is used, with any reply of the peer the request went to, and after
+     * {@value #LOST_RETRY_MS} ms; the request sent again is signed, so it is never recorded again. What is sent is this
+     * node's own message as it kept it -- checked against the MAC it left with -- never what the refusal carried back.
      */
     public boolean afterVerified(MsgEvent m, Verdict v) {
         if (v == null || !v.ok() || m == null || m.getParams() == null) return false;
         if (v.lost == null) {
-            // any reply to a call this node could send again: the call is answered, there is nothing to send again
-            if (lostRetries != null && lostRetries.size() != 0) {
+            // a reply of the peer a recorded request went to: the call is answered, there is nothing to send again (a
+            // message of any OTHER node that names the call id changes nothing)
+            if (lostRetries != null && v.signerNode != null && lostRetries.size() != 0) {
                 String id = replyCallId(m);
-                if (id != null) lostRetries.invalidate(id);
+                Retry r = id == null ? null : lostRetries.getIfPresent(id);
+                if (r != null && r.peerNode.equals(v.signerNode)) lostRetries.asMap().remove(id, r);
             }
             return false;
         }
         String id = replyCallId(m);
-        if (LOST_CALL.equals(id)) return true;                     // the notice of its own: verify acted on it
-        Retry r = id == null || lostRetries == null ? null : lostRetries.asMap().remove(id);
-        if (r == null || !"401".equals(m.getParam("status_code")) || !r.peerNode.equals(v.lostBy) || !r.sid.equals(v.lost)) {
-            return false;                                           // no call of this node's to send again: its caller sees the 401
+        boolean ownNotice = LOST_CALL.equals(id);                 // a notice of its own: it is handed to nobody either way
+        Retry r = ownNotice || id == null || lostRetries == null ? null : lostRetries.getIfPresent(id);
+        if (r != null && !r.peerNode.equals(v.signerNode)) r = null;
+        if (r != null) lostRetries.asMap().remove(id, r);          // the peer it went to answered: one decision per call
+        if (!selfName().equals(v.lostName)) {
+            lostIgnored.incrementAndGet();                         // refused under another name than this node's: not its business
+            return ownNotice;
+        }
+        if (v.lostNamedCurrent) {
+            if (sessions != null) sessions.lostAtPeer(v.signerNode, v.signerName, v.lost);
+            if (lostHeard.incrementAndGet() == 1) info("session with " + v.signerName + " DROPPED: it says it does not hold it (it restarted,"
+                    + " or the session ended there); this node signs to it again and agrees a new session (first of this kind)");
+        } else {
+            lostIgnored.incrementAndGet();                         // not the session this node sends under: nothing changes
+        }
+        if (ownNotice) return true;
+        if (r == null || !"401".equals(m.getParam("status_code")) || !r.sid.equals(v.lost)) return false;
+        long ageMs = (System.nanoTime() - r.sentNanos) / 1_000_000L + 1;   // rounded up: this node's own monotonic clock
+        if (ageMs + v.lostForMs / 64 + 5 >= v.lostForMs) {
+            // sent before the peer stopped holding the session (or the peer cannot say): it may have run. The 401 goes to
+            // its caller, as on 1.3.378
+            lostNotRetried.incrementAndGet();
+            return false;
         }
         boolean sent;
         try {
-            mark(r.request, "");                                    // signed, whatever session this node holds by now
+            MsgEvent again = again(r);
+            if (again == null) {
+                lostNotRetried.incrementAndGet();
+                return false;
+            }
+            mark(again, RESEND);                                    // signed, whatever session this node holds by now
             java.util.function.Predicate<MsgEvent> tap = resendTap;
             if (tap != null) {
-                sent = tap.test(r.request);
+                sent = tap.test(again);
             } else {
                 ce.msgCounts().originated();                        // a message of this node's, as the one refused was
-                sent = ce.getActiveClient().sendMessage(r.request); // as the router handed it to the producer before
+                sent = ce.getActiveClient().sendMessage(again);     // as the router handed it to the producer before
             }
-        } catch (RuntimeException e) {
+        } catch (Exception | Error e) {
+            if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
             sent = false;
         }
         if (!sent) return false;                                    // counted where it failed: its caller sees the 401, as before
-        if (lostRetried.incrementAndGet() == 1) info("lost sessions: an RPC request " + v.lostBy + " refused because it does not hold the"
-                + " session it came under was sent again, signed; its caller does not see the refusal (first of this kind: "
-                + m.getMsgType() + " " + m.getParam("action") + ")");
+        if (lostRetried.incrementAndGet() == 1) info("lost sessions: an RPC request " + v.signerNode + " refused because it does not hold the"
+                + " session it came under, sent after it stopped holding it, was sent again, signed; its caller does not see the"
+                + " refusal (first of this kind: " + m.getMsgType() + " " + m.getParam("action") + ")");
         return true;
     }
 
@@ -2369,9 +2543,9 @@ public final class MsgSigning {
                         ownAttestation = taken;
                     }
                     attestationWanted = false;               // it is here
-                    Runnable attested = attestedListener;    // what waited for it is sent (no lock is held here)
-                    if (attested != null) {
-                        try { attested.run(); } catch (RuntimeException ignore) { }
+                    ActiveClient client = ce.getActiveClient();  // what waited for it is sent (no lock is held here)
+                    if (client != null) {
+                        try { client.attested(); } catch (RuntimeException ignore) { }
                     }
                     // one line per issuer key: the first attestation, and each one after its issuer came back re-keyed
                     String madeBy = taken.issuerFp, before = attestedBy;

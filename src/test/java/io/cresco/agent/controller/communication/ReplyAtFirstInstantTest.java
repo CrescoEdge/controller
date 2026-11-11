@@ -89,23 +89,24 @@ class ReplyAtFirstInstantTest {
         broker.waitUntilStopped();
     }
 
-    /** The node r1/n1: what its controller sends goes the way AgentServiceImpl.msgOut sends it (stamped, then routed). */
-    private ControllerEngine node(Map<String, Object> extra) {
+    /**
+     * The node r1/n1, secured as a node in production is (message signing on; a region controller, which signs with its
+     * certificate): what its controller sends goes the way AgentServiceImpl.msgOut sends it (stamped, then routed).
+     */
+    private ControllerEngine node(Map<String, Object> extra) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
-        cfg.put("broker_security_enabled", "false");
+        cfg.put("broker_security_enabled", "true");
         cfg.put("tenant_namespacing", "false");
-        cfg.put("tenant_id", "t1");
         cfg.put("route_ready_wait_ms", "100");
         cfg.put("enable_tcp_discovery", "false");
         if (extra != null) cfg.putAll(extra);
         ControllerEngine[] self = new ControllerEngine[1];
-        PluginBuilder pb = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), cfg, m -> {
+        ControllerEngine e = TlsTestSupport.engine("r1", "n1", cfg, m -> {
             sentByController.add(GSON.fromJson(GSON.toJson(m), MsgEvent.class));
             self[0].stampSelf(m);
             self[0].msgIn(m);
-        }, "r1", "n1");
-        ControllerEngine e = new ControllerEngine(null, pb, null, null);
-        e.cstate = TlsTestSupport.state(pb, "r1", "n1");
+        });
+        ((TlsTestSupport.State) e.cstate).regional = true;
         self[0] = e;
         node = e;
         return e;
@@ -118,8 +119,9 @@ class ReplyAtFirstInstantTest {
     }
 
     /**
-     * An RPC request of r1/caller's plugin for a plugin n1 does not run: n1's router answers it with an error
-     * ({@code route unavailable}), a reply n1's controller sends to the caller. The cheapest request a node answers.
+     * An RPC request of r1/caller's plugin, as a node finds it in its inbox. It is not signed, so the node answers it
+     * {@code 401}: an answer its controller makes, signs and sends to the caller -- the cheapest request a secured node
+     * answers, through everything an answer goes through.
      */
     private static MsgEvent request(int i) {
         MsgEvent m = new MsgEvent(MsgEvent.Type.EXEC, "r1", "caller", "pc", "r1", "n1", "plugin-x", false, false);
@@ -134,8 +136,8 @@ class ReplyAtFirstInstantTest {
     }
 
     /**
-     * What reached the caller's inbox within {@code waitMs}, in the order it came: an answer as its call id (it is the
-     * router's error: the caller is answered), a one-way report as its name.
+     * What reached the caller's inbox within {@code waitMs}, in the order it came: an answer as its call id, a one-way
+     * report as its name.
      */
     private List<String> atCaller(int expected, long waitMs) throws Exception {
         List<String> got = new ArrayList<>();
@@ -148,7 +150,8 @@ class ReplyAtFirstInstantTest {
                 if (m.getParam("report") != null) {
                     got.add(m.getParam("report"));
                 } else {
-                    assertNotNull(m.getParam(MsgRouter.ROUTE_UNAVAILABLE), "an answer (here: the router's error)");
+                    assertEquals("401", m.getParam("status_code"), "an answer (here: the node's refusal of an unsigned request)");
+                    assertNotNull(m.getParam(MsgSigning.SIG), "signed by the node");
                     got.add(m.getParam("callId-r1-caller-pc"));
                 }
             }
@@ -364,6 +367,126 @@ class ReplyAtFirstInstantTest {
     }
 
     @Test
+    void aLaterMessageNeverOvertakesAnEarlierOneWhenTheAttestationDoesNotCome() throws Exception {
+        // review: each held message had its own deadline while the wait ended once -- m1 at 0, m2 at 0.7 s and m3 at 1.2 s
+        // (hold 1 s) arrived m1, m3, m2
+        ControllerEngine rc = TlsTestSupport.engine("rgA", "rc", Map.of("broker_security_enabled", "true"));
+        ((TlsTestSupport.State) rc.cstate).regional = true;
+        ControllerEngine a = securedAgent("a30", rc, Map.of("msg_signing_hold_ms", "1000"));
+        node = a;
+        ActiveClient client = a.getActiveClient();
+        long t0 = System.currentTimeMillis();
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "m1")));
+        Thread.sleep(700);
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "m2")));
+        assertEquals(2, client.sendsHeldNow(), "both wait: one stretch, one end");
+        Thread.sleep(500);
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "m3")));
+        List<String> order = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            MsgEvent m = next("rgB_b1", 5_000);
+            order.add(m == null ? "nothing" : m.getParam("payload"));
+        }
+        assertEquals(List.of("m1", "m2", "m3"), order, "in the order they were sent");
+        assertTrue(System.currentTimeMillis() - t0 < 4_000, "and m2 left with m1, at the end of the stretch");
+    }
+
+    @Test
+    void whatWaitedForAProducerLeavesOnTheAttestationAndBeforeWhatIsSentLater() throws Exception {
+        // review: a message held for a producer, then unattested, was not released by the pong (the listener was
+        // registered only by a message held for the attestation): it left when the producer's hold time ended, after a
+        // message sent later
+        ControllerEngine rc = TlsTestSupport.engine("rgA", "rc", Map.of("broker_security_enabled", "true"));
+        ((TlsTestSupport.State) rc.cstate).regional = true;
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("broker_security_enabled", "true");
+        cfg.put("tenant_namespacing", "false");
+        cfg.put("msgin_fault_wait_ms", "6000");
+        ControllerEngine a = TlsTestSupport.engine("rgA", "a31", cfg);
+        ((TlsTestSupport.State) a.cstate).parentRegion = "rgA";
+        ((TlsTestSupport.State) a.cstate).parentAgent = "rc";
+        assertNull(a.getCertificateManager().getPeerTrust().pin("rgA", "rc", leaf(rc), PeerTrustRegistry.ROLE_CONTROLLER, true));
+        assertNull(rc.getCertificateManager().getPeerTrust().pin("rgA", "a31", leaf(a), PeerTrustRegistry.ROLE_AGENT, false));
+        node = a;
+        ActiveClient client = a.getActiveClient();
+        long t0 = System.currentTimeMillis();
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "state-1 (made with no producer)")));
+        assertEquals(1, client.sendsHeldNow());
+        assertTrue(client.initActiveAgentProducer(VM));               // the producer comes
+        Thread.sleep(100);
+        assertEquals(1, client.sendsHeldNow(), "it waits for the attestation now");
+        firstPong(a, rc);                                             // and the attestation with the first pong
+        await(() -> client.sendsHeldNow() == 0, "still held after the producer and the attestation: " + client.sendsHeldNow());
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "state-2 (made later)")));
+        MsgEvent first = next("rgB_b1", 5_000), second = next("rgB_b1", 5_000);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals("state-1 (made with no producer)", first.getParam("payload"));
+        assertEquals("state-2 (made later)", second.getParam("payload"));
+        assertTrue(first.getParam(MsgSigning.CRED).startsWith("att:"), "signed with the attestation it waited for");
+        assertTrue(System.currentTimeMillis() - t0 < 4_000, "long before either hold time ended");
+    }
+
+    @Test
+    void whileAnythingIsHeldALaterMessageOfItsKindGoesBehindItAndTheControllersOwnDoesNotWait() throws Exception {
+        ControllerEngine rc = TlsTestSupport.engine("rgA", "rc", Map.of("broker_security_enabled", "true"));
+        ((TlsTestSupport.State) rc.cstate).regional = true;
+        ControllerEngine a = securedAgent("a32", rc, Map.of());
+        node = a;
+        ActiveClient client = a.getActiveClient();
+        for (int i = 0; i < 5; i++) assertTrue(client.sendMessage(from(a, "rgB", "b1", "far-" + i)));
+        assertEquals(5, client.sendsHeldNow());
+        // what goes to its own controller is not held up by them: the ping that brings the attestation is such a message
+        assertTrue(client.sendMessage(from(a, "rgA", "rc", "for the controller")));
+        assertNotNull(next("rgA_rc", 5_000), "a message for its own controller leaves at once");
+        assertEquals(5, client.sendsHeldNow());
+        firstPong(a, rc);
+        // sent while the timer thread may still be sending the five: it goes behind them, never between or before
+        assertTrue(client.sendMessage(from(a, "rgB", "b1", "far-5")));
+        List<String> order = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            MsgEvent m = next("rgB_b1", 5_000);
+            order.add(m == null ? "nothing" : m.getParam("payload"));
+        }
+        assertEquals(List.of("far-0", "far-1", "far-2", "far-3", "far-4", "far-5"), order);
+    }
+
+    @Test
+    void whatWasHeldForTheControllerThisNodeHadIsNotSentToItAfterItJoinedAnother() throws Exception {
+        // review: a held message kept the forward destination the router chose before the link went: after a re-join
+        // to another controller it went to the former one
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("broker_security_enabled", "false");
+        cfg.put("tenant_namespacing", "false");
+        cfg.put("tenant_id", "t1");
+        PluginBuilder pb = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), cfg, m -> { }, "r1", "n9");
+        ControllerEngine e = new ControllerEngine(null, pb, null, null);
+        TlsTestSupport.State state = TlsTestSupport.state(pb, "r1", "n9");
+        state.parentRegion = "r1";
+        state.parentAgent = "rc";
+        e.cstate = state;
+        node = e;
+        ActiveClient client = e.getActiveClient();
+        MsgEvent forController = new MsgEvent(MsgEvent.Type.CONFIG, "r1", "n9", null, "r1", "rc", null, true, false);
+        forController.setParam("action", "agent_enable");
+        MsgEvent forAnother = new MsgEvent(MsgEvent.Type.EXEC, "r1", "n9", "p1", "r1", "other", null, false, false);
+        forAnother.setParam("action", "noop");
+        forAnother.setParam("report", "kept");
+        assertTrue(client.sendMessage(forController));
+        assertTrue(client.sendMessage(forAnother));
+        assertEquals(2, client.sendsHeldNow());
+        state.parentAgent = "rc2";                                    // the node joined another controller
+        assertTrue(client.initActiveAgentProducer(VM));
+        MsgEvent kept = next("r1_other", 5_000);
+        assertNotNull(kept, "what was for another node is sent");
+        assertEquals("kept", kept.getParam("report"));
+        await(() -> e.msgCounts().droppedCount(MsgCounts.Drop.PARENT_CHANGED) == 1, "the message for the former controller is counted");
+        assertNull(next("r1_rc", 300), "and is not sent to it");
+        assertEquals(1, e.msgCounts().droppedCount(), "counted once");
+        assertEquals(0, e.msgCounts().relayedCount());
+    }
+
+    @Test
     void whatWaitsForAProducerIsBoundedInCountAndInTime() throws Exception {
         ControllerEngine e = node(Map.of("msgin_fault_wait_ms", "400"));
         ActiveClient client = e.getActiveClient();
@@ -383,12 +506,14 @@ class ReplyAtFirstInstantTest {
         huge.setParam("payload", "x".repeat((int) SendHold.MAX_CHARS));
         assertFalse(client.sendMessage(huge));
 
-        // no producer comes: each waited its time and no longer, and each is counted
-        await(() -> client.sendsHeldNow() == 0, "still held after the hold time: " + client.sendsHeldNow());
+        // no producer comes: they waited the stretch's time and no longer, and each is counted (the timer thread does the
+        // counting: wait for IT to have finished, not for the queue to look empty)
+        await(() -> client.heldNotSentCount() == SendHold.MAX_MESSAGES, "not sent after the hold time: " + client.heldNotSentCount());
         long waited = System.currentTimeMillis() - t0;
         assertTrue(waited >= 400 && waited < 5_000, "held " + waited + " ms, the hold time being 400");
-        assertEquals(SendHold.MAX_MESSAGES, client.heldNotSentCount());
-        assertEquals(SendHold.MAX_MESSAGES + over + 1, e.msgCounts().droppedCount(MsgCounts.Drop.NO_SENDER), "every one of them is accounted for");
+        assertEquals(0, client.sendsHeldNow());
+        await(() -> e.msgCounts().droppedCount(MsgCounts.Drop.NO_SENDER) == SendHold.MAX_MESSAGES + over + 1,
+                "every one of them is accounted for: " + e.msgCounts().droppedCount(MsgCounts.Drop.NO_SENDER));
         assertEquals(0, client.heldSentCount());
         // a producer that comes now has nothing stale to send
         assertTrue(client.initActiveAgentProducer(VM));

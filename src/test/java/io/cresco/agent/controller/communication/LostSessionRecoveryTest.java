@@ -221,6 +221,8 @@ class LostSessionRecoveryTest {
         MsgEvent notice = fromB.get(0);
         assertTrue(signed(notice), "a notice is verified under its sender's key");
         assertEquals(first.getParam(MsgSessions.SID), notice.getParam(MsgSigning.LOST), "it names the session it speaks of");
+        assertEquals("t1/rgA/a1", notice.getParam(MsgSigning.LOST_BY), "and the signer of the message that was refused");
+        assertTrue(Long.parseLong(notice.getParam(MsgSigning.LOST_FOR)) >= 0, "and for how long it has not held it");
         assertFalse(MsgRouter.isRpcRequest(notice), "it asks for nothing: nobody answers it");
         assertEquals(MsgSigning.LOST_CALL, notice.getParam("callId-rgA-a1-null"));
         assertTrue(HANDED.get(key(a)).stream().noneMatch(m -> MsgSigning.LOST_ACTION.equals(m.getParam("action"))), "nobody at a is handed the notice");
@@ -255,27 +257,40 @@ class LostSessionRecoveryTest {
         assertEquals(2, refusedAt(b) - refused, "at most 2 refused");
     }
 
-    @Test
-    void anRpcRefusedForALostSessionIsSentAgainOnceSignedAndItsCallerSeesSuccess() throws Exception {
-        ControllerEngine a = agent("a3", Map.of()), b = agent("b3", Map.of());
-        established(a, b);
+    /** {@code a}'s producer for a request sent again: signed as it leaves, kept for the test to deliver. */
+    private static List<MsgEvent> resends(ControllerEngine a) {
         List<MsgEvent> sentAgain = new ArrayList<>();
-        // the producer's part: the request sent again is signed as it leaves, and reaches b
         a.msgSigning().resendTap = again -> {
             a.msgSigning().signIfPending(again);
             sentAgain.add(copy(again));
             return true;
         };
+        return sentAgain;
+    }
+
+    @Test
+    void anRpcSentAfterThePeerLostTheSessionIsSentAgainOnceSignedAndItsCallerSeesSuccess() throws Exception {
+        ControllerEngine a = agent("a3", Map.of()), b = agent("b3", Map.of());
+        established(a, b);
+        List<MsgEvent> sentAgain = resends(a);
+        b.msgSigning().restartSessions();                        // b restarted: it holds nothing from here on
+        Thread.sleep(150);
+        // a does not know yet, and calls b: the request is sent AFTER b stopped holding the session
         String callId = UUID.randomUUID().toString();
         MsgEvent request = request(a, b, callId);
         assertTrue(macd(request));
-        assertEquals(1, a.msgSigning().lostRetriesHeld(), "a keeps what it takes to send the request again");
-        b.msgSigning().restartSessions();
-        int handedToA = HANDED.get(key(a)).size(), ranAtB = HANDED.get(key(b)).size();
+        assertEquals(1, a.msgSigning().lostRetriesHeld(), "a remembers the request it sent under the session");
+        int handedToA = HANDED.get(key(a)).size(), ranAtB = HANDED.get(key(b)).size(), bSent = SENT.get(key(b)).size();
 
-        // b refuses it before anything ran, and its 401 names the session; a sends the request again by itself
+        // b refuses it before anything ran; its 401 names the session, whose message it refused and for how long it has
+        // not held the session; a sends the request again by itself
         assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)));
         assertEquals(ranAtB, HANDED.get(key(b)).size(), "refused before any handler saw it");
+        MsgEvent refusal = SENT.get(key(b)).get(bSent);
+        assertEquals("401", refusal.getParam("status_code"));
+        assertEquals("t1/rgA/a3", refusal.getParam(MsgSigning.LOST_BY));
+        assertTrue(Long.parseLong(refusal.getParam(MsgSigning.LOST_FOR)) >= 150, "b has not held it since it restarted: "
+                + refusal.getParam(MsgSigning.LOST_FOR) + " ms");
         assertEquals(1, sentAgain.size(), "sent again, once");
         MsgEvent again = sentAgain.get(0);
         assertTrue(signed(again), "signed: never under a session, never unsigned");
@@ -283,7 +298,7 @@ class LostSessionRecoveryTest {
         assertEquals(request.getParam("payload"), again.getParam("payload"));
         assertEquals(handedToA, HANDED.get(key(a)).size(), "the caller is not handed the refusal");
         assertEquals(1, a.msgSigning().lostRetriedCount());
-        assertEquals(0, a.msgSigning().lostRetriesHeld(), "its record is gone: one retry per call");
+        assertEquals(0, a.msgSigning().lostRetriesHeld(), "its record is gone: one decision per call");
 
         // b runs it, once, and answers; the caller sees the answer
         assertEquals(Arrival.HANDED, arrive(b, copy(again), plugin(a)));
@@ -303,10 +318,81 @@ class LostSessionRecoveryTest {
         // is under a session b will never hold again, and neither brings a second retry
         MsgSigning.Verdict replayed = b.msgSigning().verify(copy(again), plugin(a), false);
         assertEquals(MsgSigning.Refusal.REPLAY, replayed.reason, "the retry, replayed");
-        assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)), "the first copy, replayed: b answers 401 and names the session again");
+        assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)), "the first copy, replayed: b answers 401 again");
         assertEquals(1, sentAgain.size(), "at most one retry per call: the second refusal goes to the caller");
         assertEquals("401", HANDED.get(key(a)).get(handedToA + 1).getParam("status_code"));
         assertEquals(ranAtB + 1, HANDED.get(key(b)).size(), "nothing ran twice");
+    }
+
+    @Test
+    void aRequestThatMayHaveRunBeforeThePeerRestartedIsNotSentAgainAndItsCallerSeesThe401() throws Exception {
+        // review: R runs at b, b restarts before it answers, a copy of R arrives (the broker delivers an unacknowledged
+        // message again, or a relay kept one). b never held the session in this life -- and R ran all the same.
+        ControllerEngine a = agent("a22", Map.of()), b = agent("b22", Map.of());
+        established(a, b);
+        List<MsgEvent> sentAgain = resends(a);
+        String callId = UUID.randomUUID().toString();
+        MsgEvent request = request(a, b, callId);
+        assertTrue(macd(request));
+        int ranAtB = HANDED.get(key(b)).size(), handedToA = HANDED.get(key(a)).size();
+        assertEquals(Arrival.HANDED, arrive(b, copy(request), plugin(a)), "it ran");
+        b.msgSigning().restartSessions();                        // b crashed before it answered, and is back
+        long notRetried = a.msgSigning().lostNotRetriedCount();
+        assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)), "its copy is refused: b does not hold the session");
+
+        assertEquals(0, sentAgain.size(), "the request was sent BEFORE b stopped holding the session: it may have run, and is not sent again");
+        assertEquals(notRetried + 1, a.msgSigning().lostNotRetriedCount());
+        assertEquals(ranAtB + 1, HANDED.get(key(b)).size(), "it ran once");
+        MsgEvent seen = HANDED.get(key(a)).get(handedToA);
+        assertEquals("401", seen.getParam("status_code"), "its caller sees the 401, exactly as on 1.3.378");
+        assertEquals(callId, seen.getParam("callId-rgA-a22-p1"));
+        assertNull(seen.getParam(MsgSigning.LOST), "and nothing of the notice");
+        // a took b's word on the session all the same: it signs again
+        assertEquals(1, a.msgSigning().lostHeardCount());
+        assertTrue(signed(sent(a, b)));
+    }
+
+    @Test
+    void aRequestUnderASessionThatEndedAtThePeerIsSentAgainOnlyWhenItWasSentAfterTheEnd() throws Exception {
+        ControllerEngine a = agent("a23", Map.of()), b = agent("b23", Map.of());
+        established(a, b);
+        List<MsgEvent> sentAgain = resends(a);
+        MsgEvent before = request(a, b, "before-the-end");
+        assertTrue(macd(before));
+        int ranAtB = HANDED.get(key(b)).size();
+        assertEquals(Arrival.HANDED, arrive(b, copy(before), plugin(a)), "it ran while b held the session");
+        // b's clock passes the session's end (as when an answer to the offer came late: see the offerer's end, below)
+        MsgSessions.Session atB = b.msgSigning().sessionWith("rgA_a23");
+        assertNotNull(atB);
+        b.msgSigning().endSession(atB);
+        int bSent = SENT.get(key(b)).size();
+        assertEquals(Arrival.REFUSED, arrive(b, copy(before), plugin(a)), "a copy of it, delivered after the end");
+        assertEquals("401", SENT.get(key(b)).get(bSent).getParam("status_code"));
+        assertNotNull(SENT.get(key(b)).get(bSent).getParam(MsgSigning.LOST_FOR), "the ended session is kept, as ended at an instant");
+        assertEquals(0, sentAgain.size(), "sent before the end: it may have run, and is not sent again");
+        assertEquals(ranAtB + 1, HANDED.get(key(b)).size());
+        assertNull(b.msgSigning().sessionWith("rgA_a23"), "b sends nothing under it either");
+    }
+
+    @Test
+    void theOfferersSessionEndsNoLaterThanTheAcceptorsHoweverLateTheAnswerCame() throws Exception {
+        long life = 3_600_000L, t0 = 1_000_000_000_000L;
+        MsgSessions a = new MsgSessions(life), b = new MsgSessions(life);
+        MsgSigning.Signer sa = new MsgSigning.Signer("t1", "rgA", "a1", null, "fp-a", List.of(), null, null, null, Long.MAX_VALUE, false);
+        MsgSigning.Signer sb = new MsgSigning.Signer("t1", "rgB", "b1", null, "fp-b", List.of(), null, null, null, Long.MAX_VALUE, false);
+        String offer = a.offerFor("rgB_b1", t0, false);                                         // a offers at t0
+        assertNotNull(offer);
+        b.received("t1/rgB/b1", "t1/rgA/a1", "rgA_a1", "incA", sa, offer, null, null, null, true, t0 + 1_000);   // b takes it a second later
+        String answer = b.ackFor("rgA_a1", t0 + 1_000, false);
+        assertNotNull(answer);
+        long late = t0 + 29_000;                                                                // and its answer reaches a 28 s after that
+        a.received("t1/rgA/a1", "t1/rgB/b1", "rgB_b1", "incB", sb, null, answer, answer.split(":")[0], null, true, late);
+        MsgSessions.Session atA = a.usable("rgB_b1", late), atB = b.find("rgA_a1", answer.split(":")[0]).session;
+        assertNotNull(atA, "a holds the session");
+        assertEquals(t0 + life, atA.expires, "counted from its offer, not from the answer");
+        assertEquals(t0 + 1_000 + life, atB.expires);
+        assertTrue(atA.expires <= atB.expires, "a, which sends under it, stops before b's end");
+        assertNull(a.usable("rgB_b1", atB.expires - MsgSessions.USABLE_MARGIN_MS), "a minute before b's end a no longer sends under it");
     }
 
     @Test
@@ -376,6 +462,12 @@ class LostSessionRecoveryTest {
         assertEquals(Arrival.HANDED, arrive(a, underMac, plugin(b)), "a genuine MAC: the message is accepted");
         assertNull(HANDED.get(key(a)).get(HANDED.get(key(a)).size() - 1).getParam(MsgSigning.LOST), "and the notice in it is removed, unread");
 
+        // b's own notice, genuine and about this very session -- of a message refused under ANOTHER signer's name (the same
+        // region and agent in another tenant): not a message a signed, so not a's business
+        ignored = a.msgSigning().lostIgnoredCount();
+        assertEquals(Arrival.TAKEN, arrive(a, notice(b, a, sid, "tX/rgA/a5"), controller(b)));
+        assertEquals(ignored + 1, a.msgSigning().lostIgnoredCount());
+
         assertEquals(0, a.msgSigning().lostHeardCount(), "a dropped nothing");
         MsgEvent still = sent(a, b);
         assertTrue(macd(still), "a still sends b messages under their session");
@@ -386,10 +478,15 @@ class LostSessionRecoveryTest {
 
     /** A notice as {@code from}'s signing layer makes it for {@code to} about {@code sid}: signed by {@code from}. */
     private static MsgEvent notice(ControllerEngine from, ControllerEngine to, String sid) {
+        return notice(from, to, sid, "t1/" + to.cstate.getRegion() + "/" + to.cstate.getAgent());
+    }
+
+    /** As above, about a message refused from the signer {@code refused}. */
+    private static MsgEvent notice(ControllerEngine from, ControllerEngine to, String sid, String refused) {
         slowWire = new ArrayList<>();
         try {
             // seconds apart from any notice before it: the rate limit is not what is tested here
-            from.msgSigning().tellLost("t1", to.cstate.getRegion(), to.cstate.getAgent(), sid,
+            from.msgSigning().tellLost("t1", to.cstate.getRegion(), to.cstate.getAgent(), sid, refused,
                     System.currentTimeMillis() + (++noticeSeq) * 5_000L);
             assertEquals(1, slowWire.size(), "a notice was made");
             return copy((MsgEvent) slowWire.get(0)[1]);
@@ -541,6 +638,123 @@ class LostSessionRecoveryTest {
         }
         // a never heard any of it: its own word is what counts, and it still (wrongly, but harmlessly) holds the session
         assertEquals(0, a.msgSigning().lostHeardCount());
+    }
+
+    @Test
+    void theHolderOfASessionNeverSaysNotHeldWhateverSignerNameIsWrittenOverTheMessage() throws Exception {
+        // review (critical): a relay reads a's session id off the wire and sends b one message with that id, a junk MAC
+        // and ANOTHER tenant's name for the same region and agent. b looked its sessions up by node and name, missed,
+        // and signed "not held" of a session it held: a dropped it; one such message every 10 s kept the pair on signatures
+        ControllerEngine a = agent("a20", Map.of()), b = agent("b20", Map.of());
+        established(a, b);
+        MsgEvent seen = sent(a, b);                              // what a relay sees: the session id in the clear
+        assertTrue(macd(seen));
+        String sid = seen.getParam(MsgSessions.SID);
+        assertEquals(Arrival.HANDED, arrive(b, copy(seen), plugin(a)), "b HOLDS the session: the genuine message is accepted");
+        long heard = a.msgSigning().lostHeardCount(), told = b.msgSigning().lostToldCount(), withheld = b.msgSigning().lostWithheldCount();
+        int bSent = SENT.get(key(b)).size();
+        for (Caller stamp : new Caller[]{plugin(a), Caller.plugin("tX", "rgA", "a20", "p1"), null}) {
+            MsgEvent forged = copy(seen);
+            forged.setParam(MsgSigning.BY, "tX/rgA/a20");
+            forged.setParam(MsgSessions.MAC, "AAAA");
+            forged.setParam("payload", "forged " + stamp);
+            MsgSigning.Verdict v = b.msgSigning().verify(forged, stamp, false);
+            assertFalse(v.ok());
+            assertNull(v.notHeld, "a session b holds is never reported as not held");
+            assertTrue(v.refusal.contains("this node holds"), v.refusal);
+            b.msgSigning().answerRefused(forged, v);
+        }
+        assertEquals(told, b.msgSigning().lostToldCount(), "b told nobody anything");
+        assertEquals(withheld, b.msgSigning().lostWithheldCount(), "and spent nobody's notice on it");
+        assertEquals(bSent, SENT.get(key(b)).size());
+        assertEquals(heard, a.msgSigning().lostHeardCount());
+        MsgEvent next = sent(a, b);
+        assertTrue(macd(next), "a still sends under the session");
+        assertEquals(sid, next.getParam(MsgSessions.SID));
+        assertEquals(Arrival.HANDED, arrive(b, next, plugin(a)));
+    }
+
+    @Test
+    void aRelayCannotGetARequestRunTwiceWhileTheCalleeHoldsTheSession() throws Exception {
+        // review (critical): the relay delivers request R (it runs), then a copy of it with another tenant's name over the
+        // signer's and a junk MAC. b answered a signed 401 naming session and call; a sent R again, signed; R ran twice
+        ControllerEngine a = agent("a21", Map.of()), b = agent("b21", Map.of());
+        established(a, b);
+        List<MsgEvent> sentAgain = resends(a);
+        String callId = UUID.randomUUID().toString();
+        MsgEvent request = request(a, b, callId);
+        assertTrue(macd(request));
+        int ranAtB = HANDED.get(key(b)).size(), handedToA = HANDED.get(key(a)).size(), bSent = SENT.get(key(b)).size();
+        assertEquals(Arrival.HANDED, arrive(b, copy(request), plugin(a)), "the genuine request runs");
+        MsgEvent forged = copy(request);
+        forged.setParam(MsgSigning.BY, "tX/rgA/a21");
+        forged.setParam(MsgSessions.MAC, "AAAA");
+        assertEquals(Arrival.REFUSED, arrive(b, forged, plugin(a)));
+        // b answers the forged request 401, as it answers any refused request -- with no word about any session
+        assertEquals(bSent + 1, SENT.get(key(b)).size());
+        MsgEvent refusal = SENT.get(key(b)).get(bSent);
+        assertEquals("401", refusal.getParam("status_code"));
+        assertNull(refusal.getParam(MsgSigning.LOST));
+        assertNull(refusal.getParam(MsgSigning.LOST_BY));
+        assertEquals(0, sentAgain.size(), "a sends nothing again");
+        assertEquals(0, a.msgSigning().lostRetriedCount());
+        assertEquals(ranAtB + 1, HANDED.get(key(b)).size(), "the request ran once");
+        assertEquals("401", HANDED.get(key(a)).get(handedToA).getParam("status_code"), "the relay made the call fail, which it could do by dropping it");
+        assertTrue(macd(sent(a, b)), "and the session stands");
+    }
+
+    @Test
+    void anotherNodesMessageThatNamesACallDoesNotRemoveItsRecord() throws Exception {
+        ControllerEngine a = agent("a24", Map.of()), b = agent("b24", Map.of()), c = agent("b25", Map.of());
+        established(a, b);
+        established(a, c);
+        List<MsgEvent> sentAgain = resends(a);
+        b.msgSigning().restartSessions();
+        Thread.sleep(150);
+        String callId = UUID.randomUUID().toString();
+        MsgEvent request = request(a, b, callId);
+        assertEquals(1, a.msgSigning().lostRetriesHeld());
+        // c (any node a verifies) sends a message that names the call: it is handed on, and the record stays
+        MsgEvent fromC = sent(c, a);
+        MsgEvent naming = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "b25", "p1", "rgA", "a24", "p1", false, false);
+        naming.setParam("action", "report");
+        naming.setParam("is_rpc", "true");
+        naming.setParam("callId-rgA-a24-p1", callId);
+        CallerStamps.stamp(naming, plugin(c));
+        c.markForSigning(naming);
+        c.msgSigning().signIfPending(naming);
+        assertEquals(Arrival.HANDED, arrive(a, copy(naming), plugin(c)));
+        assertEquals(1, a.msgSigning().lostRetriesHeld(), "only the peer the request went to answers for it");
+        assertEquals(Arrival.HANDED, arrive(a, fromC, plugin(c)));
+        // b's refusal still brings the retry
+        assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)));
+        assertEquals(1, sentAgain.size());
+    }
+
+    @Test
+    void aNodeThatOnlyWritesAnothersNameSpendsNobodysNotice() throws Exception {
+        // review: the per-peer second and the node's budget were spent on the name a message merely declared
+        ControllerEngine a = agent("a26", Map.of()), b = agent("b26", Map.of("msg_signing_lost_notices_per_second", "2"));
+        established(a, b);
+        MsgEvent template = sent(a, b);
+        assertTrue(macd(template));
+        b.msgSigning().restartSessions();
+        slowWire = new ArrayList<>();
+        try {
+            // another node's flood in a's name (its broker stamp says who it is), and messages with no stamp at all
+            for (int i = 0; i < 50; i++) {
+                MsgEvent bad = copy(template);
+                bad.setParam("payload", "flood " + i);
+                assertFalse(b.msgSigning().verify(bad, i % 2 == 0 ? Caller.plugin("t1", "rgA", "other", "p1") : null, false).ok());
+            }
+            assertEquals(0, b.msgSigning().lostToldCount(), "no notice for a message the broker did not stamp as that node's");
+            assertEquals(0, b.msgSigning().lostWithheldCount(), "and neither a's second nor the node's budget was spent");
+            // a's own message, right after: it is told at once
+            assertEquals(Arrival.REFUSED, arrive(b, copy(template), plugin(a)));
+            assertEquals(1, b.msgSigning().lostToldCount());
+        } finally {
+            slowWire = null;
+        }
     }
 
     @Test

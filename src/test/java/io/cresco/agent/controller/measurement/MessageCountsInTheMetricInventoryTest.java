@@ -67,7 +67,7 @@ class MessageCountsInTheMetricInventoryTest {
         }
         for (String cause : List.of("ttl", "route_error", "tier_refused", "cross_tenant", "sender_unbound", "plugin_admin_unavailable", "plugin_unknown",
                 "plugin_inactive", "controller_not_ready", "controller_stopping", "no_global", "parent_unknown",
-                "source_route_not_relayed", "parent_link_down", "no_sender", "no_destination", "send_failed", "misrouted",
+                "source_route_not_relayed", "parent_link_down", "no_sender", "hold_full", "parent_changed", "no_destination", "send_failed", "misrouted",
                 "inbox_error", "file_group_refused", "file_group_expired", "hold_closed", "node_stopping", "sender_not_plugin")) {
             expected.add("msg.dropped." + cause);
         }
