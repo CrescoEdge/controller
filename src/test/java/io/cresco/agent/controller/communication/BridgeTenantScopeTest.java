@@ -200,16 +200,43 @@ class BridgeTenantScopeTest {
         send(atRegion, false, "T.t1.rgA_a1", 3);
         send(atRegion, true, "T.t1.global.event", 3);
         send(atRegion, false, "T.t1.rgG_gc", 3);
-        send(atRegion, false, "T.cresco-system.rgG_gc", 3);                           // its answers to the operator's global
+        send(atRegion, false, "T.cresco-system.rgG_gc", 3);                           // under the superuser tenant's name
         assertEquals(3, drain(t1Inbox, 8000), "the region's own tenant's traffic did not cross its bridge");
         assertEquals(3, drain(t1Data, 4000), "its tenant's dataplane did not cross");
-        assertEquals(6, drain(operatorInbox, 4000), "what the region sent to the global's inbox did not cross");
+        // its answers to the operator's nodes travel in its own tenant's namespace; under the superuser tenant's name it
+        // brings in nothing any more (that allowance carried no honest traffic)
+        assertEquals(3, drain(operatorInbox, 4000), "a tenant's bridge wrote into a superuser tenant's inbox, or its own answers did not cross");
         int injected = drain(t2Inbox, 3000), injectedData = drain(t2Data, 500);
         System.out.println("region rgA (t1) over its bridge to the global: messages written into tenant t2's inbox=" + injected
                 + ", into its dataplane=" + injectedData + "; discarded at the global=" + gAuthz.bridgeDiscardedCount());
         assertEquals(0, injected, "tenant t1's region wrote into tenant t2's inbox over its bridge");
         assertEquals(0, injectedData, "tenant t1's region wrote into tenant t2's dataplane over its bridge");
-        assertTrue(gAuthz.bridgeDiscardedCount() >= 6);
+        assertTrue(gAuthz.bridgeDiscardedCount() >= 9, "discarded: " + gAuthz.bridgeDiscardedCount());
+    }
+
+    /**
+     * An operator's leaf (a node of the superuser tenant, a network client of the global's broker) reads its inbox in every
+     * tenant's namespace: a tenant's answer, sent in the tenant's own namespace over its region's bridge, reaches it. The
+     * wildcard is one segment and its own inbox only.
+     */
+    @Test
+    void aTenantsAnswerReachesASuperuserTenantsLeafInTheTenantsOwnNamespace() throws Exception {
+        BrokerService g = globalWithRegionA();
+        BrokerService region = plain("rgA_rc", regionA);
+        bridge(region, regionA, g);
+        TlsTestSupport.Id ops = TlsTestSupport.issued(caG, "cresco-system", "rgG", "ops1");
+        Session leaf = client(g, ops), operator = local(g);
+        String inbox = MsgRouter.inboxQueue("rgG_ops1", false, true, "cresco-system", java.util.Set.of("cresco-system"));
+        assertEquals("T.*.rgG_ops1", inbox);
+        MessageConsumer opsInbox = leaf.createConsumer(leaf.createQueue(inbox));
+        Thread.sleep(2000);                                                          // demand crosses the bridge
+        Session atRegion = local(region);
+        send(atRegion, false, "T.t1.rgG_ops1", 3);                                    // the tenant's answer
+        send(atRegion, false, "T.cresco-system.rgG_ops1", 3);                         // not the tenant's to write
+        send(operator, false, "T.a.b.rgG_ops1", 2);                                   // two segments: no tenant's namespace
+        send(operator, false, "T.t1.rgG_ops2", 2);                                    // another node's inbox
+        assertEquals(3, drain(opsInbox, 8000), "a tenant's answer did not reach the operator's leaf (or more than its inbox did)");
+        assertTrue(gAuthz.bridgeDiscardedCount() >= 3, "discarded: " + gAuthz.bridgeDiscardedCount());
     }
 
     /**

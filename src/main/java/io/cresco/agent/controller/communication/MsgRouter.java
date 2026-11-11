@@ -192,7 +192,12 @@ public class MsgRouter {
     static String tenantRefusal(MsgEvent rm, java.util.Set<String> superuserTenants) {
         String msgTenant = rm.getParam(io.cresco.library.security.TenantNamespace.TENANT_PARAM);
         if (msgTenant == null || msgTenant.isEmpty()) return null;        // qualified with this node's tenant at the send
-        io.cresco.library.security.Caller c = io.cresco.library.security.Caller.fromMsgEvent(rm);
+        return tenantRefusal(io.cresco.library.security.Caller.fromMsgEvent(rm), msgTenant, superuserTenants);
+    }
+
+    /** {@link #tenantRefusal(MsgEvent, java.util.Set)} for a caller in hand ({@code c}) and the tenant the message travels in. */
+    public static String tenantRefusal(io.cresco.library.security.Caller c, String msgTenant, java.util.Set<String> superuserTenants) {
+        if (msgTenant == null || msgTenant.isEmpty()) return null;
         if (c == null || c.isAnonymous() || msgTenant.equals(c.getTenant())) return null;
         if (superuserTenants.contains(c.getTenant())) return null;
         return "a message of " + c + " (tenant " + c.getTenant() + ") travels in tenant " + msgTenant
@@ -201,28 +206,80 @@ public class MsgRouter {
 
     /**
      * The tenant whose namespace a message this node originates travels in ({@code cresco_tenant}: it names the queues every
-     * hop puts the message on), decided where the node stamps the message as its caller's and before it is signed:
+     * hop puts the message on), decided where the node stamps the message as its caller's and before it is signed -- or
+     * null: the tenant of the node the message is addressed to, as far as this node knows it, else this node's own.
      * <ul>
      *   <li>a tenant's caller: that tenant, whatever the message carried. An answer is the request's message sent back, so
      *       it carried the request's stamp: a tenant's answer to a superuser tenant's request stayed in the superuser
      *       tenant's namespace and was dropped by the first router ({@link #tenantRefusal}) -- and a tenant's leaf may
      *       write its own tenant's queues only;</li>
-     *   <li>a superuser tenant's caller: the stamp the message carries (the request it answers came in that namespace, or
-     *       an operator's client named the tenant it addresses); else the tenant of the node it is addressed to when this
-     *       node knows it ({@code destinationTenant}: a tenant's leaf consumes its own tenant's inbox and no other);
-     *       else this node's tenant, which controllers read and no tenant's leaf does;</li>
+     *   <li>a superuser tenant's caller answering a tenant's caller ({@code answeredTenant}: the tenant of the caller the
+     *       message carried before this node stamped it -- the verified caller of the request it answers): that tenant,
+     *       never one the request merely named in its stamp;</li>
+     *   <li>a superuser tenant's caller otherwise: the stamp the message carries (a superuser's request it answers came in
+     *       that namespace, or an operator's client named the tenant it addresses); else null (see above: a tenant's
+     *       leaf consumes its own tenant's inbox and no other);</li>
      *   <li>no caller (security off): as before, the stamp it carries, else this node's tenant.</li>
      * </ul>
      * What it returns is never refused by {@link #tenantRefusal(MsgEvent, java.util.Set)} for that caller.
      */
-    public static String travelTenant(io.cresco.library.security.Caller caller, String carried, String nodeTenant,
-                                      java.util.Set<String> superuserTenants, java.util.function.Supplier<String> destinationTenant) {
+    public static String travelTenant(io.cresco.library.security.Caller caller, String answeredTenant, String carried, String nodeTenant,
+                                      java.util.Set<String> superuserTenants) {
         boolean stamped = carried != null && !carried.isEmpty();
         if (caller == null || caller.isAnonymous() || caller.getTenant() == null) return stamped ? carried : nodeTenant;
         if (superuserTenants == null || !superuserTenants.contains(caller.getTenant())) return caller.getTenant();
-        if (stamped) return carried;
-        String to = destinationTenant == null ? null : destinationTenant.get();
-        return to == null || to.isEmpty() ? nodeTenant : to;
+        if (answeredTenant != null && !answeredTenant.isEmpty() && !superuserTenants.contains(answeredTenant)) return answeredTenant;
+        return stamped ? carried : null;
+    }
+
+    /**
+     * The queue a node consumes its inbox {@code agentPath} ({@code <region>_<agent>}) on. With tenant namespacing a
+     * tenant's leaf consumes its own tenant's ({@code T.<tenant>.<path>}) and nothing else; a controller on its own broker
+     * relays every tenant and consumes the inbox in every tenant's namespace ({@code T.*.<path>}: one wildcard segment --
+     * a tenant name has no {@code .} -- and exactly its own inbox). So does any node of a SUPERUSER tenant, an operator's
+     * leaf included: a tenant's node answers it in the tenant's own namespace ({@link #travelTenant}), which its own
+     * tenant's inbox never names. Each message it takes there is judged by its verified caller like any other
+     * ({@code ControllerEngine.admitArrival}, the action table).
+     */
+    public static String inboxQueue(String agentPath, boolean ownBroker, boolean tenantNamespacing, String tenant,
+                                    java.util.Set<String> superuserTenants) {
+        if (!tenantNamespacing || agentPath == null) return agentPath;
+        if (ownBroker || (tenant != null && superuserTenants != null && superuserTenants.contains(tenant))) {
+            return io.cresco.library.security.TenantNamespace.wildcard(agentPath);
+        }
+        return io.cresco.library.security.TenantNamespace.qualify(tenant, agentPath);
+    }
+
+    /**
+     * Why an RPC request that arrived for dispatch on a node of {@code nodeTenant} is not served, or null. Its answer goes to
+     * the address the request names as its source, which nothing binds to who sent it: a tenant's controller could name
+     * another tenant's node there and have this node's (signed) answer sent to it. So a request of ANOTHER tenant's caller
+     * (not a superuser tenant's) must name the node that verified as its sender: the caller's own node, at its region or
+     * its former one ({@code region_alias}); for an API user, the node that vouched for it ({@code speaker}:
+     * {@code <tenant>/<region>/<agent>}, MsgSigning.speakerOf -- when no node is noted, message signing is off and no
+     * sender is verified at all: not judged). Within one tenant nothing changes.
+     */
+    public static String senderRefusal(MsgEvent rm, io.cresco.library.security.Caller caller, String speaker, String nodeTenant,
+                                java.util.Set<String> superuserTenants) {
+        if (caller == null || caller.isAnonymous() || caller.getTenant() == null || caller.getTenant().equals(nodeTenant)) return null;
+        if (superuserTenants != null && superuserTenants.contains(caller.getTenant())) return null;
+        if (!isRpcRequest(rm)) return null;
+        String region, agent, alias = null;
+        if (caller.getKind() == io.cresco.library.security.Caller.Kind.API) {
+            String[] node = speaker == null ? null : speaker.split("/", -1);
+            if (node == null || node.length != 3) return null;
+            region = node[1];
+            agent = node[2];
+        } else {
+            region = caller.getRegion();
+            agent = caller.getAgent();
+            alias = io.cresco.library.security.Caller.validAlias(rm.getParam(io.cresco.library.security.Caller.PARAM_ALIAS), region);
+        }
+        if (agent != null && agent.equals(rm.getSrcAgent()) && region != null
+                && (region.equals(rm.getSrcRegion()) || (alias != null && alias.equals(rm.getSrcRegion())))) return null;
+        return "an RPC request of " + caller + " names " + ParamLog.safeName(rm.getSrcRegion()) + "/" + ParamLog.safeName(rm.getSrcAgent())
+                + " as its sender; a request from another tenant is answered only to the node that verified as its sender ("
+                + region + "/" + agent + ")";
     }
 
     /**

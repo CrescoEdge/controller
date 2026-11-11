@@ -261,6 +261,14 @@ public class AgentConsumer {
 								}
 							}
 
+							// what is dispatched here keeps the tenant rule a relay applies before it sends: its namespace is its
+							// (verified) caller's tenant's, and another tenant's RPC request names the node that verified as its
+							// sender. What was deferred above is judged where it is verified (ControllerEngine.admitDeferred).
+							if (forThisNode(me) && (checkNow || !signing.required()) && !controllerEngine.admitArrival(me, caller)) {
+								settled = true;                     // refused: counted as dropped under its cause
+								return;
+							}
+
 							//logger.info("TEST PLUG 0");
 							//logger.info("Q: " + RXQueueName);
 							//logger.info("TEST PLUG " + controllerEngine.cstate.getAgentPath());

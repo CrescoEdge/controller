@@ -73,6 +73,10 @@ public final class MsgMetrics {
             count(registry, names, GROUP, d.metric(), "Dropped on this node: " + d.what() + ".", ce, e -> e.msgCounts().droppedCount(d));
         }
 
+        count(registry, names, GROUP, "msg.tenant.unresolved", "Messages a superuser tenant's node sent in its own namespace because it"
+                        + " does not know the tenant of the region they are for (a tenant's leaf does not read them there).",
+                ce, e -> e.msgCounts().tenantUnresolvedCount());
+
         // the broker's own counts: read through the engine, and kept across a broker this node makes anew
         broker(registry, names, "broker.caller.stripped", "Caller stamps this node's broker stripped (forged, or carried by a bridge that may not carry them).",
                 ce, CrescoAuthorizationBroker::forgedStampCount);

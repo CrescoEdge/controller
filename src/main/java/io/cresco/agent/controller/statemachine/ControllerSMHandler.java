@@ -1479,17 +1479,13 @@ public class ControllerSMHandler {
                     if(URI != null) {
                         // Tenant namespacing: the inbox queue is tenant-qualified. An infra controller on
                         // vm:// (its own broker) is a multi-tenant relay -> it consumes the T.*.<agentPath>
-                        // WILDCARD so it receives every tenant's traffic regardless of the stamped tenant. A
+                        // WILDCARD so it receives every tenant's traffic regardless of the stamped tenant; so does a
+                        // node of a superuser tenant (a tenant answers it in the tenant's own namespace). Any other
                         // leaf agent (network client, ACL-enforced) consumes only its own T.<tenant>.<agentPath>.
-                        String rxQueue = cstate.getAgentPath();
-                        if (io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig())) {
-                            if (URI.startsWith("vm")) {
-                                rxQueue = io.cresco.library.security.TenantNamespace.wildcard(rxQueue);
-                            } else {
-                                rxQueue = io.cresco.library.security.TenantNamespace.qualify(
-                                        io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig()), rxQueue);
-                            }
-                        }
+                        String rxQueue = io.cresco.agent.controller.communication.MsgRouter.inboxQueue(cstate.getAgentPath(), URI.startsWith("vm"),
+                                io.cresco.agent.controller.communication.SecuritySettings.tenantNamespacing(plugin.getConfig()),
+                                io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig()),
+                                io.cresco.agent.controller.communication.SecuritySettings.superuserTenants(plugin.getConfig()));
                         if (!controllerEngine.getActiveClient().initActiveAgentConsumer(rxQueue, URI)) {
                             // consumer construction failed hard (e.g. broker not trust-ready yet or
                             // authz denial): fail THIS attempt so the outer retry loop advances,
