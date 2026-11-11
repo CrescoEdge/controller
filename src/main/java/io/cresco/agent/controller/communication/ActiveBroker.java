@@ -397,6 +397,8 @@ public class ActiveBroker {
 						String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
 						return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
 					});
+					// a node whose inbox consumer left this broker gets nothing first hand any more: no unsigned direct messages
+					authz.setInboxLeftListener(node -> controllerEngine.msgSigning().inboxConsumerLeft(node));
 					// gfs#26: a node attached here answers at the former region its own registration recorded (region_alias)
 					authz.setRegionAliasLookup((region, agent) -> {
 						io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;

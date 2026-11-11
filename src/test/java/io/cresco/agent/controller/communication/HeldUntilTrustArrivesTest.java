@@ -56,6 +56,27 @@ class HeldUntilTrustArrivesTest {
         child.msgSigning().onParentPong(wire(p), parent.cstate.getRegion(), parent.cstate.getAgent());
     }
 
+    /**
+     * The ping as an agent's health watcher runs it -- the join seen, then both halves (revocations, signatures) of the ping
+     * and of its pong, the pong through the engine --; {@code seq} false: the region is of an earlier build and states no
+     * position of its revocation list.
+     */
+    private static void watcherPing(ControllerEngine child, ControllerEngine parent, boolean seq) {
+        RevocationSync.onParentLink(child, true);
+        MsgEvent p = new MsgEvent(MsgEvent.Type.EXEC, child.cstate.getRegion(), child.cstate.getAgent(), null,
+                parent.cstate.getRegion(), parent.cstate.getAgent(), null, true, false);
+        p.setParam("action", "ping");
+        RevocationSync.onChildPing(child, p);
+        child.msgSigning().onChildPing(p);
+        p = wire(p);
+        Caller.controller("t1", child.cstate.getRegion(), child.cstate.getAgent()).stamp(p);
+        RevocationSync.onPingAtParent(parent, p, false);
+        parent.msgSigning().onPingAtParent(p, false);
+        if (!seq) p.removeParam(RevocationSync.SEQ);
+        p.setReturn();
+        child.onParentPong(wire(p));
+    }
+
     @BeforeAll
     static void fabric() throws Exception {
         g = node("rgG", "gc", true);
@@ -108,7 +129,7 @@ class HeldUntilTrustArrivesTest {
         assertEquals(refusedBefore + 1, b2.msgSigning().refusedCount());
 
         // the parent's first pong brings the bundle: the node is ready, its listeners are told, the held message verifies
-        ping(b2, rB, false);
+        watcherPing(b2, rB, true);
         assertTrue(b2.trustReady());
         assertTrue(changes[0] > 0, "no trust change was announced: a held message would wait out its whole time");
         v = b2.msgSigning().verify(m, plugin(a1), false, null, true);
@@ -132,6 +153,51 @@ class HeldUntilTrustArrivesTest {
         v = b3.msgSigning().verify(unsigned, plugin(a1), false, null, true);
         assertFalse(v.ok());
         assertFalse(v.later, "an unsigned message was held");
+    }
+
+    @Test
+    void aNodeIsReadyOnlyWithTheLastPartOfItsParentsRevocationList() throws Exception {
+        // rgE's controller holds 40 revocations and sends 16 with a pong: e1, which just joined, holds them all with the third
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("broker_security_enabled", "true");
+        cfg.put("revocation_sync_max_entries", "16");
+        ControllerEngine rE = TlsTestSupport.engine("rgE", "rc5", cfg);
+        ((TlsTestSupport.State) rE.cstate).regional = true;
+        java.security.SecureRandom r = new java.security.SecureRandom();
+        java.util.List<String> fps = new java.util.ArrayList<>();
+        byte[] b = new byte[32];
+        for (int i = 0; i < 40; i++) { r.nextBytes(b); fps.add(java.util.HexFormat.of().formatHex(b)); }
+        rE.getCertificateManager().getPeerTrust().mergeRevocations(fps, "test", null);
+        ControllerEngine e1 = node("rgE", "e1", false);
+        TlsTestSupport.State st = (TlsTestSupport.State) e1.cstate;
+        st.parentRegion = "rgE";
+        st.parentAgent = "rc5";
+        joined(e1, rE, false);
+        int[] changes = new int[1];
+        e1.msgSigning().onTrustChange(() -> changes[0]++);
+        watcherPing(e1, rE, true);
+        assertFalse(e1.trustReady(), "ready with 16 of its region's 40 revocations: a key among the other 24 is still accepted");
+        watcherPing(e1, rE, true);
+        assertFalse(e1.trustReady(), "ready with 32 of 40");
+        int before = changes[0];
+        watcherPing(e1, rE, true);
+        assertTrue(e1.trustReady(), "not ready with the whole list");
+        assertEquals(40, e1.getCertificateManager().getPeerTrust().revocations().size());
+        assertTrue(changes[0] > before, "the last part came and nothing was announced: what the inbox holds waits out its whole time");
+    }
+
+    @Test
+    void aParentOfAnEarlierBuildDoesNotHoldANodeBack() throws Exception {
+        // its pongs state no position of its list: whether the list is whole cannot be known, and the node judges as before
+        ControllerEngine f1 = node("rgB", "f1", false);
+        TlsTestSupport.State st = (TlsTestSupport.State) f1.cstate;
+        st.parentRegion = "rgB";
+        st.parentAgent = "rc2";
+        joined(f1, rB, false);
+        assertFalse(f1.trustReady());
+        watcherPing(f1, rB, false);
+        assertFalse(RevocationSync.parentListComplete(f1), "a list of unknown length was taken for whole");
+        assertTrue(f1.trustReady(), "a node under a region of an earlier build holds every message its whole time at each start");
     }
 
     @Test

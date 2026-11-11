@@ -104,6 +104,8 @@ public final class RevocationSync {
         volatile boolean parentJoined;
         /** A pong since this node last joined its parent showed that it holds the parent's whole list. */
         volatile boolean parentComplete;
+        /** A pong since this node last joined its parent stated no position of its list (a parent of an earlier build). */
+        volatile boolean parentStatesNoPosition;
         final Map<String, String> childAcks = new ConcurrentHashMap<>();
         final Map<String, Long> lastWarned = new ConcurrentHashMap<>();
         final Map<String, String> cache = java.util.Collections.synchronizedMap(new LinkedHashMap<String, String>(16, 0.75f, true) {
@@ -404,7 +406,9 @@ public final class RevocationSync {
     private static void noteHeld(State st, MsgEvent pong) {
         if (st.parentComplete) return;
         String seq = pong.getParam(SEQ), epoch = pong.getParam(EPOCH);
+        if (seq == null) st.parentStatesNoPosition = true;
         if (seq == null || epoch == null || epoch.isEmpty() || !epoch.equals(st.parentEpoch)) return;
+        st.parentStatesNoPosition = false;
         try {
             if (st.parentSeq >= Long.parseLong(seq)) st.parentComplete = true;
         } catch (NumberFormatException ignore) { }
@@ -424,8 +428,21 @@ public final class RevocationSync {
         }
         if (st.parentJoined) return false;
         st.parentComplete = false;
+        st.parentStatesNoPosition = false;
         st.parentJoined = true;
         return true;
+    }
+
+    /**
+     * Is this node still waiting for (part of) its parent's revocation list -- so that its inbox holds what it cannot judge
+     * without it? True from a join until {@link #parentListComplete}; not for a parent of an earlier build, whose pongs
+     * state no position: whether its list is whole cannot be known, and a node below it judges with what it holds, as
+     * nodes did before the position was stated.
+     */
+    public static boolean awaitingParentList(ControllerEngine ce) {
+        if (parentListComplete(ce)) return false;
+        State st = STATE.get(ce);
+        return st == null || !st.parentStatesNoPosition;
     }
 
     /**
