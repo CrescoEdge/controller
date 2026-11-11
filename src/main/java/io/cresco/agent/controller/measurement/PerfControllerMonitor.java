@@ -261,7 +261,7 @@ public class PerfControllerMonitor {
                             io.cresco.library.messaging.MsgEvent req =
                                     plugin.getGlobalPluginMsgEvent(io.cresco.library.messaging.MsgEvent.Type.EXEC, region, agent, pid);
                             req.setParam("action", "getmetrics");
-                            io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, pluginTimeoutMs);
+                            io.cresco.library.messaging.MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, req, pluginTimeoutMs);
                             String m = (resp != null) ? resp.getParam("metrics") : null;
                             if (m != null) {
                                 bySource.put(region + "_" + agent + ":" + pid, gson.fromJson(m, Object.class));
@@ -326,7 +326,7 @@ public class PerfControllerMonitor {
                     req.setParam("action_scope", "node");
                     req.setParam("action_include_plugins", includePlugins ? "true" : "false");
                     if (includeResource) { req.setParam("action_include_resource", "true"); }
-                    io.cresco.library.messaging.MsgEvent resp = plugin.sendRPC(req, childTimeoutMs);
+                    io.cresco.library.messaging.MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, req, childTimeoutMs);
                     String mi = (resp != null) ? resp.getParam("metricinventory") : null;
                     if (mi != null) { synched.put(r + "_" + a, gson.fromJson(mi, Object.class)); }
                 } catch (Exception ignore) { /* unreachable/slow node -> skip */ }
@@ -482,7 +482,7 @@ public class PerfControllerMonitor {
                             // Bound this RPC: an unbounded sendRPC here can stall the whole metric
                             // inventory / resourceinfo query if the sysinfo plugin is slow or mid-restart.
                             int sysInfoTimeoutMs = plugin.getConfig().getIntegerParam("resource_rpc_timeout_ms", 3000);
-                            MsgEvent sysInfoResponse = plugin.sendRPC(sysInfoRequest, sysInfoTimeoutMs);
+                            MsgEvent sysInfoResponse = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, sysInfoRequest, sysInfoTimeoutMs);
 
                             if (sysInfoResponse != null) {
                                 String perfString = sysInfoResponse.getCompressedParam("perf");

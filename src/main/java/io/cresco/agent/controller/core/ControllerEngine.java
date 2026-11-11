@@ -107,6 +107,11 @@ public class ControllerEngine {
         this.logger = pluginBuilder.getLogger(ControllerEngine.class.getName(), CLogger.Level.Info);
         this.msgCounts = new io.cresco.agent.controller.communication.MsgCounts(
                 pluginBuilder.getLogger(io.cresco.agent.controller.communication.MsgCounts.class.getName(), CLogger.Level.Info));
+        this.routeGate = new io.cresco.agent.controller.communication.RouteGate(pluginBuilder.getConfig());
+        CLogger routeLog = pluginBuilder.getLogger(io.cresco.agent.controller.communication.RouteGate.class.getName(), CLogger.Level.Info);
+        this.routeGate.setWarn(routeLog::warn);
+        CLogger expiryLog = pluginBuilder.getLogger(io.cresco.agent.controller.communication.ExpiredMessages.class.getName(), CLogger.Level.Info);
+        this.expiredMessages.setWarn(expiryLog::warn);
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
@@ -141,6 +146,65 @@ public class ControllerEngine {
      * {@code msg.*}.
      */
     public io.cresco.agent.controller.communication.MsgCounts msgCounts() { return msgCounts; }
+
+    private volatile io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal, lastGlobal;
+    private volatile boolean knewAGlobal;
+
+    /**
+     * This region begins to join the global {@code region/agent} (found in discovery; its bridge is about to be built).
+     * From now this node has known a global ({@link #knewAGlobal}), and its broker takes a bridge connection that verifies
+     * as that controller for its parent's ({@link #parentWhileNotJoined}).
+     */
+    public void joiningGlobal(String region, String agent) {
+        if (region == null || agent == null) return;
+        this.joiningGlobal = new io.cresco.agent.controller.communication.PeerIdentity.Expected(region, agent);
+        this.knewAGlobal = true;
+    }
+
+    /**
+     * The join attempt begun with {@link #joiningGlobal} ended. {@code joined}: the controller state names the global now,
+     * and it is remembered as the one joined last. Not joined: this region is joining nobody.
+     */
+    public void joinEnded(boolean joined) {
+        io.cresco.agent.controller.communication.PeerIdentity.Expected g = joiningGlobal;
+        if (joined && g != null) lastGlobal = g;
+        joiningGlobal = null;
+    }
+
+    /**
+     * The global of this region while its controller state names none: the one it is joining now, else the one it joined
+     * last (and lost: it is trying to join it again); null when neither. The broker grants it nothing by name -- only a
+     * bridge connection whose certificate verified as that controller is its parent's (CrescoAuthorizationBroker.isParent).
+     */
+    public io.cresco.agent.controller.communication.PeerIdentity.Expected parentWhileNotJoined() {
+        io.cresco.agent.controller.communication.PeerIdentity.Expected g = joiningGlobal;
+        return g != null ? g : lastGlobal;
+    }
+
+    /** Has this node joined a global, or begun to join one, since it started? Never false again once true. */
+    public boolean knewAGlobal() { return knewAGlobal; }
+
+    private final io.cresco.agent.controller.communication.ExpiredMessages expiredMessages = new io.cresco.agent.controller.communication.ExpiredMessages();
+
+    /** The messages this node's broker let expire: counted (msg.expired) and said, whichever broker the node runs now. */
+    public io.cresco.agent.controller.communication.ExpiredMessages expiredMessages() { return expiredMessages; }
+
+    private final io.cresco.agent.controller.communication.RouteGate routeGate;
+
+    /**
+     * What this node's broker can reach, and the RPC requests held for a route that is being made anew: a request for a
+     * node the broker has no way to is answered {@code route unavailable} instead of waiting in a queue (MsgRouter).
+     */
+    public io.cresco.agent.controller.communication.RouteGate routeGate() { return routeGate; }
+
+    /**
+     * Send {@code msg} on toward its forward destination, as the router does: an RPC request this node's broker has no
+     * route for is held or answered (false: it was not sent, and has been accounted for). For the senders beside the
+     * router (the regional executor's send to the global).
+     */
+    public boolean routeKnown(MsgEvent msg, String hop, boolean offWire) {
+        return msgRouter.routeKnown(msg, hop, offWire);
+    }
 
     /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
     private volatile boolean refusedByConfiguration;
@@ -239,6 +303,9 @@ public class ControllerEngine {
         if (sweeper != null) sweeper.shutdownNow();
         boolean isStopped = false;
         try {
+            // first, while this node can still send and sign: the requests it holds for a route are answered (nothing will
+            // send them on), and none is held from now
+            routeGate.stop();
 
             if (healthExecutor != null) {
                 healthExecutor.shutdown();
@@ -933,6 +1000,35 @@ public class ControllerEngine {
         if (t != null) return t;
         msgCounts.tenantUnresolved(region, peers == null ? null : peers.tenantsRecordedFor(region));
         return cfg.tenant;
+    }
+
+    /**
+     * Is the verified caller of {@code msg} of a tenant that is not a superuser's, asking for a node that this node does
+     * not know to be of the caller's own tenant? Such a caller is told nothing about that node's state by how a request
+     * for it fails (MsgRouter: one answer and one timing whether the node is gone, was never there, or cannot be told).
+     * The node's tenant as this node knows it first hand: for its own region the tenant bound to that node's name here,
+     * else its own; for another region the tenant of that region's controllers that completed discovery here, else the
+     * tenant bound to the node's name. False without security or tenant namespacing, and for a message with no caller.
+     */
+    public boolean foreignTenantCaller(MsgEvent msg) {
+        if (msg == null || msg.getParams() == null) return false;
+        Travel cfg = travel();
+        if (!cfg.on) return false;
+        io.cresco.library.security.Caller caller = io.cresco.library.security.Caller.fromMsgEvent(msg);
+        if (caller == null || caller.isAnonymous() || caller.getTenant() == null) return false;
+        if (cfg.superusers != null && cfg.superusers.contains(caller.getTenant())) return false;
+        String region = msg.getDstRegion(), agent = msg.getDstAgent();
+        CertificateManager cm = getCertificateManager();
+        io.cresco.agent.controller.communication.PeerTrustRegistry peers = cm == null ? null : cm.getPeerTrust();
+        String t;
+        if (region == null || region.isEmpty() || (cstate != null && region.equals(cstate.getRegion()))) {
+            t = peers == null || agent == null || cstate == null ? null : peers.boundTenant(cstate.getRegion(), agent);
+            if (t == null) t = cfg.tenant;
+        } else {
+            t = peers == null ? null : peers.tenantOfRegion(region);
+            if (t == null && peers != null && agent != null) t = peers.boundTenant(region, agent);
+        }
+        return t == null || !t.equals(caller.getTenant());
     }
 
     /**

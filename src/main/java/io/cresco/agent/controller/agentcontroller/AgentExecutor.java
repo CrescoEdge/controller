@@ -246,7 +246,7 @@ public class AgentExecutor implements Executor {
                                 p.setParam("action", "ping");
                                 p.setParam("desc", "swim-indirect");
                                 p.setParam("no_cost_route", "1");
-                                MsgEvent r = plugin.sendRPC(p, plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000));
+                                MsgEvent r = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, p, plugin.getConfig().getIntegerParam("peer_ping_timeout", 5000));
                                 reachable = (r != null && "pong".equals(r.getParam("action")));
                             }
                         } catch (Exception ex) { /* reachable stays false */ }

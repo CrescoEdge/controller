@@ -1221,13 +1221,16 @@ public class ControllerSMHandler {
         return ownStatus == null || ownStatus == BrokerStatusType.FAILED || ownStatus == BrokerStatusType.STOPPED;
     }
 
-    private boolean isRegionGlobal(DiscoveryNode discoveryNode) {
+    boolean isRegionGlobal(DiscoveryNode discoveryNode) {
 
         boolean isInit = false;
         logger.debug("isRegionGlobal Called");
 
         try {
             String globalPath = discoveryNode.getDiscoveredPath();
+            // from now a bridge connection that verifies as this global is this region's parent's, not only from the moment
+            // the join is recorded below: the bridge carries the fabric's messages as soon as it is up
+            controllerEngine.joiningGlobal(discoveryNode.discovered_region, discoveryNode.discovered_agent);
             BrokeredAgent own = controllerEngine.getBrokeredAgents().get(globalPath);
             boolean reachable = controllerEngine.isReachableAgent(globalPath);
             if (needsOwnUplink(reachable, own == null ? null : own.getBrokerStatus())) {
@@ -1282,6 +1285,9 @@ public class ControllerSMHandler {
         }
         catch(Exception ex) {
             logger.error("connectToGlobal() Error " + ex.getMessage(), ex);
+        }
+        finally {
+            controllerEngine.joinEnded(isInit);                 // recorded in the state now, or joining nobody
         }
 
         return isInit;
@@ -2204,7 +2210,7 @@ public class ControllerSMHandler {
 
 
 
-            MsgEvent re = plugin.sendRPC(disableMsg,3000);
+            MsgEvent re = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, disableMsg, 3000);
 
             if (re != null) {
 
@@ -2322,7 +2328,7 @@ public class ControllerSMHandler {
                 disableMsg.setParam("desc", "to-rc-agent");
                 disableMsg.setParam("action", "agent_disable");
 
-                MsgEvent re = plugin.sendRPC(disableMsg, 2000);
+                MsgEvent re = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, disableMsg, 2000);
 
                 if (re != null) {
                     logger.info("Agent: " + localAgent + " unregistered from Region: " + localRegion);

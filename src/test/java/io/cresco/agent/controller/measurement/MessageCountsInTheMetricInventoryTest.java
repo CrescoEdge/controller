@@ -58,7 +58,9 @@ class MessageCountsInTheMetricInventoryTest {
         Map<String, String> names = MsgMetrics.register(registry, e);
         Set<String> expected = new HashSet<>(List.of("msg.originated", "msg.relayed", "msg.delivered", "msg.held", "msg.hold.full",
                 "msg.refused", "msg.dropped", "msg.sign.failed", "msg.trust.refused", "msg.filepart.dropped", "msg.tenant.unresolved",
-                "broker.caller.stripped", "broker.bridge.withheld", "broker.bridge.discarded", "broker.anonymous.discarded",
+                "msg.route.held", "msg.route.mismatch", "msg.route.unread.patterns", "msg.expired", "msg.expired.on_arrival",
+                "msg.expired.by_consumer", "broker.dlq.depth",
+                "broker.caller.stripped", "broker.bridge.withheld", "broker.bridge.transit.withheld", "broker.bridge.discarded", "broker.anonymous.discarded",
                 "broker.recipient.withheld", "broker.quarantine.connections"));
         for (String reason : List.of("unsigned", "not_for_this_node", "no_recipient", "too_old", "ahead_of_clock", "replay",
                 "replay_memory_full", "credential", "revoked", "session_key", "bad_signature", "caller_mismatch", "other")) {
@@ -66,7 +68,7 @@ class MessageCountsInTheMetricInventoryTest {
         }
         for (String cause : List.of("ttl", "route_error", "tier_refused", "cross_tenant", "sender_unbound", "plugin_admin_unavailable", "plugin_unknown",
                 "plugin_inactive", "controller_not_ready", "controller_stopping", "no_global", "parent_unknown",
-                "source_route_not_relayed", "parent_link_down", "no_sender", "no_destination", "send_failed", "misrouted",
+                "source_route_not_relayed", "parent_link_down", "no_route", "no_sender", "no_destination", "send_failed", "misrouted",
                 "inbox_error", "file_group_refused", "file_group_expired", "hold_closed", "node_stopping", "sender_not_plugin")) {
             expected.add("msg.dropped." + cause);
         }

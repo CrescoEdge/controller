@@ -26,10 +26,12 @@ import java.util.function.ToLongFunction;
  *       {@code msg.hold.full}; {@code msg.refused} (every message this node refused) and {@code msg.refused.<reason>}
  *       ({@link MsgSigning.Refusal}); {@code msg.dropped} (every message dropped here) and {@code msg.dropped.<cause>}
  *       ({@link MsgCounts.Drop}). Three counts are not messages this node received and are in neither total:
- *       {@code msg.sign.failed}, {@code msg.trust.refused}, {@code msg.filepart.dropped};</li>
+ *       {@code msg.sign.failed}, {@code msg.trust.refused}, {@code msg.filepart.dropped}. Beside them: {@code msg.route.held},
+ *       {@code msg.route.mismatch}, {@code msg.route.unread.patterns} (a gauge), and what the broker let expire, which ended on
+ *       no node: {@code msg.expired}, {@code msg.expired.on_arrival}, {@code msg.expired.by_consumer};</li>
  *   <li>group {@value #BROKER_GROUP}: {@code broker.caller.stripped}, {@code broker.bridge.withheld},
- *       {@code broker.bridge.discarded}, {@code broker.anonymous.discarded}, {@code broker.recipient.withheld},
- *       {@code broker.quarantine.connections} (a gauge: now).</li>
+ *       {@code broker.bridge.transit.withheld}, {@code broker.bridge.discarded}, {@code broker.anonymous.discarded}, {@code broker.recipient.withheld},
+ *       {@code broker.quarantine.connections} and {@code broker.dlq.depth} (gauges: now).</li>
  * </ul>
  * On a quiet fabric, summed over its nodes: {@code msg.originated = msg.delivered + msg.refused + msg.dropped}
  * ({@link MsgCounts}).
@@ -73,6 +75,24 @@ public final class MsgMetrics {
             count(registry, names, GROUP, d.metric(), "Dropped on this node: " + d.what() + ".", ce, e -> e.msgCounts().droppedCount(d));
         }
 
+        count(registry, names, GROUP, "msg.route.held", "RPC requests held on this node for a route that had just gone (each then went on"
+                        + " when the route was back, or was answered that there is none: msg.dropped.no_route).",
+                ce, e -> e.routeGate().heldCount());
+        count(registry, names, GROUP, "msg.route.mismatch", "RPC requests for an inbox the route gate counted no consumer for and this node's"
+                        + " broker had one (each was sent on; a consumer event was missed or the queue is read by a pattern).",
+                ce, e -> e.routeGate().mismatchCount());
+        Gauge.builder("msg.route.unread.patterns", ce, e -> e.routeGate().unreadPatterns())
+                .description("Consumers at this node's broker that read queues by a pattern the route gate does not count: requests for"
+                        + " the inboxes such a pattern can match are sent as before, never answered `route unavailable`.")
+                .strongReference(true).register(registry);
+        names.put("msg.route.unread.patterns", GROUP);
+        count(registry, names, GROUP, "msg.expired", "Messages this node's broker let expire (nothing consumed them within their life).",
+                ce, e -> e.expiredMessages().expiredCount());
+        count(registry, names, GROUP, "msg.expired.on_arrival", "Of msg.expired: messages that had already expired when they reached this"
+                        + " node's broker (the sender's clock is behind, or they waited on the way).",
+                ce, e -> e.expiredMessages().onArrivalCount());
+        count(registry, names, GROUP, "msg.expired.by_consumer", "Messages a consumer of this node's broker discarded as expired by its own clock.",
+                ce, e -> e.expiredMessages().byConsumerCount());
         count(registry, names, GROUP, "msg.tenant.unresolved", "Messages a superuser tenant's node sent in its own namespace because it"
                         + " does not know the tenant of the region they are for (a tenant's leaf does not read them there).",
                 ce, e -> e.msgCounts().tenantUnresolvedCount());
@@ -82,6 +102,9 @@ public final class MsgMetrics {
                 ce, CrescoAuthorizationBroker::forgedStampCount);
         broker(registry, names, "broker.bridge.withheld", "Messages a bridge demanded and this node's broker did not give it.",
                 ce, CrescoAuthorizationBroker::bridgeWithheldCount);
+        broker(registry, names, "broker.bridge.transit.withheld", "Topic messages that reached this node's broker over a bridge and were"
+                        + " not handed on to a bridge that asked for them (a region of a fabric with a global relays none; each message once).",
+                ce, CrescoAuthorizationBroker::transitWithheldCount);
         broker(registry, names, "broker.bridge.discarded", "Messages a bridge brought in for a destination its peer may not write: discarded.",
                 ce, CrescoAuthorizationBroker::bridgeDiscardedCount);
         broker(registry, names, "broker.anonymous.discarded", "Messages sent by connections without a client certificate: discarded.",
@@ -95,6 +118,14 @@ public final class MsgMetrics {
                 .description("Connections without a verified identity up now on this node's broker (they receive nothing; their sends are discarded).")
                 .strongReference(true).register(registry);
         names.put("broker.quarantine.connections", BROKER_GROUP);
+        Gauge.builder("broker.dlq.depth", ce, e -> {
+                    io.cresco.agent.controller.communication.ActiveBroker b = e.getBroker();
+                    return b == null ? 0 : b.deadLetterDepth();
+                })
+                .description("Messages in this node's dead-letter queue (ActiveMQ.DLQ) now: expired messages are not kept there, and what"
+                        + " is expires after broker_dlq_expiry_ms.")
+                .strongReference(true).register(registry);
+        names.put("broker.dlq.depth", BROKER_GROUP);
         return names;
     }
 
