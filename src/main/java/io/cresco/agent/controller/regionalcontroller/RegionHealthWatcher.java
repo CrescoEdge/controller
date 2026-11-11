@@ -782,7 +782,7 @@ public class RegionHealthWatcher {
 
                     if (pingResponse == null) {
                         // an unanswered ping: the global may have restarted and not bound this link yet, so the next goes signed
-                        controllerEngine.msgSigning().parentLinkReset();
+                        controllerEngine.msgSigning().parentPingUnanswered();
                         // Transport-only: record the miss. ParentLinkHealthCheck sees the stale
                         // lastGlobalPongTs and the HC->MINA bridge fires globalControllerLost after
                         // the grace window. No direct state transition here.

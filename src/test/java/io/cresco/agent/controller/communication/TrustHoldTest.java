@@ -85,16 +85,98 @@ class TrustHoldTest {
         TrustHold hold = new TrustHold(5_000L, 3, 100, m -> { });
         try {
             long now = System.currentTimeMillis();
-            assertTrue(hold.hold(msg("a"), 40, now));
-            assertTrue(hold.hold(msg("b"), 40, now));
-            assertFalse(hold.hold(msg("c"), 40, now), "past its size");
-            assertTrue(hold.hold(msg("d"), 10, now));
-            assertFalse(hold.hold(msg("e"), 1, now), "past its count");
+            assertTrue(hold.hold(msg("a"), 40, now, "rgA/a1"));
+            assertTrue(hold.hold(msg("b"), 40, now, "rgA/a2"));
+            assertFalse(hold.hold(msg("c"), 40, now, "rgA/a3"), "past its size");
+            assertTrue(hold.hold(msg("d"), 10, now, "rgA/a3"));
+            assertFalse(hold.hold(msg("e"), 1, now, "rgA/a4"), "past its count");
             assertEquals(3, hold.size());
             assertEquals(2, hold.notHeld.get());
             hold.close();
             assertFalse(hold.hold(msg("f"), 1, now), "held after close");
             assertEquals(0, hold.size());
+        } finally {
+            hold.close();
+        }
+    }
+
+    @Test
+    void oneSenderTakesAnEighthOfTheHoldAndNoMore() throws Exception {
+        // what is held is not verified yet: one sender must not be able to take the room of every other
+        TrustHold hold = new TrustHold(60_000L, 64, 1 << 20, m -> { });
+        try {
+            long now = System.currentTimeMillis();
+            int own = 64 / TrustHold.SENDER_DIVISOR;
+            for (int i = 0; i < own; i++) assertTrue(hold.hold(msg("x" + i), 1, now, "rgB/flood"), "message " + i + " of one sender");
+            assertFalse(hold.hold(msg("x"), 1, now, "rgB/flood"), "one sender holds more than its share");
+            assertFalse(hold.hold(msg("x"), 1, now, "rgB/flood"));
+            for (int i = 0; i < own; i++) assertTrue(hold.hold(msg("y" + i), 1, now, "rgA/a" + i), "another sender found no room");
+            for (int i = 0; i < own; i++) assertTrue(hold.hold(msg("z" + i), 1, now, null), "a message whose sender is not known");
+            assertFalse(hold.hold(msg("z"), 1, now, null), "the unknown senders together hold more than one sender's share");
+            assertEquals(3 * own, hold.size());
+        } finally {
+            hold.close();
+        }
+    }
+
+    @Test
+    void aSendersShareIsFreeAgainOnceItsMessagesWentBack() throws Exception {
+        List<Message> back = new CopyOnWriteArrayList<>();
+        TrustHold hold = new TrustHold(60_000L, 16, 1 << 20, back::add);
+        try {
+            long now = System.currentTimeMillis();
+            assertTrue(hold.hold(msg("a"), 1, now, "rgA/a1"));
+            assertTrue(hold.hold(msg("b"), 1, now, "rgA/a1"));
+            assertFalse(hold.hold(msg("c"), 1, now, "rgA/a1"));
+            hold.trustChanged();
+            await(() -> back.size() == 2, 3_000);
+            assertEquals(2, back.size());
+            assertTrue(hold.hold(msg("d"), 1, System.currentTimeMillis(), "rgA/a1"), "its share was not given back");
+        } finally {
+            hold.close();
+        }
+    }
+
+    @Test
+    void aChangeBetweenTheVerdictAndTheHoldIsNotMissed() throws Exception {
+        // the inbox judged the message (not yet), the trust data changed, a tick took the change -- and only then was the
+        // message held: it waited out its whole time although the data it needed was in
+        List<Message> back = new CopyOnWriteArrayList<>();
+        TrustHold hold = new TrustHold(30_000L, 16, 1 << 20, back::add);
+        try {
+            assertTrue(hold.hold(msg("first"), 1, System.currentTimeMillis(), "rgA/a1"));   // starts the timer
+            long judgedAt = System.currentTimeMillis();
+            Thread.sleep(5);
+            hold.trustChanged();
+            await(() -> back.size() == 1, 3_000);                                            // the tick took the change
+            assertEquals(1, back.size());
+            Message late = msg("late");
+            assertTrue(hold.hold(late, 1, judgedAt, "rgA/a2"));                              // judged before the change, held after
+            await(() -> back.contains(late), 3_000);
+            assertTrue(back.contains(late), "a message judged before a change of the trust data and held after it waits its whole time");
+        } finally {
+            hold.close();
+        }
+    }
+
+    @Test
+    void aRedeliveryThatFailsEndsNeitherTheOthersNorTheTimer() throws Exception {
+        List<Message> back = new CopyOnWriteArrayList<>();
+        TrustHold hold = new TrustHold(60_000L, 16, 1 << 20, m -> {
+            back.add(m);
+            if (back.size() == 1) throw new AssertionError("an Error out of the inbox");
+            if (back.size() == 2) throw new IllegalStateException("an exception out of the inbox");
+        });
+        try {
+            long now = System.currentTimeMillis();
+            for (int i = 0; i < 3; i++) assertTrue(hold.hold(msg("m" + i), 1, now, "rgA/a" + i));
+            hold.trustChanged();
+            await(() -> back.size() == 3, 3_000);
+            assertEquals(3, back.size(), "one failed redelivery kept the others from going back");
+            assertTrue(hold.hold(msg("after"), 1, System.currentTimeMillis(), "rgA/a9"));
+            hold.trustChanged();
+            await(() -> back.size() == 4, 3_000);
+            assertEquals(4, back.size(), "the hold's timer ended with a failed redelivery: nothing held is ever judged again");
         } finally {
             hold.close();
         }

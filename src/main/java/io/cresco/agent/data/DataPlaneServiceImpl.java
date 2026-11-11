@@ -964,6 +964,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         //clean existing listeners
         synchronized (lockMessage) {
+            restoring.addAll(messageConfigMap.keySet());
             //get all keys
             List<String> listenerIds = new ArrayList<>(messageConsumerMap.keySet());
             for(String listenerId : listenerIds) {
@@ -988,6 +989,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
         }
 
         int restored = 0;
+        try {
         for (DataPlanePersistantInstance dataPlanePersistantInstance : saveMessageConfigMap.values()) {
             logger.info("Restoring listenerId: " + dataPlanePersistantInstance.getListenerId()
                     + (dataPlanePersistantInstance.getShard() >= 0 ? " on shard " + dataPlanePersistantInstance.getShard() : ""));
@@ -1003,6 +1005,9 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 tellRefused(dataPlanePersistantInstance.getMessageListener(), refused.getMessage());
             }
             if (id != null) restored++;
+        }
+        } finally {
+            synchronized (lockMessage) { restoring.clear(); }
         }
         logger.warn("Dataplane restored " + restored + " of " + saveMessageConfigMap.size() + " listener(s) after reconnecting");
 
@@ -1067,9 +1072,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
      */
     public boolean holdsMessageListener(String listenerId) {
         synchronized (lockMessage) {
-            return listenerId != null && messageConsumerMap.containsKey(listenerId);
+            // one being put back after a reconnect is held (asking in that moment must not make its owner add a second)
+            return listenerId != null && (messageConsumerMap.containsKey(listenerId) || restoring.contains(listenerId));
         }
     }
+
+    /** The persistent listeners updateConnections is putting back right now (with lockMessage). */
+    private final java.util.Set<String> restoring = new java.util.HashSet<>();
 
     public void removeMessageListener(String listenerId) {
 	    try {
