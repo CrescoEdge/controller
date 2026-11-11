@@ -839,6 +839,26 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   its connection to the controller's broker (the certificate that verified as that controller): an attestation another
   key of it made is dropped at that moment, the agent pings at once, and until the new attestation arrives what goes to
   its controller is signed with its certificate and what goes beyond it waits (`msg_signing_hold_ms`, as at a first join).
+- **The replay memory has a floor across a restart (2026-11-11).** The replay memory is in RAM: a node that restarted
+  remembered nothing, and a signed message it had accepted could be delivered to it once more, and accepted, for as long
+  as its signature was young enough (`msg_signature_max_age_ms`, 5 minutes). (A message under a session MAC cannot: the
+  restarted node holds no session.) Now the latest signing time a node accepted from each signer is on disk
+  (`security/replay-floor.bin`, 24 bytes a signer; `msg_replay_floor`, default true), and at the next start it is that
+  signer's floor: a signed message of that signer signed at or before it may have been accepted before the restart and
+  is refused (`msg.refused.replay`: "... signed at or before the last one this node accepted from it before this node
+  restarted"). Only two signing times of ONE signer are ever compared, so no clock difference between nodes, and no
+  step of the node's own clock, lets a message pass. Everything a signer signs after the last message the node accepted
+  from it has a later signing time and is never refused by this: what it sends after the restart, and what it signed
+  during the outage and a broker stored (which is what a node that knew the link was down now sends: signed). What is
+  refused although it never arrived: a message its signer signed BEFORE one the node accepted from it, still on its way
+  when the node went down -- the node cannot tell it from one it accepted. The record is handed to the operating system
+  before the message is accepted (one append of 24 bytes for a signed message whose signing time is later than its
+  signer's last: a few microseconds), so nothing a process loses -- a kill, an out-of-memory error, an upgrade -- opens a
+  window; it is forced to the disk within a second by a background thread, so after a failure of the HOST (power, the
+  operating system) what was accepted in its last second can be accepted once more. A record is kept while a message at
+  or before it could still be accepted (the maximum age plus the allowance for a signer's clock, by the node's own
+  clock) and dropped when the file is rewritten (at start, and past 8 MB); a storage error is logged (`REPLAY FLOOR ...`)
+  and the node goes on accepting, as before the record existed.
 - **Cost.** Between two nodes that talk both ways, one ECDH agreement per pair and hour, then an HMAC per message (about
   15 us to check, 0.7 KB on the wire); otherwise one signature per message a node originates to anything but its parent
   or children (RSA-3072 private key: about 2 ms of one core, shared by a batch under load) and one signature check per
@@ -875,6 +895,7 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_lost_retry` | true | an RPC request refused for a session its receiver lost is sent again once, signed, by the caller's node |
 | `msg_signing_credentials_max` | 100000 | credentials held verified (an LRU) |
 | `msg_replay_memory_max` | 4000000 | signatures and MACs the replay memory holds (past it, the oldest signing times are refused as too old) |
+| `msg_replay_floor` | true | the latest signing time accepted from each signer is kept on disk: after a restart, what that signer signed at or before it is refused |
 
 ### Final review (2026-11-09)
 

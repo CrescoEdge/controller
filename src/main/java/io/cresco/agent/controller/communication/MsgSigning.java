@@ -374,6 +374,35 @@ public final class MsgSigning {
     /** Credentials verified here: digest -> signer. Bounded LRU ({@code msg_signing_credentials_max}); never cleared wholesale but on a revocation. */
     private final Cache<String, Signer> credCache;
     private final ReplayMemory replay;
+    /** {@code msg_replay_floor} (default true): what this node accepted before a restart is refused after it ({@link ReplayFloor}). */
+    private final boolean replayFloorOn;
+    private volatile ReplayFloor replayFloor;
+    private volatile boolean replayFloorFailed;
+
+    /** The durable floor, opened at the first signed message this node judges (its certificate manager is there by then); or null. */
+    private ReplayFloor floor() {
+        ReplayFloor f = replayFloor;
+        if (f != null || !replayFloorOn || replayFloorFailed) return f;
+        synchronized (this) {
+            f = replayFloor;
+            if (f == null && !replayFloorFailed) {
+                try {
+                    // what it restored at start is news, a storage error is a warning
+                    f = new ReplayFloor(ce.getCertificateManager().identityDirectory().resolve("replay-floor.bin"), maxAgeMs, maxFutureMs,
+                            line -> { if (line.startsWith("REPLAY FLOOR")) warn(line); else info(line); });
+                    replayFloor = f;
+                } catch (RuntimeException e) {
+                    replayFloorFailed = true;
+                    warn("REPLAY FLOOR could not be opened (" + e + "): a signed message this node accepted shortly before a restart"
+                            + " could be accepted again after it (as before this record existed)");
+                }
+            }
+            return f;
+        }
+    }
+
+    /** Signed messages refused because they may have been accepted before this node restarted (diagnostics, tests). */
+    long replayFloorRefused() { ReplayFloor f = replayFloor; return f == null ? 0 : f.refused(); }
     private final AtomicLong signedCount = new AtomicLong(), verifiedCount = new AtomicLong();
     /** Refusals by reason, and when each reason's line is due ({@link Refusal}). */
     private final KindTally refusals = new KindTally(REFUSALS.length, REFUSAL_LINE_EVERY_MS);
@@ -692,6 +721,7 @@ public final class MsgSigning {
                 .maximumSize(Math.max(1L, c.getLongParam("msg_signing_credentials_max", 100_000L)))
                 .expireAfterWrite(Duration.ofHours(1)).build();
         this.replay = new ReplayMemory(maxAgeMs, maxFutureMs, Math.max(4096L, c.getLongParam("msg_replay_memory_max", 4_000_000L)), this::warn);
+        this.replayFloorOn = required && c.getBooleanParam("msg_replay_floor", true);
     }
 
     /** Messages sent and accepted under a session key, sessions made (diagnostics, tests). */
@@ -728,6 +758,8 @@ public final class MsgSigning {
     public void close() {
         MsgBatchSigner b = batcher;
         if (b != null) b.close();
+        ReplayFloor f = replayFloor;
+        if (f != null) f.close();
     }
 
     /** Messages signed in a shared batch (diagnostics, tests). */
@@ -1653,8 +1685,21 @@ public final class MsgSigning {
             if (fromBroker != null && !fromBroker.equals(signed)) {
                 return refuse(m, Refusal.CALLER_MISMATCH, "the broker's caller " + fromBroker + " is not the signed caller " + signed);
             }
-            switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now, signerMemoryKey(who))) {
-                case FRESH: break;
+            // Across a restart (a signature only: a restarted node holds no session, so nothing under a MAC can come again):
+            // a message its signer signed at or before the latest one this node accepted from it IN AN EARLIER LIFE may be
+            // one it accepted then, and is refused. Two signing times of one signer are compared, nothing else.
+            long memory = signerMemoryKey(who);
+            ReplayFloor floor = under == null && !who.self ? floor() : null;
+            if (floor != null && floor.mayHaveAccepted(memory, t)) {
+                return refuse(m, Refusal.REPLAY, "a message " + by + " signed at or before the last one this node accepted from it before"
+                        + " this node restarted (it may have accepted it then)");
+            }
+            switch (replay.record(ReplayMemory.digest64(sha256.get().digest(replayKey)), t, now, memory)) {
+                case FRESH:
+                    // recorded -- in the operating system's hands -- before the message is accepted: its signing time is
+                    // its signer's floor after this node's next restart
+                    if (floor != null) floor.accepted(memory, t, now);
+                    break;
                 case REPLAY: return refuse(m, Refusal.REPLAY, "a signature seen before (a replay) from " + by);
 
                 case TOO_OLD: return refuse(m, Refusal.REPLAY_MEMORY_FULL, "a message signed " + (now - t) / 1000 + " s ago while the replay memory for " + by + " is full");
