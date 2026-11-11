@@ -45,6 +45,9 @@ public class AgentProducer {
     // tenant, so isolation holds end-to-end and every relay qualifies identically. See TenantNamespace.
     private final boolean tenantNamespacing;
     private final String localTenant;
+    // RpcExpiry: an RPC request that states its caller's timeout lives that long plus this margin, not the usual five minutes
+    private final long rpcExpiryMarginMs;
+    private final long workerTtlMs;
 
 
     private class ClearProducerTask extends io.cresco.agent.core.GuardedTimerTask {
@@ -86,6 +89,8 @@ public class AgentProducer {
 
         this.tenantNamespacing = SecuritySettings.tenantNamespacing(plugin.getConfig());
         this.localTenant = io.cresco.agent.controller.communication.SecuritySettings.tenant(plugin.getConfig());
+        this.rpcExpiryMarginMs = RpcExpiry.marginMs(plugin.getConfig());
+        this.workerTtlMs = plugin.getConfig().getLongParam("activeproducerworker_ttl", 300000L);
 
 
         try {
@@ -169,17 +174,14 @@ public class AgentProducer {
      * counted as dropped here, once, under what failed (no destination, or the broker did not take it) -- a caller that
      * reports the failure does not count it again.
      */
-    public boolean sendMessage(MsgEvent sm) {
-        boolean isSent = false;
-        long currentRetryDelay = INITIAL_RETRY_DELAY_MS;
-
+    /**
+     * The queue {@code sm} is sent to (what {@link #sendMessage} hands the broker, and what {@link RouteGate} asks the
+     * broker about): its forward destination, with tenant namespacing qualified with the tenant the message travels in --
+     * which is stamped on it here, once, at its origin. Null when it names no destination.
+     */
+    String queueOf(MsgEvent sm) {
         String dstPath = sm.getForwardDst();
-        if (dstPath == null) {
-            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
-            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_DESTINATION, sm);
-            return false; // Cannot proceed without a destination
-        }
-
+        if (dstPath == null) return null;
         // Tenant namespacing: stamp the origin tenant once (at origin the param is absent -> use local
         // tenant; at a relay it is already present and preserved), then qualify the always-raw forward
         // destination with the MESSAGE's tenant. Every hop derives the same qualified queue, and the
@@ -196,6 +198,19 @@ public class AgentProducer {
                 dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
             }
         }
+        return dstPath;
+    }
+
+    public boolean sendMessage(MsgEvent sm) {
+        boolean isSent = false;
+        long currentRetryDelay = INITIAL_RETRY_DELAY_MS;
+
+        String dstPath = queueOf(sm);
+        if (dstPath == null) {
+            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_DESTINATION, sm);
+            return false; // Cannot proceed without a destination
+        }
         // D4: a message this node originated is signed as it leaves (relays carry their origin's signature)
         controllerEngine.msgSigning().signIfPending(sm);
 
@@ -205,7 +220,7 @@ public class AgentProducer {
         if (!sm.hasFiles()) {
             MsgQoS.Tier tier = MsgQoS.classify(sm);
             if (tier.isControlPlane()) {
-                boolean ok = controlPlane.send(dstPath, sm, tier);
+                boolean ok = controlPlane.send(dstPath, sm, tier, RpcExpiry.ttlMs(sm, controlPlane.ttl(), rpcExpiryMarginMs));
                 if (!ok) {
                     ControlPlaneFailures.SEND_LOST.incrementAndGet();
                     logger.error("Control-plane send failed to [{}] for {} message.", dstPath, sm.getMsgType());
@@ -271,7 +286,7 @@ public class AgentProducer {
                         break;
                     } else {
                         try {
-                            apw.sendMessage(sm);
+                            apw.sendMessage(sm, RpcExpiry.ttlMs(sm, workerTtlMs, rpcExpiryMarginMs));
                             isSent = true;
                             logger.debug("Message to [{}] sent successfully (Attempt {}/{})", dstPath, effectivelyFinalAttempt, MAX_SEND_RETRIES_CONFIG);
                             break;

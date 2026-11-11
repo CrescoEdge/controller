@@ -71,7 +71,7 @@ public class CapabilityInventory {
                         try {
                             MsgEvent req = plugin.getGlobalPluginMsgEvent(MsgEvent.Type.EXEC, region, agent, pid);
                             req.setParam("action", "getcapabilities");
-                            MsgEvent resp = plugin.sendRPC(req, timeout);
+                            MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, req, timeout);
                             String caps = (resp != null) ? resp.getParam("capabilities") : null;
                             if (caps != null) {
                                 bySource.put(region + "_" + agent + ":" + pid, gson.fromJson(caps, Object.class));
@@ -130,7 +130,7 @@ public class CapabilityInventory {
                     req.setParam("action_scope", "node");
                     req.setParam("action_include_plugins", includePlugins ? "true" : "false");
                     req.setParam("action_include_osgi", includeOsgi ? "true" : "false");
-                    MsgEvent resp = plugin.sendRPC(req, childTimeoutMs);
+                    MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, req, childTimeoutMs);
                     String ci = (resp != null) ? resp.getParam("capabilityinventory") : null;
                     if (ci != null) { synched.put(r + "_" + a, gson.fromJson(ci, Object.class)); }
                 } catch (Exception ignore) { /* unreachable/slow node -> skip */ }

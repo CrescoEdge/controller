@@ -169,12 +169,138 @@ public class MsgRouter {
             unavailable(rm, hop, "broker client not available", MsgCounts.Drop.NO_SENDER);
             return;
         }
+        if (!routeKnown(rm, hop.name(), offWire)) return;          // held for a route being made anew, or answered: no route
         if (!client.sendMessage(rm)) {
             // counted where it failed, under what failed (no producer, no destination, the broker did not take it)
             unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed", null);
             return;
         }
         if (offWire) controllerEngine.msgCounts().relayed();
+    }
+
+    /**
+     * Before an RPC request is handed to this node's broker: does the broker have a way to the node it is for
+     * ({@link RouteGate})? True: send it (also for everything that is no RPC request, and on a node without a broker).
+     * False: it was not sent and is accounted for --
+     * <ul>
+     *   <li>the route went so recently that it may be being made anew, or this broker never had it: the request is held (in
+     *       the gate, not in the broker) and goes on the moment the route is there -- through this method again -- or is
+     *       answered when the grace has passed;</li>
+     *   <li>the route is gone: it is answered {@code route unavailable} now (a ping is not answered: its pinger records
+     *       the miss), and counted as dropped under {@code no_route}.</li>
+     * </ul>
+     * The broker has the last word: before a request is held or answered, the broker itself is asked for a consumer of
+     * the queue ({@link ActiveBroker#queueHasConsumer}); one the gate did not count sends the request and is reported.
+     *
+     * <p><b>Another tenant's caller learns nothing from it.</b> A caller of a tenant that is not a superuser's, asking for a
+     * node this node does not know to be of its own tenant ({@code ControllerEngine.foreignTenantCaller}), gets one answer
+     * and one timing whatever this node knows: the request is held for one grace from its arrival (or half its stated
+     * timeout) and then answered with a text that says nothing of the node -- whether it left long ago, a moment ago, or
+     * was never there. (A node that is there answers, or does not, by its own rules.)
+     *
+     * {@code hop}: the name the reply carries in its {@code route_unavailable} parameter.
+     */
+    public boolean routeKnown(MsgEvent rm, String hop, boolean offWire) {
+        return routeKnown(rm, hop, offWire, 0L);
+    }
+
+    /** {@code heldUntil}: 0, or the time a request that was held before is held until at most (one grace, however the route flaps). */
+    private boolean routeKnown(MsgEvent rm, String hop, boolean offWire, long heldUntil) {
+        RouteGate gate = controllerEngine.routeGate();
+        if (gate == null || !gate.active() || !isRpcRequest(rm)) return true;
+        ActiveClient client = controllerEngine.getActiveClient();
+        String queue = client == null ? null : client.queueOf(rm);
+        if (queue == null) return true;                              // no producer, no destination: the send reports it
+        long now = System.currentTimeMillis();
+        long known = gate.noRouteFrom(queue, now);
+        if (known == RouteGate.ROUTE) return true;
+        if (brokerHasConsumer(gate, queue)) return true;             // the gate missed it: the broker has the last word
+        boolean foreign = controllerEngine.foreignTenantCaller(rm);
+        long until = foreign ? now + gate.graceMs() : known;
+        if (heldUntil > 0L) {
+            until = Math.min(until, heldUntil);
+        } else {
+            long timeout = RpcExpiry.statedTimeoutMs(rm);
+            if (timeout > 0L) until = Math.min(until, now + timeout / 2);    // never most of the caller's own wait
+        }
+        final long deadline = until;
+        if (deadline > now && gate.hold(queue, rm.getForwardDst(), deadline, now,
+                () -> resume(rm, hop, offWire, deadline), () -> gaveUp(rm, hop, queue, offWire, foreign))) {
+            return false;
+        }
+        noRoute(rm, hop, queue, heldUntil > 0L, foreign);
+        return false;
+    }
+
+    /** Asks the broker itself; a consumer there that the gate did not count is reported. True when it cannot be asked. */
+    private boolean brokerHasConsumer(RouteGate gate, String queue) {
+        ActiveBroker broker = controllerEngine.getBroker();
+        if (broker == null || !broker.queueHasConsumer(queue)) return false;
+        gate.mismatch(queue);
+        return true;
+    }
+
+    /** A held request's route is back: it goes on, through the gate again (the route may have gone once more). */
+    private void resume(MsgEvent rm, String hop, boolean offWire, long heldUntil) {
+        try {
+            if (!routeKnown(rm, hop, offWire, heldUntil)) return;
+            sendHeld(rm, hop, offWire);
+        } catch (RuntimeException e) {
+            logger.error("route: a request held for its route could not be sent on: " + e);
+            unavailable(rm, hop, "the request could not be sent on (" + e + ")", MsgCounts.Drop.ROUTE_ERROR);
+        }
+    }
+
+    /** The grace of a held request ended. The broker is asked once more: a consumer there sends it; else it is answered. */
+    private void gaveUp(MsgEvent rm, String hop, String queue, boolean offWire, boolean foreign) {
+        try {
+            if (brokerHasConsumer(controllerEngine.routeGate(), queue)) {
+                sendHeld(rm, hop, offWire);
+                return;
+            }
+        } catch (RuntimeException e) {
+            logger.error("route: a held request could not be judged at the end of its grace: " + e);
+        }
+        noRoute(rm, hop, queue, true, foreign);
+    }
+
+    /** Hand a request that was held to the broker, as {@link #send} does: a send that cannot happen is answered too. */
+    private void sendHeld(MsgEvent rm, String hop, boolean offWire) {
+        ActiveClient client = controllerEngine.getActiveClient();
+        if (client == null) {
+            unavailable(rm, hop, "broker client not available", MsgCounts.Drop.NO_SENDER);
+            return;
+        }
+        if (!client.sendMessage(rm)) {
+            unavailable(rm, hop, "broker send to " + rm.getForwardDst() + " failed", null);     // counted where it failed
+            return;
+        }
+        if (offWire) controllerEngine.msgCounts().relayed();
+    }
+
+    /**
+     * The RPC request {@code rm} ends here: this node's broker has no way to its node. Counted ({@code no_route}; the count
+     * logs its first and then at most one line every 10 s), answered {@code route unavailable} unless it is a ping.
+     * {@code foreign}: its caller is of another tenant than the node: the answer names the node it asked for and nothing
+     * this node knows of it.
+     */
+    private void noRoute(MsgEvent rm, String hop, String queue, boolean waited, boolean foreign) {
+        controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_ROUTE, rm);
+        String node = rm.getForwardDst();
+        if ("ping".equals(rm.getParam("action"))) {
+            logger.debug("route: no route to " + node + "; a liveness ping is not answered (its pinger records a miss)");
+            return;
+        }
+        String reason = "no route to " + ParamLog.safeName(node);
+        if (!foreign) {
+            reason += ": nothing at this node's broker consumes its inbox" + (waited ? " (none came while the request was held for it)" : "")
+                    + " -- the node, or the controller it is reached through, is not connected";
+        }
+        logger.debug("route: " + hop + " unavailable (" + reason + "); answering RPC with an error, queue " + queue);
+        if (!answerWithError(plugin, rm, ROUTE_UNAVAILABLE, hop, "route unavailable at "
+                + plugin.getRegion() + "_" + plugin.getAgent() + ": " + hop + ": " + reason)) {
+            logger.error("route: error reply for a request to " + ParamLog.safeName(node) + " failed");
+        }
     }
 
     /**
@@ -369,6 +495,10 @@ public class MsgRouter {
      * {@code cause} -- null when what failed has counted it already (a send).
      */
     private void unavailable(MsgEvent rm, Hop hop, String reason, MsgCounts.Drop cause) {
+        unavailable(rm, String.valueOf(hop), reason, cause);
+    }
+
+    private void unavailable(MsgEvent rm, String hop, String reason, MsgCounts.Drop cause) {
         if (cause != null) controllerEngine.msgCounts().dropped(cause, rm);
         String what = "type=" + rm.getMsgType() + " action=" + rm.getParam("action")
                 + " src=" + rm.getSrcRegion() + "_" + rm.getSrcAgent() + "/" + rm.getSrcPlugin()

@@ -68,6 +68,8 @@ public final class MsgCounts {
         SOURCE_ROUTE_NOT_RELAYED("source_route_not_relayed", "a source-routed message this node does not relay"),
         /** Waited msgin_fault_wait_ms for the link to the parent's broker, which stayed down. */
         PARENT_LINK_DOWN("parent_link_down", "a message held for the parent link, which stayed down until the wait ended or the sender gave up"),
+        /** An RPC request for a node this node's broker has no way to ({@link RouteGate}): answered at once, never sent. */
+        NO_ROUTE("no_route", "an RPC request for a node this node's broker has no way to (nothing consumes its inbox here)"),
         /** This node has no producer (or broker client) now: its link is being made anew. */
         NO_SENDER("no_sender", "a message to send while this node has no producer (AgentProducer is null. Message not sent)"),
         /** Behind messages this node holds to be sent first, and the hold has no room: sending it now would overtake them. */

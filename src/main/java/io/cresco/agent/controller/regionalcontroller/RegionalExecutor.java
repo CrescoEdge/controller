@@ -314,6 +314,12 @@ public class RegionalExecutor implements Executor {
                     return;
                 }
                 incoming.setForwardDst(controllerEngine.cstate.getGlobalRegion(),controllerEngine.cstate.getGlobalAgent(), null);
+                // the global is joined but the bridge to it is gone (it restarts): an RPC request is held for the bridge or
+                // answered, not left in a queue for a global that may not come back while its caller waits
+                if (!controllerEngine.routeKnown(incoming, "REMOTE_GLOBAL", offWire)) {
+                    settled = true;
+                    return;
+                }
                 //ge.setParam("dst_region",controllerEngine.cstate.getGlobalRegion());
                 //ge.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());
                 //ge.setParam("dst_plugin",controllerEngine.cstate.getControllerId());
