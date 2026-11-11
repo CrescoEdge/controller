@@ -174,17 +174,14 @@ public class AgentProducer {
      * counted as dropped here, once, under what failed (no destination, or the broker did not take it) -- a caller that
      * reports the failure does not count it again.
      */
-    public boolean sendMessage(MsgEvent sm) {
-        boolean isSent = false;
-        long currentRetryDelay = INITIAL_RETRY_DELAY_MS;
-
+    /**
+     * The queue {@code sm} is sent to (what {@link #sendMessage} hands the broker, and what {@link RouteGate} asks the
+     * broker about): its forward destination, with tenant namespacing qualified with the tenant the message travels in --
+     * which is stamped on it here, once, at its origin. Null when it names no destination.
+     */
+    String queueOf(MsgEvent sm) {
         String dstPath = sm.getForwardDst();
-        if (dstPath == null) {
-            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
-            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_DESTINATION, sm);
-            return false; // Cannot proceed without a destination
-        }
-
+        if (dstPath == null) return null;
         // Tenant namespacing: stamp the origin tenant once (at origin the param is absent -> use local
         // tenant; at a relay it is already present and preserved), then qualify the always-raw forward
         // destination with the MESSAGE's tenant. Every hop derives the same qualified queue, and the
@@ -200,6 +197,19 @@ public class AgentProducer {
             if (!(controllerEngine.legacyNodes().isLegacy(dstPath) && controllerEngine.legacyNodesAdmitted())) {
                 dstPath = io.cresco.library.security.TenantNamespace.qualify(msgTenant, dstPath);
             }
+        }
+        return dstPath;
+    }
+
+    public boolean sendMessage(MsgEvent sm) {
+        boolean isSent = false;
+        long currentRetryDelay = INITIAL_RETRY_DELAY_MS;
+
+        String dstPath = queueOf(sm);
+        if (dstPath == null) {
+            logger.error("sendMessage Error: Destination path (dstPath) is null. Message: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
+            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_DESTINATION, sm);
+            return false; // Cannot proceed without a destination
         }
         // D4: a message this node originated is signed as it leaves (relays carry their origin's signature)
         controllerEngine.msgSigning().signIfPending(sm);

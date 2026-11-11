@@ -107,6 +107,7 @@ public class ControllerEngine {
         this.logger = pluginBuilder.getLogger(ControllerEngine.class.getName(), CLogger.Level.Info);
         this.msgCounts = new io.cresco.agent.controller.communication.MsgCounts(
                 pluginBuilder.getLogger(io.cresco.agent.controller.communication.MsgCounts.class.getName(), CLogger.Level.Info));
+        this.routeGate = new io.cresco.agent.controller.communication.RouteGate(pluginBuilder.getConfig());
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
@@ -158,6 +159,23 @@ public class ControllerEngine {
 
     /** The global this region is joining ({@link #setJoiningGlobal}), or null. */
     public io.cresco.agent.controller.communication.PeerIdentity.Expected joiningGlobal() { return joiningGlobal; }
+
+    private final io.cresco.agent.controller.communication.RouteGate routeGate;
+
+    /**
+     * What this node's broker can reach, and the RPC requests held for a route that is being made anew: a request for a
+     * node the broker has no way to is answered {@code route unavailable} instead of waiting in a queue (MsgRouter).
+     */
+    public io.cresco.agent.controller.communication.RouteGate routeGate() { return routeGate; }
+
+    /**
+     * Send {@code msg} on toward its forward destination, as the router does: an RPC request this node's broker has no
+     * route for is held or answered (false: it was not sent, and has been accounted for). For the senders beside the
+     * router (the regional executor's send to the global).
+     */
+    public boolean routeKnown(MsgEvent msg, String hop, boolean offWire) {
+        return msgRouter.routeKnown(msg, hop, offWire);
+    }
 
     /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
     private volatile boolean refusedByConfiguration;
@@ -279,6 +297,9 @@ public class ControllerEngine {
             }
 
             if (msgSigning != null) msgSigning.close();
+
+            // requests held for a route are answered now: nothing will send them on
+            routeGate.stop();
 
             if(plugin != null) {
                 plugin.setIsActive(false);

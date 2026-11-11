@@ -73,6 +73,9 @@ public final class MsgMetrics {
             count(registry, names, GROUP, d.metric(), "Dropped on this node: " + d.what() + ".", ce, e -> e.msgCounts().droppedCount(d));
         }
 
+        count(registry, names, GROUP, "msg.route.held", "RPC requests held on this node for a route that had just gone (each then went on"
+                        + " when the route was back, or was answered that there is none: msg.dropped.no_route).",
+                ce, e -> e.routeGate().heldCount());
         count(registry, names, GROUP, "msg.tenant.unresolved", "Messages a superuser tenant's node sent in its own namespace because it"
                         + " does not know the tenant of the region they are for (a tenant's leaf does not read them there).",
                 ce, e -> e.msgCounts().tenantUnresolvedCount());
