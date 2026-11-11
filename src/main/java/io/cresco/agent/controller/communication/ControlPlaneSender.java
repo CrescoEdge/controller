@@ -177,8 +177,16 @@ class ControlPlaneSender {
         return d;
     }
 
+    /** The time to live every control-plane message leaves with unless it has its own ({@code controlplane_ttl}). */
+    long ttl() { return ttl; }
+
     /** Send a control-plane (liveness/control) message to the given peer queue. Thread-safe. */
     boolean send(String dstQueueName, MsgEvent sm, MsgQoS.Tier tier) {
+        return send(dstQueueName, sm, tier, ttl);
+    }
+
+    /** As {@link #send(String, MsgEvent, MsgQoS.Tier)}, with this message's own time to live ({@link RpcExpiry}). */
+    boolean send(String dstQueueName, MsgEvent sm, MsgQoS.Tier tier, long ttlMs) {
         for (int attempt = 1; attempt <= 2; attempt++) {
             if (closed) {
                 ControlPlaneFailures.SEND_REFUSED.incrementAndGet();
@@ -197,7 +205,7 @@ class ControlPlaneSender {
                     // ensureOpen, so a dead transport fails this send instead of parking senders
                     TextMessage tm = used.createTextMessage(gson.toJson(sm));
                     CallerStamps.toJms(sm, tm);       // the verified caller travels as properties the broker checks
-                    p.send(dest(used, dstQueueName), tm, tier.deliveryMode, tier.priority, ttl);
+                    p.send(dest(used, dstQueueName), tm, tier.deliveryMode, tier.priority, ttlMs);
                 } finally {
                     lock.unlock();
                 }

@@ -477,7 +477,7 @@ public class RegionHealthWatcher {
             req.setParam("target_region", targetRegion);
             req.setParam("target_agent", targetAgent);
             req.setParam("no_cost_route", "1");
-            MsgEvent resp = plugin.sendRPC(req, timeout);
+            MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, req, timeout);
             return resp != null && "true".equalsIgnoreCase(resp.getParam("reachable"));
         } catch (Exception e) {
             logger.debug("indirectProbe via {} failed: {}", relay.discovered_region, e.getMessage());
@@ -576,7 +576,7 @@ public class RegionHealthWatcher {
                 probe.setForwardDst(headRegion, headAgent, null);
             }
             long t0 = System.nanoTime();
-            MsgEvent resp = plugin.sendRPC(probe, timeout);
+            MsgEvent resp = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, probe, timeout);
             return isPong(resp) ? (System.nanoTime() - t0) / 1_000_000.0 : -1;
         } catch (Exception e) {
             return -1;
@@ -836,7 +836,7 @@ public class RegionHealthWatcher {
                             // small jittered backoff between in-tick retries
                             try { Thread.sleep(150L + (long) (Math.random() * 150L)); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
                         }
-                        pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
+                        pingResponse = io.cresco.agent.controller.communication.RpcExpiry.call(plugin, pingRequest, pingTimeout);
                     }
 
                     // a pong, the global's refusal, or a miss: each consumer of "a pong came" gets what is its own

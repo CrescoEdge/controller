@@ -218,6 +218,14 @@ public class ActiveBroker {
 				sslContextBroker.setSSLContext(sslContext);
 				logger.info("Initialized SSL Context");
 
+				// Dead letters. With no strategy set ActiveMQ's default applied: every PERSISTENT message that expired (liveness
+				// and control are persistent, MsgQoS) went to the queue ActiveMQ.DLQ with its expiry cleared, which nothing
+				// consumes -- it grew until the store was full. An expired message is now discarded (counted and logged by
+				// ExpiredMessages); whatever else lands there (a persistent message a consumer refused) expires after
+				// broker_dlq_expiry_ms, and the queue's depth is the gauge broker.dlq.depth.
+				long dlqExpiryMs = plugin.getConfig().getLongParam("broker_dlq_expiry_ms", DLQ_EXPIRY_MS);
+				entry.setDeadLetterStrategy(deadLetters(dlqExpiryMs));
+
 				PolicyMap map = new PolicyMap();
 		        map.setDefaultEntry(entry);
 
@@ -265,6 +273,7 @@ public class ActiveBroker {
 								+ " messages behind loses its oldest (counted: dataplane.broker.discarded)");
 					}
 					topics.setAllConsumersExclusiveByDefault(topicAllConsumersExclusive);
+					topics.setDeadLetterStrategy(deadLetters(dlqExpiryMs));
 					topics.setAdvisoryForDiscardingMessages(discardAccounting);
 					topics.setAdvisoryForSlowConsumers(discardAccounting);
 					map.put(new org.apache.activemq.command.ActiveMQTopic(">"), topics);
@@ -391,12 +400,11 @@ public class ActiveBroker {
 					CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(plugin, controllerEngine.getCertificateManager().getPeerTrust());
 					this.authorization = authz;
 					// review F2: a bridge carries only principals it may carry; this node's global carries the fabric below it
-					authz.setParent(() -> {
-						io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
-						if (cs == null || cs.isGlobalController()) return null;
-						String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
-						return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
-					});
+					authz.setParent(() -> parentOf(controllerEngine.cstate));
+					// ... and, on a connection verified as it, the global it is joining or lost (see CrescoAuthorizationBroker.isParent)
+					authz.setParentWhileNotJoined(controllerEngine::parentWhileNotJoined);
+					// broker_bridge_transit=auto: a region relays between bridges only until it has known a global
+					authz.setGlobalKnown(controllerEngine::knewAGlobal);
 					// a node whose inbox consumer left this broker gets nothing first hand any more: no unsigned direct messages
 					authz.setInboxLeftListener(node -> controllerEngine.msgSigning().inboxConsumerLeft(node));
 					// gfs#26: a node attached here answers at the former region its own registration recorded (region_alias)
@@ -425,6 +433,11 @@ public class ActiveBroker {
 				if (discardAccounting) {
 					brokerPlugins.add(new CrescoDiscardAccountingBroker(plugin));
 				}
+				// What this broker lets expire is counted and said (msg.expired; ExpiredMessages). Always installed.
+				brokerPlugins.add(controllerEngine.expiredMessages().plugin());
+				// What this broker can reach: every consumer that joins or leaves is told to the controller's RouteGate, which
+				// answers a request for a node nothing here leads to instead of leaving it in a queue. Always installed.
+				brokerPlugins.add(controllerEngine.routeGate().plugin());
 				if (!brokerPlugins.isEmpty()) {
 					broker.setPlugins(brokerPlugins.toArray(new org.apache.activemq.broker.BrokerPlugin[0]));
 				}
@@ -802,6 +815,7 @@ public class ActiveBroker {
 
 	public void stopBroker() {
 		try {
+			controllerEngine.routeGate().unbound();          // no broker to ask: requests are sent (and fail) as before
 
 			broker.getRegionBroker().getScheduler().shutdown();
 			broker.getBroker().getScheduler().shutdown();
@@ -882,6 +896,93 @@ public class ActiveBroker {
 	public static boolean dataplaneBackpressure(PluginBuilder plugin) {
 		return plugin.getConfig().getBooleanParam("dataplane_backpressure", true)
 				&& plugin.getConfig().getBooleanParam("activemq_topic_producer_flow_control", true);
+	}
+
+	static final long DLQ_EXPIRY_MS = 3_600_000L;
+	static final String DLQ = "ActiveMQ.DLQ";
+
+	/**
+	 * What becomes of a message nothing took: an expired one is discarded, not kept; a non-persistent one is discarded as
+	 * before; a persistent one a consumer refused goes to {@value #DLQ} and expires there after {@code expiryMs} (at least a
+	 * minute), so that nothing collects in a queue nobody reads.
+	 */
+	static org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy deadLetters(long expiryMs) {
+		org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy s = new org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy();
+		s.setProcessExpired(false);
+		s.setProcessNonPersistent(false);
+		s.setExpiration(Math.max(60_000L, expiryMs));
+		return s;
+	}
+
+	/** The messages in this broker's dead-letter queue now (the gauge broker.dlq.depth): one lookup, nothing scanned. */
+	public long deadLetterDepth() {
+		return deadLetterDepth(broker);
+	}
+
+	static long deadLetterDepth(BrokerService service) {
+		try {
+			org.apache.activemq.broker.region.Destination d = queue(service, DLQ);
+			return d == null ? 0L : d.getDestinationStatistics().getMessages().getCount();
+		} catch (Exception e) {
+			return 0L;
+		}
+	}
+
+	/** The queue {@code name} of {@code service} when it exists: one lookup in the queue region's own map. */
+	private static org.apache.activemq.broker.region.Destination queue(BrokerService service, String name) {
+		if (service == null) return null;
+		Broker b = service.getRegionBroker();
+		if (!(b instanceof org.apache.activemq.broker.region.RegionBroker)) return null;
+		return ((org.apache.activemq.broker.region.RegionBroker) b).getQueueRegion().getDestinationMap()
+				.get(new org.apache.activemq.command.ActiveMQQueue(name));
+	}
+
+	/**
+	 * Does anything consume the queue {@code name} at this broker now -- by the broker's own account, not the RouteGate's?
+	 * One lookup of the queue. A queue that does not exist yet is created, as sending to it would: the broker then attaches
+	 * every subscription that matches it (a controller's {@code T.*.<inbox>}, any other pattern), and an empty queue with
+	 * no consumer is collected again after activemq_inactive_timeout_before_gc. True when it cannot be told (send as before).
+	 */
+	public boolean queueHasConsumer(String name) {
+		return queueHasConsumer(broker, name);
+	}
+
+	static boolean queueHasConsumer(BrokerService service, String name) {
+		try {
+			if (service == null || name == null) return true;
+			org.apache.activemq.broker.region.Destination d = queue(service, name);
+			if (d == null) {
+				Broker b = service.getRegionBroker();
+				if (!(b instanceof org.apache.activemq.broker.region.RegionBroker)) return true;
+				d = b.addDestination(service.getAdminConnectionContext(), new org.apache.activemq.command.ActiveMQQueue(name), false);
+			}
+			return d == null || !d.getConsumers().isEmpty();
+		} catch (Exception e) {
+			return true;
+		}
+	}
+
+	/**
+	 * This node's parent controller, whose bridge carries the whole fabric below it: the global a region has joined (its
+	 * controller state names it). None for the global itself, and for a region that has no global joined.
+	 */
+	static PeerIdentity.Expected parentOf(io.cresco.agent.core.ControllerStateImp cs) {
+		if (cs == null || cs.isGlobalController()) return null;
+		String gr = cs.getGlobalRegion(), ga = cs.getGlobalAgent();
+		return (gr == null || ga == null) ? null : new PeerIdentity.Expected(gr, ga);
+	}
+
+	/**
+	 * Is this node configured to be part of a fabric with a global (ControllerSMHandler's config modes)? Yes when
+	 * {@code global_controller_host} names one (mode 24: it joins that host, and keeps trying), and yes when
+	 * {@code global_optional} is not set: such a region looks for its global by discovery and does not start its own
+	 * services (its agents cannot join it) before it has joined one (mode 8). Only a region with {@code global_optional=true}
+	 * and no {@code global_controller_host} runs on its own: it may still find and join a global by discovery later, which is
+	 * what {@code ControllerEngine.knewAGlobal} records.
+	 */
+	public static boolean configuredWithGlobal(io.cresco.library.plugin.Config config) {
+		String host = config.getStringParam("global_controller_host");
+		return (host != null && !host.trim().isEmpty()) || !config.getBooleanParam("global_optional", false);
 	}
 
 	// Create the bridge group to a remote host. Returns the PRIMARY connector (index 0) un-started so

@@ -18,9 +18,11 @@ WHAT IT IS
 HOW TO RUN IT
   PYTHONPATH=<pycrescolib checkout> python3 fabric_matrix.py --jar agent-1.3-SNAPSHOT.jar --work /tmp/fm
       [--topology tree] [--profile standard] [--events start,restart-region,...] [--old-jar earlier-agent.jar]
+      [--old-nodes rc2,a21]
       [--base-port 41000] [--settle 30] [--seed 1] [--keep] [--json out.json]
   Needs a JDK 21 `java` on PATH, Python 3.12 with pycrescolib, and (production profile) OpenSSL 3 for tools/cresco-pki.sh.
-  One cell per run; about 12 minutes for the 10 JVMs of `tree` with every default event (4.5 of them settle time), ~4 GB
+  One cell per run; about 13 minutes for the 10 JVMs of `tree` with every default event (5 of them settle time; `mesh`
+  takes 17, three of them `quiet`), ~4 GB
   of RAM and 1.5 GB of disk, which is removed at the end unless --keep (logs stay in <work>/logs). A cell whose fabric
   does not form at `start` stops there. It starts and stops only
   its own JVMs, by PID (also when it fails or is interrupted; a run that was killed outright is cleaned up by the next
@@ -29,7 +31,8 @@ HOW TO RUN IT
 
   Topologies  single     a global and one agent
               tree       a global, 3 regions bridged to the global only, 2 agents per region
-              mesh       the tree, every region also bridged to the others (regional_peers)
+              mesh       the tree, every region also bridged to the others (regional_peers); `quiet` always runs
+                         after `start` here: a mesh at rest must strip no caller stamp
               tenants    two tenants, each its own region and 2 agents, under a global in the superuser tenant
                          (regions are given the global's key in controller_trust_anchors; standard profile only).
                          The release of 2026-11-10 did not form it (a tenant's region never registered with the global);
@@ -46,8 +49,17 @@ HOW TO RUN IT
               upgrade    standard, the upgrade window open on the controllers, one agent on --old-jar
   Events, in this order (--events picks some; `start` always runs):
               start          every node, in an order shuffled by --seed (agents before their controllers too)
+              quiet          nothing is done for QUIET_S (180 s): a fabric at rest must strip no caller stamp, by the
+                             nodes' logs and by their counters (broker.caller.stripped must not move). The deployed
+                             three-region mesh logged one stripped stamp per node every 10 s, for hours, with every
+                             event of this matrix passing or within a known bound. Runs when named, and always in `mesh`.
               restart-agent  kill -9 and start of one agent
               restart-region kill -9 and start of one region controller; its agents come back by themselves
+              region-outage  kill -9 of one region controller; 8 s later (the bridge is gone, not being rebuilt) three
+                             RPCs through the global's wsapi to an agent of that region must each be answered with the
+                             error reply `route unavailable` within NO_ROUTE_ANSWER_S (2 s) -- the release let each
+                             wait out its caller's timeout in a queue nothing consumed; then the controller is started,
+                             and the usual invariants show that its agents answer again.
               restart-global kill -9, 20 s, start
               global-outage  the global down 60 s; meanwhile one agent starts under a region and one is killed
               rekey-region   a region controller is stopped, loses its identity (security/node-identity.p12) and starts
@@ -92,7 +104,16 @@ ON THE RELEASE OF 2026-11-10 (agent 1.3, controller 29ef93d), 2026-11-11
   advertised, and logs PEER IDENTITY MISMATCH: refused, as it must be); tenants does not form (fixed since: see the
   topology above); rekey-region fails. None of these has a known-item entry: each is for its owner to fix or to list. The release before it (tree) fails six of
   eight events: credentials that do not verify at start, a minute of unsigned-message refusals at a moved agent.
-  SINCE THEN: rekey-region is fixed in the controller (message signing: see the event above) and is part of the default
+  SINCE THEN: mesh passes with no stamp stripped at any node (controller branch fix/restart-routing: a region's broker
+  no longer relays between bridges, CrescoAuthorizationBroker.relayedByABridge), so its two known items are gone:
+  `stripped-mesh-adverts` (117 to 240 stamps an event in this cell on the release) is removed, and the queue messages that
+  crossed another region after a restart of the global no longer do. `stripped-after-global-restart` is removed too (on a
+  bridge connection that verifies as it, a region takes the global it is joining, or joined last and lost, for its
+  parent before the join is recorded): no known item allows a stripped stamp any more. `quiet` and `region-outage` are
+  new with that change. The regions of every topology here are configured with their global (global_controller_host),
+  so none relays (broker_bridge_transit=auto); a fabric without a global, where regions do relay, is not a cell yet.
+  What the counters gained is reported for msg.expired* too (a message a broker let expire ends on no node).
+  rekey-region is fixed in the controller (message signing: see the event above) and is part of the default
   order; tree passes it in standard and in production with no message refused at any node, and the agents hold an
   attestation of the new key 0.1 s after the operator's rebind is taken ("attested by <controller> (its key ...)").
 
@@ -157,42 +178,45 @@ class Known:
 
 
 # Events during which some node has lost, or is finding again, the controller above it.
-PARENT_AWAY = ("start", "restart-region", "restart-global", "global-outage", "rekey-region", "cut-bridge")
-RESTARTS = ("restart-agent", "restart-region", "restart-global", "global-outage", "rekey-region", "move-agent", "cut-bridge", "revoke")
+PARENT_AWAY = ("start", "restart-region", "region-outage", "restart-global", "global-outage", "rekey-region", "cut-bridge")
+RESTARTS = ("restart-agent", "restart-region", "region-outage", "restart-global", "global-outage", "rekey-region", "move-agent",
+            "cut-bridge", "revoke")
 
 KNOWN: list[Known] = [
     # ---- messages refused
     Known("refused-lost-session", "refused", r"a message under a session key this node does not hold", RESTARTS, 3,
           "after a node restarts, its peers' messages under the session it lost are refused until they notice and sign again"),
     Known("refused-stale-unsigned", "refused", r"an unsigned message \(from null, not delivered first hand\)",
-          ("restart-region", "restart-global", "global-outage", "cut-bridge"), 2,
+          ("restart-region", "region-outage", "restart-global", "global-outage", "cut-bridge"), 2,
           "one stale unsigned ping or WATCHDOG reaches a parent that restarted"),
     # ---- messages dropped (logged by builds from controller 983407f on; the cause is the last word before the ';')
     Known("dropped-no-sender", "dropped", r"of this kind, no_sender;", ("*",), 2,
           "a node asked for an answer in its first moments (or while it joins again) has no sender yet"),
     Known("dropped-no-global", "dropped", r"of this kind, no_global;", ("restart-global", "global-outage"), 4,
           "a region's ping for the global is dropped while it has joined none"),
+    Known("dropped-no-route", "dropped", r"of this kind, no_route;",
+          ("restart-agent", "restart-region", "region-outage", "restart-global", "global-outage", "rekey-region", "move-agent",
+           "cut-bridge", "revoke"), 6,
+          "a controller does not send a ping or a request for a node its broker has no way to while the event has that node"
+          " (or the controller it is reached through) down: region-outage's three RPCs at the global, a region's pings for"
+          " the global whose bridge is away, the controllers' pings and inventory requests for the node that is down"
+          " (at most 2 at one node in one event over 5 runs of tree and mesh, 2026-11-11)"),
     Known("dropped-send-failed", "dropped", r"of this kind, send_failed;", PARENT_AWAY, 5,
           "an agent's watchdog or ping cannot be sent while its controller is away"),
     Known("dropped-controller-stopping", "dropped", r"of this kind, controller_stopping;", ("rekey-region", "move-agent", "revoke"), 3,
           "a node the event stops drops what it was about to send (seen by the counters' author at shutdown, not in these runs)"),
     Known("dropped-plugin-inactive", "dropped", r"of this kind, plugin_inactive;", ("*",), 2,
           "a message reaches a node whose plugin is still loading (expected by the counters' author, not seen in these runs)"),
-    # ---- caller stamps stripped
-    Known("stripped-mesh-adverts", "stripped",
-          r"global\.event' .* a node of region \S+ over the bridge of region (?!glob\b)\S+ \(outside its subtree\)", ("*",), 200,
-          "in a region mesh, a controller's link-state advert that arrives over a second bridge loses its caller stamp", per_minute=True),
-    Known("stripped-after-global-restart", "stripped",
-          r"global\.event' .* a node of region \S+ over the bridge of region glob \(outside its subtree\)",
-          ("restart-global", "global-outage"), 3,
-          "right after the global restarts, a region strips another region's advert the global carried before its new bundle arrived"),
+    # ---- caller stamps stripped: no entry. A region's broker relays nothing between bridges (a mesh stripped a stamp per
+    # node every 10 s), and a region knows the global it is joining as its parent before the join is recorded (one to three
+    # adverts were stripped "over the bridge of region glob" in the second between the bridge and the join).
     # ---- ERROR lines that are the report of the event itself
     Known("error-parent-discovery", "error", r"Discovery Failed: Connection refused|No agents discovered\.", PARENT_AWAY, 25,
           "an agent retries discovery (two lines every ~3 s) while its controller's port does not answer", per_minute=True),
     Known("error-global-discovery", "error", r"exchangeKeyWithBroker\(\) Connection refused|No global controller discovered\.",
           PARENT_AWAY, 25, "a region retries discovery (two lines every ~3 s) while the global's port does not answer", per_minute=True),
     Known("error-peer-discovery", "error", r"Could not discover or connect to peer|Error while maintaining peer connection to \S+: Connection refused",
-          ("start", "restart-region", "rekey-region", "cut-bridge"), 3,
+          ("start", "restart-region", "region-outage", "rekey-region", "cut-bridge"), 3,
           "in a region mesh, a region reports a configured peer (regional_peers) that does not answer while the event has it down"
           " (the peer timer's own line, 'Error while maintaining peer connection ... Connection refused', was seen once at each"
           " of the two peers of a controller being re-keyed, 2026-11-11)"),
@@ -465,6 +489,19 @@ class Fabric:
         except Exception as e:
             self.drop_client()
             return False, (time.perf_counter() - t) * 1000.0, type(e).__name__
+
+    def ask(self, region, agent, timeout=10.0):
+        """The same RPC, and what came back: (the reply's parameters or None, milliseconds, the exception's name or "")."""
+        c = self.api()
+        if c is None:
+            return None, 0.0, "the global's wsapi cannot be reached"
+        t = time.perf_counter()
+        try:
+            r = c.messaging.global_agent_msgevent(True, "EXEC", {"action": "iscontrolleractive"}, region, agent, timeout=timeout)
+            return (r if isinstance(r, dict) else None), (time.perf_counter() - t) * 1000.0, ""
+        except Exception as e:
+            self.drop_client()
+            return None, (time.perf_counter() - t) * 1000.0, type(e).__name__
 
     def expected(self) -> set:
         return {n.path for n in self.nodes.values() if n.up}
@@ -749,6 +786,7 @@ def topo_tree(fab, regions=3, agents=2):
 def topo_mesh(fab):
     topo_tree(fab)
     fab.mesh = True              # every region also bridged to the others (regional_peers)
+    fab.setup_events = ["quiet"]             # at rest a mesh strips nothing (it stripped a stamp per node every 10 s)
 
 
 def topo_alias(fab):
@@ -828,6 +866,62 @@ def ev_restart_region(fab):
     fab.kill(r)
     fab.launch(r)
     return "kill -9 and start of %s (its agents: %s)" % (r.path, " ".join(n.name for n in fab.agents(r)))
+
+
+# A fabric at rest for this long must strip no caller stamp (the nodes log a strip at most every 10 s: 18 chances a node).
+QUIET_S = 180
+# An RPC for a node behind a dead region controller is answered `route unavailable` within this (seconds).
+NO_ROUTE_ANSWER_S = 2.0
+
+
+def stripped_now(fab) -> dict:
+    """{node: broker.caller.stripped} from the nodes' counters; {} when the build has none or the global cannot be asked."""
+    return {node: int(m.get("broker.caller.stripped", 0)) for node, m in observe_counters(fab).items()}
+
+
+def ev_quiet(fab):
+    before = stripped_now(fab)
+    time.sleep(QUIET_S)
+    after = stripped_now(fab)
+    gained = {n: after[n] - before.get(n, 0) for n in after if after[n] - before.get(n, 0) > 0}
+    if gained:
+        fab.event_failures.append("quiet: caller stamps were stripped while nothing happened (by the counters): %s"
+                                  % ", ".join("%s +%d" % kv for kv in sorted(gained.items())))
+    # the log is judged like after any event: no known item allows a strip here
+    return "nothing for %d s; broker.caller.stripped gained %s" % (
+        QUIET_S, ("%d at %d nodes" % (sum(gained.values()), len(gained))) if gained
+        else ("0 at %d nodes" % len(after) if after else "? (no counters could be read)"))
+
+
+def ev_region_outage(fab):
+    regions = fab.regions()
+    if not regions:
+        raise Skip("no region in this topology")
+    r = regions[-1]
+    agents = fab.agents(r)
+    if not agents:
+        raise Skip("the region has no agent to ask for")
+    a = agents[0]
+    fab.kill(r)
+    time.sleep(8)                            # past the grace: the global knows the bridge is gone, not being rebuilt
+    took, bad = [], []
+    for _ in range(3):
+        reply, ms, err = fab.ask(a.region, a.name, timeout=20.0)
+        took.append(ms)
+        if reply is None:
+            bad.append("no reply after %.0f ms (%s)" % (ms, err or "nothing"))
+        elif not reply.get("route_unavailable"):
+            bad.append("a reply without route_unavailable after %.0f ms: %s" % (ms, sorted(reply)[:12]))
+        elif ms > NO_ROUTE_ANSWER_S * 1000.0:
+            bad.append("route unavailable only after %.0f ms" % ms)
+        time.sleep(1)
+    for b in bad:
+        fab.event_failures.append("region-outage: an RPC for %s while %s is down: %s (it must be answered `route unavailable` "
+                                  "within %.0f s)" % (a.path, r.path, b, NO_ROUTE_ANSWER_S))
+    fab.launch(r)
+    return "kill -9 of %s; 8 s later 3 RPCs for %s through the global: %s (%s); then started" % (
+        r.path, a.path, "each answered route unavailable" if not bad else "%d of 3 NOT answered so" % len(bad),
+        ", ".join("%.0f ms" % t for t in took))
 
 
 def ev_restart_global(fab):
@@ -1012,10 +1106,10 @@ def secs(t):
     return "a TIMEOUT" if t is None else "%.0f s" % t
 
 
-# Events that run only when named in --events, and why (none today: rekey-region was one until the controller passed it).
-OPT_IN = {}
-EVENTS = {"start": ev_start, "restart-agent": ev_restart_agent, "restart-region": ev_restart_region,
-          "restart-global": ev_restart_global, "global-outage": ev_global_outage, "rekey-region": ev_rekey_region,
+# Events that run only when named in --events, and why (rekey-region was one until the controller passed it).
+OPT_IN = {"quiet": "three minutes in which nothing happens; the mesh topology runs it by itself"}
+EVENTS = {"start": ev_start, "quiet": ev_quiet, "restart-agent": ev_restart_agent, "restart-region": ev_restart_region,
+          "region-outage": ev_region_outage, "restart-global": ev_restart_global, "global-outage": ev_global_outage, "rekey-region": ev_rekey_region,
           "move-agent": ev_move_agent, "cut-bridge": ev_cut_bridge, "clock-skew": ev_clock_skew, "revoke": ev_revoke}
 
 
@@ -1123,7 +1217,7 @@ def counter_gains(fab, counters) -> dict:
     for node, m in counters.items():
         base = fab.prev_counters.get(node, {}) if fab.prev_launches.get(node) == launches.get(node) else {}
         for k, v in m.items():
-            if k.startswith(("msg.refused.", "msg.dropped.", "broker.")):
+            if k.startswith(("msg.refused.", "msg.dropped.", "msg.expired", "msg.route.mismatch", "broker.")):
                 gain = int(v - base.get(k, 0.0))
                 if gain > 0:
                     out.setdefault(k, {})[node] = gain
@@ -1254,7 +1348,10 @@ def reap_previous(work: Path):
 def main():
     ap = argparse.ArgumentParser(description="One cell of the Cresco fabric matrix (see the top of this file).")
     ap.add_argument("--jar", required=True, help="the agent jar under test")
-    ap.add_argument("--old-jar", default="", help="an earlier-build agent jar (the upgrade profile)")
+    ap.add_argument("--old-jar", default="", help="an earlier-build agent jar (the upgrade profile, --old-nodes)")
+    ap.add_argument("--old-nodes", default="", help="a rolling update half done: these nodes (comma separated names, e.g. "
+                    "rc2,a21) run --old-jar, a release that speaks the same protocol; they are listed, asked and judged "
+                    "like the others. Known items are measured on one build: expect what the earlier one still does")
     ap.add_argument("--work", required=True, help="work directory (created; node directories, logs, secrets)")
     ap.add_argument("--topology", default="tree", help=" | ".join(TOPOLOGIES))
     ap.add_argument("--profile", default="standard", choices=sorted(PROFILES))
@@ -1330,6 +1427,10 @@ def main():
     try:
         free_disk(work)
         TOPOLOGIES[a.topology](fab)
+        for name in [x.strip() for x in a.old_nodes.split(",") if x.strip()]:
+            if name not in fab.nodes or not a.old_jar:
+                raise Fatal("--old-nodes: %s" % ("no --old-jar given" if not a.old_jar else "no node %s in topology %s" % (name, a.topology)))
+            fab.nodes[name].jar = a.old_jar
         if getattr(profile, "tenant", "") and any(n.tenant for n in fab.nodes.values()):
             raise Fatal("the %s profile runs one tenant: topology %s is for the standard profile" % (a.profile, a.topology))
         if len(fab.nodes) + 8 > MAX_SLOTS:
@@ -1340,12 +1441,14 @@ def main():
         profile.prepare(fab)
         plan = []
         for e in names:
+            if e in fab.setup_events and e in OPT_IN:
+                continue                     # the topology runs it by itself, once
             plan.append((e, e))
             if e == "start":
                 plan += [(s, s + " (the topology's own)") for s in fab.setup_events]
         print("# cell %s, %d nodes, events: %s" % (cell, len(fab.nodes), ", ".join(label for _, label in plan)), flush=True)
         for e, why in OPT_IN.items():
-            if e not in names:
+            if e not in names and e not in fab.setup_events:
                 print("# not run: %s (only when named in --events: %s)" % (e, why), flush=True)
         for event, label in plan:
             began = time.time()
