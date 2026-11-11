@@ -264,9 +264,11 @@ public class ControllerSMHandler {
 
         if(context.getCurrentState().getId().equals(REGION_GLOBAL)) {
             controllerEngine.cstate.setRegionalGlobalFailed(desc);
-            if(!isRegionalGlobalShutdown()) {
-              logger.error("!isRegionalGlobalShutdown() Dirty Shutdown!");
-            }
+            // Only the uplink to the global is gone, and only it is rebuilt (stateInit joins the global again). The region's
+            // own services -- the discovery engines its agents join through, the watcher that ages its agents and keeps
+            // its peer bridges -- stay up. They were stopped here and started again only once the global was joined
+            // again: for the whole outage no agent could join or rejoin the region, no dead agent was aged to STALE or
+            // LOST, and this thread joined the discovery engines' threads without limit.
             stateInit();
             lossDebounce.recoveryCompleted();
             logger.info("RegionalGlobalFailed Recovered");
@@ -363,6 +365,10 @@ public class ControllerSMHandler {
             if (!isRegionalGlobalShutdown()) {
                 logger.error("!isRegionalGlobalShutdown() Dirty Shutdown!");
             }
+        } else {
+            // no global to unregister from; the region's own services run in every region state (they are kept through
+            // a global outage) and end with the region
+            stopRegionServices();
         }
 
         logger.info("STOP CALLED REGION");
@@ -1088,6 +1094,9 @@ public class ControllerSMHandler {
                 //set this must be enabled to let global message go through, it should be on the region side
                 //(idempotent: region-first boot may have already started it)
                 ensureRegionHealthWatcher();
+                // the watcher is kept through a global outage: the global just joined is not judged by the last pong
+                // before the outage
+                controllerEngine.getRegionHealthWatcher().globalJoined();
 
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL)); //1
                 cstate.setRegionalGlobalSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "isRegionGlobal() Success");
@@ -1119,17 +1128,26 @@ public class ControllerSMHandler {
             // watcher + net discovery down AFTER the RPC round-trips.
             unregisterRegion(cstate.getRegion(), cstate.getGlobalRegion());
 
-            stopNetDiscoveryEngine();
-            if (controllerEngine.getRegionHealthWatcher() != null) {
-                controllerEngine.getRegionHealthWatcher().shutdown();
-                controllerEngine.setRegionHealthWatcher(null);
-            }
+            stopRegionServices();
 
             isShutdown = true;
         } catch (Exception ex) {
             logger.error("isRegionalGlobalShutdown() Error : " + ex.getMessage());
         }
         return isShutdown;
+    }
+
+    /**
+     * Stop the region's own services: the discovery engines its agents (and peer regions) join through, and the watcher
+     * that ages its agents and maintains its peer bridges. Only when the region itself stops -- never for the loss of
+     * its global.
+     */
+    private void stopRegionServices() {
+        stopNetDiscoveryEngine();
+        if (controllerEngine.getRegionHealthWatcher() != null) {
+            controllerEngine.getRegionHealthWatcher().shutdown();
+            controllerEngine.setRegionHealthWatcher(null);
+        }
     }
 
     private boolean globalInit() {
@@ -1455,6 +1473,9 @@ public class ControllerSMHandler {
         return isStarted;
     }
 
+    // how long a stopping discovery engine's thread is waited for (it was joined without limit)
+    static long DISCOVERY_STOP_WAIT_MS = 10_000;
+
     public boolean stopNetDiscoveryEngine() {
         boolean isStopped = false;
         try {
@@ -1465,7 +1486,10 @@ public class ControllerSMHandler {
             if (controllerEngine.getDiscoveryUDPEngineThread() != null) {
                 logger.info("UDP Discovery Engine shutting down");
                 UDPDiscoveryEngine.shutdown();
-                controllerEngine.getDiscoveryUDPEngineThread().join();
+                controllerEngine.getDiscoveryUDPEngineThread().join(DISCOVERY_STOP_WAIT_MS);
+                if (controllerEngine.getDiscoveryUDPEngineThread().isAlive()) {
+                    logger.warn("UDP Discovery Engine thread still running " + DISCOVERY_STOP_WAIT_MS + " ms after its shutdown; not waiting for it");
+                }
                 controllerEngine.setDiscoveryUDPEngineThread(null);
             }
 
@@ -1473,7 +1497,10 @@ public class ControllerSMHandler {
             if (controllerEngine.getDiscoveryTCPEngineThread() != null) {
                 logger.info("TCP Discovery Engine shutting down");
                 TCPDiscoveryEngine.shutdown();
-                controllerEngine.getDiscoveryTCPEngineThread().join();
+                controllerEngine.getDiscoveryTCPEngineThread().join(DISCOVERY_STOP_WAIT_MS);
+                if (controllerEngine.getDiscoveryTCPEngineThread().isAlive()) {
+                    logger.warn("TCP Discovery Engine thread still running " + DISCOVERY_STOP_WAIT_MS + " ms after its shutdown; not waiting for it");
+                }
                 controllerEngine.setDiscoveryTCPEngineThread(null);
             }
 
