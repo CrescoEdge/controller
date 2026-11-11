@@ -249,11 +249,23 @@ public class ControllerSMHandler {
         return true;
     }
 
+    // Accepted in every state a region can wait for its global in, not in REGION_GLOBAL alone: raised where no global is
+    // joined it asks for one more attempt to join (the background attempts of a region that runs on without its global
+    // come in this way, through the state machine, so they are serialized with stop and with loss reports).
     @Transitions({
+            @Transition(on = "globalControllerLost", in = REGION),
+            @Transition(on = "globalControllerLost", in = REGION_GLOBAL_INIT),
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL_FAILED),
             @Transition(on = "globalControllerLost", in = REGION_GLOBAL)
     })
     public void globalControllerLost(StateContext context, String desc) {
+        if (!context.getCurrentState().getId().equals(REGION_GLOBAL)) {
+            rejoinGlobal(context.getCurrentState().getId(), desc);
+            return;
+        }
+        if (desc != null && desc.startsWith(GLOBAL_REJOIN)) {
+            return; // a background join attempt that finds the global joined: not a loss
+        }
         if (isDuplicateLossReport("globalControllerLost", desc)) {
             return;
         }
@@ -270,6 +282,7 @@ public class ControllerSMHandler {
             // again: for the whole outage no agent could join or rejoin the region, no dead agent was aged to STALE or
             // LOST, and this thread joined the discovery engines' threads without limit.
             stateInit();
+            notJoined(getConfigMode());      // also when stateInit ended early: never detached with nothing trying
             lossDebounce.recoveryCompleted();
             logger.info("RegionalGlobalFailed Recovered");
             //startup things
@@ -480,6 +493,10 @@ public class ControllerSMHandler {
 
     public void shutdown() {
         forceShutdown.set(true);
+        Thread rejoin = globalRejoin;
+        if (rejoin != null) {
+            rejoin.interrupt();
+        }
     }
 
 
@@ -605,15 +622,7 @@ public class ControllerSMHandler {
                     int gAttempt8 = 0;
                     int gMax8 = globalOptional8 ? plugin.getConfig().getIntegerParam("global_connect_attempts", 3) : Integer.MAX_VALUE;
                     while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get()) && (gAttempt8 < gMax8)) {
-                        List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.GLOBAL);
-                        DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
-                        if(discoveryNode != null) {
-                            stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
-                            cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
-                            isStateInit = isRegionGlobal(discoveryNode);
-                        } else {
-                            logger.error("No agents discovered.");
-                        }
+                        isStateInit = tryJoinGlobal(configMode);
                         gAttempt8++;
                         Thread.sleep(retryWait);
                     }
@@ -621,6 +630,7 @@ public class ControllerSMHandler {
                         logger.info("global_optional: no global joined after " + gMax8 + " attempt(s); operating REGION-FIRST "
                                 + "(autonomous). Peer bridging, data plane, and cost routing are active without a global.");
                     }
+                    notJoined(configMode);
                     //discovery engine (idempotent)
                     if(!startNetDiscoveryEngine()) {
                         logger.error("Start Network Discovery Engine Failed!");
@@ -652,19 +662,7 @@ public class ControllerSMHandler {
                     int gAttempt24 = 0;
                     int gMax24 = globalOptional24 ? plugin.getConfig().getIntegerParam("global_connect_attempts", 3) : Integer.MAX_VALUE;
                     while((cstate.getControllerState() != ControllerMode.REGION_GLOBAL) && (!forceShutdown.get()) && (gAttempt24 < gMax24)) {
-                        // global discovery port is configurable (default 32005) so multiple globals can
-                        // coexist (e.g. same-host multi-global mesh); a region targets ITS global's port.
-                        int globalPort = plugin.getConfig().getIntegerParam("global_controller_port", 32005);
-                        DiscoveryNode discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort);
-
-                        if(discoveryNode != null) {
-                            lastJoin = new Object[]{DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort};
-                            stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
-                            cstate.setRegionGlobalInit("regionInit() : Case 8"); //2
-                            isStateInit = isRegionGlobal(discoveryNode);
-                        } else {
-                            logger.error("No global controller discovered.");
-                        }
+                        isStateInit = tryJoinGlobal(configMode);
                         gAttempt24++;
                         Thread.sleep(retryWait);
                     }
@@ -672,6 +670,7 @@ public class ControllerSMHandler {
                         logger.info("global_optional: no global joined after " + gMax24 + " attempt(s); operating REGION-FIRST "
                                 + "(autonomous). Peer bridging, data plane, and cost routing are active without a global.");
                     }
+                    notJoined(configMode);
                     //discovery engine (idempotent)
                     if(!startNetDiscoveryEngine()) {
                         logger.error("Start Network Discovery Engine Failed!");
@@ -787,6 +786,170 @@ public class ControllerSMHandler {
 
         }
         return isStateInit;
+    }
+
+    /**
+     * One attempt to join the global: find it -- the configured global_controller_host (config mode 24), else by
+     * dynamic discovery (mode 8) -- and build the uplink to it. REGION_GLOBAL when joined; REGION_GLOBAL_FAILED when it
+     * was found and not reached; a global that was not found leaves the state as it is.
+     */
+    boolean tryJoinGlobal(int configMode) {
+        DiscoveryNode discoveryNode;
+        if (configMode == 24) {
+            // global discovery port is configurable (default 32005) so multiple globals can
+            // coexist (e.g. same-host multi-global mesh); a region targets ITS global's port.
+            int globalPort = plugin.getConfig().getIntegerParam("global_controller_port", 32005);
+            discoveryNode = exchangeKeyWithBroker(DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort);
+            if (discoveryNode != null) {
+                lastJoin = new Object[]{DiscoveryType.GLOBAL, plugin.getConfig().getStringParam("global_controller_host"), globalPort};
+            }
+        } else {
+            discoveryNode = getDiscoveryNode(nodeDiscovery(DiscoveryType.GLOBAL));
+        }
+        if (discoveryNode == null) {
+            logger.error("No global controller discovered.");
+            return false;
+        }
+        stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL_INIT)); //1
+        cstate.setRegionGlobalInit("regionInit() : Case " + configMode); //2
+        return isRegionGlobal(discoveryNode);
+    }
+
+    // the waits between a region's background attempts to join its global: doubling from the first to the longest
+    static long GLOBAL_REJOIN_FIRST_MS = 5_000, GLOBAL_REJOIN_MAX_MS = 60_000;
+
+    /** The wait before background join attempt {@code attempt} (from 0). */
+    static long rejoinDelayMs(int attempt) {
+        long delay = GLOBAL_REJOIN_FIRST_MS;
+        for (int i = 0; i < attempt && delay < GLOBAL_REJOIN_MAX_MS; i++) delay *= 2;
+        return Math.min(delay, GLOBAL_REJOIN_MAX_MS);
+    }
+
+    /**
+     * Does a region that is not joined to a global keep trying in the background? While a global is configured
+     * (global_controller_host, config mode 24), and when one found by discovery was joined before and lost. A region
+     * with no global configured that never had one runs on its own (region-first).
+     */
+    static boolean rejoinsInBackground(int configMode, boolean joinedBefore) {
+        return configMode == 24 || joinedBefore;
+    }
+
+    /** The description of a background join attempt (an event raised by this handler, not a loss report). */
+    static final String GLOBAL_REJOIN = "global rejoin: ";
+
+    private final Object globalRejoinLock = new Object();
+    private volatile Thread globalRejoin;
+    private volatile boolean joinedGlobal;
+
+    /** Whether background attempts to join the global are running. */
+    boolean rejoiningGlobal() {
+        return globalRejoin != null;
+    }
+
+    /**
+     * The join attempts of stateInit (or one more attempt) are over. A region that did not join its global used to be left
+     * as it was -- after a loss in REGION_GLOBAL_FAILED, where isActive() is false -- and nothing tried again, ever.
+     * With global_optional it is REGION now: active for its agents, a steady state; and it keeps trying to join in the
+     * background while a global is configured or was joined before.
+     */
+    private void notJoined(int configMode) {
+        ControllerMode mode = cstate.getControllerState();
+        if (forceShutdown.get() || mode == ControllerMode.REGION_GLOBAL || (configMode != 8 && configMode != 24)) {
+            return;
+        }
+        if (plugin.getConfig().getBooleanParam("global_optional", false)
+                && (mode == ControllerMode.REGION_GLOBAL_FAILED || mode == ControllerMode.REGION_GLOBAL_INIT)) {
+            stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION)); //1
+            Map<String,String> desc = new HashMap<>();
+            desc.put("mode", "REGION");
+            cstate.setRegionSuccess(cstate.getRegion(), cstate.getAgent(), gson.toJson(desc)); //2
+        }
+        if (rejoinsInBackground(configMode, joinedGlobal)) {
+            startGlobalRejoin();
+        }
+    }
+
+    /** One more attempt to join the global, asked for in a state with no global joined ({@link #globalControllerLost}). */
+    private void rejoinGlobal(String state, String desc) {
+        if (forceShutdown.get()) {
+            return;
+        }
+        int configMode = getConfigMode();
+        if (configMode != 8 && configMode != 24) {
+            logger.error("globalControllerLost in " + state + ": not a region that joins a global (" + desc + ")");
+            return;
+        }
+        logger.info("No global joined (" + state + "): trying to join it (" + desc + ")");
+        try {
+            if (tryJoinGlobal(configMode)) {
+                lossDebounce.recoveryCompleted();
+                logger.info("Global joined (" + desc + ")");
+            }
+        } catch (Exception ex) {
+            logger.error("rejoinGlobal() " + ex.getMessage());
+        }
+        notJoined(configMode);
+    }
+
+    /** Start the background join attempts unless they are running. Ended by a join, and by the region stopping. */
+    private void startGlobalRejoin() {
+        synchronized (globalRejoinLock) {
+            if (globalRejoin != null) {
+                return;
+            }
+            Thread rejoin = new Thread(this::rejoinGlobalInBackground, "global-rejoin");
+            rejoin.setDaemon(true);
+            globalRejoin = rejoin;
+            rejoin.start();
+        }
+        logger.info("No global joined: trying again in the background, every " + GLOBAL_REJOIN_FIRST_MS + " ms at first, backing off to "
+                + GLOBAL_REJOIN_MAX_MS + " ms");
+    }
+
+    private void rejoinGlobalInBackground() {
+        int attempt = 0;
+        try {
+            while (!globalRejoinEnds()) {
+                Thread.sleep(rejoinDelayMs(attempt++));
+                if (globalRejoinEnds()) {
+                    return;
+                }
+                try {
+                    // through the state machine: one event at a time, as stop and the loss reports
+                    controllerEngine.getControllerSM().globalControllerLost(GLOBAL_REJOIN + "attempt " + attempt);
+                } catch (Throwable t) {
+                    logger.warn("background attempt " + attempt + " to join the global: " + t);
+                }
+            }
+        } catch (InterruptedException stopping) {
+            // the region is stopping
+        } finally {
+            synchronized (globalRejoinLock) {
+                if (globalRejoin == Thread.currentThread()) {
+                    globalRejoin = null;
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether the background attempts are over: the global is joined, or this node is stopping or no longer a region
+     * waiting for a global. Decided and recorded under the lock startGlobalRejoin takes, so a loss right after a join
+     * either finds these attempts still running or starts new ones.
+     */
+    private boolean globalRejoinEnds() {
+        synchronized (globalRejoinLock) {
+            ControllerMode mode = cstate.getControllerState();
+            boolean waiting = mode == ControllerMode.REGION || mode == ControllerMode.REGION_GLOBAL_FAILED
+                    || mode == ControllerMode.REGION_GLOBAL_INIT;
+            if (forceShutdown.get() || !waiting) {
+                if (globalRejoin == Thread.currentThread()) {
+                    globalRejoin = null;
+                }
+                return true;
+            }
+            return false;
+        }
     }
 
     private Map<String,String> preInit() {
@@ -1100,6 +1263,7 @@ public class ControllerSMHandler {
 
                 stateContext.setCurrentState(getStateByEnum(ControllerMode.REGION_GLOBAL)); //1
                 cstate.setRegionalGlobalSuccess(discoveryNode.discovered_region, discoveryNode.discovered_agent, "isRegionGlobal() Success");
+                joinedGlobal = true;
                 // (re-)joined the global: send the full region export now -- if the global marked this region
                 // LOST, its agents and plugins stay hidden there until an export restores them
                 requestFullStateUpdate("joined global " + discoveryNode.getDiscoveredPath());
