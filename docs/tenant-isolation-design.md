@@ -395,6 +395,151 @@ NATS accounts / Solace VPNs draw the line.
 
 ---
 
+## 12a. Inside one tenant: a node reads its own inbox only (2026-11-11)
+
+Sections 1 to 12 keep tenants apart. This one is about two nodes of the SAME tenant, and the threat is a compromised
+node that holds a valid identity (a leaf's certificate).
+
+**The defect.** The namespaced rule of `TenantPolicy.check` allowed every access, READ included, to every destination
+of the principal's own `T.<tenant>.` subtree. A node's inbox is a queue there (`T.<tenant>.<region>_<agent>`), so any
+verified node of a tenant could open a consumer -- on the broker it is attached to -- on its controller's inbox, a
+sibling's, or on the pattern `T.<tenant>.>`, and receive (as a competing or an exclusive consumer: take away) the
+control messages addressed to other nodes. They are signed, not encrypted. The un-namespaced rule always had it right
+("own-queue"; "read of peer inbox in region denied"); the namespaced rule had lost it.
+
+### Who reads what on a broker (the inventory, from the code)
+
+Only NETWORK clients are judged by the rule. A controller's own connections to its own broker are in-JVM (`vm://`), a
+bridge is a verified controller's (`isTrustedInfra`: broker-internal, in-JVM, or a verified bridge) and what a bridge
+carries is judged per message by `bridgeRefusal`; a bridge's local side and broker-internal contexts are forwarders
+(`isForwarder`, `bridgeCarrier`). None of them is touched by this section.
+
+| Reader | Destination | Kind | Name |
+|---|---|---|---|
+| `AgentConsumer` (every node) | its inbox | queue | `T.<tenant>.<region>_<agent>` (`MsgRouter.inboxQueue`) |
+| `AgentConsumer`, node with `region_alias` | the inbox of its former address | queue | `T.<tenant>.<former region>_<agent>` (`RegionAlias.aliasQueue`) |
+| `AgentConsumer`, node of a superuser tenant | its inbox in every tenant's namespace | queue pattern | `T.*.<region>_<agent>` (role SUPERUSER) |
+| `AgentConsumer`, controller on its own broker (in-JVM, exempt) | the same pattern; in the upgrade window also its raw inbox | queue | `T.*.<region>_<agent>`, `<region>_<agent>` |
+| a node of an earlier build without namespacing (upgrade window) | its raw inbox | queue | `<region>_<agent>` (the un-namespaced rule: "own-queue") |
+| `DataPlaneServiceImpl` (`getConsumer`, `shardConsumer`, `ownConsumer`) | the tenant's dataplane | topic | `T.<tenant>.agent.event`, `.region.event`, `.global.event`, each also `.<shard>` |
+| `DataPlaneServiceImpl.addMessageListenerEveryTenant` (a global of a superuser tenant) | regions' exports | topic pattern | `T.*.agent.event` |
+| the ActiveMQ client itself | temporary-destination advisories | topic | `ActiveMQ.Advisory.TempQueue,ActiveMQ.Advisory.TempTopic` |
+
+Nothing else creates a consumer, a browser or a durable subscriber (`createConsumer|createBrowser|
+createDurableSubscriber` over the controller; the library and the wsapi, filerepo, stunnel, executor, sysinfo, repo and
+gfs plugins create none). A plugin reaches the broker only through `DataPlaneService`, where it chooses a topic TYPE
+(`AGENT`, `REGION`, `GLOBAL`), a selector and a shard -- never a destination name, never a queue.
+
+So **there is no shared queue**: no work queue, no queue two nodes read. Every queue a network client legitimately
+reads in a tenant's namespace is its own inbox, in one of the two forms above. No name space for shared queues is
+defined; one that is ever needed must be one that cannot be an inbox name, and must be added to the rule by name.
+
+### The rule
+
+A principal of role `TENANT`, on a destination of its own `T.<tenant>.` subtree:
+
+- **WRITE**: any destination, as before (a node writes its controller's and its peers' inboxes).
+- **READ of a topic**: any, as before (below).
+- **READ of a QUEUE** (a consumer, a queue browser): only its own inbox -- `TenantPolicy.isOwnInbox`: the name is
+  exactly `T.<tenant>.<region>_<agent>` of its certificate, or `T.<tenant>.<R>_<agent>` with the same agent name and
+  `R` a plain region name (letters, digits, `-`: `Caller.validAlias`). Anything else is refused at the subscription
+  (`DENY READ '<queue>' for <identity> : a node reads no queue of its tenant's namespace but its own inbox`): another
+  node's inbox, a plugin-suffixed name, a queue that is no inbox, and every pattern -- an inbox name holds no wildcard
+  (`*`, `>`) and no `,`, a pattern is never equal to one, and a composite was already refused to all but
+  infrastructure.
+- **Removing or creating a queue by name** (`DestinationInfo`) needs READ and WRITE as before, so with the same rule
+  a node removes no queue but its own inbox (before: its controller's inbox and what waited in it, whenever no
+  consumer was on it). A queue is still created by the first message written to it.
+
+`SUPERUSER` and `INTERNAL` are not judged (a superuser tenant's node reads `T.*.<its inbox>` and any pattern); in-JVM
+connections and bridges never reach the rule; another tenant's namespace is refused as before, a named cross-tenant
+sink that says `read` excepted (the operator's explicit grant, unchanged). Callers that judge a NAME without its kind
+keep the earlier answer: a bridge's reach (`bridgeRefusal`), an advisory about a destination (`advisoryAllowed`), the
+creation of a destination by writing.
+
+### What binds an alias inbox to the node
+
+`AgentConsumer` opens the alias inbox when it connects, before the node has registered; the alias the region records
+(`recordedRegionAlias`) is the node's own statement in that registration. So neither can gate the subscription, and
+neither would bind anything: the node says what its former region is. What binds an inbox -- either form -- to the
+node is **the agent name in its certificate**: the queue's name must end in `_<agent>`, whole (names hold no `_`), and
+within a region a name is bound to one key. A node therefore never reads its controller's, a sibling's or a plugin's
+queue through the alias form: they end in another agent's name.
+
+What the alias form does reach is `T.<tenant>.<another region>_<the same agent name>`: the inbox of a node of the
+same name, in the same tenant, in another region. That is the alias feature itself (a moved node answers at its
+former address), and it is safe only under the requirement `region_alias` already states: **agent names are unique
+across the fabric**. Nothing enforces that at enrolment today (section 15), and where a node joins under a name of
+its own choosing (the standard profile: an agent's identity is its own claim, bound at first use) a compromised node
+could join again under the agent name of a controller of another region and ask for that controller's inbox as its
+"former address". So the broker
+refuses the alias form for the address of **a controller it knows**: its own, its parent, and every controller that
+joined it or bridges to it (`formerAddressOfAController`, asked when the consumer is added and when a queue is
+removed, never per message): `DENY READ '<queue>' for <identity> : the inbox of a controller this broker knows is no
+node's former address`. A controller that is there reads that inbox; it is nobody's former address.
+
+What remains is the inbox of a LEAF of the same agent name in another region (or of a controller this broker has
+never met): the broker a node is attached to cannot know every name of the fabric. Closing it is refusing, at
+enrolment or registration, an agent name another region of the tenant already holds (section 15).
+
+### Per message as well
+
+The subscription rule is the gate; two things reach a node without passing it, so the broker also judges each
+message (`isAllowedToConsume`, which every queue and topic subscription and every queue browser asks):
+
+- **Advisories that carry a copy of a message.** A tenant's node may read advisory topics, and
+  `ActiveMQ.Advisory.Expired.Queue.<queue>`, `...MessageDiscarded...`, `...MessageDLQd...` carry the message itself
+  (its properties -- the caller stamp among them -- and its body where a destination's policy asks for it; none does
+  today). The copy was judged by its destination's name: every node
+  of the tenant was sent the copy of a message that expired in another node's inbox. It is now read as the queue it
+  was on: a network node is sent the copy only for its own inbox. This is the one topic rule that changed, because
+  such a topic holds a message addressed to a single node.
+- **Whatever subscription a node holds.** A message on a queue of the connection's own tenant's namespace is given
+  to a network node only when that queue is its own inbox (`notItsInbox`); otherwise it is withheld, counted
+  (`withheldCount`) and logged (`WITHHELD message on '<queue>' from <identity> : a queue of its tenant's namespace
+  that is not this node's own inbox`, at most every 10 s). It costs a few field reads and one comparison of the
+  queue's name with the identity's; no lookup, no lock, nothing for topics.
+
+Why the subscription rule alone is otherwise tight: every consumer and browser of a network client passes
+`addConsumer` on the broker it attaches to; queue subscriptions do not outlive the broker (only durable topic
+subscriptions are restored, and a rolling upgrade restarts the broker), and a connection's identity and role never
+change while it is up, so no subscription predates the rule. `Consumer.*.VirtualTopic.>` queues are fed from TOPICS
+named `VirtualTopic.>`, never from a queue, and lie outside every tenant's namespace; mirrored queues (a topic copy
+`VirtualTopic.Mirror.<queue>` of every queue) are off (the ActiveMQ default; `ActiveBroker` does not turn them on) and
+would lie outside every namespace too; the dead-letter queue is `ActiveMQ.DLQ`, which no tenant reads. A tenant must
+not be named `VirtualTopic`, `Consumer` or `ActiveMQ` (the un-namespaced rule would hand it those names).
+
+### Topics: unchanged, and what a node can still learn inside its tenant
+
+A node of a tenant reads and writes every topic of `T.<tenant>.`, patterns included. Ranked by what it yields:
+
+1. **The tenant's whole dataplane** on the broker it is attached to (and what its demand brings over bridges):
+   `agent.event`, `region.event`, `global.event` -- telemetry, logs, state exports, application streams, the output
+   of processes. Only a stream its sender bound to a recipient (`cresco_to`, `StreamRecipientPolicy`) reaches that
+   recipient alone, and no subscription but the executor's sees a process's stdin (`StdinGuard`). Next: bind by
+   default the streams that have one reader.
+2. **Who is there.** Advisories about consumers, producers and destinations of its tenant: the names of the
+   tenant's nodes on this broker (their inbox queues), when each connects and leaves, and the selectors of their
+   dataplane subscriptions. No message. Next: give a node the advisories about its own inbox only (the same check).
+3. **It can write** to any inbox and topic of its tenant: receivers judge a message by its verified caller and its
+   signature, but nothing bounds the volume, and it can create queues without bound. Next: quotas per identity.
+4. **Names outside `T.`**: the un-namespaced rule still lets a tenant read `<tenant>.` names, queues included. No
+   Cresco code uses them with namespacing on; a raw inbox lies under such a prefix only when a region's name begins
+   with `<tenant>.`, and raw inboxes exist only in the upgrade window.
+
+### Tests
+
+`TenantPolicyInboxReadTest` (the rule, name by name), `InboxReadBrokerTest` (a real secured broker, mutual TLS: no
+consumer and no browser on another inbox or a pattern; all of what is sent to a controller's inbox reaches the
+controller; a subscription put on the queue past the rule is given nothing; an expired message's advisory copy; no
+removal of another node's inbox; no alias form of a known controller's address; a node of the released build --
+inbox, alias inbox, raw inbox -- and a superuser tenant's node work as before). Against the sources before the
+change 8 of the 10 broker tests fail (the two that pass are the last two: what must not change), and with the rule
+alone switched off 4 of the 8 unit tests fail (the other four assert what is unchanged: writes, topics, superuser,
+names outside the namespaced rule).
+
+---
+
 ## 13. Verification (shipped tests)
 
 | Test | Result | What it proves |
@@ -417,7 +562,7 @@ Run all four after any change to the auth or namespacing path; each must stay gr
 | L1 MsgEvent producer | `controller/.../communication/AgentProducer.java` | `sendMessage` — stamp `cresco_tenant` + qualify `dstPath` |
 | L1 MsgEvent inbox | `controller/.../statemachine/ControllerSMHandler.java` | `initIOChannels` — `T.*.` wildcard (vm://) vs `T.<tenant>.` (network) |
 | L1 dataplane | `controller/.../data/DataPlaneServiceImpl.java` | `getTopicName` — qualify topics |
-| L2 policy | `controller/.../communication/TenantPolicy.java` | `Role` enum + namespaced-prefix rule in `check` |
+| L2 policy | `controller/.../communication/TenantPolicy.java` | `Role` enum + namespaced-prefix rule in `check`; `isOwnInbox` (a queue is read by its node only, section 12a) |
 | L2 role resolution | `controller/.../communication/CrescoAuthorizationBroker.java` | `roleOf` from `broker_superuser_tenants` |
 
 ---
@@ -429,7 +574,10 @@ Run all four after any change to the auth or namespacing path; each must stay gr
   `setDynamicallyIncludedDestinations(T.<tenant>.>)` (the same lever `ActiveBroker.buildConnector` already
   uses for shard partitioning).
 - **L4 — payload envelope encryption** (opt-in; protects against a compromised transit broker).
-- **Advisory scoping** — close the destination-existence leak (§12).
+- **Advisory scoping** — close the destination-existence leak (§12), and inside a tenant give a node the advisories
+  about its own inbox only (§12a).
+- **Agent names unique across the fabric** — `region_alias` requires it and the alias inbox rule rests on it (§12a);
+  nothing refuses, at enrolment, a name that another region of the tenant already holds.
 - **Infra cross-tenant dataplane aggregation** — with topics qualified by local tenant, a global "god
   view" of all tenants' dataplane streams needs a `T.*.` wildcard *consumer* on infra (produce stays
   tenant-scoped). Built for the one stream the fabric itself needs — the regions' state exports at a global of a

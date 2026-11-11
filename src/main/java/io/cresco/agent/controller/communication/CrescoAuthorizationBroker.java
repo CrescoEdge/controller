@@ -375,7 +375,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         String name = dest.getPhysicalName();
         CrescoIdentity id = identityOf(ctx);
         if (access == TenantPolicy.Access.WRITE && legacyRawInboxWrite(id, name)) return;
-        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+        TenantPolicy.Decision d = TenantPolicy.check(id, name, access, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf,
+                dest.isQueue());
+        if (d.allowed && access == TenantPolicy.Access.READ && formerAddressOfAController(id, dest)) {
+            d = TenantPolicy.Decision.deny("the inbox of a controller this broker knows is no node's former address");
+        }
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
             logger.warn("DENY " + access + " '" + name + "' for " + who + " : " + d.reason);
@@ -422,6 +426,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             } catch (Exception ignore) { }
             String why = bridgeRefusal(context, q, about, TenantPolicy.Access.READ);
             if (why != null) return bridgeOutOfScope(q, about, TenantPolicy.Access.READ, why);
+        } else if (notItsInbox(q, message.getDestination())) {
+            // the READ rule on queues (enforce, TenantPolicy) again, per message: whatever subscription a node holds, a
+            // message on an inbox queue goes to the node that inbox names (or to infrastructure) and to no other
+            return withheld(message, q.identity, "a queue of its tenant's namespace that is not this node's own inbox");
         }
         // an advisory that carries a copy of a message (MessageDiscarded, DLQ'd, ...) is judged as that message: its
         // recipient binding and its destination's tenant, so properties never leak to other recipients or tenants
@@ -447,14 +455,52 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (isForwarder(context, sc)) return true;            // a verified bridge or a bridge's local side: the next broker judges
         CrescoIdentity who = (sc != null && sc.verified) ? sc.identity : null;
         if (advisoryCopy && subject.getDestination() != null) {
+            // (the copy of a message on a queue is read as that queue is: a network node is given its own inbox's only)
             TenantPolicy.Decision t = TenantPolicy.check(who, subject.getDestination().getPhysicalName(), TenantPolicy.Access.READ,
-                    sharedPrefixes, roleOf(who), crossTenantSinks);
+                    sharedPrefixes, roleOf(who), crossTenantSinks, null, subject.getDestination().isQueue() && sc != null && !sc.inJvm);
             if (!t.allowed) return withheld(message, who, "an advisory about another tenant's destination (" + t.reason + ")");
         }
         if (to == null) return true;
         TenantPolicy.Decision d = StreamRecipientPolicy.mayReceive(who, to, toTenant);
         return d.allowed || withheld(message, who, d.reason + (sc != null && !sc.verified && sc.identity != null ? " (asserted, unverified identity "
                 + sc.identity + ")" : ""));
+    }
+
+    /**
+     * Is {@code on} a queue of this connection's own tenant's namespace that its node may not read ({@link TenantPolicy}: a
+     * node reads only its own inbox there)? Asked, per message, of a connection that is no bridge (the caller rules those
+     * out: {@link #bridgeRefusal} judges them): it is one that {@link #enforce} judges when it presented a certificate over
+     * the network and is not of a superuser tenant. In-JVM connections read as before. A few field reads and one
+     * comparison of the name: no lookup, no lock.
+     */
+    private boolean notItsInbox(CrescoSecurityContext sc, ActiveMQDestination on) {
+        if (sc == null || !sc.certificate || sc.inJvm || sc.identity == null || on == null || !on.isQueue()) return false;
+        String name = on.getPhysicalName();
+        return TenantPolicy.inOwnNamespace(sc.identity, name) && !TenantPolicy.isOwnInbox(sc.identity, name)
+                && roleOf(sc.identity) == TenantPolicy.Role.TENANT;
+    }
+
+    /**
+     * Is the queue {@code dest} the alias form of {@code id}'s inbox ({@code <another region>_<its agent name>},
+     * {@link TenantPolicy#isOwnInbox}) AND the inbox of a controller this broker knows: its own, its parent, one that joined
+     * it or bridges to it? The region of the alias form is the node's own statement; a controller that is there reads that
+     * inbox, so it is nobody's FORMER address, and a node of the same agent name in another region took its messages
+     * through this form. Asked when a consumer is added (a few map reads), never per message.
+     */
+    private boolean formerAddressOfAController(CrescoIdentity id, ActiveMQDestination dest) {
+        if (id == null || roleOf(id) != TenantPolicy.Role.TENANT) return false;
+        String[] node = CrescoNames.splitPath(inboxNode(dest));
+        if (node == null || !node[1].equals(id.getAgent()) || node[0].equals(id.getRegion())) return false;   // not the alias form
+        CrescoIdentity own = ownIdentity;
+        if (own != null && node[0].equals(own.getRegion()) && node[1].equals(own.getAgent())) return true;
+        PeerIdentity.Expected p = parent.get();
+        if (p != null && node[0].equals(p.region) && node[1].equals(p.agent)) return true;
+        // a controller is recorded with its tenant: the one bound to that name, its region's, or (same tenant) the asker's
+        for (String tenant : new String[]{peers.boundTenant(node[0], node[1]), peers.tenantOfRegion(node[0]), id.getTenant()}) {
+            if (tenant != null && (peers.isJoinedController(tenant, node[0], node[1])
+                    || peers.isBridgePeer(CrescoIdentity.of(tenant, node[0], node[1], null)))) return true;
+        }
+        return false;
     }
 
     /**
@@ -503,9 +549,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 if (p != null && !p.isEmpty() && (name.equals(p) || name.startsWith(p + "."))) return "fabric-shared destination " + name + " belongs to the fabric";
             }
             CrescoIdentity id = identityOf(ctx);
-            TenantPolicy.Decision r = TenantPolicy.check(id, name, TenantPolicy.Access.READ, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
+            // (a queue is judged as a queue: a node removes no inbox it may not read, so none but its own)
+            TenantPolicy.Decision r = TenantPolicy.check(id, name, TenantPolicy.Access.READ, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf,
+                    d.isQueue());
             TenantPolicy.Decision w = TenantPolicy.check(id, name, TenantPolicy.Access.WRITE, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
             if (!r.allowed || !w.allowed) return "'" + name + "' is not this identity's to administer (" + (r.allowed ? w.reason : r.reason) + ")";
+            if (formerAddressOfAController(id, d)) return "'" + name + "' is the inbox of a controller this broker knows";
         }
         return null;
     }

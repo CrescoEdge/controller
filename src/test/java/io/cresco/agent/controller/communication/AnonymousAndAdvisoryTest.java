@@ -77,22 +77,23 @@ class AnonymousAndAdvisoryTest {
     @Test
     void aConnectionWithoutACertificateReadsNothingWritesNothingAndHoldsNothing() throws Exception {
         BrokerService b = broker(false);
+        // (the queues are a1's own inbox and the inbox of its former address: a node reads no other queue of its tenant)
         Session owner = client(b, TlsTestSupport.issued(caA, "t1", "rgA", "a1"), null);
         Session spy = client(b, null, "cresco-system|rgS|admin");
-        MessageConsumer c = spy.createConsumer(spy.createQueue("T.t1.inbox"));
-        owner.createProducer(owner.createQueue("T.t1.inbox")).send(owner.createTextMessage("t1-secret"));
+        MessageConsumer c = spy.createConsumer(spy.createQueue("T.t1.rgA_a1"));
+        owner.createProducer(owner.createQueue("T.t1.rgA_a1")).send(owner.createTextMessage("t1-secret"));
         assertTrue(drain(c, 1500).isEmpty(), "a certificate-less connection that typed a superuser username received");
-        spy.createProducer(spy.createQueue("T.t1.inbox")).send(spy.createTextMessage("injected"));
-        MessageConsumer real = owner.createConsumer(owner.createQueue("T.t1.inbox"));
+        spy.createProducer(spy.createQueue("T.t1.rgA_a1")).send(spy.createTextMessage("injected"));
+        MessageConsumer real = owner.createConsumer(owner.createQueue("T.t1.rgA_a1"));
         assertEquals(List.of("t1-secret"), drain(real, 2000), "the owner lost its message, or received the anonymous one");
         assertThrows(JMSException.class, () -> spy.createDurableSubscriber(spy.createTopic("T.t1.events"), "keep-everything"),
                 "a certificate-less connection was allowed a durable subscription");
         // an exclusive consumer request cannot take a queue from its owner
         Session spy2 = client(b, null, "t1|rgA|x");
-        spy2.createConsumer(spy2.createQueue("T.t1.work?consumer.exclusive=true"));
+        spy2.createConsumer(spy2.createQueue("T.t1.old_a1?consumer.exclusive=true"));
         Thread.sleep(200);
-        MessageConsumer worker = owner.createConsumer(owner.createQueue("T.t1.work"));
-        owner.createProducer(owner.createQueue("T.t1.work")).send(owner.createTextMessage("job"));
+        MessageConsumer worker = owner.createConsumer(owner.createQueue("T.t1.old_a1"));
+        owner.createProducer(owner.createQueue("T.t1.old_a1")).send(owner.createTextMessage("job"));
         assertEquals(List.of("job"), drain(worker, 3000), "a certificate-less exclusive consumer starved the queue");
     }
 
@@ -106,8 +107,8 @@ class AnonymousAndAdvisoryTest {
         MessageConsumer t2Conn = t2.createConsumer(t2.createTopic("ActiveMQ.Advisory.Connection"));
         MessageConsumer suAll = su.createConsumer(su.createTopic("ActiveMQ.Advisory.Consumer.Queue.T.t1.>"));
         Session t1 = client(b, TlsTestSupport.issued(caA, "t1", "rgA", "a1"), null);
-        t1.createConsumer(t1.createQueue("T.t1.payroll"), "stream='q3-salaries'");
-        t2.createConsumer(t2.createQueue("T.t2.mine"));
+        t1.createConsumer(t1.createQueue("T.t1.rgA_a1"), "stream='q3-salaries'");     // each its own inbox
+        t2.createConsumer(t2.createQueue("T.t2.rgB_watcher"));
         assertNull(t2Foreign.receive(1500), "tenant t2 saw tenant t1's consumer and selector in an advisory");
         Message own = t2Own.receive(3000);
         assertNotNull(own, "tenant t2 no longer sees advisories about its own destinations");
