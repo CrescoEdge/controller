@@ -16,8 +16,8 @@ WHAT IT IS
   PASS/FAIL table, the known items it saw with their counts, and exits 0 only when every event passed.
 
 HOW TO RUN IT
-  PYTHONPATH=<pycrescolib checkout> python3 fabric_matrix.py --jar agent-1.3-SNAPSHOT.jar --work /tmp/fm \
-      [--topology tree] [--profile standard] [--events start,restart-region,...] [--old-jar earlier-agent.jar] \
+  PYTHONPATH=<pycrescolib checkout> python3 fabric_matrix.py --jar agent-1.3-SNAPSHOT.jar --work /tmp/fm
+      [--topology tree] [--profile standard] [--events start,restart-region,...] [--old-jar earlier-agent.jar]
       [--base-port 41000] [--settle 30] [--seed 1] [--keep] [--json out.json]
   Needs a JDK 21 `java` on PATH, Python 3.12 with pycrescolib, and (production profile) OpenSSL 3 for tools/cresco-pki.sh.
   One cell per run; about 11 minutes for the 10 JVMs of `tree` with every default event (4 of them settle time), ~4 GB
@@ -31,7 +31,8 @@ HOW TO RUN IT
               tree       a global, 3 regions bridged to the global only, 2 agents per region
               mesh       the tree, every region also bridged to the others (regional_peers)
               tenants    two tenants, each its own region and 2 agents, under a global in the superuser tenant
-                         (regions are given the global's key in controller_trust_anchors; standard profile only)
+                         (regions are given the global's key in controller_trust_anchors; standard profile only).
+                         The release of 2026-11-10 does not form it: a tenant's region never registers with the global.
               alias      the tree, plus one agent that starts in the global's region and is moved to a region with
                          region_alias (it must keep answering at its former address through every event)
               regions30  a global and 30 regions, no agents, no plugins: a scale smoke for a bigger machine
@@ -73,6 +74,14 @@ WHAT IT CANNOT SEE
   the log has one line). Every observation is one function (observe_*): moving the judgement from the log to the
   counters is replacing those. An earlier-build agent (upgrade profile) keeps its membership and nothing more: it must
   be listed, it is not asked an RPC, and its own log is not judged; nor is a revoked node's after its revocation.
+
+ON THE RELEASE OF 2026-11-10 (agent 1.3, controller 29ef93d), 2026-11-11
+  single, tree (standard, production, upgrade) pass. mesh fails restart-global and global-outage (after the global
+  restarts, messages for controller inboxes and agent.event arrive over another region's bridge and lose their caller
+  stamp); alias fails restart-region (the moved agent's failover dials the global's broker, which its region's broker
+  advertised, and logs PEER IDENTITY MISMATCH: refused, as it must be); tenants does not form; rekey-region fails. None
+  of these has a known-item entry: each is for its owner to fix or to list. The release before it (tree) fails six of
+  eight events: credentials that do not verify at start, a minute of unsigned-message refusals at a moved agent.
 
 HOW TO ADD
   A topology    a function that adds nodes to the fabric (the global first: fab.add / fab.add_agent), listed in TOPOLOGIES.
@@ -253,6 +262,7 @@ class Fabric:
         self.event_failures: list[str] = []   # what an event itself found wrong (beside the invariants)
         self.prev_counters: dict = {}  # the metric inventory's counters at the event before, and the JVMs they were of
         self.prev_launches: dict = {}
+        self.revoked = None           # what the revoke event measured
 
     # ---- layout ----
     def disc(self, n): return self.a.base_port + SLOT * n.slot
@@ -738,8 +748,8 @@ def topo_tenants(fab):
 
 
 def topo_regions30(fab, regions=30):
-    """A scale smoke for a bigger machine: a global and 30 regions, no agents, without the default plugins. The regions
-    self-organize their own bridges (the shipped default, at most net_infer_max_peers each). regions<N> runs N regions."""
+    """A scale smoke for a bigger machine: a global and 30 regions, no agents, without the default plugins. The inference
+    of region-to-region bridges is left at its default, on (a 4-region trial on one host inferred none). regions<N> runs N."""
     topo_tree(fab, regions=regions, agents=0)
     fab.infer = True
     fab.a.light = True
@@ -753,9 +763,9 @@ TOPOLOGIES = {"single": topo_single, "tree": topo_tree, "mesh": topo_mesh, "tena
 # Events. Each takes the fabric, does one thing to it and returns a short description. Raise Skip when it does not apply.
 # To add one: write a function, add it to EVENTS (the order there is the order they run in).
 # ====================================================================================================================
-def pick_agent(fab, parent=None, avoid=()):
-    """An agent that is up (of `parent` when given), never the earlier-build one, the last of its parent first."""
-    pool = [n for n in fab.agents(parent) if not n.old_build and n not in avoid and not n.alias]
+def pick_agent(fab, parent=None):
+    """An agent that is up (of `parent` when given), never the earlier-build one or a moved one; the last one added."""
+    pool = [n for n in fab.agents(parent) if not n.old_build and not n.alias]
     if not pool:
         raise Skip("no agent to pick")
     return pool[-1]
@@ -778,7 +788,8 @@ def ev_start(fab):
     for n in order:
         fab.launch(n)
         time.sleep(fab.a.stagger)
-    return "%d nodes started in the order %s" % (len(fab.nodes), " ".join(n.name for n in order))
+    return "%d nodes started in the order %s%s" % (len(fab.nodes), "gc (for its key), then " if fab.anchor_global else "",
+                                                   " ".join(n.name for n in order))
 
 
 def ev_restart_agent(fab):
@@ -1316,7 +1327,7 @@ def main():
             time.sleep(a.settle)
             res = check(fab, label, began, counts_as=event)
             res.update({"what": what, "listed_after_s": listed_after, "took_s": round(time.time() - began, 1),
-                        "revoked": getattr(fab, "revoked", None) if event == "revoke" else None})
+                        "revoked": fab.revoked if event == "revoke" else None})
             if listed_after is None:
                 res["failures"].insert(0, "listing: not right with every node answering within %d s of the event" % a.converge)
             hook, fab.after_check = fab.after_check, None
