@@ -172,7 +172,11 @@ public class DBInterfaceImpl implements DBInterface {
                 String agentconfigs = de.paramsContains("agentconfigs") ? de.getCompressedParam("agentconfigs") : null;
                 String pluginconfigs = de.paramsContains("pluginconfigs") ? de.getCompressedParam("pluginconfigs") : null;
 
-                boolean statusUpdateCallSuccess = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs);
+                // a region's update by its controller touches no row of another tenant's node (DBEngine.nodeUpdateStatus); an
+                // operator's (an admin's) is bound to no tenant
+                io.cresco.library.security.Caller by = "REGION".equals(mode) ? io.cresco.library.security.Caller.fromMsgEvent(de) : null;
+                String writerTenant = by != null && by.getKind() == io.cresco.library.security.Caller.Kind.CONTROLLER ? by.getTenant() : null;
+                boolean statusUpdateCallSuccess = dbe.nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs, writerTenant);
 
                 if (statusUpdateCallSuccess) {
                     // If dbe.nodeUpdateStatus also reports success, then all intended operations worked.

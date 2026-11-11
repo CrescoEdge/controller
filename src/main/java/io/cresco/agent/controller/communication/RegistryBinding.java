@@ -120,7 +120,11 @@ public final class RegistryBinding {
     public static String dataplaneRefusal(Caller writer, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
                                           java.util.function.Predicate<Caller> regionController,
                                           String regionId, String agentId, String regionconfigs, String agentconfigs, String pluginconfigs) {
-        return refusal(writer, atGlobal, regionOfAgent, regionController, atGlobal ? (regionId == null ? "" : regionId) : null,
+        // a state export is a node's controller's own word about itself: no API caller makes one, whatever its role (an
+        // admin stamp is any tenant's to declare, and exempt from every check below), and nobody does without a name
+        if (writer == null) return "no verified caller";
+        if (writer.getKind() != Caller.Kind.CONTROLLER) return "only a node's controller writes its state export, not " + writer;
+        return refusal(writer, false, atGlobal, regionOfAgent, regionController, atGlobal ? (regionId == null ? "" : regionId) : null,
                 atGlobal ? null : (agentId == null ? "" : agentId), null, null, null, null, regionconfigs, agentconfigs, pluginconfigs);
     }
 
@@ -161,11 +165,23 @@ public final class RegistryBinding {
                           java.util.function.Predicate<Caller> regionController,
                           String rw, String aw, String pw, String ur, String ua, String up,
                           String regionconfigs, String agentconfigs, String pluginconfigs) {
+        return refusal(caller, true, atGlobal, regionOfAgent, regionController, rw, aw, pw, ur, ua, up, regionconfigs, agentconfigs, pluginconfigs);
+    }
+
+    /**
+     * As above. {@code unbound}: an {@code admin} (whom the action table admitted) and {@code anonymous} (insecure mode) are
+     * bound to no node -- true for an action a caller asks for, false for a state export on the dataplane, where no action
+     * table stands in front and the writer is the node it reports or nobody.
+     */
+    static String refusal(Caller caller, boolean unbound, boolean atGlobal, java.util.function.Function<String, String> regionOfAgent,
+                          java.util.function.Predicate<Caller> regionController,
+                          String rw, String aw, String pw, String ur, String ua, String up,
+                          String regionconfigs, String agentconfigs, String pluginconfigs) {
         if (caller == null) return "no verified caller";
-        if (caller.isAnonymous()) return null;
+        if (unbound && caller.isAnonymous()) return null;
         // a plugin record is removed only with its agent: DBEngine never deletes a bare plugin id (review F3)
         if (up != null && ua == null) return "unregistering plugin " + up + " without naming its agent, from " + caller;
-        if (caller.hasRole(Caller.ROLE_ADMIN)) return null;
+        if (unbound && caller.hasRole(Caller.ROLE_ADMIN)) return null;
         if (caller.getKind() != Caller.Kind.CONTROLLER) return "only a controller updates the registry, not " + caller;
         String region = caller.getRegion(), agent = caller.getAgent();
         if (atGlobal && (regionController == null || !regionController.test(caller))) {

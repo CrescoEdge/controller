@@ -421,7 +421,13 @@ public class ControllerStatePersistance {
     private String writerRefusal(Message msg, boolean atGlobal, String regionId, String agentId, String regionconfigs,
                                  String agentconfigs, String pluginconfigs) {
         if (!io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) return null;
-        io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg);
+        return writerRefusal(io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(msg), atGlobal, regionId, agentId,
+                regionconfigs, agentconfigs, pluginconfigs);
+    }
+
+    /** As above (security on), for the writer already read from the message. */
+    private String writerRefusal(io.cresco.library.security.Caller writer, boolean atGlobal, String regionId, String agentId,
+                                 String regionconfigs, String agentconfigs, String pluginconfigs) {
         return io.cresco.agent.controller.communication.RegistryBinding.dataplaneRefusal(writer, atGlobal,
                 dbe::regionOfAgentQuiet, regionController,
                 io.cresco.agent.controller.communication.SecuritySettings.compatOpen(plugin.getConfig(), System.currentTimeMillis()),
@@ -549,6 +555,30 @@ public class ControllerStatePersistance {
         return lid;
     }
 
+    /**
+     * A region's state export, as the global's registry listener took it: applied only when its verified writer is the
+     * controller of the region it reports -- a controller (no API caller, whatever its role), the one that joined this
+     * global, in the tenant it joined in (RegistryBinding.dataplaneRefusal). The listener of a superuser tenant's global
+     * takes exports from every tenant's namespace, so the namespace says nothing about the writer; the writer does. Its
+     * agents' rows are given the WRITER's tenant, never one the export claims, and it neither overwrites nor removes a row
+     * of another tenant's node (DBEngine.nodeUpdateStatus). Why it was refused (nothing written), or null.
+     */
+    String applyRegionExport(MapMessage export) throws jakarta.jms.JMSException {
+        String region = export.getStringProperty("region_id");
+        String regionconfigs = export.getString("regionconfigs"), agentconfigs = export.getString("agentconfigs"),
+                pluginconfigs = export.getString("pluginconfigs");
+        String writerTenant = null;
+        if (io.cresco.agent.controller.communication.SecuritySettings.brokerSecurity(plugin.getConfig())) {
+            io.cresco.library.security.Caller writer = io.cresco.agent.controller.communication.CallerStamps.fromJmsProperties(export);
+            String why = writerRefusal(writer, true, region, null, regionconfigs, agentconfigs, pluginconfigs);
+            if (why != null) { refusedUpdate("REGION", why); return why; }
+            writerTenant = writer.getTenant();
+            agentconfigs = io.cresco.agent.controller.communication.RegistryBinding.withVerifiedTenant(agentconfigs, writerTenant);
+        }
+        dbe.nodeUpdateStatus("REGION", region, null, null, regionconfigs, agentconfigs, pluginconfigs, writerTenant);
+        return null;
+    }
+
     public String registerGlobalListener() {
         String lid = null;
         try {
@@ -561,12 +591,7 @@ public class ControllerStatePersistance {
 
                             if (msg instanceof MapMessage) {
 
-                                MapMessage mapMessage = (MapMessage)msg;
-                                //logger.error("GLOBAL HEALTH MESSAGE: INCOMING " + mapMessage.getStringProperty("region_id"));
-                                String why = writerRefusal(msg, true, mapMessage.getStringProperty("region_id"), null,
-                                        mapMessage.getString("regionconfigs"), mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
-                                if (why != null) { refusedUpdate("REGION", why); return; }
-                                dbe.nodeUpdateStatus("REGION", mapMessage.getStringProperty("region_id"),null, null, mapMessage.getString("regionconfigs"),mapMessage.getString("agentconfigs"), mapMessage.getString("pluginconfigs"));
+                                applyRegionExport((MapMessage) msg);
 
                             }
                         } catch(Exception ex) {

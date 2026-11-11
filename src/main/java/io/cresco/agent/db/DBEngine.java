@@ -312,6 +312,18 @@ public class DBEngine {
     }
 
     public boolean nodeUpdateStatus(String mode, String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs) {
+        return nodeUpdateStatus(mode, region_watchdog_update, agent_watchdog_update, plugin_watchdog_update, regionconfigs, agentconfigs, pluginconfigs, null);
+    }
+
+    /**
+     * As above. {@code writerTenant}: the tenant of the verified controller whose REGION update this is (null: not bound to
+     * a tenant -- security off, an operator's action). An agent row and a plugin row are keyed by their id alone, for the
+     * whole fabric: a region's export that names an agent (or a plugin) registered in ANOTHER tenant would take that row
+     * over (and move it into the writer's region), and its next export that leaves it out would remove it. Such an entry is
+     * refused (logged, the row untouched), and an export's omission removes only rows of the writer's own tenant. The same
+     * name in two tenants cannot be held: the second one is not listed.
+     */
+    public boolean nodeUpdateStatus(String mode, String region_watchdog_update, String agent_watchdog_update, String plugin_watchdog_update, String regionconfigs, String agentconfigs, String pluginconfigs, String writerTenant) {
 
         // Start pessimistic and report success only when every entry applied cleanly. Callers use
         // this to answer agent_enable (is_registered): the old always-true return told a
@@ -427,7 +439,15 @@ public class DBEngine {
                             // the agent row is keyed by agent id alone: an agent known under another region (it moved
                             // here, gfs#26) is updated, not inserted again (a duplicate key); joining this region below
                             // then moves its membership
-                            if(!nodeExist(null,agent_id,null)) {
+                            boolean known = nodeExist(null,agent_id,null);
+                            String owner = (isRegionUpdate && known) ? foreignTenant(agent_id, writerTenant) : null;
+                            if (owner != null) {
+                                // ...but never across tenants: the name is another tenant's node here
+                                refusedForeign("agent " + agent_id, region_id, writerTenant, owner);
+                                entryFailed = true;
+                                continue;
+                            }
+                            if(!known) {
 
                                 //logger.debug("addNodeFromUpdate add [" + de.getParams() + "]");
                                 addANode(agent_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),configparams);
@@ -449,6 +469,8 @@ public class DBEngine {
 
                     //remove any agents not in the update
                     if(removeAgentList != null && !removeAgentList.isEmpty()) {
+                        // (only rows the writer could have written: its own tenant's, or with no tenant recorded)
+                        removeAgentList.removeIf(a -> foreignTenant(a, writerTenant) != null);
                         for (String agent_id : removeAgentList) {
                             removeNode(region_id, agent_id, null);
                         }
@@ -468,6 +490,13 @@ public class DBEngine {
                     String agent_id = entry.getKey();
 
                     String region_id = getRNodeFromAnode(agent_id);
+
+                    String agentOwner = (isRegionUpdate && region_id != null) ? foreignTenant(agent_id, writerTenant) : null;
+                    if (agentOwner != null) {
+                        refusedForeign("the plugins of agent " + agent_id, region_id, writerTenant, agentOwner);
+                        entryFailed = true;
+                        continue;
+                    }
 
                     if(region_id != null) {
 
@@ -505,7 +534,18 @@ public class DBEngine {
                                 continue;
                             }
 
-                            if(!nodeExist(null,null, plugin_id)) {
+                            boolean knownPlugin = nodeExist(null,null, plugin_id);
+                            if (knownPlugin && isRegionUpdate && writerTenant != null) {
+                                // a plugin row is keyed by its id alone too: one held by another tenant's agent is not taken over
+                                String holder = agentOfPlugin(plugin_id);
+                                String owner = holder == null || holder.equals(agent_id) ? null : foreignTenant(holder, writerTenant);
+                                if (owner != null) {
+                                    refusedForeign("plugin " + plugin_id + " (of agent " + holder + ")", region_id, writerTenant, owner);
+                                    entryFailed = true;
+                                    continue;
+                                }
+                            }
+                            if(!knownPlugin) {
                                 int status = addPNode(agent_id,plugin_id,Integer.parseInt(status_code),status_desc,Integer.parseInt(watchdog_period),System.currentTimeMillis(),pluginname,jarfile,version,md5,configparams,Integer.parseInt(persistence_code));
                             } else {
                                 updateNode(null, null, plugin_id, Integer.parseInt(status_code), status_desc, Integer.parseInt(watchdog_period), System.currentTimeMillis(), configparams);
@@ -1128,6 +1168,72 @@ public class DBEngine {
         } catch(Exception ex) {
             logger.error("DBEngine.getANode()", ex);
             return null;
+        }
+    }
+
+    /**
+     * The tenant recorded on the agent row {@code agentId} ({@code tenant_id} in its configparams: the tenant its controller
+     * was verified in, RegistryBinding.withVerifiedTenant), or null: no row, or a row with no tenant recorded.
+     */
+    public String tenantOfAgentRow(String agentId) {
+        if (agentId == null) return null;
+        String configparams = null;
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT configparams FROM anode WHERE agent_id = ?")) {
+            stmt.setString(1, textParam(agentId));
+            try (ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) configparams = rs.getString(1);
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.tenantOfAgentRow(): {}", ex.getMessage());
+            return null;
+        }
+        if (configparams == null || configparams.isEmpty()) return null;
+        try {
+            Map<String, String> params = gson.fromJson(configparams, new com.google.gson.reflect.TypeToken<Map<String, String>>() { }.getType());
+            String t = params == null ? null : params.get("tenant_id");
+            return t == null || t.isEmpty() ? null : t;
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    /** The other tenant the agent row {@code agentId} is recorded in, or null: it is {@code writerTenant}'s, or nobody's on record. */
+    private String foreignTenant(String agentId, String writerTenant) {
+        if (writerTenant == null) return null;
+        String t = tenantOfAgentRow(agentId);
+        return t == null || t.equals(writerTenant) ? null : t;
+    }
+
+    /** The agent that holds the plugin row {@code pluginId}, or null. */
+    private String agentOfPlugin(String pluginId) {
+        try (Connection conn = ds.getConnection();
+             PreparedStatement stmt = conn.prepareStatement("SELECT agent_id FROM pluginof WHERE plugin_id = ?")) {
+            stmt.setString(1, textParam(pluginId));
+            try (ResultSet rs = stmt.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        } catch (Exception ex) {
+            logger.error("DBEngine.agentOfPlugin(): {}", ex.getMessage());
+            return null;
+        }
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong foreignRefused = new java.util.concurrent.atomic.AtomicLong();
+    private volatile long lastForeignLog;
+
+    /** Registry entries refused so far because their name is another tenant's node here (tests, diagnosis). */
+    public long foreignRefusedCount() { return foreignRefused.get(); }
+
+    /** Count, and log at most every 10 s, a REGION update's entry for a name that is another tenant's node here. */
+    private void refusedForeign(String what, String region, String writerTenant, String owner) {
+        long n = foreignRefused.incrementAndGet();
+        long now = System.currentTimeMillis();
+        if (now - lastForeignLog > 10_000L) {
+            lastForeignLog = now;
+            logger.warn("REGISTRY NAME COLLISION: the export of region " + region + " (tenant " + writerTenant + ") names " + what
+                    + ", which is registered in tenant " + owner + " here: refused, that row is untouched. The registry holds a"
+                    + " name once for the whole fabric, so the second node of that name is not listed (" + n + " so far)");
         }
     }
 
