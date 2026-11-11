@@ -107,6 +107,12 @@ public class RegionHealthWatcher {
 
     public long getLastGlobalPongTs() { return lastGlobalPongTs; }
 
+    /**
+     * This region has just (re-)joined a global. The watcher is kept through a global outage, so the pong stamp is from
+     * before it: link:parent would call the global stale at once and report it lost again.
+     */
+    public void globalJoined() { lastGlobalPongTs = System.currentTimeMillis(); }
+
     public long getPingIntervalMs() { return pingInterval; }
 
     public void shutdown() {
@@ -481,7 +487,9 @@ public class RegionHealthWatcher {
                     // this message being addressed to the global, it was only ever applied to the
                     // LOCAL DB, so the global's view of this region's liveness depended entirely on
                     // the dataplane stateUpdate — which bulk dataplane traffic can starve.
-                    if (controllerEngine.cstate.isRegionalController() && !controllerEngine.cstate.isGlobalController()) {
+                    // only while a global is joined: this watcher runs through a global outage, and with none joined the
+                    // tick has nowhere to go (it was refused and logged every comm_watchdog_interval)
+                    if (controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL) {
                         plugin.msgOut(tick);
                     }
                 } else {
