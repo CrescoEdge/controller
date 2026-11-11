@@ -24,6 +24,34 @@ public class ControllerStateImp implements ControllerState {
 
 	private ControllerStatePersistance controllerStatePersistance;
 
+	/**
+	 * This node as it stands (name, role, parent), for the message paths: one immutable value, replaced whole by every
+	 * method below that changes the mode, the node's name or a parent's -- inside the same monitor as the change, so no
+	 * reader ever sees half of one. Read with no lock ({@link #standing()}): the getters above enter this object's
+	 * monitor on every call, which a per-message path must not.
+	 */
+	private volatile io.cresco.agent.controller.communication.SpeakerPosition.Standing standing =
+			io.cresco.agent.controller.communication.SpeakerPosition.Standing.NONE;
+
+	/** This node as it stands now. A volatile read: no lock, nothing allocated. Never null. */
+	public io.cresco.agent.controller.communication.SpeakerPosition.Standing standing() {
+		return standing;
+	}
+
+	/**
+	 * Publish the standing from the fields as they are now. Called with this object's monitor held, as the last step of
+	 * every change of {@code currentMode}, {@code localRegion}/{@code localAgent}, {@code regionalRegion}/{@code
+	 * regionalAgent} or {@code globalRegion}/{@code globalAgent}: a method that changes one of them and does not call
+	 * this leaves the message paths on the state before (ControllerStandingTest holds every setter to it).
+	 */
+	private void publishStanding() {
+		String mode = currentMode.name();
+		boolean global = mode.startsWith("GLOBAL");
+		boolean regional = global || mode.startsWith("REGION");
+		standing = new io.cresco.agent.controller.communication.SpeakerPosition.Standing(localRegion, localAgent, regional, global,
+				regional ? globalRegion : regionalRegion, regional ? globalAgent : regionalAgent);
+	}
+
 	public ControllerStateImp(PluginBuilder plugin, DBEngine dbe) {
 		this.plugin = plugin;
 		this.logger = plugin.getLogger(ControllerStatePersistance.class.getName(), CLogger.Level.Info);
@@ -139,19 +167,22 @@ public class ControllerStateImp implements ControllerState {
 		//pull last known agent and region name from the database
 		Map<String, String> lastCState = controllerStatePersistance.getStateMap();
 
-			currentMode = ControllerMode.PRE_INIT;
-			currentDesc = "Initial State";
-			if(lastCState != null) {
-				localAgent = lastCState.get("local_agent");
-				localRegion = lastCState.get("local_region");
-			} else {
-				localAgent = null;
-				localRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.PRE_INIT;
+				currentDesc = "Initial State";
+				if(lastCState != null) {
+					localAgent = lastCState.get("local_agent");
+					localRegion = lastCState.get("local_region");
+				} else {
+					localAgent = null;
+					localRegion = null;
+				}
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
 			}
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
@@ -160,8 +191,11 @@ public class ControllerStateImp implements ControllerState {
 
 		if(controllerStatePersistance.setControllerState(ControllerMode.AGENT_SHUTDOWN, desc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent)){
 
-				currentMode = ControllerMode.AGENT_SHUTDOWN;
-				currentDesc = desc;
+				synchronized (this) {
+					currentMode = ControllerMode.AGENT_SHUTDOWN;
+					currentDesc = desc;
+					publishStanding();
+				}
 
 			return true;
 		} else {
@@ -170,23 +204,29 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setAgentFailed(String desc) {
-			currentMode = ControllerMode.AGENT_FAILED;
-			currentDesc = desc;
-			this.globalAgent = null;
-			this.globalRegion = null;
-			this.regionalRegion = null;
-			this.regionalAgent = null;
+			synchronized (this) {
+				currentMode = ControllerMode.AGENT_FAILED;
+				currentDesc = desc;
+				this.globalAgent = null;
+				this.globalRegion = null;
+				this.regionalRegion = null;
+				this.regionalAgent = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setAgentSuccess(String regionalRegion, String regionalAgent, String desc) {
-			currentMode = ControllerMode.AGENT;
-			currentDesc = desc;
-			this.globalAgent = null;
-			this.globalRegion = null;
-			this.regionalRegion = regionalRegion;
-			this.regionalAgent = regionalAgent;
+			synchronized (this) {
+				currentMode = ControllerMode.AGENT;
+				currentDesc = desc;
+				this.globalAgent = null;
+				this.globalRegion = null;
+				this.regionalRegion = regionalRegion;
+				this.regionalAgent = regionalAgent;
+				publishStanding();
+			}
 
 		// below a parent: the global's crypto policy governs; local crypto policy keys are ignored
 		io.cresco.agent.controller.statemachine.CryptoPolicySync.warnIfLocalPolicyIgnored(plugin, logger);
@@ -194,76 +234,94 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setAgentInit(String regionName, String agentName, String desc) {
-			currentMode = ControllerMode.AGENT_INIT;
-			currentDesc = desc;
-			this.localAgent = agentName;
-			this.localRegion = regionName;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.AGENT_INIT;
+				currentDesc = desc;
+				this.localAgent = agentName;
+				this.localRegion = regionName;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 
 	}
 
 	public boolean setRegionInit(String regionName, String agentName, String desc) {
-			currentMode = ControllerMode.REGION_INIT;
-			currentDesc = desc;
-			localRegion = regionName;
-			localAgent = agentName;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION_INIT;
+				currentDesc = desc;
+				localRegion = regionName;
+				localAgent = agentName;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setRegionSuccess(String regionName, String agentName, String desc) {
-			currentMode = ControllerMode.REGION;
-			currentDesc = desc;
-			localRegion = regionName;
-			localAgent = agentName;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION;
+				currentDesc = desc;
+				localRegion = regionName;
+				localAgent = agentName;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setRegionGlobalInit(String desc) {
-			currentMode = ControllerMode.REGION_GLOBAL_INIT;
-			currentDesc = desc;
-			this.globalAgent = null;
-			this.globalRegion = null;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION_GLOBAL_INIT;
+				currentDesc = desc;
+				this.globalAgent = null;
+				this.globalRegion = null;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setRegionFailed(String desc) {
-			currentMode = ControllerMode.REGION_FAILED;
-			currentDesc = desc;
-			this.globalAgent = null;
-			this.globalRegion = null;
-			this.regionalAgent = null;
-			this.regionalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION_FAILED;
+				currentDesc = desc;
+				this.globalAgent = null;
+				this.globalRegion = null;
+				this.regionalAgent = null;
+				this.regionalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setGlobalSuccess(String desc) {
-			currentMode = ControllerMode.GLOBAL;
-			currentDesc = desc;
-			this.globalRegion = localRegion;
-			this.globalAgent = localAgent;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
+			synchronized (this) {
+				currentMode = ControllerMode.GLOBAL;
+				currentDesc = desc;
+				this.globalRegion = localRegion;
+				this.globalAgent = localAgent;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				publishStanding();
+			}
 
 		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
 		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
@@ -271,12 +329,15 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setGlobalInit(String desc) {
-			currentMode = ControllerMode.GLOBAL_INIT;
-			currentDesc = desc;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
+			synchronized (this) {
+				currentMode = ControllerMode.GLOBAL_INIT;
+				currentDesc = desc;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				publishStanding();
+			}
 
 		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
 		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
@@ -284,12 +345,15 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setGlobalFailed(String desc) {
-			currentMode = ControllerMode.GLOBAL_FAILED;
-			currentDesc = desc;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
-			this.regionalAgent = localAgent;
-			this.regionalRegion = localRegion;
+			synchronized (this) {
+				currentMode = ControllerMode.GLOBAL_FAILED;
+				currentDesc = desc;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				this.regionalAgent = localAgent;
+				this.regionalRegion = localRegion;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
@@ -297,8 +361,11 @@ public class ControllerStateImp implements ControllerState {
 	public boolean setGlobalShutdown(String desc) {
 
 		if(controllerStatePersistance.setControllerState(ControllerMode.GLOBAL_SHUTDOWN, desc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent)) {
-				currentMode = ControllerMode.GLOBAL_SHUTDOWN;
-				currentDesc = desc;
+				synchronized (this) {
+					currentMode = ControllerMode.GLOBAL_SHUTDOWN;
+					currentDesc = desc;
+					publishStanding();
+				}
 
 			return true;
 		} else {
@@ -307,10 +374,13 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setRegionalGlobalSuccess(String globalRegion, String globalAgent, String desc) {
-			currentMode = ControllerMode.REGION_GLOBAL;
-			currentDesc = desc;
-			this.globalRegion = globalRegion;
-			this.globalAgent = globalAgent;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION_GLOBAL;
+				currentDesc = desc;
+				this.globalRegion = globalRegion;
+				this.globalAgent = globalAgent;
+				publishStanding();
+			}
 
 		// below a parent: the global's crypto policy governs; local crypto policy keys are ignored
 		io.cresco.agent.controller.statemachine.CryptoPolicySync.warnIfLocalPolicyIgnored(plugin, logger);
@@ -320,8 +390,11 @@ public class ControllerStateImp implements ControllerState {
 	public boolean setRegionShutdown(String desc) {
 
 		if(controllerStatePersistance.setControllerState(ControllerMode.REGION_SHUTDOWN, desc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent)) {
-				currentMode = ControllerMode.REGION_SHUTDOWN;
-				currentDesc = desc;
+				synchronized (this) {
+					currentMode = ControllerMode.REGION_SHUTDOWN;
+					currentDesc = desc;
+					publishStanding();
+				}
 
 			return true;
 		} else {
@@ -330,36 +403,45 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setRegionalGlobalFailed(String desc) {
-			currentMode = ControllerMode.REGION_GLOBAL_FAILED;
-			currentDesc = desc;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.REGION_GLOBAL_FAILED;
+				currentDesc = desc;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setStandaloneInit(String region, String agent, String desc) {
-			currentMode = ControllerMode.STANDALONE_INIT;
-			currentDesc = desc;
-			localAgent = agent;
-			localRegion = region;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.STANDALONE_INIT;
+				currentDesc = desc;
+				localAgent = agent;
+				localRegion = region;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setStandaloneSuccess(String region, String agent, String desc) {
-			currentMode = ControllerMode.STANDALONE;
-			currentDesc = desc;
-			localAgent = agent;
-			localRegion = region;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.STANDALONE;
+				currentDesc = desc;
+				localAgent = agent;
+				localRegion = region;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
 		// the top of the fabric: its config sets the fabric-wide crypto policy (CryptoPolicySync)
 		io.cresco.agent.controller.statemachine.CryptoPolicySync.becomeAuthority(plugin, logger, localRegion + "/" + localAgent);
@@ -367,21 +449,27 @@ public class ControllerStateImp implements ControllerState {
 	}
 
 	public boolean setStandaloneFailed(String region, String agent, String desc) {
-			currentMode = ControllerMode.STANDALONE_FAILED;
-			currentDesc = desc;
-			localAgent = agent;
-			localRegion = null;
-			regionalRegion = null;
-			regionalAgent = null;
-			globalAgent = null;
-			globalRegion = null;
+			synchronized (this) {
+				currentMode = ControllerMode.STANDALONE_FAILED;
+				currentDesc = desc;
+				localAgent = agent;
+				localRegion = null;
+				regionalRegion = null;
+				regionalAgent = null;
+				globalAgent = null;
+				globalRegion = null;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}
 
 	public boolean setStandaloneShutdown(String desc) {
-			currentMode = ControllerMode.STANDALONE_SHUTDOWN;
-			currentDesc = desc;
+			synchronized (this) {
+				currentMode = ControllerMode.STANDALONE_SHUTDOWN;
+				currentDesc = desc;
+				publishStanding();
+			}
 
         return controllerStatePersistance.setControllerState(currentMode, currentDesc, globalRegion, globalAgent, regionalRegion, regionalAgent, localRegion, localAgent);
 	}

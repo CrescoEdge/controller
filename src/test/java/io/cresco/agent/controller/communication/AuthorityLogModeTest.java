@@ -216,6 +216,94 @@ class AuthorityLogModeTest {
         assertTrue(SecuritySettings.bootWarnings(cfg("broker_security_enabled", "false"), now).stream().noneMatch(w -> w.startsWith("authority_direction")));
     }
 
+    // ------------------------------------------------------------------ enforce stands on signatures and recorded joins
+
+    private static boolean starts(Config c) throws Exception {
+        if (!SecuritySettings.startupRefusals(c).isEmpty()) return false;
+        return true;
+    }
+
+    @Test
+    void enforceWithoutMessageSigningRefusesTheStartAndLogStartsAndWarns() throws Exception {
+        Config enforce = cfg("broker_security_enabled", "true", "authority_direction", "enforce", "msg_signing_required", "false");
+        List<String> refusals = SecuritySettings.startupRefusals(enforce);
+        assertEquals(1, refusals.size(), refusals.toString());
+        assertTrue(refusals.get(0).startsWith("authority_direction=enforce with msg_signing_required=false: without verified message"
+                + " signatures there is no speaker"), refusals.get(0));
+        // the node itself does not start: nothing listens, nothing is made
+        Map<String, Object> m = new HashMap<>();
+        m.put("broker_security_enabled", "true");
+        m.put("authority_direction", "enforce");
+        m.put("msg_signing_required", "false");
+        ControllerEngine engine = new ControllerEngine(null, TestAgentService.plugin(Files.createTempDirectory("authority").toString(), m), null, null);
+        assertFalse(engine.start(), "a node that enforces what it cannot verify started");
+        assertTrue(engine.isRefusedByConfiguration());
+        // with signing (the default) enforce starts
+        assertTrue(starts(cfg("broker_security_enabled", "true", "authority_direction", "enforce")));
+        assertTrue(starts(cfg("broker_security_enabled", "true", "authority_direction", "enforce", "msg_signing_required", "true")));
+        // log (and the default, and off) starts without signing, and log says what its count is then worth
+        long now = System.currentTimeMillis();
+        for (String mode : new String[]{"log", null}) {
+            Config log = mode == null ? cfg("broker_security_enabled", "true", "msg_signing_required", "false")
+                    : cfg("broker_security_enabled", "true", "authority_direction", mode, "msg_signing_required", "false");
+            assertTrue(starts(log), "authority_direction=" + mode + " must start without message signing");
+            List<String> warned = SecuritySettings.bootWarnings(log, now);
+            assertEquals(1, warned.stream().filter(w -> w.startsWith("authority_direction=log with msg_signing_required=false: the"
+                    + " would-refuse count (authz.direction.would_refuse) is NOT meaningful on this node for API callers and for other"
+                    + " regions' nodes")).count(), warned.toString());
+        }
+        assertTrue(starts(cfg("broker_security_enabled", "true", "authority_direction", "off", "msg_signing_required", "false")));
+        // with signing, log has nothing to warn of there
+        assertTrue(SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true"), now).stream()
+                .noneMatch(w -> w.contains("msg_signing_required")));
+        assertTrue(SecuritySettings.msgSigningRequired(cfg("broker_security_enabled", "true")));
+        assertFalse(SecuritySettings.msgSigningRequired(cfg("broker_security_enabled", "true", "msg_signing_required", "false")));
+        assertTrue(SecuritySettings.msgSigningRequired(cfg("security_profile", "production", "msg_signing_required", "false")),
+                "production signs whatever the setting says (and refuses to start on it)");
+    }
+
+    @Test
+    void enforceWithPeerIdentityOffRefusesTheStartAndLogStartsAndWarns() throws Exception {
+        Config enforce = cfg("broker_security_enabled", "true", "authority_direction", "enforce", "peer_identity_mode", "off");
+        List<String> refusals = SecuritySettings.startupRefusals(enforce);
+        assertEquals(1, refusals.size(), refusals.toString());
+        assertTrue(refusals.get(0).startsWith("authority_direction=enforce with peer_identity_mode=off: nothing records which region"
+                + " controllers joined a global"), refusals.get(0));
+        Map<String, Object> m = new HashMap<>();
+        m.put("broker_security_enabled", "true");
+        m.put("authority_direction", "enforce");
+        m.put("peer_identity_mode", "off");
+        ControllerEngine engine = new ControllerEngine(null, TestAgentService.plugin(Files.createTempDirectory("authority").toString(), m), null, null);
+        assertFalse(engine.start());
+        assertTrue(engine.isRefusedByConfiguration());
+        // both at once: both are named
+        assertEquals(2, SecuritySettings.startupRefusals(cfg("broker_security_enabled", "true", "authority_direction", "enforce",
+                "peer_identity_mode", "off", "msg_signing_required", "false")).size());
+        // the other identity modes record who joined
+        for (String mode : new String[]{"enforce", "warn"}) {
+            assertTrue(starts(cfg("broker_security_enabled", "true", "authority_direction", "enforce", "peer_identity_mode", mode)), mode);
+        }
+        long now = System.currentTimeMillis();
+        Config log = cfg("broker_security_enabled", "true", "authority_direction", "log", "peer_identity_mode", "off");
+        assertTrue(starts(log));
+        List<String> warned = SecuritySettings.bootWarnings(log, now);
+        assertEquals(1, warned.stream().filter(w -> w.startsWith("authority_direction=log with peer_identity_mode=off: the would-refuse"
+                + " count (authz.direction.would_refuse) is NOT meaningful at a global for the controllers of its regions")).count(),
+                warned.toString());
+        assertTrue(starts(cfg("broker_security_enabled", "true", "authority_direction", "off", "peer_identity_mode", "off")));
+        assertTrue(SecuritySettings.bootWarnings(cfg("broker_security_enabled", "true"), now).stream().noneMatch(w -> w.contains("peer_identity_mode")));
+    }
+
+    @Test
+    void enforceInInsecureDevelopmentModeRefusesTheStart() throws Exception {
+        // nothing is checked there at all: a node that says enforce and enforces nothing must not start
+        List<String> refusals = SecuritySettings.startupRefusals(cfg("broker_security_enabled", "false", "authority_direction", "enforce"));
+        assertEquals(1, refusals.size(), refusals.toString());
+        assertTrue(refusals.get(0).startsWith("authority_direction=enforce with broker_security_enabled=false"), refusals.get(0));
+        assertTrue(starts(cfg("broker_security_enabled", "false")), "insecure development mode with the default starts");
+        assertTrue(starts(cfg("broker_security_enabled", "false", "authority_direction", "log")));
+    }
+
     /** One node of its own, with security on and the mode given; nothing signed (its admission reads the stamp alone). */
     private static ControllerEngine alone(String mode, Map<String, Object> more) throws Exception {
         Map<String, Object> c = new HashMap<>(more);
@@ -254,8 +342,9 @@ class AuthorityLogModeTest {
 
     @Test
     void withoutMessageSigningAnApiUsersWordCannotBeTracedToANode() throws Exception {
-        // msg_signing_required=false (development): nothing says which node vouched for a user that came over the wire
-        ControllerEngine e = alone("enforce", Map.of("msg_signing_required", "false"));
+        // msg_signing_required=false (development): nothing says which node vouched for a user that came over the wire.
+        // enforce does not start so (above); in log the call is counted from a speaker nobody can name
+        ControllerEngine e = alone("log", Map.of("msg_signing_required", "false"));
         MsgEvent m = new MsgEvent(MsgEvent.Type.CONFIG, "rgA", "rc", null, "rgA", "a2", null, false, false);
         m.setParam("action", "killjvm");
         m.setParam(MsgSigning.SPEAKER, "t1/rgA/a2");                   // a sender's own claim to be this very node
@@ -263,12 +352,12 @@ class AuthorityLogModeTest {
         assertNotNull(got, "premise: without signing the broker's stamp is taken");
         assertNull(MsgSigning.speakerOf(got), "a sender's note stayed on a message nobody verified");
         ActionAuthorizer.Decision d = e.getPluginBuilder().authorize(got);
-        assertFalse(d.allowed, "an API admin nobody can be named for ran a management action");
-        assertEquals(Position.UNKNOWN, d.position);
+        assertEquals(Position.UNKNOWN, d.position, "an API admin nobody can be named for was placed");
+        assertTrue(d.wouldRefuse, "and enforce would refuse it");
         // a controller's own word needs no note: its stamp is its node
         MsgEvent own = new MsgEvent(MsgEvent.Type.CONFIG, "rgA", "a2", null, "rgA", "a2", null, false, false);
         own.setParam("action", "killjvm");
         e.stampSelf(own);
-        assertTrue(e.getPluginBuilder().authorize(own).allowed);
+        assertFalse(e.getPluginBuilder().authorize(own).wouldRefuse);
     }
 }

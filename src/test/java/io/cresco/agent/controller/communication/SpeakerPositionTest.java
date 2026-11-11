@@ -24,24 +24,22 @@ class SpeakerPositionTest {
     // ------------------------------------------------------------------ the rule
 
     /** A node that knows what it is told. */
-    static final class Knows implements SpeakerPosition.Node {
+    static class Knows implements SpeakerPosition.Node {
         String tenant = "t1", region, agent, parentRegion, parentAgent;
         boolean regionController, global;
         /** region/agent the parent's bundle names as the global (an agent). */
         String globalAbove;
         /** Regions whose controller joined (the global), and controllers known to have joined before they presented themselves. */
         final Set<String> joinedRegions = new HashSet<>(), joinedControllers = new HashSet<>();
-        int parentAsked;
+        int standingRead;
 
         Knows(String region, String agent) { this.region = region; this.agent = agent; }
 
         @Override public String tenant() { return tenant; }
-        @Override public String region() { return region; }
-        @Override public String agent() { return agent; }
-        @Override public boolean regionController() { return regionController; }
-        @Override public boolean global() { return global; }
-        @Override public String parentRegion() { parentAsked++; return parentRegion; }
-        @Override public String parentAgent() { return parentAgent; }
+        @Override public SpeakerPosition.Standing standing() {
+            standingRead++;
+            return new SpeakerPosition.Standing(region, agent, regionController, global, parentRegion, parentAgent);
+        }
         @Override public boolean globalAbove(String r, String a, String pr, String pa) {
             return pr.equals(parentRegion) && pa.equals(parentAgent) && (r + "/" + a).equals(globalAbove);
         }
@@ -130,15 +128,36 @@ class SpeakerPositionTest {
         n.parentAgent = null;
         assertEquals(ELSEWHERE, at(n, "rgG", "gc"), "the global, seen from a region that has not joined it");
         assertEquals(BELOW, at(n, "rgA", "a1"), "a region with no global still has its agents below it");
-        int asked = n.parentAsked;
-        at(n, "rgA", "a1");
-        assertEquals(asked, n.parentAsked, "an agent's report costs its region controller no look at its own parent");
+    }
+
+    @Test
+    void theNodesStateIsReadOncePerSpeakerSoAChangeMeanwhileNeverGivesAMixOfTwoStates() {
+        for (Knows n : new Knows[]{agent(), region(), global()}) {
+            for (String[] speaker : new String[][]{{"rgA", "a1"}, {"rgA", "rc"}, {"rgG", "gc"}, {"rgA", "a2"}, {"rgB", "b1"}}) {
+                int before = n.standingRead;
+                at(n, speaker[0], speaker[1]);
+                assertEquals(before + 1, n.standingRead, "placing " + speaker[0] + "/" + speaker[1] + " read the node's state more than once");
+            }
+        }
+        // a standing is whole: a parent is both names or none, and the global has none
+        SpeakerPosition.Standing half = new SpeakerPosition.Standing("rgA", "a1", false, false, "rgA", null);
+        assertNull(half.parentRegion);
+        assertNull(half.parentAgent);
+        SpeakerPosition.Standing top = new SpeakerPosition.Standing("rgG", "gc", true, true, "rgG", "gc");
+        assertNull(top.parentRegion, "the global named itself as its parent");
+        assertTrue(new SpeakerPosition.Standing("rgG", "gc", false, true, null, null).regionController, "the global is a region controller too");
+        assertEquals(UNKNOWN, SpeakerPosition.of("t1", "rgA", "a1", new Knows("rgA", "a1") {
+            @Override public SpeakerPosition.Standing standing() { return null; }
+        }));
+        assertEquals(UNKNOWN, SpeakerPosition.of("t1", "rgA", "a1", new Knows("rgA", "a1") {
+            @Override public SpeakerPosition.Standing standing() { return SpeakerPosition.Standing.NONE; }
+        }));
     }
 
     @Test
     void seenFromTheGlobal() {
         Knows n = global();
-        n.parentRegion = "rgG";                    // a global's state names itself as its global: never read as a parent
+        n.parentRegion = "rgG";                    // a global's state names itself as its global: never taken as a parent
         n.parentAgent = "gc";
         assertEquals(SELF, at(n, "rgG", "gc"));
         assertEquals(BELOW, at(n, "rgG", "ga"), "an agent of its own region");
@@ -153,7 +172,7 @@ class SpeakerPositionTest {
         for (String[] s : new String[][]{{"rgA", "rc"}, {"rgA", "a1"}, {"rgG", "ga"}, {"rgX", "x1"}}) {
             assertNotEquals(ABOVE, at(n, s[0], s[1]), "nothing is above the global");
         }
-        assertEquals(0, n.parentAsked, "the global asked for a parent");
+        assertNull(n.standing().parentRegion, "the global has a parent");
     }
 
     @Test
@@ -223,6 +242,43 @@ class SpeakerPositionTest {
         s.parentAgent = "rc2";
         assertEquals(ELSEWHERE, node(own.a1, own.g), "the global was taken on the word of a controller that is not this agent's parent");
         assertEquals(ABOVE, node(own.a1, own.rB));
+    }
+
+    @Test
+    void whenARegionChangesGlobalsItsAgentsPlaceTheOldGlobalElsewhereAtOnce() throws Exception {
+        AuthorityFabric own = new AuthorityFabric("enforce");
+        assertEquals(ABOVE, node(own.a1, own.g), "premise: the global the region joined first");
+        // the region joins another global: discovery, then that global's bundle on its pongs (the old global's entry is
+        // then only kept for its grace period, msg_signing_bundle_grace_ms: its messages on the way still verify)
+        ControllerEngine g2 = TlsTestSupport.engine("rgH", "gc2", java.util.Map.of("broker_security_enabled", "true", "authority_direction", "enforce"));
+        ((TlsTestSupport.State) g2.cstate).regional = true;
+        ((TlsTestSupport.State) g2.cstate).global = true;
+        assertNull(own.rA.getCertificateManager().getPeerTrust().pin("rgH", "gc2", g2.getCertificateManager().getPublicCertificate()[0],
+                PeerTrustRegistry.ROLE_CONTROLLER, true));
+        assertNull(g2.getCertificateManager().getPeerTrust().pin("rgA", "rc", own.rA.getCertificateManager().getPublicCertificate()[0],
+                PeerTrustRegistry.ROLE_CONTROLLER, false));
+        g2.getCertificateManager().getPeerTrust().allowBridgePeer("rgA", "rc");
+        TlsTestSupport.State region = (TlsTestSupport.State) own.rA.cstate;
+        region.globalRegion = "rgH";
+        region.globalAgent = "gc2";
+        for (int i = 0; i < 2; i++) AuthorityFabric.ping(own.rA, g2, true);
+        assertEquals(ABOVE, node(own.rA, g2), "the region's own parent is the global it joined now");
+        assertEquals(ELSEWHERE, node(own.rA, own.g));
+        // the agent's next pong brings the region's bundle as it stands now
+        AuthorityFabric.ping(own.a1, own.rA, false);
+        assertEquals(ABOVE, node(own.a1, g2), "the global the region joined now");
+        assertEquals(ELSEWHERE, node(own.a1, own.g), "the global the region left was served as the global for its grace period:"
+                + " the agent still takes its management word");
+        // the old global's key is still served (a message of it on the way verifies), only not as the global
+        assertTrue(own.rA.msgSigning().servedBundle().contains("\"role\":\"" + MsgSigning.ROLE_FORMER_GLOBAL + "\""), "the entry kept for its grace period");
+        MsgEvent late = AuthorityFabric.deliver(own.g, AuthorityFabric.controller(own.g),
+                AuthorityFabric.request(MsgEvent.Type.CONFIG, "killjvm", own.g, own.a1, false, false), own.a1);
+        assertNotNull(late, "premise: the old global's message still verifies at the agent during the grace period");
+        assertFalse(AuthorityFabric.admittedByAgentTier(own.a1, late), "the global the region left stopped the agent");
+        // an agent that only holds the bundle from before (no pong yet) is covered by its parent's word once it comes
+        assertEquals(ABOVE, node(own.a2, own.g), "a2 has not heard its region since: it still holds the bundle from before");
+        AuthorityFabric.ping(own.a2, own.rA, false);
+        assertEquals(ELSEWHERE, node(own.a2, own.g));
     }
 
     @Test

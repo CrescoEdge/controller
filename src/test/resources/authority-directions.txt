@@ -6,9 +6,9 @@
 # itself). "floor" lines are the privileged floor of every bundle, DOWN unless that bundle's own tables or annotations
 # say otherwise (the controller's agent_enable/agent_disable are UP on the region tier, above).
 # EveryActionHasADirectionTest compares ControllerActionRoles with this file: change both, on purpose.
-agent CONFIG|cepadd ANY
-agent CONFIG|cepinput ANY
-agent CONFIG|cepremove ANY
+agent CONFIG|cepadd DOWN
+agent CONFIG|cepinput DOWN
+agent CONFIG|cepremove DOWN
 agent CONFIG|controllerupdate DOWN
 agent CONFIG|getagentinfo DOWN
 agent CONFIG|getislogdp DOWN
@@ -47,9 +47,9 @@ agent KPI|* UP
 agent WATCHDOG|* UP
 region CONFIG|agent_disable UP
 region CONFIG|agent_enable UP
-region CONFIG|cepadd ANY
-region CONFIG|cepinput ANY
-region CONFIG|cepremove ANY
+region CONFIG|cepadd DOWN
+region CONFIG|cepinput DOWN
+region CONFIG|cepremove DOWN
 region CONFIG|controllerupdate DOWN
 region CONFIG|getagentinfo DOWN
 region CONFIG|getislogdp DOWN

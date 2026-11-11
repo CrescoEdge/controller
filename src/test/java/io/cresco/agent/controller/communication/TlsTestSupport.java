@@ -167,6 +167,11 @@ public final class TlsTestSupport {
         public volatile String globalRegion, globalAgent;
         @Override public String getGlobalRegion() { return globalRegion; }
         @Override public String getGlobalAgent() { return globalAgent; }
+        /** As the real state publishes it (ControllerStateImp.publishStanding), from this test node's own fields. */
+        @Override public SpeakerPosition.Standing standing() {
+            boolean r = regional || global;
+            return new SpeakerPosition.Standing(region, agent, r, global, r ? globalRegion : parentRegion, r ? globalAgent : parentAgent);
+        }
     }
 
     /** A test node's controller state (agent, not regional). */

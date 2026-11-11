@@ -26,6 +26,7 @@ class PeerAuthorityTest {
             {"CONFIG", "pluginadd"}, {"CONFIG", "pluginremove"}, {"CONFIG", "pluginupload"}, {"CONFIG", "pluginrepopull"},
             {"CONFIG", "controllerupdate"}, {"CONFIG", "stopcontroller"}, {"CONFIG", "restartcontroller"}, {"CONFIG", "restartframework"},
             {"CONFIG", "killjvm"}, {"CONFIG", "setloglevel"}, {"CONFIG", "setlogdp"}, {"CONFIG", "getislogdp"}, {"CONFIG", "getagentinfo"},
+            {"CONFIG", "cepadd"}, {"CONFIG", "cepremove"}, {"CONFIG", "cepinput"},
             {"EXEC", "getlog"}, {"EXEC", "getfileinfo"}, {"EXEC", "getfiledata"}, {"EXEC", "getbroadcastdiscovery"},
             {"EXEC", "getnetworkstate"}, {"EXEC", "getcoordinators"}};
 
@@ -155,6 +156,145 @@ class PeerAuthorityTest {
         assertNull(arrive(f.x1, wire, controller(f.g), null));
         wire = send(f.g, controller(f.g), request(MsgEvent.Type.CONFIG, "killjvm", f.g, f.rX, false, false));
         assertNull(arrive(f.rX, wire, controller(f.g), null));
+    }
+
+    // ------------------------------------------------------------------ CEP queries: code in the controller's JVM
+
+    @Test
+    void aLeafCannotRunACepQueryOnItsRegionControllerASiblingOrTheGlobal() throws Exception {
+        // cepadd makes the receiving controller compile and run a Siddhi app (AgentExecutor.cepAdd): its role admits a
+        // plugin and a controller of the tenant, so only where the caller's word comes from keeps a leaf out
+        for (String action : new String[]{"cepadd", "cepremove", "cepinput"}) {
+            for (ControllerEngine to : new ControllerEngine[]{f.rA, f.a2, f.g}) {
+                for (Caller leaf : new Caller[]{controller(f.a1), plugin(f.a1)}) {
+                    refusedOnEveryTier(f.a1, leaf, "CONFIG", action, to, DOWN_403);
+                }
+            }
+            // a node's own plugin, and its own controller, keep it: nothing crosses the wire
+            for (ControllerEngine e : new ControllerEngine[]{f.a1, f.rA, f.g}) {
+                MsgEvent own = request(MsgEvent.Type.CONFIG, action, e, e, false, false);
+                CallerStamps.stamp(own, plugin(e));
+                e.markForSigning(own);
+                assertTrue(admittedByAgentTier(e, own), action + " by a plugin of " + e.cstate.getAgentPath() + " itself");
+                if (((TlsTestSupport.State) e.cstate).regional) {
+                    MsgEvent again = request(MsgEvent.Type.CONFIG, action, e, e, false, false);
+                    CallerStamps.stamp(again, plugin(e));
+                    e.markForSigning(again);
+                    assertTrue(admittedByControllerTier(e, again, false), action + " by its own plugin (regional tier)");
+                }
+            }
+            // and the controllers above: a region controller's plugin for its agents, the global's for every node
+            allowedOnEveryTier(f.rA, plugin(f.rA), "CONFIG", action, f.a1);
+            allowedOnEveryTier(f.g, plugin(f.g), "CONFIG", action, f.a2);
+            allowedOnEveryTier(f.g, plugin(f.g), "CONFIG", action, f.rA);
+        }
+    }
+
+    // ------------------------------------------------------------------ what is refused is counted by itself
+
+    @Test
+    void aCallRefusedForItsDirectionIsCountedAsRefusedNotAsWouldRefuse() throws Exception {
+        ControllerEngine at = f.b1;
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        Map<String, String> names = io.cresco.agent.controller.measurement.AuthorityMetrics.register(registry, at);
+        for (String expected : List.of("authz.direction.refused", "authz.direction.refused.killjvm", "authz.direction.refused.cepadd",
+                "authz.direction.refused.getfiledata", "authz.direction.refused.agent_enable", "authz.direction.refused.watchdog",
+                "authz.direction.refused.kpi", "authz.direction.refused.run_process", "authz.direction.refused.other")) {
+            assertEquals("authz", names.get(expected), expected + " has no meter in the authz group");
+            assertNotNull(registry.find(expected).functionCounter(), expected);
+        }
+        assertFalse(names.containsKey("authz.direction.refused.ping"), "an action honoured from anywhere has no meter");
+        // other tests of this class refuse calls at this node too: what these four add
+        long refusedBefore = at.authority().refusedCount(), deniedBefore = at.getPluginBuilder().deniedCount();
+        long killBefore = at.authority().refusedCount("killjvm"), fileBefore = at.authority().refusedCount("getfiledata");
+        long elsewhereBefore = at.authority().refusedCount("killjvm", io.cresco.library.security.ActionAuthorizer.Position.ELSEWHERE);
+        for (int i = 0; i < 3; i++) assertFalse(admittedByAgentTier(at, received(f.a1, controller(f.a1), "CONFIG", "killjvm", at)));
+        assertFalse(admittedByAgentTier(at, received(f.a1, admin(), "EXEC", "getfiledata", at)));
+        assertEquals(refusedBefore + 4, at.authority().refusedCount());
+        assertEquals(killBefore + 3, at.authority().refusedCount("killjvm"));
+        assertEquals(elsewhereBefore + 3, at.authority().refusedCount("killjvm", io.cresco.library.security.ActionAuthorizer.Position.ELSEWHERE));
+        assertEquals(fileBefore + 1, at.authority().refusedCount("getfiledata"));
+        assertEquals((double) (refusedBefore + 4), registry.get("authz.direction.refused").functionCounter().count());
+        assertEquals((double) (killBefore + 3), registry.get("authz.direction.refused.killjvm").functionCounter().count());
+        assertEquals((double) (fileBefore + 1), registry.get("authz.direction.refused.getfiledata").functionCounter().count());
+        assertEquals(0.0, registry.get("authz.direction.refused.other").functionCounter().count());
+        assertEquals(0, at.authority().wouldRefuseCount(), "a refusal was counted as a would-refuse");
+        assertEquals(0.0, registry.get("authz.direction.would_refuse").functionCounter().count());
+        assertEquals(deniedBefore + 4, at.getPluginBuilder().deniedCount(), "it is still one of the node's refusals");
+        // a refusal for the caller's role is not one for its direction; nor is an allowed call
+        long before = at.authority().refusedCount();
+        assertFalse(admittedByAgentTier(at, received(f.a1, plugin(f.a1), "CONFIG", "killjvm", at)));
+        assertTrue(admittedByAgentTier(at, received(f.g, controller(f.g), "CONFIG", "killjvm", at)));
+        assertEquals(before, at.authority().refusedCount());
+        // a whole type is counted under the type, whatever action a sender writes
+        MsgEvent report = arrive(f.rB, send(f.rA, controller(f.rA), request(MsgEvent.Type.WATCHDOG, "anything-a-sender-writes", f.rA, f.rB, true, false)),
+                controller(f.rA), null);
+        assertNotNull(report);
+        long typeBefore = f.rB.authority().refusedCount("WATCHDOG");
+        assertFalse(admittedByControllerTier(f.rB, report, false));
+        assertEquals(typeBefore + 1, f.rB.authority().refusedCount("WATCHDOG"));
+        assertEquals(0, f.rB.authority().refusedCount("anything-a-sender-writes"));
+    }
+
+    // ------------------------------------------------------------------ session keys: the same speaker under a MAC
+
+    private static boolean macd(MsgEvent m) {
+        return m.getParam(MsgSessions.MAC) != null && m.getParam(MsgSigning.SIG) == null && m.getParam(MsgSigning.CRED) == null;
+    }
+
+    /** Talk until {@code a} and {@code b} send each other messages under a session key (a few round trips at most). */
+    private static void session(ControllerEngine a, ControllerEngine b) throws Exception {
+        for (int i = 0; i < 5; i++) {
+            MsgEvent ab = send(a, plugin(a), request(MsgEvent.Type.EXEC, "ping", a, b, false, false));
+            boolean abMac = macd(ab);
+            assertNotNull(arrive(b, ab, plugin(a), null), AuthorityFabric.lastRefusal);
+            MsgEvent ba = send(b, plugin(b), request(MsgEvent.Type.EXEC, "ping", b, a, false, false));
+            boolean baMac = macd(ba);
+            assertNotNull(arrive(a, ba, plugin(b), null), AuthorityFabric.lastRefusal);
+            if (abMac && baMac) return;
+        }
+        fail("no session between " + a.cstate.getAgentPath() + " and " + b.cstate.getAgentPath());
+    }
+
+    @Test
+    void underASessionKeyAnApiUsersSpeakerIsStillTheGatewayNodeAndALeafsSessionCarriesNoOtherSpeaker() throws Exception {
+        // the second and later messages between two nodes carry a MAC under their session key: no signature, no credential
+        session(f.a1, f.b1);
+        Caller admin = admin();
+        for (int i = 0; i < 3; i++) {
+            MsgEvent wire = send(f.a1, admin, request(MsgEvent.Type.CONFIG, "killjvm", f.a1, f.b1, false, false));
+            assertTrue(macd(wire), "premise: the message travels under the session key, not a signature");
+            assertNull(wire.getParam(MsgSigning.SPEAKER));
+            MsgEvent m = arrive(f.b1, wire, admin, null);
+            assertNotNull(m, AuthorityFabric.lastRefusal);
+            assertEquals("t1/rgA/a1", MsgSigning.speakerOf(m), "under a MAC the speaker is the node the session is with");
+            assertFalse(admittedByAgentTier(f.b1, m), "an admin a leaf vouches for stopped another region's agent, under a session key");
+            refused403(f.b1, "killjvm", DOWN_403, "under a session key");
+        }
+        // the leaf writes another speaker into a message under its session: the note is not under the MAC, and is removed
+        MsgEvent claims = send(f.a1, admin, request(MsgEvent.Type.CONFIG, "killjvm", f.a1, f.b1, false, false));
+        assertTrue(macd(claims));
+        claims.setParam(MsgSigning.SPEAKER, "t1/rgG/gc");
+        MsgEvent m = arrive(f.b1, claims, admin, null);
+        assertNotNull(m, AuthorityFabric.lastRefusal);
+        assertEquals("t1/rgA/a1", MsgSigning.speakerOf(m));
+        assertFalse(admittedByAgentTier(f.b1, m));
+        f.clearSent();
+        // the leaf names another node as the one its MAC is from: there is no session with that node under this key
+        for (String other : new String[]{"t1/rgG/gc", "t1/rgB/rc2"}) {
+            MsgEvent forged = send(f.a1, admin, request(MsgEvent.Type.CONFIG, "killjvm", f.a1, f.b1, false, false));
+            assertTrue(macd(forged));
+            forged.setParam(MsgSigning.BY, other);
+            assertNull(arrive(f.b1, forged, admin, null), "a leaf's session MAC was accepted as " + other + "'s");
+        }
+        // and the global's own session with an agent carries the global's word
+        session(f.g, f.a2);
+        MsgEvent fromGlobal = send(f.g, admin, request(MsgEvent.Type.CONFIG, "killjvm", f.g, f.a2, false, false));
+        assertTrue(macd(fromGlobal));
+        MsgEvent got = arrive(f.a2, fromGlobal, admin, null);
+        assertNotNull(got, AuthorityFabric.lastRefusal);
+        assertEquals("t1/rgG/gc", MsgSigning.speakerOf(got));
+        assertTrue(admittedByAgentTier(f.a2, got), "an admin at the global's gateway, under the global's session with the agent");
     }
 
     // ------------------------------------------------------------------ an API admin: the node that vouched for it
@@ -366,7 +506,7 @@ class PeerAuthorityTest {
     void whatIsOpenOrOnlyReadIsHonouredFromAnywhere() throws Exception {
         String[][] any = {{"EXEC", "ping"}, {"EXEC", "getcontrollerstatus"}, {"EXEC", "iscontrolleractive"}, {"EXEC", "getmetricinventory"},
                 {"EXEC", "gethealthinventory"}, {"EXEC", "getcapabilities"}, {"EXEC", "listagents"}, {"EXEC", "indirectprobe"},
-                {"CONFIG", "pluginlist"}, {"CONFIG", "pluginstatus"}, {"CONFIG", "cepadd"}, {"INFO", null}};
+                {"CONFIG", "pluginlist"}, {"CONFIG", "pluginstatus"}, {"INFO", null}};
         for (String[] a : any) {
             for (ControllerEngine to : new ControllerEngine[]{f.rA, f.a2, f.g, f.b1}) {
                 assertTrue(admittedByAgentTier(to, received(f.a1, controller(f.a1), a[0], a[1], to)),

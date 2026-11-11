@@ -174,7 +174,14 @@ public final class MsgSigning {
     private volatile String heldBundleDigest = "";
     // ---- at a global: the region controllers' certificates learned from their pings
     private final ConcurrentHashMap<String, BundleEntry> childControllers = new ConcurrentHashMap<>();
-    /** At a global: region -> its controller ({@code region/agent}) in {@link #childControllers}. Kept with that map. */
+    /**
+     * At a global: region -> its controller ({@code region/agent}) in {@link #childControllers}. Kept with that map, so
+     * an entry goes only when the controller's certificate stops verifying here ({@link #onRevocations}), not when the
+     * region leaves: a region that left this global and was not revoked stays BELOW it (authority follows the tree). That
+     * is no wider than before directions existed -- BELOW lets its nodes report (UP actions), which RegistryBinding
+     * confines to their own records, and nothing more -- and it is listed in the limits of docs/caller-authorization.md
+     * section 3a. Do not read it as "joined now".
+     */
     private final ConcurrentHashMap<String, String> childRegions = new ConcurrentHashMap<>();
     /** The global(s) this node's present trust bundle names, with the parent that signed it; null: none. */
     private volatile GlobalAbove globalAbove;
@@ -195,7 +202,8 @@ public final class MsgSigning {
     /**
      * Is {@code region/agent} the global above this node, on the word of the parent {@code parentRegion/parentAgent} it
      * has now: named with kind {@code global} in the trust bundle that parent signed? False for a bundle another (earlier)
-     * parent signed. O(1), nothing allocated.
+     * parent signed, and for a global that parent only keeps for its grace period (it serves that one as
+     * {@value #ROLE_FORMER_GLOBAL}). O(1), no lock, nothing allocated.
      */
     public boolean isGlobalAbove(String region, String agent, String parentRegion, String parentAgent) {
         GlobalAbove g = globalAbove;
@@ -302,8 +310,15 @@ public final class MsgSigning {
 
     private static final Refusal[] REFUSALS = Refusal.values();
 
+    /**
+     * The kinds of a bundle entry. {@value #ROLE_FORMER_GLOBAL}: a global this region no longer has above it, whose key
+     * it still serves for the entry's grace period (messages on their way still verify) -- never as {@code global}, which
+     * is what an agent takes for the global above it ({@link #isGlobalAbove}).
+     */
+    static final String ROLE_GLOBAL = "global", ROLE_REGION = "region", ROLE_FORMER_GLOBAL = "former-global";
+
     static final class BundleEntry {
-        String t, r, a, k, role;            // tenant, region, agent, public key (X.509 SPKI, base64), global|region
+        String t, r, a, k, role;            // tenant, region, agent, public key (X.509 SPKI, base64), global|region|former-global
         List<PeerTrustRegistry.CertRef> refs; // the certificates the key stands on, leaf first
         transient PublicKey key;
         transient String fp;
@@ -380,8 +395,7 @@ public final class MsgSigning {
     public MsgSigning(ControllerEngine ce) {
         this.ce = ce;
         io.cresco.library.plugin.Config c = ce.getPluginBuilder().getConfig();
-        this.required = SecuritySettings.production(c)
-                || (SecuritySettings.brokerSecurity(c) && c.getBooleanParam("msg_signing_required", true));
+        this.required = SecuritySettings.msgSigningRequired(c);
         this.maxAgeMs = Math.max(10_000L, c.getLongParam("msg_signature_max_age_ms", 300_000L));
         // a signed time ahead of the clock keeps its entry in the replay memory until that time has passed: the allowance is
         // for clock differences between nodes only, never as long as the age a message may have
@@ -1519,7 +1533,7 @@ public final class MsgSigning {
                 warn("trust bundle: DROPPED controller " + en.getKey() + " (" + why + ")");
                 // a global this node no longer takes the word of is no longer above it
                 GlobalAbove g = globalAbove;
-                if (g != null && "global".equals(e.role) && isGlobalAbove(e.r, e.a, g.parentRegion, g.parentAgent)) globalAbove = null;
+                if (g != null && ROLE_GLOBAL.equals(e.role) && isGlobalAbove(e.r, e.a, g.parentRegion, g.parentAgent)) globalAbove = null;
             }
         }
         if (dropped > 0) bundleChanged();
@@ -1598,7 +1612,7 @@ public final class MsgSigning {
                         String n = id.getRegion() + "/" + id.getAgent();
                         BundleEntry prev = childControllers.get(n);
                         if (prev == null || prev.cert == null || !prev.cert.equals(leaf)) {
-                            BundleEntry e = entry(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), "region",
+                            BundleEntry e = entry(id.getTenant(), id.getRegion(), id.getAgent(), leaf.getPublicKey(), ROLE_REGION,
                                     intern(peers().pathRefs(new X509Certificate[]{leaf})));
                             e.cert = leaf;
                             childControllers.put(n, e);
@@ -1717,7 +1731,7 @@ public final class MsgSigning {
         // who this parent says the global is: as it signed it now, never an entry only kept for its grace period
         List<String> globals = new ArrayList<>();
         for (BundleEntry e : next.values()) {
-            if (e.keepUntil == 0 && "global".equals(e.role)) { globals.add(e.r); globals.add(e.a); }
+            if (e.keepUntil == 0 && ROLE_GLOBAL.equals(e.role)) { globals.add(e.r); globals.add(e.a); }
         }
         globalAbove = globals.isEmpty() ? null : new GlobalAbove(parentRegion, parentAgent, globals.toArray(new String[0]));
         heldBundleDigest = digest(json);
@@ -1777,14 +1791,18 @@ public final class MsgSigning {
             long validUntil = Long.MAX_VALUE;
             for (BundleEntry e : bundle.values()) {
                 if (e.keepUntil == 0 || e.keepUntil > now) {
-                    all.put(e.r + "/" + e.a, e);
+                    // an entry only kept for its grace period is a key this node's children still verify with, and no
+                    // longer what this node's parent says: a global this region left is not served as the global (its
+                    // agents would hold it as the global above them, with a management word, for the whole grace period)
+                    all.put(e.r + "/" + e.a, e.keepUntil > 0 && ROLE_GLOBAL.equals(e.role)
+                            ? entry(e.t, e.r, e.a, e.key, ROLE_FORMER_GLOBAL, e.refs) : e);
                     if (e.keepUntil > 0) validUntil = Math.min(validUntil, e.keepUntil);
                 }
             }
             for (BundleEntry e : childControllers.values()) all.put(e.r + "/" + e.a, e);
             X509Certificate[] chain = ce.getCertificateManager().getPublicCertificate();
             BundleEntry self = entry(ce.tenant(), ce.cstate.getRegion(), ce.cstate.getAgent(), own.getPublicKey(),
-                    ce.cstate.isGlobalController() ? "global" : "region", intern(peers().pathRefs(chain)));
+                    ce.cstate.isGlobalController() ? ROLE_GLOBAL : ROLE_REGION, intern(peers().pathRefs(chain)));
             all.put(self.r + "/" + self.a, self);
             StringBuilder kb = new StringBuilder();
             for (BundleEntry e : all.values()) {
