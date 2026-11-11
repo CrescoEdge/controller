@@ -107,9 +107,12 @@ ON THE RELEASE OF 2026-11-10 (agent 1.3, controller 29ef93d), 2026-11-11
   SINCE THEN: mesh passes with no stamp stripped at any node (controller branch fix/restart-routing: a region's broker
   no longer relays between bridges, CrescoAuthorizationBroker.relayedByABridge), so its two known items are gone:
   `stripped-mesh-adverts` (117 to 240 stamps an event in this cell on the release) is removed, and the queue messages that
-  crossed another region after a restart of the global no longer do. `stripped-after-global-restart` is removed too (a
-  region now knows the global it is joining as its parent before the join is recorded): no known item allows a stripped
-  stamp any more. `quiet` and `region-outage` are new with that change.
+  crossed another region after a restart of the global no longer do. `stripped-after-global-restart` is removed too (on a
+  bridge connection that verifies as it, a region takes the global it is joining, or joined last and lost, for its
+  parent before the join is recorded): no known item allows a stripped stamp any more. `quiet` and `region-outage` are
+  new with that change. The regions of every topology here are configured with their global (global_controller_host),
+  so none relays (broker_bridge_transit=auto); a fabric without a global, where regions do relay, is not a cell yet.
+  What the counters gained is reported for msg.expired* too (a message a broker let expire ends on no node).
   rekey-region is fixed in the controller (message signing: see the event above) and is part of the default
   order; tree passes it in standard and in production with no message refused at any node, and the agents hold an
   attestation of the new key 0.1 s after the operator's rebind is taken ("attested by <controller> (its key ...)").
@@ -1213,7 +1216,7 @@ def counter_gains(fab, counters) -> dict:
     for node, m in counters.items():
         base = fab.prev_counters.get(node, {}) if fab.prev_launches.get(node) == launches.get(node) else {}
         for k, v in m.items():
-            if k.startswith(("msg.refused.", "msg.dropped.", "broker.")):
+            if k.startswith(("msg.refused.", "msg.dropped.", "msg.expired", "msg.route.mismatch", "broker.")):
                 gain = int(v - base.get(k, 0.0))
                 if gain > 0:
                     out.setdefault(k, {})[node] = gain
