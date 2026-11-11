@@ -151,4 +151,30 @@ public final class BrokerTransport {
             }
         }
     }
+
+    /**
+     * A broker never tells its clients about the other brokers it is bridged to. With updateClusterClients (it was on
+     * from an early experiment) the broker sent every failover client the addresses of its network: the global's and
+     * the peer regions' brokers. An agent whose region controller restarted then dialled the global's broker as a
+     * failover target; the identity check refused it ("PEER IDENTITY MISMATCH ... the certificate names region=glob,
+     * agent=gc") and the agent lost reconnect attempts before it tried its own controller again -- and with
+     * peer_identity_mode=off it would have attached to a broker that is not its parent's. An agent's only broker is
+     * its parent's; which parent that is, is decided by discovery, not by a broker's advertisement.
+     */
+    static void noClusterAdvertising(org.apache.activemq.broker.TransportConnector connector) {
+        connector.setUpdateClusterClients(false);
+        connector.setUpdateClusterClientsOnRemove(false);
+        connector.setRebalanceClusterClients(false);
+    }
+
+    /**
+     * The failover URI an agent uses for its parent's broker (consumer, producer and dataplane share it): that one
+     * broker, and no address a broker advertises ({@code updateURIsSupported=false}: a parent of an earlier build still
+     * advertises its network, see {@link #noClusterAdvertising}).
+     */
+    public static String agentFailoverURI(String transport, String brokerAddress, int port, String transportOptions, String reconnectDelayMs) {
+        return "failover:(" + transport + "://" + brokerAddress + ":" + port + (transportOptions == null ? "" : transportOptions)
+                + ")?maxReconnectAttempts=5&initialReconnectDelay=" + reconnectDelayMs
+                + "&useExponentialBackOff=false&updateURIsSupported=false";
+    }
 }
