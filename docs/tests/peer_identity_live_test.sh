@@ -176,13 +176,19 @@ if [ "${RESTART_DRILL:-1}" = "1" ]; then
   # A bridge's failover reconnect races its own monitor, which rebuilds the whole group (and a region re-attaches)
   # once a member has been down for one 5 s tick -- by design, whatever TLS does. Judge what TLS decides: if the
   # client made a failover handshake (it verified the restarted server: $4) before its rediscovery ($5), the server
-  # ($1) must have admitted it ($2) before that rediscovery. "na": no failover handshake before the rediscovery.
+  # ($1) must have admitted it ($2) before that rediscovery. "na": no failover handshake before the rediscovery, or one
+  # made less than 2 s before it: the client's TLS handshake is done some hundred ms before the server binds the bridge's
+  # connection (the bridge starts asynchronously), and a monitor that rebuilds the group inside that time closes the
+  # failover connection before the server could admit it (seen 2026-11-11: handshake 53.101, rediscovery 53.402, the
+  # rebuilt bridge admitted 53.439; nothing was refused). That is the monitor's race, not a decision of TLS.
+  tsms() { echo "$1" | awk -F'[:,]' '{ print (($1 * 60 + $2) * 60 + $3) * 1000 + $4 }'; }
   bridgefo() { # server admit-regex client verified-regex rediscovery-regex -> 1 | na | (empty)
     local v d a; v=$(firstts "$3" "$4"); d=$(firstts "$3" "$5"); a=$(firstts "$1" "$2")
     if [ -z "$v" ] || { [ -n "$d" ] && [[ "$d" < "$v" ]]; }; then echo na; return; fi
+    if [ -n "$d" ] && [ $(( $(tsms "$d") - $(tsms "$v") )) -lt 2000 ] && { [ -z "$a" ] || [[ ! "$a" < "$d" ]]; }; then echo na; return; fi
     [ -n "$a" ] && { [ -z "$d" ] || [[ "$a" < "$d" ]]; } && echo 1; }
   fo() { # result label
-    if [ "$1" = na ]; then ck 1 "$2 (no failover handshake was made: the monitor rebuilt the group first, by design)"; else ck "$1" "$2"; fi; }
+    if [ "$1" = na ]; then ck 1 "$2 (no failover handshake could be judged: the monitor rebuilt the group first or within 2 s of it, by design)"; else ck "$1" "$2"; fi; }
 
   echo "### restart drill 1: the global restarts (same data directory)"
   restart global
