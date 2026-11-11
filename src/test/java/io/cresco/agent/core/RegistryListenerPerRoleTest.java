@@ -44,6 +44,10 @@ class RegistryListenerPerRoleTest {
             assertTrue(live.remove(listenerId.substring(listenerId.indexOf('|') + 1)), "removed a listener that was not held: " + listenerId);
         }
 
+        @Override boolean holdsRegistryListener(String listenerId) {
+            return live.contains(listenerId.substring(listenerId.indexOf('|') + 1));
+        }
+
         long agentExports() { return live.stream().filter(s -> s.contains("'AGENT'")).count(); }
         long regionExports() { return live.stream().filter(s -> s.contains("'REGION'")).count(); }
 
@@ -137,6 +141,28 @@ class RegistryListenerPerRoleTest {
         dataplaneUp[0] = true;
         p.enter(ControllerMode.REGION_GLOBAL);
         assertEquals(1, p.agentExports(), "a listener the dataplane refused once is registered at the next role entry");
+    }
+
+    @Test
+    void aListenerTheDataplaneLostIsRegisteredAgainOnceOnTheNextStateChange() {
+        Recording p = persistence();
+        p.enter(ControllerMode.REGION);
+        p.enter(ControllerMode.GLOBAL);
+        assertEquals(2, p.added);
+        p.live.clear();                                   // a dataplane reconnect could not re-add them (updateConnections)
+        p.enter(ControllerMode.GLOBAL);
+        assertEquals(1, p.agentExports(), "the id of a listener the dataplane no longer holds was kept: no agent export is taken again");
+        assertEquals(1, p.regionExports(), "the id of a listener the dataplane no longer holds was kept: no region export is taken again");
+        p.enter(ControllerMode.GLOBAL);
+        assertEquals(4, p.added, "registered again exactly once each");
+        assertEquals(0, p.removed, "a listener the dataplane does not hold is not removed from it");
+
+        Recording region = persistence();
+        region.enter(ControllerMode.REGION_GLOBAL);
+        region.live.clear();
+        region.enter(ControllerMode.REGION_GLOBAL_FAILED);
+        assertEquals(1, region.agentExports(), "a region that lost its listener and then its global took no agent export again");
+        assertEquals(2, region.added);
     }
 
     @Test
