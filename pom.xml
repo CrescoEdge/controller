@@ -14,6 +14,7 @@
     <artifactId>controller</artifactId>
 
     <properties>
+        <cresco.commit>unknown</cresco.commit>
         <!-- jdk, encoding, plugin & gson versions inherited from cresco-parent -->
         <activemq.version>6.2.7</activemq.version>
         <netty.version>4.1.139.Final</netty.version>
@@ -462,6 +463,8 @@
                         <Bundle-Description>Controller for Cresco</Bundle-Description>
                         <Bundle-Vendor>Cresco.io</Bundle-Vendor>
                         <Bundle-Version>${project.version}-${maven.build.timestamp}</Bundle-Version>
+                        <!-- the source commit this bundle was built from (CI passes -Dcresco.commit; a build by hand says unknown) -->
+                        <Cresco-Commit>${cresco.commit}</Cresco-Commit>
                         <!-- NOTE: this Bundle-Activator is currently a no-op; the real entry point is the
                              AgentServiceImpl DS @Component. Kept as-is in Phase 0 to avoid changing the
                              critical bundle's lifecycle; candidate for removal once DS-only start is verified. -->
