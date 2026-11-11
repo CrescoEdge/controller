@@ -1326,19 +1326,31 @@ public class PluginAdmin {
      * Deliver {@code msg} to its plugin. No lock: the plugin's inMsg may run its handler right here (its bounded queue is
      * full: CallerRuns) and that handler may send (bundleRunsPlugin) and wait for a reply that another thread delivers
      * here; one plugin that is slow to take a message holds up no other plugin's messages or sends. A plugin not (or no
-     * longer) in the map gets nothing; one that is not active (not started yet, or being removed) gets nothing (logged).
+     * longer) in the map gets nothing; one that is not active (not started yet, or being removed) gets nothing. Neither is
+     * logged here: the caller counts what became of the message and logs it by cause, the first at once and then at most
+     * every 10 s (MsgCounts) -- one ERROR line per message was 260 lines a minute while a plugin loaded.
+     *
+     * @return what became of {@code msg}
      */
-    public void msgIn(MsgEvent msg) {
+    public Delivery msgIn(MsgEvent msg) {
 
         String pluginID = msg.getDstPlugin();
         PluginNode node = pluginID == null ? null : pluginMap.get(pluginID);
-        if (node == null) return;
+        if (node == null) return Delivery.UNKNOWN;
         PluginService service = node.getActive() ? node.getPluginService() : null;
-        if (service != null) {
-            service.inMsg(msg);
-        } else {
-            logger.error("MESSAGE SENT TO INACTIVE PLUGIN");
-        }
+        if (service == null) return Delivery.INACTIVE;
+        service.inMsg(msg);
+        return Delivery.DELIVERED;
+    }
+
+    /** What {@link #msgIn} did with a message. */
+    public enum Delivery {
+        /** Handed to its plugin. */
+        DELIVERED,
+        /** Its plugin is not active (not started yet, or being removed): it got nothing. */
+        INACTIVE,
+        /** This node runs no plugin of that id: nothing got it. */
+        UNKNOWN
     }
 
     public String addPlugin(Map<String,Object> map) {

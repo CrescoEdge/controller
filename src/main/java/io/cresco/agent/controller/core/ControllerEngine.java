@@ -105,6 +105,8 @@ public class ControllerEngine {
         this.cstate = cstate;
         if (cstate != null) cstate.setRegionControllerCheck(this::speaksForRegion);
         this.logger = pluginBuilder.getLogger(ControllerEngine.class.getName(), CLogger.Level.Info);
+        this.msgCounts = new io.cresco.agent.controller.communication.MsgCounts(
+                pluginBuilder.getLogger(io.cresco.agent.controller.communication.MsgCounts.class.getName(), CLogger.Level.Info));
         this.msgRouter = new MsgRouter(this);
         this.executor = new AgentExecutor(this);
         this.plugin.setExecutor(this.executor);
@@ -130,6 +132,15 @@ public class ControllerEngine {
         new Thread(staticPluginLoader).start();
 
     }
+
+    private final io.cresco.agent.controller.communication.MsgCounts msgCounts;
+
+    /**
+     * What became of the control-plane messages this node had in hand (originated, relayed, delivered, held, dropped by
+     * cause); with {@code msgSigning().refusedCount()}, every message is accounted for. In the metric inventory as
+     * {@code msg.*}.
+     */
+    public io.cresco.agent.controller.communication.MsgCounts msgCounts() { return msgCounts; }
 
     /** Set when {@link #start} refused this node's security configuration (it must not run at all). */
     private volatile boolean refusedByConfiguration;
@@ -258,10 +269,10 @@ public class ControllerEngine {
             try {
                 msgInProcessQueue.shutdown();
                 if (!msgInProcessQueue.awaitTermination(5, TimeUnit.SECONDS)) {
-                    msgInProcessQueue.shutdownNow();
+                    notRouted(msgInProcessQueue.shutdownNow());
                 }
             } catch (InterruptedException ie) {
-                msgInProcessQueue.shutdownNow();
+                notRouted(msgInProcessQueue.shutdownNow());
                 Thread.currentThread().interrupt();
             }
 
@@ -665,7 +676,16 @@ public class ControllerEngine {
     // timeout and retries, exactly as for any other transient loss. Messages addressed to this
     // agent itself never need the parent link and are routed immediately.
     public void msgIn(MsgEvent msg) {
+        msgIn(msg, false);
+    }
 
+    /**
+     * As {@link #msgIn(MsgEvent)}; {@code offWire}: this node took {@code msg} off its inbox (another node originated it),
+     * so when it goes on toward another node it is counted as relayed.
+     */
+    public void msgIn(MsgEvent msg, boolean offWire) {
+
+        boolean routed = false;             // handed to the router, which accounts for it from there
         try {
             if (!getActiveClient().isFaultURIActive() && !isLocalDestination(msg)) {
                 long waitMs = plugin.getConfig().getLongParam("msgin_fault_wait_ms", 20000L);
@@ -674,6 +694,7 @@ public class ControllerEngine {
                 while (!getActiveClient().isFaultURIActive()) {
                     if (System.currentTimeMillis() >= deadline) {
                         logger.error("msgIn: parent link in connection fault for " + waitMs + "ms, dropping message [" + io.cresco.agent.controller.communication.ParamLog.describe(msg) + "]");
+                        msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.PARENT_LINK_DOWN, msg);
                         return;
                     }
                     if (!logged) {
@@ -683,9 +704,12 @@ public class ControllerEngine {
                     Thread.sleep(250);
                 }
             }
-            msgRouter.route(msg);
+            routed = true;
+            msgRouter.route(msg, offWire);
         } catch (Exception ex) {
         logger.error("ControllerEngine.msgIn ", ex);
+            // it never reached the router (the wait for the parent link was interrupted, or the check itself failed)
+            if (!routed) msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.ROUTE_ERROR, msg);
         }
     }
 
@@ -698,8 +722,21 @@ public class ControllerEngine {
         }
     }
 
+    /** Route a message this node's inbox took off the wire, on the routing pool. */
     public void msgInThreaded(MsgEvent msg) {
+        // a pool that was shut down takes nothing and says nothing (its CallerRunsPolicy discards then): counted here
+        if (msgInProcessQueue.isShutdown()) {
+            msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.NODE_STOPPING, msg);
+            return;
+        }
         msgInProcessQueue.submit(new MsgEventRunner(this, msg));
+    }
+
+    /** Messages still queued for routing when this node stopped: they are not routed. */
+    private void notRouted(java.util.List<Runnable> queued) {
+        if (queued != null && !queued.isEmpty()) {
+            msgCounts.dropped(io.cresco.agent.controller.communication.MsgCounts.Drop.NODE_STOPPING, queued.size(), "queued for routing");
+        }
     }
 
     // ------------------------------------------------------------------ verified callers (docs/caller-authorization.md)
@@ -810,6 +847,7 @@ public class ControllerEngine {
 
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */
     public void markForSigning(MsgEvent msg) {
+        msgCounts.originated();             // every stamping point passes here: the message is this node's from now on
         msgSigning().markForSigning(msg, tenant());
     }
 

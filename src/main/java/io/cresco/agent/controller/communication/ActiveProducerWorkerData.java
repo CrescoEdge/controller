@@ -61,6 +61,8 @@ public class ActiveProducerWorkerData implements Runnable {
 		try {
 			ActiveMQSession dataSess = null;
 			MessageProducer dataProducer = null;
+			// the message itself (which registers the transfer at its receiver) was handed to the broker
+			boolean registered = false;
 
 			try {
 
@@ -85,6 +87,7 @@ public class ActiveProducerWorkerData implements Runnable {
 				dataProducer.setDeliveryMode(DeliveryMode.PERSISTENT);
 
 				dataProducer.send(textMessage, DeliveryMode.PERSISTENT, 0, 0);
+				registered = true;
 
 				//one producer for the whole transfer: creating and closing one per file part cost
 				//N synchronous OpenWire round-trips per file; the outer finally closes it
@@ -161,6 +164,9 @@ public class ActiveProducerWorkerData implements Runnable {
 			catch (Exception ex) {
 				logger.error("ActiveProducerWorkerData.run ERROR SENDING FILE MESSAGE", ex);
 			} finally{
+				// its sender was told it was sent (the transfer runs after the send returned): a message that never left
+				// is counted here. Parts lost after it left end at the receiver, whose file group expires (counted there)
+				if (!registered) controllerEngine.msgCounts().dropped(MsgCounts.Drop.SEND_FAILED, me);
 				try {
 					if (dataProducer != null) {
 						dataProducer.close();

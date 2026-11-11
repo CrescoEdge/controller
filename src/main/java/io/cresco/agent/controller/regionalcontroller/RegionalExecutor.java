@@ -2,6 +2,7 @@ package io.cresco.agent.controller.regionalcontroller;
 
 import com.google.gson.reflect.TypeToken;
 import io.cresco.agent.controller.communication.ControllerTiers;
+import io.cresco.agent.controller.communication.MsgCounts;
 import io.cresco.agent.controller.communication.MsgRouter;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.agent.controller.globalcontroller.GlobalExecutor;
@@ -243,6 +244,20 @@ public class RegionalExecutor implements Executor {
     }
     @Override
     public MsgEvent executeKPI(MsgEvent incoming) {
+        return executeKPI(incoming, false);
+    }
+
+    /**
+     * Does this node only carry the KPI {@code incoming} on to its global ({@link #executeKPI})? Then the KPI is not
+     * delivered here: it is relayed (or dropped when it cannot go on), and ends at the global.
+     */
+    private boolean carriesKpiOn(MsgEvent incoming) {
+        return incoming.getMsgType() == MsgEvent.Type.KPI && !controllerEngine.cstate.isGlobalController()
+                && plugin.getConfig().getBooleanParam("forward_global_kpi", true);
+    }
+
+    /** As {@link #executeKPI(MsgEvent)}; {@code offWire}: this node took the KPI off the wire (carried on, it is relayed). */
+    private MsgEvent executeKPI(MsgEvent incoming, boolean offWire) {
 
         logger.debug("KPI: " + incoming.printHeader());
         if(controllerEngine.cstate.isGlobalController()) {
@@ -250,7 +265,7 @@ public class RegionalExecutor implements Executor {
         } else {
             if(plugin.getConfig().getBooleanParam("forward_global_kpi",true)){
                 //logger.error("BUILD IN KPI FORWARDING!!!");
-                remoteGlobalSend(incoming);
+                remoteGlobalSend(incoming, offWire);
             }
         }
 
@@ -271,6 +286,16 @@ public class RegionalExecutor implements Executor {
     }
 
     public void remoteGlobalSend(MsgEvent incoming) {
+        remoteGlobalSend(incoming, false);
+    }
+
+    /**
+     * Send {@code incoming} on to the global this region joined. {@code offWire}: this node took it off the wire, so sent
+     * on it is counted as relayed. A message that cannot go on is counted as dropped: here when no global is joined or
+     * the send could not be tried, by the sender when the send failed.
+     */
+    public void remoteGlobalSend(MsgEvent incoming, boolean offWire) {
+        boolean settled = false;            // what became of it has been counted
         try {
             if(!controllerEngine.cstate.isGlobalController()) {
                 // REGION-FIRST AUTONOMY: a region may run with no global (global_optional). There is then
@@ -279,6 +304,8 @@ public class RegionalExecutor implements Executor {
                 if (controllerEngine.cstate.getGlobalRegion() == null || controllerEngine.cstate.getGlobalAgent() == null) {
                     logger.warn("remoteGlobalSend: no global controller joined (region-first); dropping global-scoped message action="
                             + incoming.getParam("action"));
+                    settled = true;
+                    controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_GLOBAL, incoming);
                     if (MsgRouter.isRpcRequest(incoming) && !"ping".equals(incoming.getParam("action"))) {
                         MsgRouter.answerWithError(plugin, incoming, MsgRouter.ROUTE_UNAVAILABLE, "REMOTE_GLOBAL",
                                 "route unavailable at " + plugin.getRegion() + "_" + plugin.getAgent()
@@ -291,11 +318,14 @@ public class RegionalExecutor implements Executor {
                 //ge.setParam("dst_agent",controllerEngine.cstate.getGlobalAgent());
                 //ge.setParam("dst_plugin",controllerEngine.cstate.getControllerId());
                 //ge.setParam("globalcmd", Boolean.TRUE.toString());
-                controllerEngine.getActiveClient().sendAPMessage(incoming);
+                boolean sent = controllerEngine.getActiveClient().sendAPMessage(incoming);    // a failed send is counted there
+                settled = true;
+                if (sent && offWire) controllerEngine.msgCounts().relayed();
             }
         }
         catch (Exception ex) {
             logger.error("globalSend : " + ex.getMessage());
+            if (!settled) controllerEngine.msgCounts().dropped(MsgCounts.Drop.ROUTE_ERROR, incoming);
         }
     }
 
@@ -343,18 +373,34 @@ public class RegionalExecutor implements Executor {
      * replaced: an agent ping arriving mid-rebuild is answered instead of NPE-ing in the router.
      */
     public void dispatch(MsgEvent incoming) {
+        dispatch(incoming, false);
+    }
+
+    /**
+     * As {@link #dispatch(MsgEvent)}; {@code offWire}: this node took {@code incoming} off the wire, so when it goes on
+     * to the global it is counted as relayed. What becomes of the message here is counted once (MsgCounts): delivered
+     * when it is handed to this controller's regional or global executor or to the call waiting for it, refused when its
+     * authentication fails (MsgSigning counts it), dropped under its cause otherwise.
+     */
+    public void dispatch(MsgEvent incoming, boolean offWire) {
+        final MsgCounts counts = controllerEngine.msgCounts();
+        boolean settled = false;            // what became of it has been counted (or is counted by what it was handed to)
         try {
             // a reply to an RPC this controller sent (e.g. a regional controller message to another region's
             // controller comes back here addressed to this node): hand it to the waiting call, never run it again
             String ownCallId = incoming.getParam("callId-" + plugin.getRegion() + "-" + plugin.getAgent() + "-" + plugin.getPluginID());
             if (ownCallId != null && ControllerTiers.isReply(incoming)) {
-                if (!controllerEngine.admitDeferred(incoming)) return;
+                if (!controllerEngine.admitDeferred(incoming)) { settled = true; return; }
+                settled = true;
+                counts.delivered();
                 plugin.receiveRPC(ownCallId, incoming);
                 return;
             }
             // the controller tier of the FUNCTION decides (ControllerTiers), not the address or the flag alone
             String refusal = ControllerTiers.refusal(incoming);
             if (refusal != null) {
+                settled = true;
+                counts.dropped(MsgCounts.Drop.TIER_REFUSED, incoming);
                 logger.warn("regional dispatch: refused {}: {}", incoming.printHeader(), refusal);
                 if (MsgRouter.isRpcRequest(incoming)) {
                     MsgRouter.answerWithError(plugin, incoming, MsgRouter.ROUTE_REFUSED, "tier",
@@ -366,10 +412,22 @@ public class RegionalExecutor implements Executor {
             // D4: what runs here was verified as addressed to this node -- on arrival, or now when this node did not check it
             // then (it was re-addressed here on the way); what this region only carries on to its global is checked there
             if (runsHere && !controllerEngine.admitDeferred(incoming)) {
+                settled = true;             // refused: counted by MsgSigning
                 return;
             }
-            if (runsHere && !admitted(incoming, ControllerTiers.targetsGlobal(incoming))) {
-                return;
+            if (runsHere) {
+                boolean admitted = admitted(incoming, ControllerTiers.targetsGlobal(incoming));
+                // it has reached the controller that runs it: delivered, whatever that controller makes of it (a caller
+                // its action tables do not admit is answered 403 and counted there; an action it does not know is logged).
+                // Two are not: a regional function addressed to another node runs nowhere (logged below): dropped; and a
+                // KPI at a region that is not the global is only carried on to the global (executeKPI), which counts it
+                settled = true;
+                if (!ControllerTiers.targetsGlobal(incoming) && !incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
+                    counts.dropped(MsgCounts.Drop.MISROUTED, incoming);
+                } else if (!admitted || !carriesKpiOn(incoming)) {
+                    counts.delivered();
+                }
+                if (!admitted) return;
             }
             if (ControllerTiers.targetsGlobal(incoming)) {
                 if (controllerEngine.cstate.isGlobalController()) {
@@ -381,7 +439,8 @@ public class RegionalExecutor implements Executor {
                     }
                     sendGlobalMsg(incoming);
                 } else {
-                    remoteGlobalSend(incoming);
+                    settled = true;         // counted there: relayed, or dropped when it cannot go on
+                    remoteGlobalSend(incoming, offWire);
                 }
             } else if (incoming.dstIsLocal(plugin.getRegion(), plugin.getAgent(), plugin.getPluginID())) {
                 MsgEvent retMsg = null;
@@ -407,7 +466,7 @@ public class RegionalExecutor implements Executor {
                         retMsg = executeWATCHDOG(incoming);
                         break;
                     case "KPI":
-                        retMsg = executeKPI(incoming);
+                        retMsg = executeKPI(incoming, offWire);
                         break;
                     default:
                         logger.error("UNKNOWN MESSAGE TYPE! {}", io.cresco.agent.controller.communication.ParamLog.describe(incoming));
@@ -429,6 +488,7 @@ public class RegionalExecutor implements Executor {
             }
         } catch (Exception ex) {
             logger.error("regional dispatch error: {}", ex.getMessage(), ex);
+            if (!settled) counts.dropped(MsgCounts.Drop.ROUTE_ERROR, incoming);
         }
     }
 

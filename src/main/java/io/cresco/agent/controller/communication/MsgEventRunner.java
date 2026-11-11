@@ -13,7 +13,7 @@ public class MsgEventRunner implements Runnable {
     }
 
     public void run() {
-        controllerEngine.msgIn(me);
+        controllerEngine.msgIn(me, true);        // off the wire: only the inbox hands messages to the routing pool
     }
 
 }
