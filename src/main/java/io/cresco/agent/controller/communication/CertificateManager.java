@@ -605,6 +605,9 @@ public class CertificateManager {
 
     // ---------------------------------------------------------------- persistent identity material
 
+    /** Where this node keeps what it must find again after a restart (its identity, its peers, its replay floor). */
+    Path identityDirectory() { return identityDir(); }
+
     /** Directory for this node's identity material: node_identity_dir, else <agent data dir>/security. */
     private Path identityDir() {
         String d = plugin.getConfig().getStringParam("node_identity_dir");
