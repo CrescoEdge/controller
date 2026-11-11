@@ -1405,6 +1405,20 @@ public final class MsgSigning {
                 + (by == null ? "" : " (" + PeerIdentity.shortFp(by) + ")") + "; this node signs with its certificate and asks to be attested anew");
     }
 
+    /**
+     * A connection this node opened to {@code region/agent} verified with {@code key} (the TLS handshake to its
+     * controller's broker: PeerIdentityTrustManager): the key that node holds now, first hand. As {@link #issuerKeySeen}:
+     * an attestation of this node that another key of that controller made is dropped NOW. From here until the new
+     * attestation arrives (the next pong: the watcher pings at once) this node signs with its certificate, which its
+     * controller verifies; what would go to a node beyond it waits for the attestation ({@link #attestationPending},
+     * ActiveClient's hold), bounded like the wait of a first join. Nothing when this node holds no attestation, or the
+     * key is the one that made it: two field reads.
+     */
+    public void controllerKeySeen(String region, String agent, PublicKey key) {
+        if (!required || ownAttestation == null || region == null || agent == null || key == null) return;
+        issuerKeySeen(region, agent, key, PeerTrustRegistry.fingerprint(key.getEncoded()));
+    }
+
     /** This node dropped its attestation and has not pinged its parent since ({@link #takeTrustWanted}). */
     private volatile boolean attestationWanted;
     /** The issuer key (fingerprint) of the attestation this node took last: a change of it is logged. */

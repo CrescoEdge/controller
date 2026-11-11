@@ -831,6 +831,14 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   not also counted as relayed), and a held RPC request's caller is answered with the router's error. A message held
   for the controller the node had is not sent to it after the node joined another (`msg.dropped.parent_changed`). No
   thread waits: one timer thread sends what was held. `msg.send.held` counts the messages held.
+- **A re-keyed controller: no message under its former key's attestation (2026-11-11).** An agent learned that its
+  controller had another key from the first thing that controller signed for it, or from its first pong -- some 100 ms
+  after the agent had reconnected to it. In between it signed with the attestation the former key had made, and a node
+  that already knew the new key held such a message 5 s and refused it (`the attestation's signature does not verify`;
+  seen at the global in the production profile's `rekey-region`). Now the agent takes the key from the TLS handshake of
+  its connection to the controller's broker (the certificate that verified as that controller): an attestation another
+  key of it made is dropped at that moment, the agent pings at once, and until the new attestation arrives what goes to
+  its controller is signed with its certificate and what goes beyond it waits (`msg_signing_hold_ms`, as at a first join).
 - **Cost.** Between two nodes that talk both ways, one ECDH agreement per pair and hour, then an HMAC per message (about
   15 us to check, 0.7 KB on the wire); otherwise one signature per message a node originates to anything but its parent
   or children (RSA-3072 private key: about 2 ms of one core, shared by a batch under load) and one signature check per
