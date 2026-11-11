@@ -163,6 +163,10 @@ public final class TlsTestSupport {
         public volatile String parentRegion, parentAgent;
         @Override public String getRegionalRegion() { return parentRegion; }
         @Override public String getRegionalAgent() { return parentAgent; }
+        /** The global this region controller joined (a region's parent), when a test sets it. */
+        public volatile String globalRegion, globalAgent;
+        @Override public String getGlobalRegion() { return globalRegion; }
+        @Override public String getGlobalAgent() { return globalAgent; }
     }
 
     /** A test node's controller state (agent, not regional). */
@@ -170,13 +174,19 @@ public final class TlsTestSupport {
 
     /** A controller engine with a real CertificateManager (and its ActiveClient), for region/agent. */
     public static ControllerEngine engine(String region, String agent, Map<String, Object> extra) throws Exception {
+        return engine(region, agent, extra, m -> { });
+    }
+
+    /** As {@link #engine(String, String, Map)}, with every message the node's controller sends handed to {@code sink}. */
+    public static ControllerEngine engine(String region, String agent, Map<String, Object> extra,
+                                          java.util.function.Consumer<io.cresco.library.messaging.MsgEvent> sink) throws Exception {
         provider();
         Path dir = Files.createTempDirectory("peerid-" + agent);
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("public_key_directory", dir.resolve("public-keys").toString());
         cfg.put("tenant_id", "t1");
         if (extra != null) cfg.putAll(extra);
-        PluginBuilder pb = TestAgentService.plugin(dir.toString(), cfg, m -> { }, region, agent);
+        PluginBuilder pb = TestAgentService.plugin(dir.toString(), cfg, sink, region, agent);
         ControllerEngine e = new ControllerEngine(null, pb, null, null);
         e.cstate = new State(pb, region, agent);
         e.setCertificateManager(new CertificateManager(e));

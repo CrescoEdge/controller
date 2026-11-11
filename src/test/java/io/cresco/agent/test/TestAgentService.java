@@ -66,6 +66,24 @@ public final class TestAgentService implements AgentService {
     @Override
     public boolean isSecurityEnabled() { return securityEnabled; }
 
+    /** This node's tenant as the controller answers it (null: not known, as before). */
+    public volatile String tenant;
+
+    @Override
+    public String getTenant() { return tenant; }
+
+    /**
+     * Who says where a message's speaker stands (a test hands it the engine's {@code authority()}, as AgentServiceImpl
+     * answers it); null: the interface's default, a controller that does not know directions.
+     */
+    public volatile io.cresco.library.security.ActionAuthorizer.Authority authority;
+
+    @Override
+    public io.cresco.library.security.ActionAuthorizer.Authority authority() {
+        io.cresco.library.security.ActionAuthorizer.Authority a = authority;
+        return a == null ? AgentService.super.authority() : a;
+    }
+
     /** A PluginBuilder of the node {@code region}/{@code agent}, every message it sends handed to {@code sink}. */
     public static PluginBuilder plugin(String dataDirectory, Map<String, Object> cfg,
                                        java.util.function.Consumer<MsgEvent> sink, String region, String agent) {
