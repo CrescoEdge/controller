@@ -81,6 +81,68 @@ public class AgentHealthWatcher {
 
     public long getLastParentPongTs() { return lastParentPongTs; }
 
+    /** What this agent holds of a region controller that refuses its pings ({@link io.cresco.agent.controller.health.ParentPing}). */
+    private final io.cresco.agent.controller.health.ParentPing parentPing = new io.cresco.agent.controller.health.ParentPing();
+
+    public io.cresco.agent.controller.health.ParentPing parentPing() { return parentPing; }
+
+    /**
+     * The answer to a ping of this agent to its region controller ({@code pingResponse}: null when none came in time),
+     * sent at {@code pingT0} (System.nanoTime). A PONG is the parent's word: liveness, the round-trip time, its health, and
+     * everything {@link ControllerEngine#onParentPong} takes from it (the parent is heard; trust data, revocations, the
+     * direct link, the state resync). Its REFUSAL (401) says only that its broker answers: the link is not declared lost,
+     * nothing else advances -- what this agent sends its parent stays signed -- and one WARN line per interval says so.
+     * Anything else is a miss. See {@link io.cresco.agent.controller.health.ParentPing}.
+     */
+    public void pingAnswered(MsgEvent pingResponse, long pingT0) {
+        // parent path may be null during the brief AGENT_INIT window before it is populated;
+        // show a readable placeholder instead of "[null]".
+        String parentPath = controllerEngine.cstate.getRegionalControllerPath();
+        String parent = "Regional Controller [" + (parentPath != null ? parentPath : "<pending-init>") + "]";
+        long now = System.currentTimeMillis();
+        switch (io.cresco.agent.controller.health.ParentPing.answer(pingResponse)) {
+            case PONG: {
+                // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
+                lastParentPongTs = now;
+                String again = parentPing.pong(parent, now);
+                if (again != null) logger.info(again);
+                // measurement: harvest the round-trip time onto the parent link.
+                try {
+                    io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
+                    if (reg != null) {
+                        reg.forPath(io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine))
+                                .recordRtt((System.nanoTime() - pingT0) / 1_000_000.0);
+                    }
+                } catch (Exception ignore) { }
+                // mesh health: record the region's advertised health carried back on the pong.
+                io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
+                // the region holds this agent as not ACTIVE (e.g. LOST while we kept our session): send it
+                // our full state now rather than on the next periodic full export
+                controllerEngine.onParentPong(pingResponse);
+                logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());
+                break;
+            }
+            case REFUSED: {
+                // the parent's broker answers: liveness only (link:parent reports WARN, not OK, and does not tear the link down)
+                lastParentPongTs = now;
+                // nothing of the answer is the parent's word (it is this agent's own ping with a status): the next ping
+                // goes signed and offers no direct link, as after a ping that was not answered
+                controllerEngine.msgSigning().parentPingUnanswered();
+                String line = parentPing.refused(parent, pingResponse.getParam("status_desc"), now);
+                if (line != null) logger.warn(line);
+                break;
+            }
+            default:
+                // Transport-only: record the miss. The failure DECISION now lives in HC —
+                // ParentLinkHealthCheck sees the stale lastParentPongTs and the HC->MINA
+                // bridge fires regionalControllerLost after the grace window. No direct state
+                // transition here (that direct call was the single-missed-ping drop bug).
+                // an unanswered ping: the region may have restarted and not bound this link yet, so the next goes signed
+                controllerEngine.msgSigning().parentPingUnanswered();
+                logger.warn("ActivePingTask: No PONG from {} within {}ms (miss recorded; HC decides).", parent, pingTimeout);
+        }
+    }
+
     public long getPingIntervalMs() { return pingInterval; }
 
     public void shutdown() {
@@ -268,36 +330,8 @@ public class AgentHealthWatcher {
                     long pingT0 = System.nanoTime();
                     MsgEvent pingResponse = plugin.sendRPC(pingRequest, pingTimeout);
 
-                    if (pingResponse == null) {
-                        // Transport-only: record the miss. The failure DECISION now lives in HC —
-                        // ParentLinkHealthCheck sees the stale lastParentPongTs and the HC->MINA
-                        // bridge fires regionalControllerLost after the grace window. No direct state
-                        // transition here (that direct call was the single-missed-ping drop bug).
-                        // parent path may be null during the brief AGENT_INIT window before it is populated;
-                        // show a readable placeholder instead of "[null]".
-                        String parentPath = controllerEngine.cstate.getRegionalControllerPath();
-                        // an unanswered ping: the region may have restarted and not bound this link yet, so the next goes signed
-                        controllerEngine.msgSigning().parentPingUnanswered();
-                        logger.warn("ActivePingTask: No PONG from Regional Controller [{}] within {}ms (miss recorded; HC decides).",
-                                (parentPath != null ? parentPath : "<pending-init>"), pingTimeout);
-                    } else {
-                        // Healthy pong -> stamp liveness for ParentLinkHealthCheck.
-                        lastParentPongTs = System.currentTimeMillis();
-                        // measurement: harvest the round-trip time onto the parent link.
-                        try {
-                            io.cresco.agent.controller.netmetrics.LinkMetricsRegistry reg = controllerEngine.getLinkMetricsRegistry();
-                            if (reg != null) {
-                                reg.forPath(io.cresco.agent.controller.netmetrics.LinkMetricsRegistry.parentLinkKey(controllerEngine))
-                                        .recordRtt((System.nanoTime() - pingT0) / 1_000_000.0);
-                            }
-                        } catch (Exception ignore) { }
-                        // mesh health: record the region's advertised health carried back on the pong.
-                        io.cresco.agent.controller.health.MeshHealthPing.recordParent(controllerEngine, pingResponse);
-                        // the region holds this agent as not ACTIVE (e.g. LOST while we kept our session): send it
-                        // our full state now rather than on the next periodic full export
-                        controllerEngine.onParentPong(pingResponse);
-                        logger.debug("ActivePingTask: Received PONG from Regional Controller [{}]. Connection healthy.", controllerEngine.cstate.getRegionalControllerPath());
-                    }
+                    // a pong, the parent's refusal, or a miss: each consumer of "a pong came" gets what is its own
+                    pingAnswered(pingResponse, pingT0);
                 } catch (Exception ex) {
                     // Transport-only: log; HC (ParentLinkHealthCheck + bridge) owns the failure decision.
                     logger.warn("ActivePingTask Error (miss recorded; HC decides): {}", ex.getMessage());
