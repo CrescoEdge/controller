@@ -277,7 +277,7 @@ public class AgentHealthWatcher {
                         // show a readable placeholder instead of "[null]".
                         String parentPath = controllerEngine.cstate.getRegionalControllerPath();
                         // an unanswered ping: the region may have restarted and not bound this link yet, so the next goes signed
-                        controllerEngine.msgSigning().parentLinkReset();
+                        controllerEngine.msgSigning().parentPingUnanswered();
                         logger.warn("ActivePingTask: No PONG from Regional Controller [{}] within {}ms (miss recorded; HC decides).",
                                 (parentPath != null ? parentPath : "<pending-init>"), pingTimeout);
                     } else {

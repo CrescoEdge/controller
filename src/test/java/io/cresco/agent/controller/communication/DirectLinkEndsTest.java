@@ -125,8 +125,32 @@ class DirectLinkEndsTest {
         MsgEvent m = originated(a1, a1C, "rgA", "rc");
         assertNotNull(m.getParam(MsgSigning.SIG), "unsigned to a parent that may not be able to attest this link yet");
         assertNull(m.getParam(MsgSigning.DIRECT));
+        // the first ping after it carries no offer of the direct link: the parent signs (its pong too, whatever its path)
+        Caller rcC = Caller.controller("t1", "rgA", "rc");
         ping(a1, rc);
         assertTrue(unsigned(originated(a1, a1C, "rgA", "rc")), "the parent's pong did not offer the direct link again");
+        assertNotNull(originated(rc, rcC, "rgA", "a1").getParam(MsgSigning.SIG), "the parent sends unsigned to a child that withdrew its offer");
+        ping(a1, rc);
+        assertTrue(unsigned(originated(rc, rcC, "rgA", "a1")), "the child's next ping did not offer the direct link again");
+    }
+
+    @Test
+    void afterAnUnansweredPingBothSidesSignForAWhile() throws Exception {
+        // the ping or its pong may have been lost because it travelled unsigned by another controller's bridge: tried
+        // again at once, the direct link fails again, every second ping, until the parent is taken for lost
+        ControllerEngine rc = node("rgA", "rc", true), a1 = node("rgA", "a1", false);
+        Caller a1C = Caller.controller("t1", "rgA", "a1"), rcC = Caller.controller("t1", "rgA", "rc");
+        ping(a1, rc);
+        ping(a1, rc);
+        assertTrue(unsigned(originated(a1, a1C, "rgA", "rc")));
+        assertTrue(unsigned(originated(rc, rcC, "rgA", "a1")));
+        a1.msgSigning().parentPingUnanswered();
+        for (int i = 0; i < 3; i++) {
+            ping(a1, rc);
+            assertNotNull(originated(a1, a1C, "rgA", "rc").getParam(MsgSigning.SIG), "ping " + i + " after a lost one: the child goes unsigned again");
+            assertNotNull(originated(rc, rcC, "rgA", "a1").getParam(MsgSigning.SIG), "ping " + i + " after a lost one: the parent goes unsigned again");
+        }
+        assertTrue(MsgSigning.DIRECT_RETRY_MS >= 30_000L, "the direct link is tried again within a few pings");
     }
 
     // ------------------------------------------------------------------ the broker says which inbox a consumer left

@@ -195,6 +195,25 @@ class RegionRejoinsGlobalInBackgroundTest {
     }
 
     @Test
+    void aBackgroundAttemptJoinsAlsoWhereTheStateMachineStillSaysJoined() throws Exception {
+        // a join that ended early leaves the state machine in REGION_GLOBAL while the controller state says the global
+        // is gone: every background attempt was then taken for "the global is joined, nothing to do" -- the thread ran
+        // for ever and nothing joined
+        bootRegion(true, true);
+        assertEquals(ControllerMode.REGION_GLOBAL, mode());
+        engine.cstate.setRegionalGlobalFailed("test: the join ended early");
+        assertNotEquals(ControllerMode.REGION_GLOBAL, mode());
+        int before = handler.attempts.get();
+        machine.globalControllerLost(ControllerSMHandler.GLOBAL_REJOIN + "attempt 1");
+        assertEquals(before + 1, handler.attempts.get(), "a background attempt did not try to join");
+        assertEquals(ControllerMode.REGION_GLOBAL, mode());
+        // with the global joined, a background attempt does nothing (it is no loss)
+        machine.globalControllerLost(ControllerSMHandler.GLOBAL_REJOIN + "attempt 2");
+        assertEquals(before + 1, handler.attempts.get());
+        assertEquals(ControllerMode.REGION_GLOBAL, mode());
+    }
+
+    @Test
     void whenTheGlobalIsRequiredTheRecoveryThreadJoinsItItself() throws Exception {
         bootRegion(false, true);
         handler.globalIsUp = false;

@@ -1114,7 +1114,32 @@ public final class MsgSigning {
      * parent is signed until the parent's next pong offers the direct link again. A parent that restarted cannot attest
      * the first messages of a link it has not bound yet; unsigned, they were refused.
      */
-    public void parentLinkReset() { directParentUntil = 0L; }
+    public void parentLinkReset() {
+        directParentUntil = 0L;
+        directWithheldTillPong = true;
+    }
+
+    /**
+     * A ping to the parent went unanswered. As {@link #parentLinkReset}, and for {@value #DIRECT_RETRY_MS} ms this node
+     * neither offers the direct link nor takes the parent's offer: the ping or its pong may have been lost BECAUSE it
+     * travelled unsigned (carried to its recipient by another controller's bridge, it is not first hand there), and a
+     * link that is tried again at once fails again -- every second ping, until the parent is taken for lost. Signed
+     * messages are accepted whatever their path.
+     */
+    public void parentPingUnanswered() {
+        directWithheldUntil = System.currentTimeMillis() + DIRECT_RETRY_MS;
+        parentLinkReset();
+    }
+
+    static final long DIRECT_RETRY_MS = 60_000L;
+    /** This node does not offer its parent the direct link: until the next pong (a join), or until a time (a lost ping). */
+    private volatile boolean directWithheldTillPong;
+    private volatile long directWithheldUntil;
+
+    private boolean directWithheld(long now) {
+        long until = directWithheldUntil;
+        return directWithheldTillPong || (until != 0L && now < until && now + DIRECT_RETRY_MS >= until);
+    }
 
     private void info(String line) {
         try {
@@ -1341,7 +1366,9 @@ public final class MsgSigning {
     /** On a child's ping: this node's certificate, what it holds of the bundle and (an agent) when its attestation expires. */
     public void onChildPing(MsgEvent ping) {
         if (!required) return;
-        if (direct) ping.setParam(P_DIRECT_OK, "1");
+        // the offer of the direct link: not on the first ping of a join (the parent's first pong then comes signed, whatever
+        // its path), nor for a while after a ping went unanswered
+        if (direct && !directWithheld(System.currentTimeMillis())) ping.setParam(P_DIRECT_OK, "1");
         long wanted = trustWantedAt;
         if (wanted != 0L && System.currentTimeMillis() - wanted <= WANT_FOR_MS) ping.setParam(P_WANT, "1");
         try {
@@ -1378,10 +1405,13 @@ public final class MsgSigning {
             Caller caller = Caller.fromMsgEvent(msg);
             if (direct) {
                 // the child (its verified caller: a controller pinging as itself) accepts direct messages; so does this node
-                if (childDirect && caller != null && caller.getKind() == Caller.Kind.CONTROLLER) {
+                if (caller != null && caller.getKind() == Caller.Kind.CONTROLLER) {
                     String child = caller.getRegion() + "_" + caller.getAgent();
                     long now = System.currentTimeMillis();
-                    if (directAgain(child, now) && (directChildren.size() < DIRECT_CHILDREN_MAX || directChildren.containsKey(child))) {
+                    if (!childDirect) {
+                        // a ping without the offer withdraws it: the child wants signatures now (this pong included)
+                        directChildren.remove(child);
+                    } else if (directAgain(child, now) && (directChildren.size() < DIRECT_CHILDREN_MAX || directChildren.containsKey(child))) {
                         directChildren.put(child, now + DIRECT_OFFER_MS);
                     }
                 }
@@ -1442,9 +1472,11 @@ public final class MsgSigning {
     /** On the parent's pong: keep an attestation of this node, and the parent's bundle when it verifies as the parent's. */
     public void onParentPong(MsgEvent pong, String parentRegion, String parentAgent) {
         if (!required) return;
-        if (direct && "1".equals(pong.getParam(P_DIRECT_OK)) && parentRegion != null && parentAgent != null) {
+        long pongAt = System.currentTimeMillis();
+        directWithheldTillPong = false;                      // the link answers: the next ping offers the direct link again
+        if (direct && "1".equals(pong.getParam(P_DIRECT_OK)) && parentRegion != null && parentAgent != null && !directWithheld(pongAt)) {
             directParent = parentRegion + "_" + parentAgent;
-            directParentUntil = System.currentTimeMillis() + DIRECT_OFFER_MS;
+            directParentUntil = pongAt + DIRECT_OFFER_MS;
         }
         pong.removeParam(P_DIRECT_OK);
         String attIss = pong.getParam(P_ATT_ISS);

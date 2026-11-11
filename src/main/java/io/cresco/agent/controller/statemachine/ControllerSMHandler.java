@@ -264,7 +264,13 @@ public class ControllerSMHandler {
             return;
         }
         if (desc != null && desc.startsWith(GLOBAL_REJOIN)) {
-            return; // a background join attempt that finds the global joined: not a loss
+            // a background join attempt is never a loss. With the global joined there is nothing to do; where the state
+            // machine still says REGION_GLOBAL while the controller state does not (a join that ended early), it is one
+            // more attempt -- else the background thread would run for ever and nothing would join
+            if (cstate.getControllerState() != ControllerMode.REGION_GLOBAL) {
+                rejoinGlobal(String.valueOf(cstate.getControllerState()), desc);
+            }
+            return;
         }
         if (isDuplicateLossReport("globalControllerLost", desc)) {
             return;

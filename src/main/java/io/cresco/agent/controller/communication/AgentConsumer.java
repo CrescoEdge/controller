@@ -108,8 +108,8 @@ public class AgentConsumer {
 			this.trustHold = null;
 			this.trustListener = null;
 		}
-		// the first moments with a parent only: a node whose parent never answers is not held back for ever
-		this.notReadyHoldUntil = System.currentTimeMillis() + 3 * holdMs;
+		// the first moments with a parent only (of each join): a node whose parent never answers is not held back for ever
+		this.trustWait = new TrustWait(3 * holdMs);
 		// gfs#26: a node moved to another region keeps answering at its former address (region_alias)
 		boolean global = controllerEngine.cstate != null && controllerEngine.cstate.isGlobalController();
 		this.aliasRegion = RegionAlias.of(plugin, global);
@@ -224,15 +224,17 @@ public class AgentConsumer {
 								TrustHold hold = trustHold;
 								long now = System.currentTimeMillis();
 								boolean mayHold = hold != null && hold.mayHold(now);
-								if (mayHold && now < notReadyHoldUntil && !fromParentOrSelf(caller) && !controllerEngine.trustReady()) {
+								// what a held message takes of the hold's room: its text and the file list it carries
+								int heldChars = msgEventString.length() + (fileobjectString == null ? 0 : fileobjectString.length());
+								if (hold != null && trustWait.waiting(controllerEngine.trustReady(), now) && mayHold && !fromParentOrSelf(caller)) {
 									signing.wantTrust();                // the parent is asked now, not at the next ping
-									if (hold.hold(msg, msgEventString.length(), now)) return;
+									if (hold.hold(msg, heldChars, now, holdSender(caller))) return;
 								}
 								MsgSigning.Verdict v = signing.verify(me, caller, controllerEngine.legacyNodesAdmitted(),
 										firstHand(msg, caller), mayHold);
 								if (!v.ok()) {
 									if (v.later) {
-										if (hold.hold(msg, msgEventString.length(), now)) return;
+										if (hold.hold(msg, heldChars, now, holdSender(caller))) return;
 										signing.refusedAfterHold(me, v.refusal);
 									}
 									refuseUnauthenticated(me, v.refusal);
@@ -637,7 +639,14 @@ public class AgentConsumer {
 	private volatile MessageListener inboxListener;
 	private final TrustHold trustHold;
 	private final Runnable trustListener;
-	private final long notReadyHoldUntil;
+	/** The first moments of each join: until the parent's trust data is in, for three hold times at most. */
+	private final TrustWait trustWait;
+
+	/** Whose share of the hold a message from {@code c} takes: the node its broker says delivered it. */
+	private static String holdSender(io.cresco.library.security.Caller c) {
+		if (c == null) return "";
+		return c.getRegion() != null && c.getAgent() != null ? c.getRegion() + "/" + c.getAgent() : String.valueOf(c.getPrincipal());
+	}
 
 	/** Messages held because this node could not judge them yet (diagnostics, tests). */
 	long heldForTrust() { return trustHold == null ? 0 : trustHold.heldTotal.get(); }
