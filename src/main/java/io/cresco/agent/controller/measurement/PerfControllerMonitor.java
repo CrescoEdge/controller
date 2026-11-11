@@ -41,6 +41,7 @@ public class PerfControllerMonitor {
         initCEPMetrics();
         initDataplaneLossMetrics();
         initControlPlaneFailureMetrics();
+        initMsgMetrics();
         initBrokerMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
@@ -93,6 +94,19 @@ public class PerfControllerMonitor {
             me.setExisting("dataplane.stream.gap", "dataplane");
         } catch (Exception ex) {
             logger.error("initDataplaneLossMetrics ", ex);
+        }
+    }
+
+    // What became of this node's control-plane messages (originated, relayed, delivered, held; refused by reason, dropped
+    // by cause) and what its broker stripped, withheld or discarded, as counters in the unified inventory (groups "msg"
+    // and "broker"): see MsgMetrics. A test bed gates on them; nothing here is on a message's path.
+    public void initMsgMetrics() {
+        try {
+            for (Map.Entry<String, String> m : MsgMetrics.register(me.getCrescoMeterRegistry(), controllerEngine).entrySet()) {
+                me.setExisting(m.getKey(), m.getValue());
+            }
+        } catch (Exception ex) {
+            logger.error("initMsgMetrics ", ex);
         }
     }
 

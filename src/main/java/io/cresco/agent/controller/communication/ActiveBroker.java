@@ -666,6 +666,9 @@ public class ActiveBroker {
 	/** This broker's authorization plugin (null when broker security is off). */
 	private volatile CrescoAuthorizationBroker authorization;
 
+	/** This broker's authorization plugin, for what it counts (null when broker security is off). */
+	public CrescoAuthorizationBroker authorization() { return authorization; }
+
 	/**
 	 * Close every connection to this broker that holds the (revoked) key {@code keyFp}, and invalidate the TLS sessions it
 	 * holds: a reconnect that RESUMED one would not have its certificate checked again.
