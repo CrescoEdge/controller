@@ -198,6 +198,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         volatile Object bridgePeer;       // the controller at the other end of this bridge connection (resolved once), or NO_PEER
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
         final java.util.concurrent.atomic.AtomicInteger producers = new java.util.concurrent.atomic.AtomicInteger();
+        /** A bridge connection: what its peer was last found to be (see bridgeReach), when, and its verdicts per destination. */
+        volatile boolean inJvm;           // a vm:// connection (set when it is added)
+        volatile int bridgeReach;
+        volatile long bridgeReachAt;
+        final java.util.concurrent.ConcurrentHashMap<String, Object> bridgeVerdicts = new java.util.concurrent.ConcurrentHashMap<>();
         /** Holds one of the quarantine's connection slots (given back exactly once: when it is removed, or its add fails). */
         final java.util.concurrent.atomic.AtomicBoolean quarantineSlot = new java.util.concurrent.atomic.AtomicBoolean();
         CrescoSecurityContext(String user, CrescoIdentity identity, boolean verified, boolean certificate, boolean localController) {
@@ -307,7 +312,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         return new CrescoSecurityContext(u, null, false, false, false, !isVm(context));
     }
 
-    /** Trusted infrastructure connections (local controller vm://, or a verified broker bridge) are exempt. */
+    /**
+     * Trusted infrastructure connections (local controller vm://, or a verified broker bridge) are not refused here. What a
+     * BRIDGE then carries is still its peer's own: its sends, the messages dispatched to it and what it administers are
+     * judged by {@link #bridgeRefusal}.
+     */
     private boolean isTrustedInfra(ConnectionContext ctx) {
         try {
             if (ctx == null) return true;
@@ -403,6 +412,17 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     public boolean isAllowedToConsume(ConnectionContext context, Message message) {
         CrescoSecurityContext q = stateOf(context);
         if (quarantined(context, q)) return withheld(message, null, "a connection without a client certificate receives nothing");
+        if (bridgeCarrier(context, q)) {
+            // a bridge's demand subscription: only its peer's own traffic leaves over it (judged per message: the demand may
+            // be a wildcard, and refusing the subscription itself would take the whole bridge down)
+            ActiveMQDestination about = message.getDestination();
+            try {
+                Object inner = message.getDataStructure();
+                if (inner instanceof Message && ((Message) inner).getDestination() != null) about = ((Message) inner).getDestination();
+            } catch (Exception ignore) { }
+            String why = bridgeRefusal(context, q, about, TenantPolicy.Access.READ);
+            if (why != null) return bridgeOutOfScope(q, about, TenantPolicy.Access.READ, why);
+        }
         // an advisory that carries a copy of a message (MessageDiscarded, DLQ'd, ...) is judged as that message: its
         // recipient binding and its destination's tenant, so properties never leak to other recipients or tenants
         Message subject = message;
@@ -455,8 +475,19 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
      */
     private String administerRefusal(ConnectionContext ctx, ActiveMQDestination dest) {
         if (dest == null) return null;
-        if (isTrustedInfra(ctx)) return null;
         CrescoSecurityContext sc = stateOf(ctx);
+        if (bridgeCarrier(ctx, sc)) {
+            // a bridge: temporary destinations as before; anything else only when its peer may both read and write it
+            ActiveMQDestination[] parts = dest.isComposite() ? dest.getCompositeDestinations() : new ActiveMQDestination[]{dest};
+            for (ActiveMQDestination d : parts) {
+                if (d.isTemporary()) continue;
+                String r = bridgeRefusal(ctx, sc, d, TenantPolicy.Access.READ);
+                if (r == null) r = bridgeRefusal(ctx, sc, d, TenantPolicy.Access.WRITE);
+                if (r != null) return "'" + d.getPhysicalName() + "' is not this bridge's peer's to administer (" + r + ")";
+            }
+            return null;
+        }
+        if (isTrustedInfra(ctx)) return null;
         if (quarantined(ctx, sc)) return "a connection without a verified identity administers no destination";
         ActiveMQDestination[] each = dest.isComposite() ? dest.getCompositeDestinations() : new ActiveMQDestination[]{dest};
         for (ActiveMQDestination d : each) {
@@ -690,10 +721,12 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
 
         private void admit(ConnectionContext context, ConnectionInfo info, CrescoSecurityContext sc) throws Exception {
+            sc.inJvm = isVm(context);
             context.setSecurityContext(sc);
             // every connection is judged per message, vm:// included: the in-JVM connector is created lazily and does
             // not inherit the broker's policy, and this controller's own vm:// connection is not exempt (see above)
-            if (recipientBinding || sc.anonymous) context.setMessageAuthorizationPolicy(CrescoAuthorizationBroker.this);
+            // (a connection with a certificate may be a bridge: what is dispatched to it is judged by bridgeRefusal)
+            if (recipientBinding || sc.anonymous || sc.certificate) context.setMessageAuthorizationPolicy(CrescoAuthorizationBroker.this);
             if (sc.anonymous) {
                 long now = System.currentTimeMillis();
                 if (now - lastAnonymousLog > 10_000L) {
@@ -845,7 +878,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         @Override
         public void addDestinationInfo(ConnectionContext context, DestinationInfo info) throws Exception {
             ActiveMQDestination d = info == null ? null : info.getDestination();
-            if (d != null && !d.isTemporary() && !isTrustedInfra(context)) {
+            if (d != null && !d.isTemporary() && (bridgeCarrier(context, stateOf(context)) || !isTrustedInfra(context))) {
                 String why = administerRefusal(context, d);
                 if (why != null) refuseAdmin(context, "create", d, why);
             } else if (d != null && d.isTemporary() && quarantined(context, stateOf(context))) {
@@ -904,8 +937,17 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 }
                 return;
             }
-            enforce(ctx, messageSend.getDestination(), TenantPolicy.Access.WRITE);
             CrescoSecurityContext sc = stateOf(ctx);
+            if (bridgeCarrier(ctx, sc)) {
+                // what a bridge brings in: only its peer's own traffic. Discarded, not refused: an error on a bridge's
+                // connection takes the whole bridge down, and with it the traffic it may carry
+                String why = bridgeRefusal(ctx, sc, messageSend.getDestination(), TenantPolicy.Access.WRITE);
+                if (why != null) {
+                    bridgeOutOfScope(sc, messageSend.getDestination(), TenantPolicy.Access.WRITE, why);
+                    return;
+                }
+            }
+            enforce(ctx, messageSend.getDestination(), TenantPolicy.Access.WRITE);
             if (sc != null && sc.verified && sc.certificate && sc.identity != null) peers.touchIdentity(sc.identity);
             stampCaller(ctx, sc, messageSend);
             super.send(producerExchange, messageSend);
@@ -1079,6 +1121,121 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (c == null || id == null || c.getKind() == io.cresco.library.security.Caller.Kind.API) return;
         String a = recordedAlias(id.getRegion(), id.getAgent());
         if (a != null) m.setProperty(CallerStamps.P_ALIAS, a);
+    }
+
+    // ---- where a bridge's traffic may go: its peer's own tenant's and region's ----
+
+    private static final int BRIDGE_NOT_A_PEER = 1, BRIDGE_ALL = 2, BRIDGE_OWN = 3;
+    private static final Object BRIDGE_ALLOWED = new Object();
+    private final AtomicLong bridgeWithheld = new AtomicLong(), bridgeDiscarded = new AtomicLong();
+    private volatile long lastBridgeScopeLog;
+
+    /** Messages a bridge demanded but may not be given (withheld from it), so far. */
+    public long bridgeWithheldCount() { return bridgeWithheld.get(); }
+
+    /** Messages a bridge brought in for a destination its peer may not write (discarded), so far. */
+    public long bridgeDiscardedCount() { return bridgeDiscarded.get(); }
+
+    /**
+     * Does this connection carry a bridge's traffic for a peer that presented a certificate? An inbound bridge (a verified
+     * network connection, and the in-JVM channel its duplex side forwards through), and the local side of any bridge: ActiveMQ
+     * opens that vm:// connection with the REMOTE broker's certificates as its transport context, so its identity here is
+     * the controller at the other end. No other in-JVM connection presents a certificate.
+     */
+    private boolean bridgeCarrier(ConnectionContext ctx, CrescoSecurityContext sc) {
+        if (sc == null || !sc.certificate || ctx == null) return false;
+        if (sc.inJvm) return true;
+        try {
+            return ctx.isNetworkConnection() && isTrustedBridge(ctx);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * What the peer of a bridge connection is, looked at again at most every second (a message costs two field reads):
+     * not a verified controller that completed discovery with this node (nothing crosses); this node's parent (a region's
+     * global: the fabric below it is its subtree) or a controller of a superuser tenant (everything, as before); or
+     * another controller -- a region below this global, a peer region -- whose bridge carries its OWN tenant's and
+     * region's traffic only.
+     */
+    private int bridgeReach(CrescoSecurityContext sc) {
+        long now = System.currentTimeMillis();
+        int scope = sc.bridgeReach;
+        if (scope != 0 && now - sc.bridgeReachAt < 1000L) return scope;
+        CrescoIdentity peer = sc.verified ? sc.identity : null;
+        if (peer == null || !peers.isBridgePeer(peer, sc.leaf)) {
+            scope = BRIDGE_NOT_A_PEER;
+        } else {
+            peers.touchBridgePeer(peer);
+            PeerIdentity.Expected p = parent.get();
+            boolean isParent = p != null && peer.getRegion().equals(p.region) && peer.getAgent().equals(p.agent);
+            scope = isParent || superuserTenants.contains(peer.getTenant()) ? BRIDGE_ALL : BRIDGE_OWN;
+        }
+        sc.bridgeReach = scope;
+        sc.bridgeReachAt = now;
+        return scope;
+    }
+
+    /**
+     * Why the bridge on this connection may not carry {@code dest} -- {@code READ}: a message leaving over it (its peer's
+     * demand); {@code WRITE}: a message it brings in -- or null. A bridge was exempt from tenant policy in both directions:
+     * any controller that could bridge could subscribe {@code T.<another tenant>.>} or write another tenant's inboxes.
+     * <ul>
+     *   <li>this node's parent and a superuser tenant's controller carry everything;</li>
+     *   <li>any other controller carries what {@link TenantPolicy} gives its own identity (its tenant's {@code T.<tenant>.}
+     *       subtree, the fabric-shared destinations, named cross-tenant sinks; it reads advisories), and besides: it is
+     *       given the messages addressed to an inbox of its OWN region under any tenant's name (a node of another tenant
+     *       wrote to one of its nodes), and it may bring in a message for an inbox under a SUPERUSER tenant's name (its
+     *       region's answers to the operator's nodes; only controllers and the operator's nodes consume those);</li>
+     *   <li>a peer that is not a verified controller that completed discovery with this node carries nothing.</li>
+     * </ul>
+     * With peer_identity_mode warn or off nothing is refused, as before.
+     */
+    private String bridgeRefusal(ConnectionContext ctx, CrescoSecurityContext sc, ActiveMQDestination dest, TenantPolicy.Access access) {
+        if (dest == null || peerMode != PeerIdentity.Mode.ENFORCE) return null;
+        int scope = bridgeReach(sc);
+        if (scope == BRIDGE_ALL) return null;
+        if (scope == BRIDGE_NOT_A_PEER) {
+            return "the bridge's peer " + (sc.identity == null ? "has no verified identity here" : sc.identity
+                    + " is not a controller that completed discovery with this node");
+        }
+        if (dest.isComposite()) {
+            for (ActiveMQDestination d : dest.getCompositeDestinations()) {
+                String why = bridgeRefusal(ctx, sc, d, access);
+                if (why != null) return why;
+            }
+            return null;
+        }
+        if (dest.isTemporary()) return null;
+        String name = dest.getPhysicalName(), key = (access == TenantPolicy.Access.READ ? "r" : "w") + (dest.isQueue() ? "q:" : "t:") + name;
+        Object cached = sc.bridgeVerdicts.get(key);
+        if (cached != null) return cached == BRIDGE_ALLOWED ? null : (String) cached;
+        CrescoIdentity peer = sc.identity;
+        TenantPolicy.Decision d = TenantPolicy.check(peer, name, access, sharedPrefixes, TenantPolicy.Role.TENANT, crossTenantSinks,
+                CrescoAuthorizationBroker.this::boundTenantOf);
+        String why = d.allowed ? null : "the bridge of " + peer + " carries its own tenant's and region's traffic only (" + d.reason + ")";
+        if (why != null && dest.isQueue() && io.cresco.library.security.TenantNamespace.isNamespaced(name)) {
+            String[] node = CrescoNames.splitPath(ActiveBroker.bridgedInboxPath(name));
+            if (node != null && access == TenantPolicy.Access.READ && node[0].equals(peer.getRegion())) why = null;
+            if (node != null && access == TenantPolicy.Access.WRITE
+                    && superuserTenants.contains(io.cresco.library.security.TenantNamespace.tenantOf(name))) why = null;
+        }
+        if (sc.bridgeVerdicts.size() > 4096) sc.bridgeVerdicts.clear();
+        sc.bridgeVerdicts.put(key, why == null ? BRIDGE_ALLOWED : why);
+        return why;
+    }
+
+    /** Count (and log, at most every 10 s) a message a bridge may not carry; false, for {@link #isAllowedToConsume}. */
+    private boolean bridgeOutOfScope(CrescoSecurityContext sc, ActiveMQDestination dest, TenantPolicy.Access access, String why) {
+        long n = access == TenantPolicy.Access.READ ? bridgeWithheld.incrementAndGet() : bridgeDiscarded.incrementAndGet();
+        long now = System.currentTimeMillis();
+        if (now - lastBridgeScopeLog > 10_000L) {
+            lastBridgeScopeLog = now;
+            logger.warn((access == TenantPolicy.Access.READ ? "WITHHELD from a bridge a message on '" : "DISCARDED a message a bridge brought in for '")
+                    + (dest == null ? "?" : dest.getPhysicalName()) + "': " + why + " (" + n + " so far)");
+        }
+        return false;
     }
 
     // ---- what a bridge may carry (review Phase 3 F2) ----
