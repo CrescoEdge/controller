@@ -218,7 +218,13 @@ public class AgentHealthWatcher {
         public void run() {
             try {
                 boolean up = controllerEngine.cstate.isActive() && !controllerEngine.cstate.isRegionalController();
-                if (io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up)) new ActivePingTask().run();
+                io.cresco.agent.controller.communication.MsgSigning signing = controllerEngine.msgSigning();
+                boolean joined = io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up);
+                // while the link is down, and for the first message of a join, nothing goes to the region unsigned: its pong
+                // offers the direct link anew
+                if (!up || joined) signing.parentLinkReset();
+                // a join, or a message this agent holds because it cannot judge it yet: ping now, not at the next interval
+                if (joined || (up && signing.takeTrustWanted(System.currentTimeMillis()))) new ActivePingTask().run();
             } catch (Exception ex) {
                 logger.warn("ParentLinkTask Error: {}", ex.getMessage());
             }
@@ -268,6 +274,8 @@ public class AgentHealthWatcher {
                         // parent path may be null during the brief AGENT_INIT window before it is populated;
                         // show a readable placeholder instead of "[null]".
                         String parentPath = controllerEngine.cstate.getRegionalControllerPath();
+                        // an unanswered ping: the region may have restarted and not bound this link yet, so the next goes signed
+                        controllerEngine.msgSigning().parentLinkReset();
                         logger.warn("ActivePingTask: No PONG from Regional Controller [{}] within {}ms (miss recorded; HC decides).",
                                 (parentPath != null ? parentPath : "<pending-init>"), pingTimeout);
                     } else {

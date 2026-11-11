@@ -595,13 +595,17 @@ public class ControllerEngine {
                 getCertificateManager().noteClock(Long.parseLong(ts), "parent " + pong.getSrcRegion() + "/" + pong.getSrcAgent());
             }
         } catch (Exception ignore) { }
-        // revocations: the parent's signed list, verified as the controller this node joined
         boolean region = cstate.isRegionalController();
+        String parentRegion = region ? cstate.getGlobalRegion() : cstate.getRegionalRegion();
+        String parentAgent = region ? cstate.getGlobalAgent() : cstate.getRegionalAgent();
+        boolean readyBefore = trustReady();
+        // revocations first: the parent's signed list, verified as the controller this node joined (the bundle that comes
+        // with it is then judged with the list as it now stands)
+        io.cresco.agent.controller.communication.RevocationSync.onParentPong(this, pong, parentRegion, parentAgent);
         // message signatures: this node's attestation (an agent) and the parent's trust bundle
-        msgSigning().onParentPong(pong, region ? cstate.getGlobalRegion() : cstate.getRegionalRegion(),
-                region ? cstate.getGlobalAgent() : cstate.getRegionalAgent());
-        io.cresco.agent.controller.communication.RevocationSync.onParentPong(this, pong,
-                region ? cstate.getGlobalRegion() : cstate.getRegionalRegion(), region ? cstate.getGlobalAgent() : cstate.getRegionalAgent());
+        msgSigning().onParentPong(pong, parentRegion, parentAgent);
+        // the last part of the parent's revocation list came with this pong: what the inbox held for it is judged now
+        if (!readyBefore && trustReady()) msgSigning().trustDataArrived();
         StateResync resync = stateResync;
         if (resync == null) {
             resync = initStateResync();
@@ -790,15 +794,18 @@ public class ControllerEngine {
     /**
      * Does this node hold what it needs to judge the signers of the messages it receives? A node with a parent (an agent's
      * region controller, a region's global) does once it has taken that parent's first pong, which brings the trust
-     * bundle, an agent's attestation and the parent's revocations; before, it can verify nobody but that parent. A global,
-     * a node with no parent joined, and a node without message signing are always ready.
+     * bundle, an agent's attestation and the parent's revocations -- and, when that list is longer than one pong carries,
+     * the pong with its last part (a key the parent revoked is otherwise accepted here until it arrives); before, it can
+     * verify nobody but that parent. A global, a node with no parent joined, and a node without message signing are
+     * always ready.
      */
     public boolean trustReady() {
         io.cresco.agent.core.ControllerStateImp cs = cstate;
         if (cs == null || !securityOn() || !msgSigning().required() || cs.isGlobalController()) return true;
         boolean region = cs.isRegionalController();
         String pr = region ? cs.getGlobalRegion() : cs.getRegionalRegion(), pa = region ? cs.getGlobalAgent() : cs.getRegionalAgent();
-        return pr == null || pa == null || msgSigning().heardParent(pr, pa);
+        return pr == null || pa == null || (msgSigning().heardParent(pr, pa)
+                && !io.cresco.agent.controller.communication.RevocationSync.awaitingParentList(this));
     }
 
     /** A message this node originates was just stamped: sign it when it leaves the node (MsgSigning). */

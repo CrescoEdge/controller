@@ -224,9 +224,9 @@ public class AgentConsumer {
 								TrustHold hold = trustHold;
 								long now = System.currentTimeMillis();
 								boolean mayHold = hold != null && hold.mayHold(now);
-								if (mayHold && now < notReadyHoldUntil && !fromParentOrSelf(caller) && !controllerEngine.trustReady()
-										&& hold.hold(msg, msgEventString.length(), now)) {
-									return;
+								if (mayHold && now < notReadyHoldUntil && !fromParentOrSelf(caller) && !controllerEngine.trustReady()) {
+									signing.wantTrust();                // the parent is asked now, not at the next ping
+									if (hold.hold(msg, msgEventString.length(), now)) return;
 								}
 								MsgSigning.Verdict v = signing.verify(me, caller, controllerEngine.legacyNodesAdmitted(),
 										firstHand(msg, caller), mayHold);

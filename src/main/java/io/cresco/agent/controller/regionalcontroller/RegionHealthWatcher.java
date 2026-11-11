@@ -637,7 +637,13 @@ public class RegionHealthWatcher {
         public void run() {
             try {
                 boolean up = controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL;
-                if (io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up)) new ActivePingTask().run();
+                io.cresco.agent.controller.communication.MsgSigning signing = controllerEngine.msgSigning();
+                boolean joined = io.cresco.agent.controller.communication.RevocationSync.onParentLink(controllerEngine, up);
+                // while the link is down, and for the first message of a join, nothing goes to the global unsigned: its pong
+                // offers the direct link anew
+                if (!up || joined) signing.parentLinkReset();
+                // a join, or a message this region (or one of its agents) holds because it cannot judge it yet: ping now
+                if (joined || (up && signing.takeTrustWanted(System.currentTimeMillis()))) new ActivePingTask().run();
             } catch (Exception ex) {
                 logger.warn("ParentLinkTask Error: {}", ex.getMessage());
             }
@@ -686,6 +692,8 @@ public class RegionHealthWatcher {
                     }
 
                     if (pingResponse == null) {
+                        // an unanswered ping: the global may have restarted and not bound this link yet, so the next goes signed
+                        controllerEngine.msgSigning().parentLinkReset();
                         // Transport-only: record the miss. ParentLinkHealthCheck sees the stale
                         // lastGlobalPongTs and the HC->MINA bridge fires globalControllerLost after
                         // the grace window. No direct state transition here.

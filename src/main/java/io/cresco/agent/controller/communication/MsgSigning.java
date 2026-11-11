@@ -854,7 +854,11 @@ public final class MsgSigning {
                 who = resolve(cred, why);
                 if (who == null) {
                     String reason = "the signer's credential does not verify here (" + by + (why[0] == null ? "" : ": " + why[0]) + ")";
-                    return hold && why[1] != null ? new Verdict(null, reason, true) : refuse(m, reason);
+                    if (hold && why[1] != null) {
+                        wantTrust();                         // newer trust data may cure it: ask the parent now, not at the next ping
+                        return new Verdict(null, reason, true);
+                    }
+                    return refuse(m, reason);
                 }
             }
             if (!who.name.equals(by)) return refuse(m, "signed by " + who.name + ", which is not the declared signer " + by);
@@ -1032,10 +1036,85 @@ public final class MsgSigning {
     public void removeTrustListener(Runnable listener) { trustListeners.remove(listener); }
 
     private void trustChanged() {
+        trustWantedAt = 0L;                                  // what was asked for may be in: asked again if it is not
         for (Runnable r : trustListeners) {
             try { r.run(); } catch (RuntimeException ignore) { }
         }
     }
+
+    /** The trust data this node judges with is complete now (the parent's whole revocation list is in): held messages are tried again. */
+    public void trustDataArrived() { trustChanged(); }
+
+    // ---- trust data on demand (a node that holds a message it cannot judge asks its parent at once)
+
+    /** On a ping: its sender holds a message it cannot judge with the trust data it has (its parent asks its own parent too). */
+    static final String P_WANT = "sig_want";
+    /** A node asks its parent at most this often, and for this long after the last message it could not judge. */
+    static final long WANT_EVERY_MS = 1_000L, WANT_FOR_MS = 5_000L;
+    private volatile long trustWantedAt, trustAskedAt;
+
+    /**
+     * This node holds a message it cannot judge yet (its signer's controller is not in the trust data held, or the parent's
+     * first pong is not in): its health watcher pings the parent at once instead of at the next interval -- the pong brings
+     * the trust bundle when the parent holds a newer one. Without it a held message waited for the next ping (5 s), as long
+     * as it may be held at all.
+     */
+    public void wantTrust() {
+        if (required) trustWantedAt = System.currentTimeMillis();
+    }
+
+    /**
+     * For the health watcher (every 250 ms): should it ping the parent now for trust data? True at most once every
+     * {@value #WANT_EVERY_MS} ms, for {@value #WANT_FOR_MS} ms after the last message this node could not judge, and not
+     * once trust data changed since. One volatile read when nothing is wanted.
+     */
+    public boolean takeTrustWanted(long now) {
+        long at = trustWantedAt;
+        if (at == 0L) return false;
+        if (now - at > WANT_FOR_MS || now < at) {
+            trustWantedAt = 0L;
+            return false;
+        }
+        if (now - trustAskedAt < WANT_EVERY_MS && now >= trustAskedAt) return false;
+        trustAskedAt = now;
+        return true;
+    }
+
+    // ---- direct links end with the link
+
+    /**
+     * A consumer of the inbox {@code node} ({@code region_agent}) left this node's broker (the node stopped, moved to
+     * another controller, or its link broke): nothing this node sends reaches it first hand any more, so messages to it are
+     * signed until its next ping offers the direct link again. The offer alone held for {@value #DIRECT_OFFER_MS} ms: a
+     * node that moved away (and answered at its former address through another broker) refused every unsigned message its
+     * former parent sent it for a minute.
+     */
+    public void inboxConsumerLeft(String node) {
+        if (node == null || directChildren.remove(node) == null) return;
+        // a ping of that node still on its way here must not offer the link again: only a ping after this moment does
+        if (inboxLeftAt.size() >= DIRECT_CHILDREN_MAX) inboxLeftAt.clear();
+        inboxLeftAt.put(node, System.currentTimeMillis());
+    }
+
+    /** Direct children whose inbox consumer left this broker, and when: their pings offer the link again only after {@value #DIRECT_AGAIN_MS} ms. */
+    private final ConcurrentHashMap<String, Long> inboxLeftAt = new ConcurrentHashMap<>();
+    static final long DIRECT_AGAIN_MS = 5_000L;
+
+    /** May {@code child}'s ping (now) make it a direct child? Not within {@value #DIRECT_AGAIN_MS} ms of its inbox consumer leaving. */
+    private boolean directAgain(String child, long now) {
+        Long left = inboxLeftAt.get(child);
+        if (left == null) return true;
+        if (now >= left && now - left < DIRECT_AGAIN_MS) return false;
+        inboxLeftAt.remove(child, left);
+        return true;
+    }
+
+    /**
+     * This node's link to its parent is down, was just made anew, or a ping went unanswered: what this node sends its
+     * parent is signed until the parent's next pong offers the direct link again. A parent that restarted cannot attest
+     * the first messages of a link it has not bound yet; unsigned, they were refused.
+     */
+    public void parentLinkReset() { directParentUntil = 0L; }
 
     private void info(String line) {
         try {
@@ -1263,6 +1342,8 @@ public final class MsgSigning {
     public void onChildPing(MsgEvent ping) {
         if (!required) return;
         if (direct) ping.setParam(P_DIRECT_OK, "1");
+        long wanted = trustWantedAt;
+        if (wanted != 0L && System.currentTimeMillis() - wanted <= WANT_FOR_MS) ping.setParam(P_WANT, "1");
         try {
             ping.setParam(P_CERT, ownCert());
             ping.setParam(P_BUNDLE_HAVE, heldBundleDigest);
@@ -1284,6 +1365,9 @@ public final class MsgSigning {
         String certB64 = msg.getParam(P_CERT), have = msg.getParam(P_BUNDLE_HAVE), attExp = msg.getParam(P_ATT_EXP);
         String attIss = msg.getParam(P_ATT_ISS);
         boolean childDirect = "1".equals(msg.getParam(P_DIRECT_OK));
+        // a child that cannot judge a message asks for trust data: what this node lacks, its own parent may hold
+        if ("1".equals(msg.getParam(P_WANT)) && required && ce.cstate != null && !ce.cstate.isGlobalController()) wantTrust();
+        msg.removeParam(P_WANT);
         msg.removeParam(P_CERT);
         msg.removeParam(P_BUNDLE_HAVE);
         msg.removeParam(P_ATT_EXP);
@@ -1296,8 +1380,9 @@ public final class MsgSigning {
                 // the child (its verified caller: a controller pinging as itself) accepts direct messages; so does this node
                 if (childDirect && caller != null && caller.getKind() == Caller.Kind.CONTROLLER) {
                     String child = caller.getRegion() + "_" + caller.getAgent();
-                    if (directChildren.size() < DIRECT_CHILDREN_MAX || directChildren.containsKey(child)) {
-                        directChildren.put(child, System.currentTimeMillis() + DIRECT_OFFER_MS);
+                    long now = System.currentTimeMillis();
+                    if (directAgain(child, now) && (directChildren.size() < DIRECT_CHILDREN_MAX || directChildren.containsKey(child))) {
+                        directChildren.put(child, now + DIRECT_OFFER_MS);
                     }
                 }
                 msg.setParam(P_DIRECT_OK, "1");

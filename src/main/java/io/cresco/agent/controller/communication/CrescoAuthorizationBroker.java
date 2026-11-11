@@ -789,6 +789,15 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
 
         @Override
+        public void removeConsumer(ConnectionContext context, ConsumerInfo info) throws Exception {
+            try {
+                super.removeConsumer(context, info);
+            } finally {
+                inboxConsumerLeft(info == null ? null : info.getDestination());
+            }
+        }
+
+        @Override
         public void removeConnection(ConnectionContext context, ConnectionInfo info, Throwable error) throws Exception {
             try {
                 super.removeConnection(context, info, error);
@@ -993,6 +1002,41 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         }
         if (d.isEmpty() && m.getProperty(CallerStamps.P_DIRECT) == null) return;      // nothing to attest or to clear
         m.setProperty(CallerStamps.P_DIRECT, d);
+    }
+
+    // ---- inbox consumers leaving (the end of a direct link) ----
+
+    private volatile java.util.function.Consumer<String> inboxLeftListener;
+
+    /**
+     * Told the node ({@code region_agent}) each time a consumer of that node's inbox queue leaves this broker: the node
+     * stopped or moved, its connection broke, or the bridge that carried its inbox went. Set by the controller that owns
+     * this broker (MsgSigning stops sending that node unsigned messages over the direct link).
+     */
+    public void setInboxLeftListener(java.util.function.Consumer<String> listener) { this.inboxLeftListener = listener; }
+
+    /** The node whose inbox the queue {@code dest} is ({@code [T.<tenant>.]<region>_<agent>}), or null (a topic, a temporary queue). */
+    static String inboxNode(ActiveMQDestination dest) {
+        if (dest == null || !dest.isQueue() || dest.isTemporary() || dest.isComposite()) return null;
+        String name = dest.getPhysicalName();
+        if (name == null) return null;
+        if (io.cresco.library.security.TenantNamespace.isNamespaced(name)) {
+            int dot = name.indexOf('.', 2);                          // past "T.<tenant>"
+            if (dot < 0 || dot + 1 >= name.length()) return null;
+            name = name.substring(dot + 1);
+        }
+        return name.isEmpty() ? null : name;
+    }
+
+    private void inboxConsumerLeft(ActiveMQDestination dest) {
+        java.util.function.Consumer<String> l = inboxLeftListener;
+        if (l == null) return;
+        try {
+            String node = inboxNode(dest);
+            if (node != null) l.accept(node);
+        } catch (RuntimeException ignore) {
+            // a listener never fails the removal of a consumer
+        }
     }
 
     // ---- region aliases (GaiaKeep gfs#26): the former region a node answers at, from its own verified registration ----
