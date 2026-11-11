@@ -619,7 +619,7 @@ public class CertificateManager {
     private PeerTrustRegistry openPeerTrust() {
         if (!plugin.getConfig().getBooleanParam("peer_trust_persist", true)) {
             PeerTrustRegistry mem = new PeerTrustRegistry().withRebind(csv(plugin.getConfig().getStringParam("peer_identity_rebind", "")));
-            mem.setKeyReplacedListener(this::dropReplacedAnchors);
+            mem.setKeyReplacedListener(this::onKeyReplaced);
             mem.setRevokedBatchListener(this::onKeysRevoked);
             mem.setSuperuserTenants(superuserTenants());
             return mem;
@@ -641,7 +641,7 @@ public class CertificateManager {
         // one writer per store: a CertificateManager re-created in this JVM (regionInit after a global loss) shares the
         // registry the broker already holds instead of opening a second writer on the same files
         PeerTrustRegistry reg = PeerTrustRegistry.shared(file, o, m -> logger.error(m));
-        reg.setKeyReplacedListener(this::dropReplacedAnchors);
+        reg.setKeyReplacedListener(this::onKeyReplaced);
         reg.setRevokedBatchListener(this::onKeysRevoked);
         reg.setSuperuserTenants(superuserTenants());
         return reg;
@@ -859,6 +859,25 @@ public class CertificateManager {
      * already refuses the old key (BoundKeyTrustManager asks the registry); this removes the anchor too, and refreshes the
      * broker's trust.
      */
+    /**
+     * The registry bound {@code name} ({@code region/agent}) to another key than {@code oldKeyFp} (an operator's rebind, a
+     * controller this node follows that re-keyed, this node's own identity replaced): the truststore anchors of the key
+     * before go ({@link #dropReplacedAnchors}), and message authentication stops serving what it verified on that key
+     * ({@link MsgSigning#keyChanged}: cached credentials, sessions, the trust-bundle entry).
+     */
+    void onKeyReplaced(String name, String oldKeyFp) {
+        dropReplacedAnchors(name, oldKeyFp);
+        try {
+            int s = name == null ? -1 : name.indexOf('/');
+            if (s <= 0 || controllerEngine == null) return;
+            String region = name.substring(0, s), agent = name.substring(s + 1);
+            String present = peerTrust == null ? null : peerTrust.pinnedKey(new PeerIdentity.Expected(region, agent));
+            if (present != null) controllerEngine.msgSigning().keyChanged(region, agent, present);
+        } catch (Exception ex) {
+            logger.error("onKeyReplaced(" + name + "): " + ex.getMessage());
+        }
+    }
+
     void dropReplacedAnchors(String name, String oldKeyFp) {
         try {
             if (trustStore == null || name == null) return;

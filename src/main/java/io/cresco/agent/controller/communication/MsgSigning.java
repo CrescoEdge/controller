@@ -64,7 +64,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * cached (bounded); on EVERY message the signer, the certificates behind it and an attestation's issuer are checked against
  * this node's revocations as they stand: a revoked key, a tombstoned name, and with a PKI the operator's
  * {@code revocation_file} (key, certificate, CRL serial, an out-of-date CRL) refuse it at once. A message costs one hash,
- * a few map lookups and one signature check (or one HMAC): O(1) in the size of the fleet.
+ * a few map lookups and one signature check (or one HMAC): O(1) in the size of the fleet. A name has ONE key: from the
+ * moment this node binds another key to a name (an operator's rebind, a controller it follows) or learns one for it (a
+ * trust bundle that lists the name with another key; at a global, the certificate a region presents), every credential
+ * verified here under another key of that name -- its certificates, the attestations its former key issued -- is no
+ * longer served, the sessions agreed with them are dropped and the trust-bundle entry of the former key goes
+ * ({@link #keyChanged}): the cost is paid where the binding changes, O(what stands on that name), never per message.
  *
  * <p><b>What the receiver does.</b> With {@code broker_security_enabled}: an unsigned message, or one whose signature,
  * credential, recipient, age ({@code msg_signature_max_age_ms}, default 5 min, either way) or freshness (a signature seen
@@ -396,6 +401,14 @@ public final class MsgSigning {
         final long expires;
         /** This node's own key: nothing to re-check. */
         final boolean self;
+        /**
+         * Set once, before the signer is cached ({@link #standsOn}): the cache key of its credential, and the names it
+         * stands on -- its own and (an attestation) its issuer's -- held here so that they live as long as it does.
+         */
+        String cacheKey;
+        Standing ownStanding, issuerStanding;
+        /** A name this signer stands on got another key here ({@link #keyChanged}): it is no longer served. */
+        volatile boolean superseded;
 
         Signer(String tenant, String region, String agent, PublicKey key, String fp, List<PeerTrustRegistry.CertRef> refs,
                String issuer, String issuerFp, List<PeerTrustRegistry.CertRef> issuerRefs, long expires, boolean self) {
@@ -405,6 +418,115 @@ public final class MsgSigning {
         }
 
         String node() { return region + "_" + agent; }
+    }
+
+    /**
+     * The signers verified here that stand on one name ({@code region/agent}): those of that name, and those whose
+     * attestation that name issued. By identity and weakly: a signer is listed for as long as anything holds it (the
+     * credential cache, a session, a message being verified), so whatever could still authenticate a message on that
+     * name's former key is found when the name gets another one -- and nothing is kept for a signer that is gone.
+     */
+    static final class Standing {
+        private final java.util.Set<Signer> live = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>(2));
+    }
+
+    /** name -> what stands on it; an entry lives as long as one of its signers (each holds it). */
+    private final Cache<String, Standing> standings = CacheBuilder.newBuilder().weakValues().build();
+    /** Bumped whenever a name gets another key here: a credential that was being verified meanwhile is verified again. */
+    private final AtomicLong trustEpoch = new AtomicLong();
+    private final AtomicLong formerKeyCredentials = new AtomicLong(), formerKeySessions = new AtomicLong();
+
+    /** Credentials no longer served, and sessions dropped, because their name got another key (diagnostics, tests). */
+    long formerKeyCredentialsDropped() { return formerKeyCredentials.get(); }
+    long formerKeySessionsDropped() { return formerKeySessions.get(); }
+
+    private Standing standing(String name) {
+        try {
+            return standings.get(name, Standing::new);
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** List {@code s}, verified a moment ago, under the names it stands on (before it is cached: once per verification). */
+    private void standsOn(Signer s, String cacheKey) {
+        s.cacheKey = cacheKey;
+        Standing own = standing(s.region + "/" + s.agent);
+        s.ownStanding = own;
+        synchronized (own) { own.live.add(s); }
+        if (s.issuer != null) {
+            Standing iss = standing(s.issuer);
+            s.issuerStanding = iss;
+            synchronized (iss) { iss.live.add(s); }
+        }
+    }
+
+    /**
+     * {@code region/agent} has the key {@code presentFp} here from now on: this node bound it (an operator's rebind, a
+     * controller it follows that re-keyed, its own identity replaced: the registry says so,
+     * {@link CertificateManager#onKeyReplaced}), its parent's trust bundle lists the name with another key than the bundle
+     * before ({@link #acceptBundle}), or -- at a global -- the region controller presented another certificate on its ping
+     * ({@link #onPingAtParent}). What its FORMER key could still do here ends now:
+     * <ul>
+     * <li>the trust-bundle entry this node holds (and serves its children) for the name under another key goes: a
+     *     certificate or an attestation of the former key no longer verifies on the bundle's word;</li>
+     * <li>every credential verified here on another key of the name -- its certificate, its own attestation, and every
+     *     attestation the former key ISSUED (a region's agents) -- leaves the credential cache;</li>
+     * <li>the sessions agreed with those signers are dropped (the name's own, and those of the agents its former key
+     *     attested): a MAC under them is refused as a session this node does not hold.</li>
+     * </ul>
+     * O(the signers standing on that name), nothing for any other name, nothing added to a message's checks. The replay
+     * memory needs nothing (it only ever refuses), nor do the verified batch roots (reached only through a credential that
+     * resolved). What is verified from here on meets the trust data as it stands.
+     */
+    void keyChanged(String region, String agent, String presentFp) {
+        if (!required || region == null || agent == null || presentFp == null) return;
+        String name = region + "/" + agent;
+        boolean served = false;
+        BundleEntry e = childControllers.get(name);
+        if (e != null && !presentFp.equals(e.fp) && childControllers.remove(name, e)) {
+            childRegions.remove(e.r, name);
+            served = true;
+        }
+        e = bundle.get(name);
+        if (e != null && !presentFp.equals(e.fp) && bundle.remove(name, e)) {
+            served = true;
+            GlobalAbove g = globalAbove;
+            if (g != null && ROLE_GLOBAL.equals(e.role) && isGlobalAbove(e.r, e.a, g.parentRegion, g.parentAgent)) globalAbove = null;
+        }
+        // after the trust data changed, before the signers are looked at: a credential verified across this moment is
+        // verified again (resolve), one listed before it is found below
+        trustEpoch.incrementAndGet();
+        int creds = 0, sess = 0;
+        Standing st = standings.getIfPresent(name);
+        if (st != null) {
+            List<Signer> former = new ArrayList<>();
+            synchronized (st) {
+                for (Signer s : st.live) {
+                    if (s == null || s.superseded) continue;
+                    boolean own = s.region.equals(region) && s.agent.equals(agent) && !presentFp.equals(s.fp);
+                    if (own || (name.equals(s.issuer) && !presentFp.equals(s.issuerFp))) former.add(s);
+                }
+            }
+            for (Signer s : former) {
+                s.superseded = true;                     // before its session is looked at (verify looks after it set one)
+                if (s.cacheKey != null && credCache.asMap().remove(s.cacheKey, s)) creds++;
+                if (sessions != null && sessions.dropIfSigner(s.node(), s)) sess++;
+            }
+        }
+        formerKeyCredentials.addAndGet(creds);
+        formerKeySessions.addAndGet(sess);
+        if (served) bundleChanged();
+        if (served || creds > 0 || sess > 0) {
+            info("ANOTHER KEY for " + name + " (" + PeerIdentity.shortFp(presentFp) + "): what its former key could still do here ends -- "
+                    + creds + " cached credential(s) no longer served, " + sess + " session(s) dropped"
+                    + (served ? ", its trust-bundle entry under the former key removed" : ""));
+        }
+    }
+
+    /** The signer cached for {@code cred} ({@code cert:...} / {@code att:...}), or null (tests). */
+    Signer cachedSigner(String cred) {
+        return credCache.getIfPresent(Base64.getEncoder().encodeToString(sha256.get().digest(cred.getBytes(StandardCharsets.UTF_8))));
     }
 
     public MsgSigning(ControllerEngine ce) {
@@ -1188,6 +1310,14 @@ public final class MsgSigning {
                     sessionsFailed(e);
                 }
             }
+            // a signature only (never under a MAC: one flag read where a session can be made): a name this signer stands on
+            // got another key while this message was being verified. Read AFTER the session took the signer, so that either
+            // this sees the flag or keyChanged sees the session
+            if (under == null && who.superseded) {
+                if (sessions != null) sessions.dropIfSigner(peerNode, who);
+                return refuse(m, Refusal.CREDENTIAL, "the signer's credential no longer verifies here (" + by + ": its key, or the key of the"
+                        + " controller that attested it, was replaced)");
+            }
             if (under != null && macVerified.incrementAndGet() == 1) info("session keys ON: this node accepts messages under a session"
                     + " key it holds (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + by + ")");
             if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
@@ -1456,11 +1586,19 @@ public final class MsgSigning {
         long now = System.currentTimeMillis();
         Signer r = credCache.getIfPresent(k);
         if (r != null && r.expires > now) return r;
-        r = cred.startsWith("cert:") ? resolveCert(cred.substring(5), now, why)
-                : cred.startsWith("att:") ? resolveAttestation(cred.substring(4), now, why) : null;
-        if (r == null) return null;
-        credCache.put(k, r);
-        return r;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            long epoch = trustEpoch.get();
+            r = cred.startsWith("cert:") ? resolveCert(cred.substring(5), now, why)
+                    : cred.startsWith("att:") ? resolveAttestation(cred.substring(4), now, why) : null;
+            if (r == null) return null;
+            standsOn(r, k);                              // found from here on by a name that gets another key (keyChanged)
+            credCache.put(k, r);
+            if (trustEpoch.get() == epoch && !r.superseded) return r;
+            credCache.asMap().remove(k, r);              // a name got another key meanwhile: judged again as things stand
+        }
+        why[0] = "the keys this node holds changed while its credential was verified";
+        if (why.length > 1) why[1] = "it is verified again";
+        return null;
     }
 
     private Signer resolveCert(String b64, long now, String[] why) throws Exception {
@@ -1507,7 +1645,8 @@ public final class MsgSigning {
         PublicKey issuerKey;
         String issuerTenant;
         List<PeerTrustRegistry.CertRef> issuerRefs;
-        if (iss[0].equals(ce.cstate.getRegion()) && iss[1].equals(ce.cstate.getAgent())) {
+        boolean ownIssued = iss[0].equals(ce.cstate.getRegion()) && iss[1].equals(ce.cstate.getAgent());
+        if (ownIssued) {
             issuerKey = ce.getCertificateManager().getPublicCertificate()[0].getPublicKey();
             issuerTenant = ce.tenant();
             issuerRefs = List.of();
@@ -1538,6 +1677,16 @@ public final class MsgSigning {
         PublicKey key = KeyFactory.getInstance(keyAlg(a.k)).generatePublic(new X509EncodedKeySpec(Base64.getDecoder().decode(a.k)));
         String fp = PeerTrustRegistry.fingerprint(key.getEncoded());
         if (!fp.equals(a.refs.get(0).k)) { why[0] = "an attestation whose certificate is not of its key"; return null; }
+        if (ownIssued) {
+            // this node attested that key for that name, and may have bound the name to another key since (an operator's
+            // rebind of a re-installed agent): its own word for the former key does not outlive the binding
+            String bound = peers().pinnedKey(new PeerIdentity.Expected(a.r, a.a));
+            if (bound != null && !bound.equals(fp)) {
+                why[0] = "an attestation of a key " + a.r + "/" + a.a + " no longer has here (the name is bound to another key, "
+                        + PeerIdentity.shortFp(bound) + ")";
+                return null;
+            }
+        }
         return new Signer(a.t, a.r, a.a, key, fp, intern(a.refs), a.iss, PeerTrustRegistry.fingerprint(issuerKey.getEncoded()),
                 issuerRefs, a.exp, false);
     }
@@ -1709,6 +1858,8 @@ public final class MsgSigning {
                             childControllers.put(n, e);
                             childRegions.put(id.getRegion(), n);
                             if (prev == null || !prev.fp.equals(e.fp) || !java.util.Objects.equals(prev.refs, e.refs)) bundleChanged();
+                            // the region came back with another key: what its former key signed and attested ends here
+                            if (prev != null && !prev.fp.equals(e.fp)) keyChanged(id.getRegion(), id.getAgent(), e.fp);
                         }
                     }
                 } else if (same && id.getRegion().equals(ce.cstate.getRegion())) {
@@ -1829,9 +1980,20 @@ public final class MsgSigning {
             if (o.keepUntil == 0) o.keepUntil = now + grace;
             if (o.keepUntil > now) next.put(old.getKey(), o);
         }
+        // the names this bundle lists with another key than the one before it did
+        List<BundleEntry> reKeyed = null;
+        for (Map.Entry<String, BundleEntry> en : next.entrySet()) {
+            BundleEntry had = bundle.get(en.getKey()), has = en.getValue();
+            if (had != null && had != has && !had.fp.equals(has.fp)) {
+                if (reKeyed == null) reKeyed = new ArrayList<>();
+                reKeyed.add(has);
+            }
+        }
         // in place, never emptied: a message checked meanwhile sees the old entry or the new one
         bundle.putAll(next);
         bundle.keySet().removeIf(k -> !next.containsKey(k));
+        // a name with another key: what was verified on its former key is no longer served
+        if (reKeyed != null) for (BundleEntry e : reKeyed) keyChanged(e.r, e.a, e.fp);
         // who this parent says the global is: as it signed it now, never an entry only kept for its grace period
         List<String> globals = new ArrayList<>();
         for (BundleEntry e : next.values()) {
