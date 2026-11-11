@@ -189,7 +189,9 @@ public class ControllerSMHandler {
         logger.warn(event + " deferred: recovery completed " + lossDebounce.sinceRecovery()
                 + "ms ago (duplicate report, or a new loss right after recovery); rechecking the parent link in "
                 + lossDebounce.recheckDelayMs() + "ms");
-        lossDebounce.scheduleRecheck(lossRecheckTimer, () -> recheckLoss(desc));
+        // guarded: a recheck that throws must not end the timer every later recheck needs
+        lossDebounce.scheduleRecheck(lossRecheckTimer,
+                () -> io.cresco.agent.core.GuardedTimerTask.guarded("parent-loss-recheck", logger, () -> recheckLoss(desc)));
         return true;
     }
 
@@ -1777,13 +1779,14 @@ public class ControllerSMHandler {
         return errors.toString();
     }
 
-    class stateUpdateTask extends TimerTask {
+    class stateUpdateTask extends io.cresco.agent.core.GuardedTimerTask {
 
         private final StateExportGate gate;
         private volatile String fullReason;
         private volatile long fullRequestedAt;
 
         stateUpdateTask(StateExportGate gate) {
+            super(logger);
             this.gate = gate;
         }
 
@@ -1800,7 +1803,7 @@ public class ControllerSMHandler {
             gate.requestFull();
         }
 
-        public void run() {
+        protected void tick() {
 
                 if (controllerEngine.cstate.isActive()) {
 

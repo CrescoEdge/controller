@@ -461,8 +461,10 @@ public class RegionHealthWatcher {
     }
 
     // Task to check health of local communication components (broker, discovery)
-    class CommunicationHealthWatcherTask extends TimerTask {
-        public void run() {
+    class CommunicationHealthWatcherTask extends io.cresco.agent.core.GuardedTimerTask {
+        CommunicationHealthWatcherTask() { super(logger); }
+
+        protected void tick() {
             boolean isHealthy = true;
             try {
                 logger.trace("CommunicationHealthWatcherTask running...");
@@ -544,18 +546,19 @@ public class RegionHealthWatcher {
     }
 
     // Task to check status of connected agents via DB timestamps
-    class RegionalNodeStatusWatchDog extends TimerTask {
+    class RegionalNodeStatusWatchDog extends io.cresco.agent.core.GuardedTimerTask {
         private ControllerEngine controllerEngine;
         private CLogger logger;
         private PluginBuilder plugin;
 
         public RegionalNodeStatusWatchDog(ControllerEngine controllerEngine, CLogger logger) {
+            super(logger);
             this.controllerEngine = controllerEngine;
             this.plugin = controllerEngine.getPluginBuilder();
             this.logger = logger;
         }
 
-        public void run() {
+        protected void tick() {
             if (controllerEngine.cstate.isRegionalController()) { // Only run if node is regional controller
 
                 // 1) keep CONFIGURED peer links up; 2) self-organize INFERRED links from learned route
@@ -651,8 +654,10 @@ public class RegionHealthWatcher {
     }
 
     // --- NEW TASK for Actively Pinging Global Controller ---
-    class ActivePingTask extends TimerTask {
-        public void run() {
+    class ActivePingTask extends io.cresco.agent.core.GuardedTimerTask {
+        ActivePingTask() { super(logger); }
+
+        protected void tick() {
             // Only run if this region is connected to a global controller
             if (controllerEngine.cstate.getControllerState() == io.cresco.library.agent.ControllerMode.REGION_GLOBAL) {
                 if (!activePingTimerActive.compareAndSet(false, true)) {

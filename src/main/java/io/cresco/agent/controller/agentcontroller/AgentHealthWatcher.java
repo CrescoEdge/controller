@@ -178,8 +178,10 @@ public class AgentHealthWatcher {
     }
 
     // Task to check underlying JMS connection via ActiveClient
-    class CommunicationHealthWatcherTask extends TimerTask {
-        public void run() {
+    class CommunicationHealthWatcherTask extends io.cresco.agent.core.GuardedTimerTask {
+        CommunicationHealthWatcherTask() { super(logger); }
+
+        protected void tick() {
             // Renamed from sendUpdate to sendWatchdogUpdate
             sendWatchdogUpdate();
 
@@ -232,8 +234,10 @@ public class AgentHealthWatcher {
     }
 
     // --- NEW TASK for Active Pinging ---
-    class ActivePingTask extends TimerTask {
-        public void run() {
+    class ActivePingTask extends io.cresco.agent.core.GuardedTimerTask {
+        ActivePingTask() { super(logger); }
+
+        protected void tick() {
             // Only run if connected to a region and not the controller itself
             if (controllerEngine.cstate.isActive() && !controllerEngine.cstate.isRegionalController()) {
                 if (!activePingTimerActive.compareAndSet(false, true)) {
