@@ -20,7 +20,7 @@ HOW TO RUN IT
       [--topology tree] [--profile standard] [--events start,restart-region,...] [--old-jar earlier-agent.jar]
       [--base-port 41000] [--settle 30] [--seed 1] [--keep] [--json out.json]
   Needs a JDK 21 `java` on PATH, Python 3.12 with pycrescolib, and (production profile) OpenSSL 3 for tools/cresco-pki.sh.
-  One cell per run; about 11 minutes for the 10 JVMs of `tree` with every default event (4 of them settle time), ~4 GB
+  One cell per run; about 12 minutes for the 10 JVMs of `tree` with every default event (4.5 of them settle time), ~4 GB
   of RAM and 1.5 GB of disk, which is removed at the end unless --keep (logs stay in <work>/logs). A cell whose fabric
   does not form at `start` stops there. It starts and stops only
   its own JVMs, by PID (also when it fails or is interrupted; a run that was killed outright is cleaned up by the next
@@ -46,15 +46,21 @@ HOW TO RUN IT
               restart-region kill -9 and start of one region controller; its agents come back by themselves
               restart-global kill -9, 20 s, start
               global-outage  the global down 60 s; meanwhile one agent starts under a region and one is killed
-              rekey-region   ONLY WHEN NAMED: a region controller is stopped, loses its identity (security/node-identity.p12)
-                             and starts with a new key; the operator's part is done exactly where a refusing node's
-                             log asks for it ("authorise ONE rebind on this node: add the line '<region>/<agent>=<key>'
-                             to <its security/peer-trust.json.rebind>"), with the key the re-keyed node printed. The
-                             release of 2026-11-10 fails it: the rebind is taken, then the re-keyed controller refuses
-                             its own agents' pings and registrations ("the attestation's signature does not verify":
-                             they still sign with the attestation its former key issued) until they are restarted.
+              rekey-region   a region controller is stopped, loses its identity (security/node-identity.p12) and starts
+                             with a new key; the operator's part is done exactly where a refusing node's log asks for
+                             it ("authorise ONE rebind on this node: add the line '<region>/<agent>=<key>' to <its
+                             security/peer-trust.json.rebind>"), with the key the re-keyed node printed. Its agents
+                             must come back by themselves, and no message may be refused: they sign for their
+                             controller with their certificate, drop the attestation its former key issued when they
+                             see its new key, and are attested anew on their first ping (ReKeyedParentTest). The
+                             release of 2026-11-10 failed it: the agents signed that ping with the former key's
+                             attestation, which the re-keyed controller refused ("the attestation's signature does not
+                             verify") for ever, until they were restarted; it ran only when named until that was fixed.
                              Nodes that still do not answer are restarted after the event is judged, so later events
-                             run on a whole fabric. Production: the node is re-issued (cresco-pki.sh node), no rebind.
+                             run on a whole fabric. Production: the node is re-issued (cresco-pki.sh node), no rebind;
+                             the controller is back within the agents' reconnect time, so their pings stay unsigned on
+                             the direct link and are accepted first hand (the release passes that; the signed ping of
+                             an agent that had to join again is what it refused).
               move-agent     an agent of the global's region is stopped and started in a region with region_alias
               cut-bridge     one region controller is SIGSTOPped for 40 s
               clock-skew     LEFT OUT: nothing supported gives one JVM another clock (the event reports that)
@@ -82,6 +88,9 @@ ON THE RELEASE OF 2026-11-10 (agent 1.3, controller 29ef93d), 2026-11-11
   advertised, and logs PEER IDENTITY MISMATCH: refused, as it must be); tenants does not form; rekey-region fails. None
   of these has a known-item entry: each is for its owner to fix or to list. The release before it (tree) fails six of
   eight events: credentials that do not verify at start, a minute of unsigned-message refusals at a moved agent.
+  SINCE THEN: rekey-region is fixed in the controller (message signing: see the event above) and is part of the default
+  order; tree passes it in standard and in production with no message refused at any node, and the agents hold an
+  attestation of the new key 0.1 s after the operator's rebind is taken ("attested by <controller> (its key ...)").
 
 HOW TO ADD
   A topology    a function that adds nodes to the fabric (the global first: fab.add / fab.add_agent), listed in TOPOLOGIES.
@@ -206,6 +215,9 @@ KNOWN: list[Known] = [
     Known("error-rekey", "error", r"Discovery REFUSED \S+: the name is bound to another key|Identity \S+ REBOUND from key"
           r"|discovery v2: could not record|REFUSED this node: refused by|certDiscovery\.size\(\) == 0|CERT DISCOVERY != 1",
           ("rekey-region",), 12, "a re-keyed controller is refused until the operator's rebind, and the rebind is reported"),
+    Known("error-rekey-connect", "error", r"Failed to connect to \[nio\+ssl://[^\]]+\] after: \d+ attempt\(s\)|createDedicatedSession error for URI",
+          ("rekey-region",), 2, "an agent's connection gives up (5 attempts, 25 s) on its controller, down and then back with a key the agent"
+          " refuses until the operator's rebind: one line of the transport, one of the client (both at one agent in 3 runs of 4, none in the 4th)"),
 ]
 
 
@@ -992,8 +1004,8 @@ def secs(t):
     return "a TIMEOUT" if t is None else "%.0f s" % t
 
 
-# Events that run only when named in --events, and why.
-OPT_IN = {"rekey-region": "the 2026-11-10 release fails it: the re-keyed controller refuses its own agents (see the top of the file)"}
+# Events that run only when named in --events, and why (none today: rekey-region was one until the controller passed it).
+OPT_IN = {}
 EVENTS = {"start": ev_start, "restart-agent": ev_restart_agent, "restart-region": ev_restart_region,
           "restart-global": ev_restart_global, "global-outage": ev_global_outage, "rekey-region": ev_rekey_region,
           "move-agent": ev_move_agent, "cut-bridge": ev_cut_bridge, "clock-skew": ev_clock_skew, "revoke": ev_revoke}
