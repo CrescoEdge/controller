@@ -671,7 +671,11 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 - **Keys.** Node keys are RSA-3072, signed with SHA-384 (CrescoCrypto's policy). A region or global controller presents
   its certificate as its credential; an agent an attestation from its region controller (tenant, region, name, public key;
   valid `msg_signing_attestation_hours`, default 24, renewed on its pings when a third is left), and its certificate until
-  it holds one. A receiver accepts a certificate that verifies here as its name (a peer bound here, or under a recorded
+  it holds one -- and always for that controller itself, which knows its agent by the certificate it attested: a controller
+  that comes back with another key (its identity lost, or re-issued) cannot verify what its former key signed, and the
+  agent's ping must reach it to be attested anew. An agent that sees its controller's present key (a message the controller
+  signed, the trust bundle it signed) drops an attestation another key made, signs with its certificate and pings at once
+  (a node that verifies the former key's attestation against the present key refuses it). A receiver accepts a certificate that verifies here as its name (a peer bound here, or under a recorded
   region CA) or whose key the trust bundle lists for that controller, and an attestation signed by the controller the trust
   bundle lists for the attested region (a superuser-tenant region attests any tenant's agents, any other its own tenant's
   only). The trust bundle is the list of region and global controller keys: each region presents its certificate on its

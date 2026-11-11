@@ -50,7 +50,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p><b>Who signed.</b> A controller (region or global) signs with its leaf certificate as its credential; an agent with
  * an <i>attestation</i> its region controller issued (its tenant, region, name, public key and the certificates its key
  * stands on, by reference; valid {@code msg_signing_attestation_hours}, default 24) once it holds one, and with its
- * certificate before. A receiver resolves a credential, in this order: a certificate that verifies HERE as its name (a
+ * certificate before -- and always for that controller itself: an attestation is its issuer's word to the nodes beyond it,
+ * and the issuer knows its agent by the certificate it attested (a controller that came back with another key cannot
+ * verify what its former key signed, and the ping that brings the new attestation must reach it). An agent that sees its
+ * controller's present key (a message that controller signed, the trust bundle it signed) drops an attestation another key
+ * made and asks to be attested anew ({@link #issuerKeySeen}).
+ * A receiver resolves a credential, in this order: a certificate that verifies HERE as its name (a
  * peer bound here, or under a recorded region CA, or the operator's PKI); a certificate whose key is the one the <i>trust
  * bundle</i> lists for that controller; an attestation signed by a controller the trust bundle lists for the attested
  * region (or by this node). The trust bundle is the list of region and global controller keys (with the certificates
@@ -347,11 +352,21 @@ public final class MsgSigning {
      * (its name, its key, issued by its current parent; {@link #currentAttestation}).
      */
     private static final class OwnAttestation {
-        final String json, issuer, region, agent, key, issuerFp;       // issuerFp: null from a parent that does not name it
+        final String json, issuer, region, agent, key;
+        /** The issuer as a recipient names it ({@code region_agent}): a message for that node is signed with the certificate. */
+        final String issuerNode;
+        /**
+         * The fingerprint of the key that signed it: as the issuer named it on its pong, or null from a parent that does not
+         * (an earlier build) until this node has checked the signature against that parent's key ({@link #issuerKeySeen}).
+         */
+        volatile String issuerFp;
+        final Attestation signed;
         final long exp;
         OwnAttestation(String json, Attestation a, String issuerFp) {
             this.json = json; this.issuer = a.iss; this.region = a.r; this.agent = a.a; this.key = a.k; this.exp = a.exp;
+            this.issuerNode = a.iss.replace('/', '_');
             this.issuerFp = issuerFp;
+            this.signed = a;
         }
     }
 
@@ -825,7 +840,7 @@ public final class MsgSigning {
                     for (String k : new String[]{MsgSessions.KX, MsgSessions.KX_ACK, MsgSessions.SID, MsgSessions.MAC}) m.removeParam(k);
                 }
             }
-            m.setParam(CRED, credential());
+            m.setParam(CRED, credential(node));
             if (batch && node != null && peerReads(node, CAP_BATCH)) {
                 // shares the private-key operation with the messages being signed at the same moment (alone: a single one)
                 MsgBatchSigner.Signed bs = batcher().sign(canonical(m));
@@ -880,11 +895,23 @@ public final class MsgSigning {
         return b;
     }
 
-    /** An agent's attestation while it is its own and valid (a tenth of its life left at least), else this node's certificate. */
-    String credential() throws Exception {
+    /** The credential this node signs with for a node beyond its parent ({@link #credential(String)}). */
+    String credential() throws Exception { return credential(null); }
+
+    /**
+     * The credential on a message for {@code recipientNode} ({@code region_agent}; null: a global function its region
+     * carries on): an agent's attestation while it is its own and valid (a tenth of its life left at least), else this
+     * node's certificate -- and always the certificate for the node that issued the attestation. That node verifies its
+     * agent's certificate itself (it did, to attest it), whatever became of the key it attested with: signed with the
+     * attestation, an agent's ping to a controller that came back with another key was refused there ("the attestation's
+     * signature does not verify"), and with the ping the only way to a new attestation.
+     */
+    String credential(String recipientNode) throws Exception {
         String cert = ownCert();
         OwnAttestation att = currentAttestation();
-        if (att != null && System.currentTimeMillis() < att.exp - attestationMs / 10) return "att:" + att.json;
+        if (att != null && !att.issuerNode.equals(recipientNode) && System.currentTimeMillis() < att.exp - attestationMs / 10) {
+            return "att:" + att.json;
+        }
         return "cert:" + cert;
     }
 
@@ -902,6 +929,61 @@ public final class MsgSigning {
         String pr = cs.getRegionalRegion(), pa = cs.getRegionalAgent();
         return pr == null || pa == null || a.issuer.equals(pr + "/" + pa) ? a : null;
     }
+
+    /** Guards the replacement of {@link #ownAttestation}: one that just arrived is never dropped for the one before it. */
+    private final Object attestationLock = new Object();
+    private final AtomicLong attestationsDropped = new AtomicLong();
+
+    /** Attestations this node dropped because their issuer has another key now (diagnostics, tests). */
+    long attestationsDroppedCount() { return attestationsDropped.get(); }
+
+    /**
+     * This node has seen, verified, the key {@code region/agent} holds NOW: that controller signed a message with its
+     * certificate, or the trust bundle this node took from it. When it is the issuer of the attestation this node holds and
+     * another key made that attestation (the controller came back re-keyed), the attestation is dropped: this node signs
+     * with its certificate and its watcher pings the parent at once ({@link #takeTrustWanted}; the ping says it holds
+     * none, so the parent attests it). Kept, a node beyond the parent that holds the parent's present key refuses
+     * everything signed with it until it nears its end. An attestation whose issuer did not name its key (an earlier
+     * build) is checked against the key once: its own signature says whether that key made it. A few comparisons when the
+     * issuer signed the message; else one.
+     */
+    private void issuerKeySeen(String region, String agent, PublicKey key, String fp) {
+        OwnAttestation a = ownAttestation;
+        if (a == null || region == null || agent == null || key == null || fp == null) return;
+        String iss = a.issuer;
+        int r = region.length();
+        if (iss.length() != r + 1 + agent.length() || iss.charAt(r) != '/' || !iss.startsWith(region) || !iss.endsWith(agent)) return;
+        String by = a.issuerFp;
+        if (by == null) {
+            try {
+                Signature s = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(key.getAlgorithm()));
+                s.initVerify(key);
+                s.update(attestationBytes(a.signed));
+                if (s.verify(Base64.getDecoder().decode(a.signed.sig))) {
+                    a.issuerFp = fp;                         // this key made it: nothing to check from here on
+                    return;
+                }
+            } catch (Exception | Error e) {
+                if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
+                return;                                      // it cannot be told: the attestation stands
+            }
+        } else if (by.equals(fp)) {
+            return;
+        }
+        synchronized (attestationLock) {
+            if (ownAttestation != a) return;                 // replaced meanwhile
+            ownAttestation = null;
+        }
+        attestationsDropped.incrementAndGet();
+        attestationWanted = true;                            // one ping now: not at the next interval
+        info("attestation DROPPED: " + iss + " has another key now (" + PeerIdentity.shortFp(fp) + ") than the one that attested this node"
+                + (by == null ? "" : " (" + PeerIdentity.shortFp(by) + ")") + "; this node signs with its certificate and asks to be attested anew");
+    }
+
+    /** This node dropped its attestation and has not pinged its parent since ({@link #takeTrustWanted}). */
+    private volatile boolean attestationWanted;
+    /** The issuer key (fingerprint) of the attestation this node took last: a change of it is logged. */
+    private volatile String attestedBy;
 
     // ================================================================ receiving side
 
@@ -1112,6 +1194,9 @@ public final class MsgSigning {
                     + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + " for " + to + ")");
             // an API user's word is that of the node whose key vouched for it (the signer, never a relay)
             if (signed.getKind() == Caller.Kind.API) m.setParam(SPEAKER, who.name);
+            // a controller that signs with its certificate shows the key it holds now: an attestation of this node that
+            // another key of that controller made is dropped (not under a session: its signer is the session's first)
+            if (under == null && who.issuer == null && !who.self && ownAttestation != null) issuerKeySeen(who.region, who.agent, who.key, who.fp);
             return new Verdict(signed);
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
@@ -1240,9 +1325,15 @@ public final class MsgSigning {
     /**
      * For the health watcher (every 250 ms): should it ping the parent now for trust data? True at most once every
      * {@value #WANT_EVERY_MS} ms, for {@value #WANT_FOR_MS} ms after the last message this node could not judge, and not
-     * once trust data changed since. One volatile read when nothing is wanted.
+     * once trust data changed since; and once after this node dropped its attestation ({@link #issuerKeySeen}), whatever
+     * else changed. Two volatile reads when nothing is wanted.
      */
     public boolean takeTrustWanted(long now) {
+        if (attestationWanted) {
+            attestationWanted = false;
+            trustAskedAt = now;
+            return true;
+        }
         long at = trustWantedAt;
         if (at == 0L) return false;
         if (now - at > WANT_FOR_MS || now < at) {
@@ -1672,7 +1763,18 @@ public final class MsgSigning {
                 if (a != null && a.v == 2 && a.k != null && a.iss != null && a.iss.equals(parentRegion + "/" + parentAgent)
                         && ce.cstate.getRegion().equals(a.r) && ce.cstate.getAgent().equals(a.a) && a.refs != null && !a.refs.isEmpty()
                         && a.k.equals(Base64.getEncoder().encodeToString(own.getEncoded())) && a.exp > System.currentTimeMillis()) {
-                    ownAttestation = new OwnAttestation(att, a, attIss == null || attIss.isEmpty() ? null : attIss);
+                    OwnAttestation taken = new OwnAttestation(att, a, attIss == null || attIss.isEmpty() ? null : attIss);
+                    synchronized (attestationLock) {
+                        ownAttestation = taken;
+                    }
+                    attestationWanted = false;               // it is here
+                    // one line per issuer key: the first attestation, and each one after its issuer came back re-keyed
+                    String madeBy = taken.issuerFp, before = attestedBy;
+                    if (madeBy != null && !madeBy.equals(before)) {
+                        attestedBy = madeBy;
+                        info("attested by " + taken.issuer + " (its key " + PeerIdentity.shortFp(madeBy) + ")" + (before == null ? ""
+                                : "; the attestation before was made by its key " + PeerIdentity.shortFp(before)));
+                    }
                 }
             }
             String b = pong.getParam(P_BUNDLE) == null ? null : pong.getCompressedParam(P_BUNDLE);
@@ -1708,6 +1810,8 @@ public final class MsgSigning {
             refusal(Refusal.TRUST_DATA, null, "a trust bundle whose signature does not verify (" + parentRegion + "/" + parentAgent + ")");
             return;
         }
+        // the parent's certificate, verified here, with the bundle it signed: the key it holds now
+        issuerKeySeen(parentRegion, parentAgent, leaf.getPublicKey(), PeerTrustRegistry.fingerprint(leaf.getPublicKey().getEncoded()));
         long now = System.currentTimeMillis();
         long grace = Math.max(0L, ce.getPluginBuilder().getConfig().getLongParam("msg_signing_bundle_grace_ms", 900_000L));
         Map<String, BundleEntry> next = new LinkedHashMap<>();
