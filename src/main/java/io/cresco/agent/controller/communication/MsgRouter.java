@@ -286,6 +286,9 @@ public class MsgRouter {
      */
     private void noRoute(MsgEvent rm, String hop, String queue, boolean waited, boolean foreign) {
         controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_ROUTE, rm);
+        // a request of this node's own: it signs to that node until the node confirms their session again (MsgSigning)
+        MsgSigning signing = controllerEngine.msgSigning();
+        if (signing != null) signing.noRouteTo(rm);
         String node = rm.getForwardDst();
         if ("ping".equals(rm.getParam("action"))) {
             logger.debug("route: no route to " + node + "; a liveness ping is not answered (its pinger records a miss)");

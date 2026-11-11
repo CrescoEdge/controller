@@ -1059,4 +1059,213 @@ class LostSessionRecoveryTest {
             c.routeGate().stop();
         }
     }
+
+    // ================================================================ a call the peer does not answer
+
+    /** A request of {@code from}'s plugin for {@code to}, stamped and marked to be signed, not yet handed to the producer. */
+    private static MsgEvent unsent(ControllerEngine from, ControllerEngine to, String callId) {
+        MsgEvent m = new MsgEvent(MsgEvent.Type.EXEC, from.cstate.getRegion(), from.cstate.getAgent(), "p1",
+                to.cstate.getRegion(), to.cstate.getAgent(), null, false, false);
+        m.setParam("action", "getstatus");
+        m.setParam("is_rpc", "true");
+        m.setParam("callId-" + from.cstate.getRegion() + "-" + from.cstate.getAgent() + "-p1", callId);
+        CallerStamps.stamp(m, plugin(from));
+        from.markForSigning(m);
+        return m;
+    }
+
+    /** {@code b}'s answer to the request it was handed last, as it leaves {@code b}. */
+    private static MsgEvent answerOf(ControllerEngine b) {
+        List<MsgEvent> handed = HANDED.get(key(b));
+        MsgEvent answer = copy(handed.get(handed.size() - 1));
+        answer.setParam("status_code", "10");
+        answer.setReturn();
+        CallerStamps.stamp(answer, controller(b));
+        b.markForSigning(answer);
+        b.msgSigning().signIfPending(answer);
+        return copy(answer);
+    }
+
+    @Test
+    void afterOneUnansweredCallTheNextMessageToThatPeerIsSignedAndARestartedPeerAcceptsIt() throws Exception {
+        // the backlog between agents: an agent has no broker to tell it that a node beyond its controller went away. It
+        // went on under the session for 30 s after the peer's last word, and what waited for the peer in a broker was
+        // refused when the peer came back restarted (90 to 100 messages per storage core per restart)
+        ControllerEngine a = agent("a70", Map.of()), b = agent("b70", Map.of()), c = agent("b71", Map.of());
+        established(a, b);
+        established(a, c);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        MsgEvent call = request(a, b, UUID.randomUUID().toString(), 60);     // its caller waits 60 ms; b is gone: no answer
+        assertTrue(macd(call));
+        assertEquals(1, a.msgSigning().callsWatched(), "the call is awaited");
+        assertTrue(macd(sent(a, b)), "while its caller still waits nothing changes");
+        Thread.sleep(80);
+        MsgEvent stored = sent(a, b);                            // the next message to b: it waits in a broker for b
+        assertTrue(signed(stored), "signed: the call to b was not answered");
+        assertEquals(sid, stored.getParam(MsgSessions.HELD), "the session is kept, not dropped");
+        assertNull(stored.getParam(MsgSessions.KX), "and nothing is agreed anew");
+        assertEquals(0, a.msgSigning().callsWatched(), "the call is no longer awaited");
+        assertEquals(1, a.msgSigning().callsUnansweredCount());
+        assertTrue(macd(sent(a, c)), "the session with another peer is not touched: one peer per event");
+        long refused = b.msgSigning().refusedCount();
+        b.msgSigning().restartSessions();                        // b comes back, restarted
+        assertEquals(Arrival.HANDED, arrive(b, stored, plugin(a)), "what was stored for it verifies");
+        assertEquals(refused, b.msgSigning().refusedCount(), "nothing is refused");
+    }
+
+    @Test
+    void aPeerThatIsAliveAndOnlySlowCostsSignaturesUntilItsNextWordAndTheSessionGoesOn() throws Exception {
+        ControllerEngine a = agent("a72", Map.of()), b = agent("b72", Map.of());
+        established(a, b);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        long made = a.msgSigning().sessionsMadeCount() + b.msgSigning().sessionsMadeCount();
+        MsgEvent call = request(a, b, UUID.randomUUID().toString(), 50);
+        assertEquals(Arrival.HANDED, arrive(b, copy(call), plugin(a)));          // b has it, and takes its time
+        Thread.sleep(70);                                                        // a's caller has stopped waiting
+        MsgEvent first = sent(a, b);
+        assertTrue(signed(first), "one timeout: what a sends b is signed");
+        assertEquals(sid, first.getParam(MsgSessions.HELD));
+        assertEquals(Arrival.HANDED, arrive(b, first, plugin(a)));
+        MsgEvent word = sent(b, a);                                              // b's next word, whatever it is
+        assertTrue(macd(word), "b still holds the session and uses it");
+        assertEquals(Arrival.HANDED, arrive(a, word, plugin(b)));
+        MsgEvent next = sent(a, b);
+        assertTrue(macd(next), "a sends under it again");
+        assertEquals(sid, next.getParam(MsgSessions.SID), "the same session");
+        assertEquals(Arrival.HANDED, arrive(b, next, plugin(a)));
+        assertEquals(made, a.msgSigning().sessionsMadeCount() + b.msgSigning().sessionsMadeCount(), "nothing was agreed anew");
+        assertEquals(1, a.msgSigning().callsUnansweredCount());
+    }
+
+    @Test
+    void aCallThatWasAnsweredIsNoTimeoutAndAMessageThatOnlyNamesItsIdIsNoAnswer() throws Exception {
+        ControllerEngine a = agent("a73", Map.of()), b = agent("b73", Map.of()), c = agent("b74", Map.of());
+        established(a, b);
+        established(a, c);
+        String id = UUID.randomUUID().toString();
+        MsgEvent call = request(a, b, id, 80);
+        assertEquals(1, a.msgSigning().callsWatched());
+        // another node's own message that names the call id is no answer to it
+        MsgEvent other = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "b74", "p1", "rgA", "a73", "p1", false, false);
+        other.setParam("action", "report");
+        other.setParam("is_rpc", "true");
+        other.setParam("callId-rgA-a73-p1", id);
+        CallerStamps.stamp(other, plugin(c));
+        c.markForSigning(other);
+        c.msgSigning().signIfPending(other);
+        assertEquals(Arrival.HANDED, arrive(a, copy(other), plugin(c)));
+        assertEquals(1, a.msgSigning().callsWatched(), "still awaited from b");
+        // b answers in time
+        assertEquals(Arrival.HANDED, arrive(b, copy(call), plugin(a)));
+        assertEquals(Arrival.HANDED, arrive(a, answerOf(b), controller(b)));
+        assertEquals(0, a.msgSigning().callsWatched(), "answered: no longer awaited");
+        Thread.sleep(100);
+        assertTrue(macd(sent(a, b)), "no timeout: a goes on under the session");
+
+        // a controller on the way answers in b's place with something else than "no route" (the tier's refusal): the
+        // caller has its answer, the call does not time out, and it says nothing of b
+        MsgEvent refusedCall = request(a, b, UUID.randomUUID().toString(), 80);
+        assertEquals(1, a.msgSigning().callsWatched());
+        slowWire = new ArrayList<>();
+        try {
+            assertTrue(MsgRouter.answerWithError(g.getPluginBuilder(), copy(refusedCall), MsgRouter.ROUTE_REFUSED, "tier", "refused at rgG_gc: not here"));
+            assertEquals(Arrival.HANDED, arrive(a, copy((MsgEvent) slowWire.remove(0)[1]), controller(g)));
+        } finally {
+            slowWire = null;
+        }
+        assertEquals(0, a.msgSigning().callsWatched());
+        Thread.sleep(100);
+        assertTrue(macd(sent(a, b)), "answered, though not by b: no timeout");
+        assertEquals(0, a.msgSigning().callsUnansweredCount());
+        // a call that states no wait is not watched (an older library): nothing changes for it
+        request(a, b, UUID.randomUUID().toString());
+        assertEquals(0, a.msgSigning().callsWatched());
+    }
+
+    @Test
+    void aCallAnsweredRouteUnavailableSetsTheSessionAsideAtOnceButOnlyACallThisNodeAwaits() throws Exception {
+        ControllerEngine a = agent("a75", Map.of()), b = agent("b75", Map.of());
+        established(a, b);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        String id = UUID.randomUUID().toString();
+        MsgEvent call = request(a, b, id, 20_000);
+        assertTrue(macd(call));
+        slowWire = new ArrayList<>();                            // what the global answers is handed over by the test
+        try {
+            // a node of the fabric says "no route to b" for a call a does not await: nothing changes
+            assertEquals(1, a.msgSigning().callsWatched());
+            MsgEvent unknown = copy(call);
+            unknown.setParam("callId-rgA-a75-p1", "a-call-a-never-made");
+            assertTrue(MsgRouter.answerWithError(g.getPluginBuilder(), unknown, MsgRouter.ROUTE_UNAVAILABLE, "REMOTE_REGION",
+                    "route unavailable at rgG_gc: REMOTE_REGION: no route to rgB_b75"));
+            MsgEvent notAwaited = (MsgEvent) slowWire.remove(0)[1];
+            assertEquals(Arrival.HANDED, arrive(a, copy(notAwaited), controller(g)));
+            assertTrue(macd(sent(a, b)), "an answer for a call this node does not await sets nothing aside");
+            assertEquals(0, a.msgSigning().callsUnansweredCount());
+
+            // the global answers the call itself: there is no route to b (its region is gone)
+            assertTrue(MsgRouter.answerWithError(g.getPluginBuilder(), copy(call), MsgRouter.ROUTE_UNAVAILABLE, "REMOTE_REGION",
+                    "route unavailable at rgG_gc: REMOTE_REGION: no route to rgB_b75"));
+            MsgEvent unavailable = (MsgEvent) slowWire.remove(0)[1];
+            int handed = HANDED.get(key(a)).size();
+            assertEquals(Arrival.HANDED, arrive(a, copy(unavailable), controller(g)), "the caller gets the answer, as before");
+            assertEquals(id, HANDED.get(key(a)).get(handed).getParam("callId-rgA-a75-p1"));
+            MsgEvent stored = sent(a, b);                        // at once: no wait for the caller's timeout
+            assertTrue(signed(stored), "signed: there is no route to b");
+            assertEquals(sid, stored.getParam(MsgSessions.HELD), "the session is kept");
+            assertEquals(1, a.msgSigning().callsUnansweredCount());
+            assertEquals(0, a.msgSigning().callsWatched());
+            long refused = b.msgSigning().refusedCount();
+            b.msgSigning().restartSessions();
+            assertEquals(Arrival.HANDED, arrive(b, stored, plugin(a)), "b, back and restarted, verifies it");
+            assertEquals(refused, b.msgSigning().refusedCount());
+        } finally {
+            slowWire = null;
+        }
+    }
+
+    @Test
+    void theCallsAwaitedFromOnePeerAreBoundedAndACallThatIsNotWatchedChangesNothing() throws Exception {
+        ControllerEngine a = agent("a76", Map.of()), b = agent("b76", Map.of());
+        established(a, b);
+        int over = 5;
+        for (int i = 0; i < MsgSessions.CALLS_PER_PEER + over; i++) {
+            assertTrue(macd(request(a, b, UUID.randomUUID().toString(), 60_000)), "call " + i);
+        }
+        assertEquals(MsgSessions.CALLS_PER_PEER, a.msgSigning().callsWatched(), "at most " + MsgSessions.CALLS_PER_PEER + " per peer");
+        assertEquals(over, a.msgSigning().callsNotWatchedCount());
+        assertTrue(macd(sent(a, b)));
+        // switched off (msg_signing_unanswered_calls=false), nothing is watched and nothing is set aside
+        ControllerEngine d = agent("a77", Map.of("msg_signing_unanswered_calls", "false")), e = agent("b77", Map.of());
+        established(d, e);
+        request(d, e, UUID.randomUUID().toString(), 30);
+        assertEquals(0, d.msgSigning().callsWatched(), "switched off: nothing is watched");
+        Thread.sleep(50);
+        assertTrue(macd(sent(d, e)), "and the session is used as on 1.3.378");
+    }
+
+    @Test
+    void aControllerWhoseOwnBrokerHasNoRouteToAPeerSignsToItFromThenOn() throws Exception {
+        ControllerEngine c = controllerOfItsOwnRegion("rgD", "rc78", Map.of("route_rebuild_grace_ms", "0"));
+        ControllerEngine b = agent("b78", Map.of());
+        established(c, b);
+        broker(c);                                               // nothing at c's broker consumes b's inbox
+        slowWire = new ArrayList<>();
+        try {
+            assertTrue(macd(sent(c, b)));
+            assertFalse(c.routeKnown(unsent(c, b, UUID.randomUUID().toString()), "REMOTE_REGION", false), "answered: no route");
+            assertEquals(1, slowWire.size(), "its caller is told");
+            assertTrue(signed(sent(c, b)), "and what c sends b from now on is signed");
+            assertEquals(1, c.msgSigning().callsUnansweredCount());
+            // a request c only carries on for another node says nothing of c's own session with b
+            ControllerEngine a = agent("a78", Map.of());
+            established(c, b);
+            assertTrue(macd(sent(c, b)));
+            assertFalse(c.routeKnown(unsent(a, b, UUID.randomUUID().toString()), "REMOTE_REGION", true));
+            assertTrue(macd(sent(c, b)), "another node's request: that node hears the answer and acts on it");
+        } finally {
+            slowWire = null;
+            c.routeGate().stop();
+        }
+    }
 }

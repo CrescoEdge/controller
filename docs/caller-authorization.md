@@ -853,11 +853,28 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   time, per event: no session is walked. The session is kept: a peer that did not restart goes on with it at its next
   message. What is sent meanwhile is signed, and a signed message stored by a broker verifies when the peer is back,
   restarted or not. (Measured in the tree cell: refused at the global after a 60 s outage 10 -> 0, at a restarted agent
-  1 -> 0.) **What this cannot do:** a node whose own broker does not see the peer leave -- an agent, whose peer is an
-  agent under another controller -- learns nothing, and what it sends under the session while that peer is down is
-  refused when the peer is back (the notice then stops it within one round trip). And a node that moved regions
-  (`region_alias`) signs under its new name, while its peers hold the session under its former one: its word does not
-  match, and recovery with it is as before.
+  1 -> 0.) A node that moved regions (`region_alias`) signs under its new name, while its peers hold the session
+  under its former one: its word does not match, and recovery with it is as before.
+  **A call a peer does not answer ends the use of the session with it, at once** (`msg_signing_unanswered_calls`). A
+  node whose own broker does not see the peer leave -- an agent, whose peer is an agent under another controller: the
+  main case in a storage system, whose cores call each other all the time -- has a signal of its own: a call to that
+  peer which nothing answers. The caller's node watches each RPC request it sends under a session for as long as its
+  caller says it waits (`rpc_timeout_ms`; a request that states no wait is not watched). When that wait ends with no
+  answer to the call, or a node on the way answers `route unavailable`, the session is not sent under until the peer
+  confirms it again (its next message that names or uses it); the session is kept. The timeout is seen when the node
+  next sends that peer anything, which is the first moment it matters: that message is signed, and a peer that comes
+  back restarted verifies it. One entry of the peer's own small table per call, O(1): at most 16 calls watched per
+  peer and 8,192 on the node (about 150 bytes each; a call beyond that is not watched and changes nothing), no timer,
+  no thread. A peer that is alive and only slow (one timeout) loses nothing: it still holds the session, its next
+  message says so, and the caller's node sends under it again; meanwhile what that node sends it is signed -- one
+  signature and one verification per message, usually for one round trip, and no key agreement. What an attacker gets
+  of it is signatures: a `route unavailable` answer counts only when it verifies, comes from another node than the
+  peer, and names a call this node awaits from exactly that peer (an id only the nodes on the call's way ever saw);
+  nothing is dropped or refused for it. Counted: `msg.session.unanswered`. **What this cannot do:** a node that only
+  sends a peer one-way messages, and calls it nothing, has no such signal; what it sends under the session while that
+  peer is down (for up to 30 s after the peer's last word) is refused when the peer is back, and the notice then stops
+  it within one round trip. And a stale word of the peer's former life, delivered late, confirms the session once more
+  (then the same notice ends it).
 - **A node answers from its first message on (2026-11-11).** A node could be asked before it could answer: its inbox
   consumer was made some 20 ms before its producer (at its start, and each time it joined a controller again), so a
   request waiting in its inbox was served and answered into nothing (`AgentProducer is null. Message not sent`, at
@@ -942,6 +959,7 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_lost_retry` | true | an RPC request refused for a session its receiver lost is sent again once, signed, by the caller's node |
 | `msg_signing_credentials_max` | 100000 | credentials held verified (an LRU) |
 | `msg_replay_memory_max` | 4000000 | signatures and MACs the replay memory holds (past it, the oldest signing times are refused as too old) |
+| `msg_signing_unanswered_calls` | true | a call to a peer that times out at its caller's node, or is answered `route unavailable`, ends the use of the session with that peer until it confirms it again (the node signs meanwhile) |
 | `msg_replay_floor` | true | the latest signing time accepted from each signer is kept on disk: after a restart, what that signer signed at or before it is refused |
 
 ### Final review (2026-11-09)

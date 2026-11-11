@@ -118,7 +118,22 @@ final class MsgSessions {
          * its three slots, so a session id that is in none of them was not held at any moment since.
          */
         volatile long forgotNanos = System.nanoTime();
+        /**
+         * The calls this node awaits an answer to from this peer ({@link MsgSessions#called}): call id to the session it
+         * left under and when its caller stops waiting. Null: none. Read and changed only while holding this entry.
+         */
+        java.util.HashMap<String, Call> calls;
+        /** How many there are, and the earliest of their ends ({@link System#nanoTime}; it means something only while there are any). */
+        volatile int callsOpen;
+        volatile long callsDue;
         Peer(String node) { this.node = node; }
+    }
+
+    /** A call awaited: the session its request left under, and when its caller stops waiting ({@link System#nanoTime}). */
+    static final class Call {
+        final Session session;
+        final long due;
+        Call(Session session, long due) { this.session = session; this.due = due; }
     }
 
     /** A session a message names, and its peer. */
@@ -163,6 +178,14 @@ final class MsgSessions {
                 .expireAfterAccess(Duration.ofMillis(this.lifetimeMs + 120_000L))
                 .removalListener((com.google.common.cache.RemovalNotification<String, Peer> gone) -> {
                     if (gone.getCause() != com.google.common.cache.RemovalCause.EXPIRED) evictedNanos = System.nanoTime();
+                    Peer p = gone.getValue();
+                    if (p != null) {
+                        synchronized (p) {                             // the calls awaited from it go with it
+                            if (p.calls != null) callsWatched.addAndGet(-p.calls.size());
+                            p.calls = null;
+                            p.callsOpen = 0;
+                        }
+                    }
                 }).build();
     }
 
@@ -205,6 +228,8 @@ final class MsgSessions {
     /** The session to send to {@code peerNode} under: the peer confirmed it lately and it is not about to end; or null. */
     Session usable(String peerNode, long now) {
         Peer p = peers.getIfPresent(peerNode);
+        // a call to this peer whose caller has stopped waiting: the session it left under is not sent under (timedOut)
+        if (p != null && p.callsOpen != 0 && System.nanoTime() - p.callsDue >= 0) timedOut(p);
         Session s = p == null ? null : p.current;
         if (s == null || s.confirmedAt <= 0 || now - s.confirmedAt >= CONFIRM_MS || now >= s.expires - USABLE_MARGIN_MS || s.endedNanos != 0) {
             return null;
@@ -233,6 +258,168 @@ final class MsgSessions {
             Session s = p.current;
             if (s != null) s.confirmedAt = 0;
         }
+    }
+
+    // ------------------------------------------------------------------ a call the peer does not answer
+
+    /**
+     * Calls awaited at most from one peer, and from all of them together; a call id longer than {@value #CALL_ID_MAX}
+     * characters is not kept. A call beyond a bound is not watched (counted): those that are watched are enough to notice
+     * a peer that answers nothing, and a call that is not watched changes nothing -- the session is used as before.
+     */
+    static final int CALLS_PER_PEER = 16, CALLS_MAX = 8_192, CALL_ID_MAX = 128;
+    private final java.util.concurrent.atomic.AtomicInteger callsWatched = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicLong callsNotWatched = new java.util.concurrent.atomic.AtomicLong(),
+            callsTimedOut = new java.util.concurrent.atomic.AtomicLong(), callsNoRoute = new java.util.concurrent.atomic.AtomicLong();
+
+    /** Told, outside every lock, the peer whose session was set aside because a call to it timed out (the log's first line). */
+    volatile java.util.function.Consumer<String> onTimedOut;
+
+    /** Calls awaited now; calls not watched for want of room; calls that timed out / were answered that there is no route. */
+    int callsWatched() { return callsWatched.get(); }
+    long callsNotWatched() { return callsNotWatched.get(); }
+    long callsTimedOut() { return callsTimedOut.get(); }
+    long callsNoRoute() { return callsNoRoute.get(); }
+
+    /**
+     * An RPC request of this node left for {@code peerNode} under the session {@code s}, and its caller waits
+     * {@code timeoutMs} for the answer (what the request states: {@code rpc_timeout_ms}). An agent has no broker to tell
+     * it that a node beyond its controller went away, but it has this: a call to that node which nothing answers. When
+     * the caller's wait ends with no answer of the peer, the session is not sent under ({@link #timedOut}) until the peer
+     * confirms it again.
+     *
+     * <p>O(1): one entry of the peer's own small table (at most {@value #CALLS_PER_PEER}; {@value #CALLS_MAX} in the
+     * whole node, about 150 bytes each), under the peer's lock, which is held for no call into a broker.
+     */
+    void called(String peerNode, Session s, String callId, long timeoutMs) {
+        if (callId == null || callId.length() > CALL_ID_MAX || timeoutMs <= 0 || s == null) return;
+        Peer p = peerNode == null ? null : peers.getIfPresent(peerNode);
+        if (p == null) return;
+        long due = System.nanoTime() + Math.min(timeoutMs, lifetimeMs) * 1_000_000L;
+        synchronized (p) {
+            if (p.current != s) return;
+            java.util.HashMap<String, Call> c = p.calls;
+            if (c != null && c.containsKey(callId)) return;
+            if (c != null && c.size() >= CALLS_PER_PEER) {
+                callsNotWatched.incrementAndGet();
+                return;
+            }
+            if (callsWatched.incrementAndGet() > CALLS_MAX) {
+                callsWatched.decrementAndGet();
+                callsNotWatched.incrementAndGet();
+                return;
+            }
+            if (c == null) p.calls = c = new java.util.HashMap<>(4);
+            c.put(callId, new Call(s, due));
+            if (c.size() == 1 || due - p.callsDue < 0) p.callsDue = due;
+            p.callsOpen = c.size();
+        }
+    }
+
+    /** Is any call awaited from {@code peerNode}? One read; nothing is allocated. */
+    boolean awaits(String peerNode) {
+        Peer p = peerNode == null ? null : peers.getIfPresent(peerNode);
+        return p != null && p.callsOpen != 0;
+    }
+
+    /** {@code peerNode} itself answered the call {@code callId} (whatever it answered): the call is no longer awaited. */
+    void answered(String peerNode, String callId) {
+        Peer p = peerNode == null || callId == null ? null : peers.getIfPresent(peerNode);
+        if (p == null || p.callsOpen == 0) return;
+        synchronized (p) {
+            take(p, callId);
+        }
+    }
+
+    /**
+     * Another node answered this node's call {@code callId} to {@code peerNode}: there is no route to it
+     * ({@code route unavailable}). The session the request left under is not sent under from now on, until the peer
+     * confirms it again. True when it was a call this node awaited from that peer -- an answer that names any other call
+     * changes nothing, so a node that is not on the way of a call (it never saw its id) cannot make this node sign.
+     */
+    boolean unanswered(String peerNode, String callId) {
+        Peer p = peerNode == null || callId == null ? null : peers.getIfPresent(peerNode);
+        if (p == null || p.callsOpen == 0) return false;
+        synchronized (p) {
+            Call c = take(p, callId);
+            if (c == null) return false;
+            Session cur = p.current;
+            if (cur != null && cur == c.session) cur.confirmedAt = 0;
+        }
+        callsNoRoute.incrementAndGet();
+        return true;
+    }
+
+    /** With {@code p}'s lock: the call {@code callId} is no longer awaited; what it was, or null. */
+    private Call take(Peer p, String callId) {
+        java.util.HashMap<String, Call> c = p.calls;
+        Call was = c == null ? null : c.remove(callId);
+        if (was == null) return null;
+        callsWatched.decrementAndGet();
+        if (c.isEmpty()) {
+            p.calls = null;
+            p.callsOpen = 0;
+        } else {
+            if (was.due == p.callsDue) p.callsDue = earliest(c);
+            p.callsOpen = c.size();
+        }
+        return was;
+    }
+
+    private static long earliest(java.util.HashMap<String, Call> calls) {
+        boolean first = true;
+        long due = 0;
+        for (Call c : calls.values()) {
+            if (first || c.due - due < 0) due = c.due;
+            first = false;
+        }
+        return due;
+    }
+
+    /**
+     * The wait of a call to {@code p} has ended and the peer did not answer it: every such call goes from the table, and
+     * the session it left under -- when it is still the one this node sends that peer under -- is not sent under until the
+     * peer confirms it again ({@link #received}: its next message that names or uses the session). Seen when this node
+     * next sends that peer anything ({@link #usable}), which is the first moment it matters: that message is signed.
+     *
+     * <p>A peer that is alive and merely slow loses nothing: it still holds the session, its next message says so, and
+     * this node sends under it again; meanwhile what this node sends it is signed (a signature here, a verification
+     * there, per message -- as it is whenever a peer has been silent for {@link #CONFIRM_MS}). A peer that restarted
+     * verifies the signature, where it would have refused the MAC.
+     */
+    private void timedOut(Peer p) {
+        long now = System.nanoTime();
+        int n = 0;
+        boolean aside = false;
+        synchronized (p) {
+            java.util.HashMap<String, Call> c = p.calls;
+            if (c == null) {
+                p.callsOpen = 0;
+                return;
+            }
+            Session cur = p.current;
+            for (java.util.Iterator<Call> it = c.values().iterator(); it.hasNext(); ) {
+                Call call = it.next();
+                if (now - call.due < 0) continue;
+                it.remove();
+                n++;
+                if (cur != null && cur == call.session) {
+                    cur.confirmedAt = 0;
+                    aside = true;
+                }
+            }
+            if (n > 0) callsWatched.addAndGet(-n);
+            if (c.isEmpty()) {
+                p.calls = null;
+                p.callsOpen = 0;
+            } else {
+                p.callsDue = earliest(c);
+                p.callsOpen = c.size();
+            }
+        }
+        if (n > 0) callsTimedOut.addAndGet(n);
+        java.util.function.Consumer<String> told = onTimedOut;
+        if (aside && told != null) told.accept(p.node);
     }
 
     /**
