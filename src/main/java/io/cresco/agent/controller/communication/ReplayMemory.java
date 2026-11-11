@@ -92,7 +92,9 @@ final class ReplayMemory {
         if (signer == 0) return record(d, signedAt, now);
         if (d == 0) d = 1;
         long b = Math.floorDiv(signedAt, bucketMs);
-        if (now - lastSweep > bucketMs || now < lastSweep) sweep(now);
+        // once a bucket's time (also after the clock was set back by more than that; a caller whose reading of the clock
+        // is a moment older than another's is not that)
+        if (now - lastSweep > bucketMs || lastSweep - now > bucketMs) sweep(now);
         String note = null;
         Result r;
         boolean madeRoom = false;
@@ -214,8 +216,10 @@ final class ReplayMemory {
                         s.expire(keep);
                         if (s.size != before) signerHeld.add(s.size - before);
                     }
-                    long idle = now - s.lastRecord;
-                    if (idle >= 0 && idle <= retainMs && (s.size > 0 || idle <= bucketMs)) continue;
+                    // written after this caller read the clock: in use (never "idle for less than no time", which
+                    // dropped a signer's memory, and with it what it had accepted, under a caller with an older reading)
+                    long idle = Math.max(0L, now - s.lastRecord);
+                    if (idle <= retainMs && (s.size > 0 || idle <= bucketMs)) continue;
                     s.gone = true;
                     signerHeld.add(-s.size);
                 }
