@@ -493,6 +493,7 @@ public final class PeerTrustRegistry {
     private void revokeConfiguredBridges() {
         List<Rec> recs = new ArrayList<>();
         for (String n : revokedBridges) if (bridges.remove(n) != null) recs.add(rec("unbridge", n));
+        bridgesVersion++;
         if (!recs.isEmpty() && !append(recs.toArray(new Rec[0]))) {
             log.accept("peer trust registry: the bridge revocations " + recs.size() + " are in effect but could not be recorded");
         }
@@ -869,8 +870,10 @@ public final class PeerTrustRegistry {
         if (pki != null) {
             Binding own = identities.get(name(region, agent));
             if (own != null && ROLE_SELF.equals(own.role)) return own.key.equals(fingerprint(key.getEncoded())) ? ROLE_SELF : null;
-            PkiSeen s = pkiSeenOf(null, region, agent);
-            return s != null && s.key.equals(fingerprint(key.getEncoded())) ? s.role : null;
+            String n = name(region, agent), fp = fingerprint(key.getEncoded());
+            if (tombs.containsKey(n) || isRevokedFor(fp, region)) return null;
+            for (PkiSeen s : pkiSeenAll(n, false)) if (s.key.equals(fp)) return s.role;
+            return null;
         }
         Binding b = identities.get(name(region, agent));
         return b != null && b.key.equals(fingerprint(key.getEncoded())) ? b.role : null;
@@ -1200,11 +1203,130 @@ public final class PeerTrustRegistry {
         }
     }
 
+    /**
+     * Pre-provisioned: the controller {@code tenant/region/agent} completed an authenticated REGION/GLOBAL discovery
+     * exchange with this node (it joined, or this node joined it). It is recorded as a bridge peer WITH its tenant: from then
+     * on the names of its region belong to that tenant here ({@link #regionRefusal}) -- a region name is owned by one tenant
+     * -- until the record is pruned or the operator revokes it ({@code peer_bridge_revoke}). Refused when the region is
+     * another tenant's here; a controller of a superuser tenant (the operator's own) is recorded in any region.
+     *
+     * @return null when recorded (or refreshed), else why not
+     */
+    public String allowBridgePeer(String tenant, String region, String agent) {
+        if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) {
+            return "invalid identity " + tenant + "/" + region + "/" + agent;
+        }
+        String n = name(region, agent);
+        if (revokedBridges.contains(n)) return "bridges with " + n + " are revoked by the operator (peer_bridge_revoke)";
+        String foreign = regionRefusal(tenant, region);
+        if (foreign != null) return foreign;
+        long now = System.currentTimeMillis();
+        Binding b = bridges.get(n);
+        if (b != null && tenant.equals(b.tenant)) { touch(bridges, n, b, now, "bridge"); return null; }
+        synchronized (writeLock) {
+            if (sealed && !tryRecover()) return sealedText();
+            if (fenced != null) return "the peer trust registry records nothing (" + fenced + ")";
+            foreign = regionRefusal(tenant, region);
+            if (foreign != null) return foreign;
+            Rec r = rec("bridge", n);
+            r.t = now;
+            r.tenant = tenant;
+            if (!append(r)) return "the peer trust registry could not record the bridge peer " + n;
+            bridges.put(n, new Binding(tenant, null, null, "discovery", null, false, now, now));
+            bridgesVersion++;
+            compactIfDue();
+        }
+        return null;
+    }
+
+    // ---- whose a region's names are (pre-provisioned)
+
+    /** Tenants whose identities act across tenants ({@code broker_superuser_tenants}): the operator's own, valid in any region. */
+    private volatile Set<String> superuserTenants = Set.of();
+    /** This node's own tenant and region (pre-provisioned): its region's names are its tenant's. */
+    private volatile String ownTenant, ownRegion;
+    /** Counts the changes of {@link #bridges}; {@link #regionIndex} is rebuilt when it lags. */
+    private volatile long bridgesVersion;
+    private volatile RegionIndex regionIndex;
+
+    /** Region -> the tenants of the controllers recorded for it (bridge peers with a tenant), as of {@code version}. */
+    private static final class RegionIndex {
+        final long version;
+        final Map<String, Set<String>> tenants;
+        RegionIndex(long version, Map<String, Set<String>> tenants) { this.version = version; this.tenants = tenants; }
+    }
+
+    public void setSuperuserTenants(Collection<String> tenants) {
+        superuserTenants = tenants == null ? Set.of() : Set.copyOf(tenants);
+    }
+
+    public boolean isSuperuserTenant(String tenant) { return tenant != null && superuserTenants.contains(tenant); }
+
+    /** This node's own identity (pre-provisioned): the names of its region are its tenant's, whatever else is recorded. */
+    public void setOwnRegion(String tenant, String region) {
+        this.ownTenant = tenant;
+        this.ownRegion = region;
+    }
+
+    /**
+     * The tenants the names of {@code region} belong to here: this node's own tenant for its own region; else the tenants
+     * of the controllers of that region recorded with one ({@link #allowBridgePeer(String, String, String)}): one tenant,
+     * and possibly superuser tenants. Null when nothing is known of the region. O(1) (an index rebuilt when the bridge
+     * peers change).
+     */
+    private Set<String> tenantsOfRegion(String region) {
+        if (region == null) return null;
+        String or = ownRegion, ot = ownTenant;
+        if (ot != null && region.equals(or)) return Set.of(ot);
+        long v = bridgesVersion;
+        RegionIndex ix = regionIndex;
+        if (ix == null || ix.version != v) {
+            Map<String, Set<String>> m = new java.util.HashMap<>();
+            for (Map.Entry<String, Binding> e : bridges.entrySet()) {
+                String t = e.getValue().tenant;
+                int slash = e.getKey().indexOf('/');
+                if (t != null && slash > 0) m.computeIfAbsent(e.getKey().substring(0, slash), k -> new HashSet<>()).add(t);
+            }
+            regionIndex = ix = new RegionIndex(v, m);
+        }
+        return ix.tenants.get(region);
+    }
+
+    /**
+     * The one tenant the names of {@code region} belong to here (pre-provisioned: this node's own region, or the region of
+     * a controller that completed discovery with this node), or null when none or several are recorded.
+     */
+    public String regionTenant(String region) {
+        Set<String> ts = tenantsOfRegion(region);
+        if (ts == null || ts.isEmpty()) return null;
+        String one = null;
+        for (String t : ts) {
+            if (ts.size() > 1 && isSuperuserTenant(t)) continue;
+            if (one != null) return null;
+            one = t;
+        }
+        return one;
+    }
+
+    /**
+     * Why an identity of {@code tenant} may not carry a name of {@code region} here, or null: the region's names belong to
+     * another tenant (CAs are scoped per tenant, and a tenant's CA can write any region name into a certificate). A
+     * superuser tenant's identity is the operator's own and is not refused; a region nothing is recorded for is not judged.
+     */
+    private String regionRefusal(String tenant, String region) {
+        if (isSuperuserTenant(tenant)) return null;
+        Set<String> ts = tenantsOfRegion(region);
+        if (ts == null || ts.isEmpty() || ts.contains(tenant)) return null;
+        return "region " + region + " belongs to tenant " + String.join(",", new java.util.TreeSet<>(ts)) + " here: an identity of tenant "
+                + tenant + " cannot carry its names (a region name is owned by one tenant)";
+    }
+
     /** Stop accepting bridges from {@code region/agent} (until a discovery exchange allows it again). */
     public boolean revokeBridgePeer(String region, String agent) {
         String n = name(region, agent);
         synchronized (writeLock) {
             if (bridges.remove(n) == null) return false;            // fail-safe: refused from now on, recorded or not
+            bridgesVersion++;
             if (!append(rec("unbridge", n))) {
                 log.accept("Bridge peer " + n + " revoked in memory, but the revocation could not be recorded: it applies until a restart");
                 return false;
@@ -1442,11 +1564,10 @@ public final class PeerTrustRegistry {
             Binding b = identities.get(n);
             if (b == null && pki != null && !tombs.containsKey(n)) {
                 // pre-provisioned: names are not bound; the name is reserved (refused for every key), and its last verified key revoked
-                PkiSeen seen = pkiSeen.get(n);
-                tombstoneLocked(n, seen == null ? null : seen.key, source);
+                List<PkiSeen> seen = pkiSeenAll(n, false);
+                tombstoneLocked(n, seen.isEmpty() ? null : seen.get(0).key, source);
                 log.accept("Name " + n + " REVOKED (" + source + "): refused for every key until an operator rebind");
-                if (seen == null || revoked.containsKey(seen.key)) return null;
-                applyInMemory(seen.key, null, n, source, 0, true);
+                for (PkiSeen x : seen) if (!revoked.containsKey(x.key)) applyInMemory(x.key, null, n, source, 0, true);
                 return null;
             }
             if (b == null) {
@@ -1553,7 +1674,7 @@ public final class PeerTrustRegistry {
                     Rec tr = rec("tomb", n);
                     tr.key = r.fp; tr.source = r.source; tr.t = r.t;
                     recs.add(tr);
-                    if (bridges.remove(n) != null) recs.add(rec("unbridge", n));
+                    if (bridges.remove(n) != null) { recs.add(rec("unbridge", n)); bridgesVersion++; }
                 }
             }
             // the name the revocation names is reserved here too, where the revocation applies (not only at the node that bound
@@ -1728,7 +1849,10 @@ public final class PeerTrustRegistry {
         final String tenant, role, key; final long t;
         PkiSeen(String tenant, String role, String key, long t) { this.tenant = tenant; this.role = role; this.key = key; this.t = t; }
     }
+    /** By {@code tenant/region/agent}: two tenants' certificates for one region/agent name never share (or replace) an entry. */
     private final Map<String, PkiSeen> pkiSeen = new ConcurrentHashMap<>();
+    /** {@code region/agent} -> the tenants {@link #pkiSeen} holds that name under. */
+    private final Map<String, Set<String>> pkiTenantsByName = new ConcurrentHashMap<>();
     /** Key fingerprint -> the name ({@code region/agent}) PKI verification last saw it under (what {@link #pkiSeen} holds). */
     private final Map<String, String> pkiNameByKey = new ConcurrentHashMap<>();
     static final int PKI_SEEN_MAX = 200_000;
@@ -1758,8 +1882,7 @@ public final class PeerTrustRegistry {
         Rec tr = rec("tomb", n);
         tr.key = key; tr.source = source; tr.t = t;
         if (!append(tr)) log.accept("peer trust registry: the tombstone of " + n + " is in force but could not be recorded");
-        PkiSeen was = pkiSeen.remove(n);
-        if (was != null) pkiNameByKey.remove(was.key, n);
+        for (PkiSeen was : pkiSeenAll(n, true)) pkiNameByKey.remove(was.key, n);
     }
 
     /**
@@ -1788,13 +1911,17 @@ public final class PeerTrustRegistry {
     private CrescoIdentity pkiVerify(Pki p, X509Certificate[] chain, CrescoIdentity id, String fp, String[] why) {
         String bad = pkiRefusal(p, chain);
         if (bad != null) { why[0] = bad; return null; }
-        String n = name(id.getRegion(), id.getAgent());
+        // the PKI scopes its CAs per tenant, and a tenant's CA can name any region: the region must be this tenant's here
+        bad = regionRefusal(id.getTenant(), id.getRegion());
+        if (bad != null) { why[0] = "the certificate names " + id.getAgentPath() + ", but " + bad; return null; }
+        String n = name(id.getRegion(), id.getAgent()), k = id.getTenant() + "/" + n;
         String role = ProvisionedIdentity.isController(chain[0]) ? ROLE_CONTROLLER : ROLE_AGENT;
-        PkiSeen prev = pkiSeen.get(n);
+        PkiSeen prev = pkiSeen.get(k);
         long now = System.currentTimeMillis();
         if (prev == null || !prev.key.equals(fp) || !prev.role.equals(role) || now - prev.t > 60_000L) {
             if (prev != null || pkiSeen.size() < PKI_SEEN_MAX) {
-                pkiSeen.put(n, new PkiSeen(id.getTenant(), role, fp, now));
+                pkiSeen.put(k, new PkiSeen(id.getTenant(), role, fp, now));
+                pkiTenantsByName.computeIfAbsent(n, x -> ConcurrentHashMap.newKeySet()).add(id.getTenant());
                 if (prev != null && !prev.key.equals(fp)) pkiNameByKey.remove(prev.key, n);
                 pkiNameByKey.put(fp, n);
             }
@@ -1812,10 +1939,34 @@ public final class PeerTrustRegistry {
 
     /** Pre-provisioned: what PKI verification learned of {@code region/agent} (tenant matching), or null. */
     private PkiSeen pkiSeenOf(String tenant, String region, String agent) {
-        PkiSeen s = pkiSeen.get(name(region, agent));
-        if (s == null || (tenant != null && !tenant.equals(s.tenant))) return null;
-        if (tombs.containsKey(name(region, agent)) || isRevokedFor(s.key, region)) return null;
+        String n = name(region, agent);
+        PkiSeen s = null;
+        if (tenant != null) {
+            s = pkiSeen.get(tenant + "/" + n);
+        } else {
+            // the name alone: what was verified for it under its region's tenant; else under the only tenant that holds it
+            String owner = regionTenant(region);
+            if (owner != null) s = pkiSeen.get(owner + "/" + n);
+            if (s == null) {
+                List<PkiSeen> all = pkiSeenAll(n, false);
+                if (all.size() == 1) s = all.get(0);
+            }
+        }
+        if (s == null) return null;
+        if (tombs.containsKey(n) || isRevokedFor(s.key, region)) return null;
         return s;
+    }
+
+    /** Pre-provisioned: everything PKI verification holds for the name {@code n} (any tenant); {@code remove}: and forget it. */
+    private List<PkiSeen> pkiSeenAll(String n, boolean remove) {
+        Set<String> ts = remove ? pkiTenantsByName.remove(n) : pkiTenantsByName.get(n);
+        if (ts == null) return List.of();
+        List<PkiSeen> out = new ArrayList<>(ts.size());
+        for (String t : ts) {
+            PkiSeen s = remove ? pkiSeen.remove(t + "/" + n) : pkiSeen.get(t + "/" + n);
+            if (s != null) out.add(s);
+        }
+        return out;
     }
 
     /** Does this node record its OWN CA for {@code region} (it held a region CA)? Lock-free. */
@@ -2311,7 +2462,7 @@ public final class PeerTrustRegistry {
         List<Rec> recs = new ArrayList<>();
         if (bridgePruneMs > 0) {
             for (Map.Entry<String, Binding> e : new ArrayList<>(bridges.entrySet())) {
-                if (now - e.getValue().lastSeen > bridgePruneMs) { bridges.remove(e.getKey()); recs.add(rec("unbridge", e.getKey())); }
+                if (now - e.getValue().lastSeen > bridgePruneMs) { bridges.remove(e.getKey()); bridgesVersion++; recs.add(rec("unbridge", e.getKey())); }
             }
         }
         if (bindingPruneMs > 0) {
@@ -2485,7 +2636,7 @@ public final class PeerTrustRegistry {
     }
 
     private void clearState() {
-        identities.clear(); cas.clear(); bridges.clear(); consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
+        identities.clear(); cas.clear(); bridges.clear(); bridgesVersion++; consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
         namesByKey.clear(); tombs.clear();
         synchronized (revMemLock) {
             revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revokedByScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
@@ -2530,8 +2681,8 @@ public final class PeerTrustRegistry {
             }
             case "ca": cas.put(r.name, new Binding(r.tenant, r.key, r.cert, r.source, null, "follow".equals(r.mode), r.t, r.t)); break;
             case "unca": cas.remove(r.name); break;
-            case "bridge": bridges.put(r.name, new Binding(null, null, null, "discovery", null, false, r.t, r.t)); break;
-            case "unbridge": bridges.remove(r.name); break;
+            case "bridge": bridges.put(r.name, new Binding(r.tenant, null, null, "discovery", null, false, r.t, r.t)); bridgesVersion++; break;
+            case "unbridge": bridges.remove(r.name); bridgesVersion++; break;
             case "unbind": { Binding old = identities.get(r.name); if (old != null) removeIdentity(r.name, old); break; }
             case "untomb": tombs.remove(r.name); break;
             case "tomb": {
@@ -2906,6 +3057,7 @@ public final class PeerTrustRegistry {
         for (Map.Entry<String, Binding> e : bridges.entrySet()) {
             Rec r = rec("bridge", e.getKey());
             r.t = e.getValue().lastSeen;
+            r.tenant = e.getValue().tenant;
             recs.add(r);
         }
         for (String t : consumed) {

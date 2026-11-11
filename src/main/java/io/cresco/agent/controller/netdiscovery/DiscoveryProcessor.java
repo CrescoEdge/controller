@@ -294,7 +294,10 @@ public class DiscoveryProcessor {
 			// learned: the PKI decides at every exchange and every handshake); nothing is installed
 			io.cresco.agent.controller.communication.CertificateManager pcm = controllerEngine.getCertificateManager();
 			String json = discoveryNode.discovered_server_cert != null ? discoveryNode.discovered_server_cert : discoveryNode.discovered_cert;
-			String why = pcm.provisionedResponderRefusal(json == null ? null : pcm.getCertsfromJson(json), type, region, agent);
+			java.security.cert.X509Certificate[] responder = json == null ? null : pcm.getCertsfromJson(json);
+			String why = pcm.provisionedResponderRefusal(responder, type, region, agent);
+			// a controller this node joined (its global, a peer region): recorded with its tenant -- its region is that tenant's here
+			if (why == null && (type == DiscoveryType.REGION || type == DiscoveryType.GLOBAL)) why = pcm.provisionedControllerLearned(responder);
 			if (why != null) {
 				logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
 				return false;
@@ -501,8 +504,12 @@ public class DiscoveryProcessor {
 		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
 		if (cm.isProvisioned()) {
 			// pre-provisioned: the joiner's identity is its certificate from the operator's PKI -- nothing is bound or issued
-			String why = cm.provisionedJoinerRefusal(cm.getCertsfromJson(discoveryNode.discover_cert), discoveryNode.discovery_type,
-					discoveryNode.discover_region, discoveryNode.discover_agent);
+			java.security.cert.X509Certificate[] joiner = cm.getCertsfromJson(discoveryNode.discover_cert);
+			String why = cm.provisionedJoinerRefusal(joiner, discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent);
+			// a controller that joined this node: recorded with its tenant -- its region is that tenant's here from now on
+			if (why == null && (discoveryNode.discovery_type == DiscoveryType.REGION || discoveryNode.discovery_type == DiscoveryType.GLOBAL)) {
+				why = cm.provisionedControllerLearned(joiner);
+			}
 			if (why != null) {
 				logger.error("Discovery REFUSED " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": " + why);
 				return null;
