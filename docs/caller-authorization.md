@@ -452,6 +452,46 @@ is refused for its caller.
   logged as a forged caller): the message travels without a caller and is refused wherever one is required. With
   `net_source_routing` on, a message relayed through another region's controller loses its stamp at that hop until
   messages are signed end to end (D4).
+- **Which broker relays between bridges** (split horizon, `broker_bridge_transit`). ActiveMQ forwards on demand along
+  every path of up to `broker_message_ttl` (5) brokers, so every broker with two bridges was a relay. Where regions are
+  bridged to each other as well as to the global, every topic message then arrived once per path, and a queue message
+  went over another region whenever its own bridge was away -- and the copy a region's bridge brought for another
+  region's node lost its stamp under the rule above (one `STRIPPED a forged caller` line per node every 10 s in a mesh at
+  rest; watchdogs refused as unsigned after a restart of the global). The rule above is unchanged; who relays is now
+  decided:
+  - `auto` (the default). The global's broker relays (`is_global`): it is the parent of the regions, and they take the
+    fabric from its bridge. A region's broker relays only while its fabric has no global: it is configured with none
+    AND has not joined, or begun to join, one since it started. "Configured with a global" is `global_controller_host`
+    set, or `global_optional` not set (such a region looks for its global by discovery and does not start its own
+    services before it has joined one); only a region with `global_optional=true` and no `global_controller_host` runs
+    on its own. From its first global on a region never relays again until it restarts, also while that global is down:
+    relaying a topic over every path costs paths times regions per message, which is not what a large fabric may fall
+    back to in an outage.
+  - `true`: this broker relays, whatever it is. `false`: it does not.
+
+  A broker that does not relay (`CrescoAuthorizationBroker.relayedByABridge`) hands a bridge no TOPIC message that
+  reached it over another bridge (counted once per such message in `broker.bridge.transit.withheld`, not logged), and
+  does not pass a bridge's demand -- for a queue or a topic -- on to another bridge. A QUEUE message is never judged:
+  what is in a region's queue goes to whatever consumes that queue, a bridge included (a node that moved to another
+  region gets what waited for it); a queue message no longer takes the way over another region because no region
+  announces that way.
+
+  **What a fabric with a global gives up against earlier builds.** A region whose own uplink is down is no longer reached
+  through a peer region (before: it was, with the caller stripped; a signed message still counted as its sender's); its
+  messages wait for its own bridge. Two globals federated only through bridges between their regions carry nothing
+  between them unless those regions set `broker_bridge_transit=true`. A fabric WITHOUT a global is unchanged: its regions
+  relay, a chain of regions carries a request and an advert past a neighbour (stripped, as before), and the regions learn
+  of each other through the adverts.
+- **A region's parent before the join is recorded.** While a region's controller state names no global, a bridge
+  connection is still its parent's when its own certificate verified as the global the region is joining now, or joined
+  last and lost (`CrescoAuthorizationBroker.isParent`, `ControllerEngine.parentWhileNotJoined`). The bridge to a global
+  is up about a second before the join is recorded, and a restarted global's own connector is back at a region before
+  the region has found it again; what the global relayed in those moments was stripped as a peer region's. Nothing is
+  granted to a name -- only to a connection that verified as that controller and is a recorded bridge peer -- and a join
+  attempt that fails leaves the region joining nobody. Not covered: a region that itself restarted remembers no global
+  until its first join begins, which is after its discovery of the global (usually well under a second, at most the
+  discovery timeout); a connector of the global that reaches the region's new broker inside that time is a peer's for
+  that long.
 - **Plugin ids** (review F6) are one plain path segment: 1-64 of `A-Z a-z 0-9 . _ -`, starting with a letter or digit,
   no `..`, checked where they enter (`pluginadd` `inode_id`, `pluginremove` `pluginid`, the global's `addplugin`). A purge
   deletes only a real directory whose real parent is `plugin-data`, and never follows a link inside it.
@@ -791,7 +831,14 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   accepted, and none can be (a session a node does not hold is never held again). No wall clocks are compared; a relay
   that delays the `401` only makes the retry less likely. A request sent before that -- one that may have run at a peer
   that then restarted, and whose copy a broker delivers again -- is not sent again: its caller sees the `401`, exactly
-  as on 1.3.378. So does the caller of every request refused by a peer of an earlier build. The offerer of a session
+  as on 1.3.378. So does the caller of every request refused by a peer of an earlier build. The copy leaves as a first
+  send leaves the router: nothing is sent for a caller whose stated wait (`rpc_timeout_ms`) has ended; the copy says
+  what the request said, so the brokers on its way expire it as they would the first; it passes the route gate, which
+  holds it for a route being made anew or answers its caller `route unavailable` (then that is the caller's one answer,
+  and the `401` is not handed on as a second); and it goes to the producer behind whatever the node holds to be sent
+  first. A request that carries a source route is not sent again. None of the three answers a node makes by itself --
+  `route unavailable`, the `401`, the notice -- is an RPC request, and only an RPC request is ever answered: they cannot
+  answer one another. The offerer of a session
   counts its end from its offer (the acceptor from when it took the offer, which is later), so the node that sends under
   a session always stops before the other's end. Counted in the metric inventory: `msg.session.lost.told`,
   `msg.session.lost.heard`, `msg.session.lost.retried`.

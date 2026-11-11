@@ -1210,7 +1210,7 @@ public final class MsgSigning {
      * room, is not kept: its caller sees the refusal, as before.
      */
     private void sentUnderSession(MsgEvent m, String node, MsgSessions.Session ss) {
-        if (!MsgRouter.isRpcRequest(m) || m.hasFiles()) return;
+        if (!MsgRouter.isRpcRequest(m) || m.hasFiles() || m.getParam(MsgRouter.SRCROUTE) != null) return;
         String callId = m.getParam("callId-" + m.getSrcRegion() + "-" + m.getSrcAgent() + "-" + m.getSrcPlugin());
         long chars = 0;
         for (Map.Entry<String, String> e : m.getParams().entrySet()) chars += e.getKey().length() + (e.getValue() == null ? 0 : e.getValue().length());
@@ -2018,6 +2018,15 @@ public final class MsgSigning {
      * <p>One decision per call: the record goes as it is used, with any reply of the peer the request went to, and after
      * {@value #LOST_RETRY_MS} ms; the request sent again is signed, so it is never recorded again. What is sent is this
      * node's own message as it kept it -- checked against the MAC it left with -- never what the refusal carried back.
+     *
+     * <p><b>How it is sent again: as a first send leaves the router.</b> Nothing is sent for a caller that has stopped
+     * waiting (the request's age has reached the {@code rpc_timeout_ms} it states). The copy says what the request said
+     * (so the brokers on its way expire it as they would the first, {@link RpcExpiry}), passes the route gate
+     * ({@link RouteGate}: a broker with no way to the peer holds it for a route being made anew, or answers its caller
+     * {@code route unavailable}), and then goes to the producer, behind whatever this node holds to be sent first. Its
+     * caller gets ONE answer: the peer's, or the gate's, or -- when the producer does not take it -- the 401 this method
+     * then hands on. A request that carries a source route is never recorded: its way was chosen at its first send and
+     * is not chosen again here.
      */
     public boolean afterVerified(MsgEvent m, Verdict v) {
         if (v == null || !v.ok() || m == null || m.getParams() == null) return false;
@@ -2063,13 +2072,29 @@ public final class MsgSigning {
                 lostNotRetried.incrementAndGet();
                 return false;
             }
+            // a caller that has stopped waiting gets nothing sent on its behalf. What the request says of its caller's
+            // wait (rpc_timeout_ms) stays as it left the first time -- it may be part of what an application signed --
+            // so the brokers on its way keep the copy for that long from now (RpcExpiry): longer than its caller waits
+            // by the request's age, which is under LOST_RETRY_MS and within the allowance every expiry has for clocks
+            long stated = RpcExpiry.statedTimeoutMs(again);
+            if (stated > 0L && ageMs >= stated) {
+                lostNotRetried.incrementAndGet();
+                return false;
+            }
             mark(again, RESEND);                                    // signed, whatever session this node holds by now
             java.util.function.Predicate<MsgEvent> tap = resendTap;
             if (tap != null) {
                 sent = tap.test(again);
             } else {
                 ce.msgCounts().originated();                        // a message of this node's, as the one refused was
-                sent = ce.getActiveClient().sendMessage(again);     // as the router handed it to the producer before
+                // as a first send leaves the router: the route gate first (a broker with no way to the peer holds the
+                // request for a route being made anew, or answers its caller "route unavailable" -- either way it is
+                // the gate's from here, and the 401 is not handed on as a second answer), then the producer
+                if (!ce.routeKnown(again, RESEND_HOP, false)) {
+                    lostRetried.incrementAndGet();
+                    return true;
+                }
+                sent = ce.getActiveClient().sendMessage(again);
             }
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
@@ -2081,6 +2106,9 @@ public final class MsgSigning {
                 + " refusal (first of this kind: " + m.getMsgType() + " " + m.getParam("action") + ")");
         return true;
     }
+
+    /** The hop a request sent again names when the route gate answers it ({@code route_unavailable}). */
+    static final String RESEND_HOP = "RESEND";
 
     /** The call {@code m} answers at the node it is addressed to (a reply's call id is keyed by its destination), or null. */
     private static String replyCallId(MsgEvent m) {

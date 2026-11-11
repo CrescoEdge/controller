@@ -519,4 +519,69 @@ class ReplyAtFirstInstantTest {
         assertTrue(client.initActiveAgentProducer(VM));
         assertTrue(atCaller(1, 300).isEmpty());
     }
+
+    // ---- together with the route gate (RouteGate): two holds on one node
+
+    @Test
+    void aRequestTheRouteGateLetsGoIsNotHeldASecondTimeAndEndsInOneCountAndOneAnswer() throws Exception {
+        // The route gate holds an RPC request for a route that is being made anew; the send hold keeps what this node
+        // cannot send yet. The gate comes first and judges only while there is a producer to hand to; what it lets go is
+        // handed to the producer as any send is. With no producer by then the request is NOT held again (an RPC request
+        // never waits for a producer): its caller is answered once, and it is counted once, under what stopped it last
+        ControllerEngine e = node(Map.of("route_rebuild_grace_ms", "30000"));
+        ActiveClient client = e.getActiveClient();
+        assertTrue(client.initActiveAgentConsumer("r1_n1", VM));
+        assertTrue(client.initActiveAgentProducer(VM));
+        e.routeGate().bound(System.currentTimeMillis());             // as on a controller: the gate reads its broker (told by hand here)
+        java.lang.reflect.Field producer = ActiveClient.class.getDeclaredField("agentProducer");
+        producer.setAccessible(true);
+        AgentProducer was = (AgentProducer) producer.get(client);
+        try {
+            MsgEvent own = new MsgEvent(MsgEvent.Type.EXEC, "r1", "n1", "p1", "r1", "caller", null, false, false);
+            own.setParam("action", "noop");
+            own.setParam("is_rpc", "true");
+            own.setParam("callId-r1-n1-p1", "gate-call");
+            int before = sentByController.size();
+            e.stampSelf(own);
+            e.msgIn(own);
+            assertEquals(1, e.routeGate().heldNow(), "nothing consumes the caller's inbox at this broker yet: the gate holds the request");
+            assertEquals(0, client.sendsHeldNow(), "and it is in no other hold");
+            assertEquals(before, sentByController.size(), "not answered while it may still go");
+
+            // this node's producer goes (its link is being made anew): what it sends now waits in the send hold
+            producer.set(client, null);
+            for (int i = 0; i < 2; i++) {
+                MsgEvent report = new MsgEvent(MsgEvent.Type.EXEC, "r1", "n1", "p1", "r1", "caller", null, false, false);
+                report.setParam("action", "noop");
+                report.setParam("report", "report-" + i);
+                e.stampSelf(report);
+                e.msgIn(report);
+            }
+            assertEquals(2, client.sendsHeldNow());
+
+            // the route is there: the gate lets the request go -- to a node that cannot send
+            e.routeGate().consumerAdded(new org.apache.activemq.command.ConsumerId(new org.apache.activemq.command.SessionId(
+                    new org.apache.activemq.command.ConnectionId("the-caller"), 1), 1), new org.apache.activemq.command.ActiveMQQueue("r1_caller"));
+            await(() -> e.routeGate().heldNow() == 0 && sentByController.size() > before, "the gate did not let the request go");
+            MsgEvent told = sentByController.get(before);
+            assertEquals("gate-call", told.getParam("callId-r1-n1-p1"));
+            assertNotNull(told.getParam(MsgRouter.ROUTE_UNAVAILABLE), "its caller is told, with the router's error");
+            assertEquals(2, client.sendsHeldNow(), "the request did not join what waits for the producer");
+            assertEquals(1, e.msgCounts().droppedCount(MsgCounts.Drop.NO_SENDER), "counted under what stopped it");
+            assertEquals(0, e.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE), "and not as having no route as well");
+            assertEquals(0, e.msgCounts().droppedCount(MsgCounts.Drop.HOLD_FULL) + e.msgCounts().droppedCount(MsgCounts.Drop.SEND_FAILED)
+                    + e.msgCounts().droppedCount(MsgCounts.Drop.ROUTE_ERROR), "nor under any other cause of a send");
+            // (the answer itself ends in this test at a plugin that is not there: that is the one other drop)
+            assertEquals(2, e.msgCounts().droppedCount(), "once: " + e.msgCounts().droppedCount(MsgCounts.Drop.PLUGIN_UNKNOWN));
+            Thread.sleep(200);
+            assertEquals(before + 1, sentByController.size(), "one answer");
+        } finally {
+            if (was != null) was.shutdown();
+            e.routeGate().stop();
+        }
+        // the producer comes: what waited for it leaves, in its order
+        assertTrue(client.initActiveAgentProducer(VM));
+        assertEquals(List.of("report-0", "report-1"), atCaller(2, 10_000));
+        assertEquals(0, client.heldNotSentCount());
+    }
 }

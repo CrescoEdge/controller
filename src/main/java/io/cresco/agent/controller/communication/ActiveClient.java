@@ -687,6 +687,12 @@ public class ActiveClient {
      * Hand {@code msg} to the producer. False when it was not sent: counted as dropped, here when there is no producer
      * (the link is being made anew), by the producer when its send failed.
      */
+    /** The queue {@code msg} would be sent to ({@link AgentProducer#queueOf}); null without a producer or a destination. */
+    public String queueOf(MsgEvent msg) {
+        AgentProducer p = agentProducer;
+        return p == null ? null : p.queueOf(msg);
+    }
+
     public boolean sendAPMessage(MsgEvent msg) {
         return send(msg, "sendAPMessage called but");
     }

@@ -130,6 +130,54 @@ Agent and plugin messages are not controller messages and are routed by address 
   own schedulers are starting (GLOBAL_INIT) it is waited for up to `route_ready_wait_ms` (default 3000).
 - **An agent re-initialising (regional controller unknown).** A function that must go to its regional controller
   waits up to `route_ready_wait_ms`, then gets `route unavailable ... regional controller not known`.
+- **A node this node's broker has no way to** (its region's controller is down, the bridge to it is gone, an agent of
+  this region is not connected). A controller hands a message for another node to its own broker; the broker has a way to
+  that node while something consumes the node's inbox queue there (the node itself, or the demand of the bridge that
+  leads to it). `RouteGate` keeps that from the broker's consumer events. An RPC request whose inbox has no consumer is
+  not sent: if the broker saw the last consumer leave more than `route_rebuild_grace_ms` ago it is answered at once with
+  `route unavailable at <node>: <hop>: no route to <region>_<agent> ...` (the caller's call fails with status 503); if
+  the consumer left less than that ago, or the broker never had one (a bridge just being built), the request is held on
+  the controller -- not in the broker -- and goes on the moment a consumer of that inbox joins, or is answered when the
+  grace ends (at most half of the caller's stated timeout). At most `route_hold_max` requests are held, and at most
+  `route_hold_max_per_node` for one node; one more is answered at once; a held request whose send then fails is answered
+  too, and a stopping node answers what it holds first. Counted as `msg.dropped.no_route` (and `msg.route.held`). A ping
+  is dropped, not answered. Messages that are not RPC requests are handed to the broker as before. An agent has no broker
+  and judges nothing: its request waits at its region's broker.
+  - *The broker has the last word.* Before a request is held or answered, the broker itself is asked for a consumer of
+    the queue (one lookup; a queue that does not exist yet is created, as sending to it would). A consumer the gate did
+    not count sends the request: `msg.route.mismatch`, one WARN every 10 s at most.
+  - *Patterns.* A consumer that reads queues by a pattern other than a controller's `T.*.<region>_<agent>` (a tenant's
+    node may consume `T.<tenant>.>` today) cannot be counted per inbox: requests for the queues that pattern can match
+    are not judged (sent as before). The gauge `msg.route.unread.patterns` and one WARN say so while such a consumer is
+    there.
+  - *Another tenant's caller.* A caller of a tenant that is not a superuser's, asking for a node this node does not know
+    to be of the caller's own tenant, gets one answer and one timing whatever this node knows of that node: held for one
+    grace from the request's arrival, then `route unavailable at <node>: <hop>: no route to <region>_<agent>` and nothing
+    more -- whether the node left long ago, a moment ago, or was never there.
+  - *Together with the send hold.* A node also holds what it cannot send yet: no producer, or an agent's attestation
+    not in (`msg.send.held`, caller-authorization.md section 10). The gate comes first and judges only while there is
+    a producer to hand to (with none, the send itself answers the caller). A request the gate lets go is handed to the
+    producer as any send is: behind whatever the node holds to be sent first, never ahead of it; and if the producer
+    went meanwhile it is not held a second time (an RPC request never waits for a producer). Its caller gets one
+    answer and it is counted once, under what stopped it last: `no_route` from the gate, `no_sender` or `hold_full`
+    from the send. The gate judges nothing on an agent and a controller never waits for an attestation, so the two
+    holds meet only on a controller whose own producer is being made anew. A request the signing layer sends again
+    after a lost session (caller-authorization.md) passes the gate like a first send.
+- **How long a request lives.** An RPC request that states its caller's timeout (`rpc_timeout_ms`, milliseconds; the
+  controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
+  `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing
+  rule accepts (`msg_signature_max_future_ms`, 60 s): the expiry is judged by the clock of whoever holds the message.
+  A sender whose clock is BEHIND by more than the timeout plus the margin has every such request expire on arrival
+  (earlier builds tolerated 300 s): that is counted and said, see the next point.
+- **What a broker lets expire** is counted and logged (`ExpiredMessages`): `msg.expired`, of which
+  `msg.expired.on_arrival` had already expired when they reached this broker, and `msg.expired.by_consumer` for what a
+  consumer's client library discarded by its own clock. One WARN every 10 s at most: `MESSAGE EXPIRED: a message for
+  '<queue>' was not consumed within its life of N ms (it waited M ms at this node's broker)`, or `MESSAGE EXPIRED on
+  arrival: ... had expired N ms before it reached this node's broker ...: the sender's clock is behind this node's by
+  about S s, or the message waited that long on its way`. An expired message is discarded, never moved to
+  `ActiveMQ.DLQ` (it was: every expired persistent message, with its expiry cleared, into a queue nothing reads, until
+  the store was full). What else lands there (a persistent message a consumer refused) expires after
+  `broker_dlq_expiry_ms`; the gauge `broker.dlq.depth` is its depth.
 - **Liveness pings** that cannot be served are never answered with an error (a pinger reads any reply as a pong).
 
 ## Behaviour changes for callers
@@ -187,6 +235,12 @@ How it is measured:
 |---|---|---|---|
 | `lost_node_retention_days` | double | `30` | Days a LOST node stays listed before its rows are deleted, counted from when it went LOST. `0` or negative keeps LOST nodes forever. Fractions allowed (`0.5` = 12 h). |
 | `lost_node_sweep_interval_ms` | long | `3600000` | Minimum time between two retention sweeps of one controller's DB. |
+| `route_rebuild_grace_ms` | long | `1500` | How long after a node's inbox lost its last consumer at this node's broker (or, for an inbox the broker never served, after a request for it arrived) an RPC request for it is held for the route to come back before it is answered `route unavailable`. |
+| `route_hold_max` | int | `1024` | The most RPC requests a controller holds for routes being rebuilt; one more is answered at once. |
+| `route_hold_max_per_node` | int | `64` | The most of them for one node. |
+| `broker_bridge_transit` | string | `auto` | Which broker relays between bridges: `auto` (the global; a region only while its fabric has no global), `true`, `false`. See docs/caller-authorization.md. |
+| `broker_dlq_expiry_ms` | long | `3600000` | How long a dead letter (a persistent message a consumer refused) stays in `ActiveMQ.DLQ`; at least a minute. Expired messages are never put there. |
+| `rpc_expiry_margin_ms` | long | `msg_signature_max_future_ms` (60000) | Added to the timeout an RPC request states (`rpc_timeout_ms`) to give its JMS time to live: the difference allowed between two nodes' clocks. |
 | `route_ready_wait_ms` | long | `3000` | How long the router waits for a target that is being rebuilt (global schedulers starting, regional controller unknown) before answering an RPC with a `route_unavailable` error. |
 
 Tests: `LostNodeRetentionTest` (real Derby: stamping on every write path, kept across updates, cleared on return,

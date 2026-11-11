@@ -4,6 +4,10 @@ import com.google.gson.Gson;
 import io.cresco.agent.controller.core.ControllerEngine;
 import io.cresco.library.messaging.MsgEvent;
 import io.cresco.library.security.Caller;
+import org.apache.activemq.command.ActiveMQQueue;
+import org.apache.activemq.command.ConnectionId;
+import org.apache.activemq.command.ConsumerId;
+import org.apache.activemq.command.SessionId;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -15,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -129,6 +134,20 @@ class LostSessionRecoveryTest {
         m.setParam("action", "getstatus");
         m.setParam("is_rpc", "true");
         m.setParam("callId-" + from.cstate.getRegion() + "-" + from.cstate.getAgent() + "-p1", callId);
+        CallerStamps.stamp(m, plugin(from));
+        from.markForSigning(m);
+        from.msgSigning().signIfPending(m);
+        return copy(m);
+    }
+
+    /** As {@link #request(ControllerEngine, ControllerEngine, String)}, saying how long its caller waits ({@code rpc_timeout_ms}). */
+    private static MsgEvent request(ControllerEngine from, ControllerEngine to, String callId, long timeoutMs) {
+        MsgEvent m = new MsgEvent(MsgEvent.Type.EXEC, from.cstate.getRegion(), from.cstate.getAgent(), "p1",
+                to.cstate.getRegion(), to.cstate.getAgent(), null, false, false);
+        m.setParam("action", "getstatus");
+        m.setParam("is_rpc", "true");
+        m.setParam("callId-" + from.cstate.getRegion() + "-" + from.cstate.getAgent() + "-p1", callId);
+        m.setParam(RpcExpiry.TIMEOUT_PARAM, Long.toString(timeoutMs));
         CallerStamps.stamp(m, plugin(from));
         from.markForSigning(m);
         from.msgSigning().signIfPending(m);
@@ -839,5 +858,205 @@ class LostSessionRecoveryTest {
         assertEquals(Arrival.HANDED, arrive(a, copy(m), plugin(b)));
         assertEquals(0, a.msgSigning().lostHeardCount());
         assertTrue(macd(sent(a, b)));
+    }
+
+    // ================================================================ together with the route gate (RouteGate, RpcExpiry)
+
+    private static int consumerIds;
+
+    private static ConsumerId consumer() {
+        return new ConsumerId(new SessionId(new ConnectionId("lost-session-" + (++consumerIds)), 1), 1);
+    }
+
+    /** The queue a message for {@code node} is sent to, as AgentProducer names it in tenant t1. */
+    private static String inbox(String node) { return "T.t1." + node; }
+
+    /**
+     * {@code e} as a controller with a broker of its own: its route gate reads that broker (told of its consumers by the
+     * test), and what it hands its producer is signed as the producer does it and kept, in order.
+     */
+    private static List<MsgEvent> broker(ControllerEngine e) throws Exception {
+        List<MsgEvent> toBroker = new CopyOnWriteArrayList<>();
+        java.lang.reflect.Field client = ControllerEngine.class.getDeclaredField("activeClient");
+        client.setAccessible(true);
+        client.set(e, new ActiveClient(e) {
+            @Override public boolean sendMessage(MsgEvent sm) {
+                e.msgSigning().signIfPending(sm);
+                return toBroker.add(copy(sm));
+            }
+            @Override public String queueOf(MsgEvent msg) { return msg.getForwardDst() == null ? null : inbox(msg.getForwardDst()); }
+        });
+        e.routeGate().bound(System.currentTimeMillis() - 600_000L);
+        return toBroker;
+    }
+
+    /** A controller of a region of its own under the global, known to region B's nodes made after it. */
+    private static ControllerEngine controllerOfItsOwnRegion(String region, String agent, Map<String, Object> extra) throws Exception {
+        ControllerEngine c = node(region, agent, true, extra);
+        joined(c, g, true);
+        ping(c, g, true);
+        ping(c, g, true);
+        ping(rB, g, true);                                       // region B takes the trust bundle that has the new controller
+        return c;
+    }
+
+    private static void awaitTrue(java.util.function.BooleanSupplier c, String what) throws InterruptedException {
+        long end = System.currentTimeMillis() + 5_000;
+        while (!c.getAsBoolean() && System.currentTimeMillis() < end) Thread.sleep(5);
+        assertTrue(c.getAsBoolean(), what);
+    }
+
+    @Test
+    void aRequestSentAgainLeavesAsAFirstSendDoesThroughTheRouteGateAndSayingWhatItSaid() throws Exception {
+        // before the two branches met, the request sent again went straight to the producer: past the route gate (it
+        // could wait in a queue nothing consumes), where every first send is judged
+        ControllerEngine c = controllerOfItsOwnRegion("rgC", "rc60", Map.of("route_rebuild_grace_ms", "2000"));
+        ControllerEngine b1 = agent("b60", Map.of()), b2 = agent("b63", Map.of()), b3 = agent("b64", Map.of());
+        established(c, b1);
+        established(c, b2);
+        established(c, b3);
+        List<MsgEvent> toBroker = broker(c);
+        ConsumerId way1 = consumer(), way2 = consumer(), way3 = consumer();
+        c.routeGate().consumerAdded(way1, new ActiveMQQueue(inbox("rgB_b60")));       // the demand of the bridge toward each
+        c.routeGate().consumerAdded(way2, new ActiveMQQueue(inbox("rgB_b63")));
+        c.routeGate().consumerAdded(way3, new ActiveMQQueue(inbox("rgB_b64")));
+        try {
+            for (ControllerEngine b : List.of(b1, b2, b3)) b.msgSigning().restartSessions();
+            Thread.sleep(150);
+            int handed = HANDED.get(key(c)).size();
+
+            // 1. there is a way to the peer: the copy goes to the producer, saying what the request said of its caller's wait
+            String first = UUID.randomUUID().toString();
+            MsgEvent r1 = request(c, b1, first, 20_000);
+            assertTrue(macd(r1));
+            assertEquals(Arrival.REFUSED, arrive(b1, copy(r1), plugin(c)));           // its 401 comes back; c sends the request again
+            assertEquals(1, toBroker.size(), "sent again, through the producer");
+            MsgEvent again = toBroker.get(0);
+            assertTrue(signed(again));
+            assertEquals(first, again.getParam("callId-rgC-rc60-p1"));
+            assertEquals("20000", again.getParam(RpcExpiry.TIMEOUT_PARAM), "what the request said stays (an application may have signed it)");
+            assertEquals(80_000L, RpcExpiry.ttlMs(again, 300_000L, 60_000L), "so the brokers on its way expire it as they would the first");
+            assertEquals(handed, HANDED.get(key(c)).size(), "its caller is not handed the refusal");
+            assertEquals(Arrival.HANDED, arrive(b1, copy(again), plugin(c)), "and the peer runs it");
+
+            // 2. the way to the peer is being made anew: the gate holds the copy, and sends it when the way is back
+            c.routeGate().consumerRemoved(way2, System.currentTimeMillis());
+            String second = UUID.randomUUID().toString();
+            MsgEvent r2 = request(c, b2, second, 20_000);
+            assertTrue(macd(r2));
+            assertEquals(Arrival.REFUSED, arrive(b2, copy(r2), plugin(c)));
+            assertEquals(1, c.routeGate().heldNow(), "held by the gate, as a first send is");
+            assertEquals(1, toBroker.size(), "not handed to a broker that has no way for it");
+            assertEquals(handed, HANDED.get(key(c)).size(), "the refusal is not a second answer");
+            c.routeGate().consumerAdded(consumer(), new ActiveMQQueue(inbox("rgB_b63")));
+            awaitTrue(() -> toBroker.size() == 2, "the held copy was not sent when the way came back");
+            assertTrue(signed(toBroker.get(1)), "signed still: " + toBroker.get(1).getParams().keySet());
+            assertEquals(second, toBroker.get(1).getParam("callId-rgC-rc60-p1"));
+            assertEquals(Arrival.HANDED, arrive(b2, copy(toBroker.get(1)), plugin(c)));
+
+            // 3. there is no way to the peer: the gate answers the caller, once, and the refusal is not handed on as well
+            // (this controller does not know the peer's tenant first hand, so the gate answers after one grace, as it does
+            // for every caller it cannot place: NoRouteAcrossTenantsTest)
+            c.routeGate().consumerRemoved(way3, System.currentTimeMillis() - 120_000L);
+            String third = UUID.randomUUID().toString();
+            MsgEvent r3 = request(c, b3, third, 20_000);
+            assertTrue(macd(r3));
+            long noRoute = c.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE);
+            slowWire = new ArrayList<>();                         // what the two nodes send is handed over by the test
+            try {
+                assertEquals(Arrival.REFUSED, arrive(b3, copy(r3), plugin(c)));
+                MsgEvent refusal = (MsgEvent) slowWire.remove(0)[1];
+                assertEquals("401", refusal.getParam("status_code"));
+                int sentByC = SENT.get(key(c)).size();
+                assertEquals(Arrival.TAKEN, arrive(c, copy(refusal), controller(b3)), "the 401 is taken: the answer is the gate's now");
+                awaitTrue(() -> SENT.get(key(c)).size() > sentByC, "the gate did not answer the caller");
+                Thread.sleep(100);
+                assertEquals(sentByC + 1, SENT.get(key(c)).size(), "one answer");
+                MsgEvent answer = SENT.get(key(c)).get(sentByC);
+                assertEquals(MsgSigning.RESEND_HOP, answer.getParam(MsgRouter.ROUTE_UNAVAILABLE));
+                assertEquals(third, answer.getParam("callId-rgC-rc60-p1"), "to the call that waits");
+                assertEquals("p1", answer.getDstPlugin());
+                assertTrue(String.valueOf(answer.getParam("error")).contains("no route to rgB_b64"), String.valueOf(answer.getParam("error")));
+            } finally {
+                slowWire = null;
+            }
+            assertEquals(2, toBroker.size(), "nothing was left in a queue nothing consumes");
+            assertEquals(noRoute + 1, c.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE), "counted once, as the gate counts it");
+            assertEquals(handed, HANDED.get(key(c)).size());
+        } finally {
+            c.routeGate().stop();
+        }
+    }
+
+    @Test
+    void aCallerThatHasStoppedWaitingGetsNothingSentAgain() throws Exception {
+        ControllerEngine a = agent("a62", Map.of()), b = agent("b62", Map.of());
+        established(a, b);
+        List<MsgEvent> sentAgain = resends(a);
+        b.msgSigning().restartSessions();
+        Thread.sleep(150);
+        MsgEvent request = request(a, b, UUID.randomUUID().toString(), 40);    // its caller waits 40 ms
+        assertTrue(macd(request));
+        Thread.sleep(60);
+        int handed = HANDED.get(key(a)).size();
+        long not = a.msgSigning().lostNotRetriedCount();
+        assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)));
+        assertTrue(sentAgain.isEmpty(), "nobody waits for its answer: it is not sent again");
+        assertEquals(not + 1, a.msgSigning().lostNotRetriedCount());
+        assertEquals("401", HANDED.get(key(a)).get(handed).getParam("status_code"), "the refusal goes where it went before");
+    }
+
+    @Test
+    void theGatesAnswerARefusalAndANoticeAreNeverAnsweredByOneAnother() throws Exception {
+        // three answers a node makes by itself: `route unavailable` (the route gate), `401` and the lost-session notice
+        // (the signing layer). Each is answered only to an RPC REQUEST, and none of them is one
+        ControllerEngine a = agent("a61", Map.of()), b = agent("b61", Map.of());
+        established(a, b);
+        ControllerEngine c = node("rgC", "rc61", true, Map.of("route_rebuild_grace_ms", "0"));
+        List<MsgEvent> toBroker = broker(c);                     // a controller whose broker has no way to anybody
+        slowWire = new ArrayList<>();
+        try {
+            b.msgSigning().restartSessions();
+            Thread.sleep(20);
+            MsgEvent request = request(a, b, "call-61");
+            assertEquals(Arrival.REFUSED, arrive(b, copy(request), plugin(a)));
+            MsgEvent refusal = (MsgEvent) slowWire.remove(0)[1];             // b's 401, bearing the notice
+            assertEquals("401", refusal.getParam("status_code"));
+            assertNotNull(refusal.getParam(MsgSigning.LOST));
+            assertEquals(Arrival.REFUSED, arrive(b, sent(a, b), plugin(a)));
+            MsgEvent notice = (MsgEvent) slowWire.remove(0)[1];              // b's notice of its own
+            assertEquals(MsgSigning.LOST_ACTION, notice.getParam("action"));
+            assertTrue(MsgRouter.answerWithError(g.getPluginBuilder(), request(a, b, "call-62"), MsgRouter.ROUTE_UNAVAILABLE, "REMOTE_REGION",
+                    "route unavailable at rgG_gc: REMOTE_REGION: no route to rgB_b61"));
+            MsgEvent unavailable = (MsgEvent) slowWire.remove(0)[1];         // the global's answer that there is no route
+            assertEquals("REMOTE_REGION", unavailable.getParam(MsgRouter.ROUTE_UNAVAILABLE));
+            assertEquals("a61", unavailable.getDstAgent());
+
+            // the gate judged a request here (the control): answered at once, nothing handed to the broker
+            assertFalse(c.routeKnown(request(a, b, "call-63"), "REMOTE_REGION", true));
+            assertEquals(1, c.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE));
+            assertEquals(1, slowWire.size(), "the gate's answer to a request");
+            slowWire.clear();
+            int n = 0;
+            for (MsgEvent answer : List.of(refusal, notice, unavailable)) {
+                n++;
+                assertFalse(MsgRouter.isRpcRequest(answer), "answer " + n + " is no request");
+                // 1. on its way through a controller with no route for it: never held, never answered `route unavailable`
+                assertTrue(c.routeKnown(copy(answer), "REMOTE_REGION", true), "answer " + n + " was judged by the route gate");
+                assertEquals(0, c.routeGate().heldNow());
+                assertEquals(1, c.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE), "answer " + n);
+                // 2. refused where it arrives (changed on its way): never answered 401, and no notice for it
+                MsgEvent changed = copy(answer);
+                changed.setParam("action", "changed-on-the-way");
+                ControllerEngine to = NODES.get(changed.getDstRegion() + "_" + changed.getDstAgent());
+                assertSame(a, to);
+                assertEquals(Arrival.REFUSED, arrive(a, changed, n == 3 ? controller(g) : controller(b)));
+                assertTrue(slowWire.isEmpty(), "answer " + n + " was answered: " + (slowWire.isEmpty() ? "" : ((MsgEvent) slowWire.get(0)[1]).getParams()));
+            }
+            assertTrue(toBroker.isEmpty());
+        } finally {
+            slowWire = null;
+            c.routeGate().stop();
+        }
     }
 }
