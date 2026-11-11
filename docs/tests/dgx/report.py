@@ -5,8 +5,10 @@ Gate (each candidate against the earlier build, same harness): throughput no mor
 higher, every frame delivered whole and in order, every agent registered, no refusal or loss line, and the per-op cost
 flat as agents grow (serial p50 at the largest step within 1.25x of the smallest, 8-caller rate within 0.8x).
 
-Usage: report.py <results dir> [builds...]   (default: old std prod)
+Usage: report.py <results dir> [builds...] [--rescan]   (default: old std prod)
+  --rescan reads the logs the run kept again (logscan.py) instead of the counts stored with the results.
 """
+import datetime
 import json
 import os
 import statistics
@@ -35,9 +37,21 @@ def fmt(v):
 
 
 def main():
-    d = sys.argv[1]
-    builds = sys.argv[2:] or ["old", "std", "prod"]
+    args = [a for a in sys.argv[1:] if a != "--rescan"]
+    d = args[0]
+    builds = args[1:] or ["old", "std", "prod"]
     R = {b: load(d, b) for b in builds}
+    if "--rescan" in sys.argv:
+        # judge the logs a finished run kept (<results dir>/<build>/logs) by today's rule (logscan.py)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import logscan
+        for b in builds:
+            logs = os.path.join(d, b, "logs")
+            if R[b] is not None and os.path.isdir(logs):
+                # the nodes were stopped when <build>/stop was written: what they logged while stopping is not judged
+                stop = os.path.join(d, b, "stop")
+                until = datetime.datetime.fromtimestamp(os.path.getmtime(stop)) if os.path.exists(stop) else None
+                R[b]["logs"] = logscan.scan(logs, until)
     base = R.get("old")
     rows, fails = [], []
 
@@ -117,10 +131,19 @@ def main():
                     fails.append("per-op cost %s: p50 %s->%s ms, rate %s->%s" % (b, p_lo, p_hi, r_lo, r_hi))
     row("log ERROR lines", {b: get(R[b], "logs", "error_lines") for b in builds})
     row("log refusal/loss lines", {b: get(R[b], "logs", "refusal_or_loss_lines") for b in builds})
+    row("log calls authority would refuse", {b: get(R[b], "logs", "would_refuse_lines") for b in builds})
+    row("log dropped messages (by cause)", {b: (lambda d: None if d is None else
+                                               (" ".join("%s=%s" % kv for kv in sorted(d.items())) or "0"))(get(R[b], "logs", "dropped"))
+                                            for b in builds})
     for b in builds:
         if b != "old" and (get(R[b], "logs", "refusal_or_loss_lines") or 0) > 0:
             fails.append("%s: %s refusal/loss line(s): %s" % (b, get(R[b], "logs", "refusal_or_loss_lines"),
                                                               [k for k, _ in (get(R[b], "logs", "top") or []) if k.startswith("REFUSAL")][:3]))
+        if b != "old" and (get(R[b], "logs", "would_refuse_lines") or 0) > 0:
+            # the gate's fabric manages every node from the global's gateway: nothing in it may be out of place
+            fails.append("%s: %s call(s) authority_direction=enforce would refuse: %s" % (
+                b, get(R[b], "logs", "would_refuse_lines"),
+                [k for k, _ in (get(R[b], "logs", "top") or []) if k.startswith("WOULD REFUSE")][:3]))
     w = [max(len(str(r[i])) for r in rows + [["metric"] + builds + ["gate"]]) for i in range(len(builds) + 2)]
     hdr = ["metric"] + builds + ["gate"]
     print("  ".join(h.ljust(w[i]) for i, h in enumerate(hdr)))
