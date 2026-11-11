@@ -533,6 +533,8 @@ public class AgentServiceImpl implements AgentService {
                 controllerEngine.securityOn() ? caller : io.cresco.library.security.Caller.anonymous());
         io.cresco.agent.controller.communication.CallerStamps.dropFiles(msg);   // a user names no file on this node's disk
         controllerEngine.markForSigning(msg);
+        // this node vouches for the user: it is the speaker, here and (by its signature) wherever the message goes
+        if (controllerEngine.securityOn()) controllerEngine.msgSigning().spokenHere(msg);
         controllerEngine.msgIn(msg);
     }
 
@@ -622,6 +624,17 @@ public class AgentServiceImpl implements AgentService {
     @Override
     public io.cresco.library.security.SecurityProfile getSecurityProfile() {
         return io.cresco.agent.controller.communication.SecuritySettings.profile(plugin == null ? null : plugin.getConfig());
+    }
+
+    /**
+     * Where a message's speaker stands relative to this node and what a call from the wrong place meets
+     * ({@code authority_direction}): the engine's answer, the same for the controller's tiers and for every plugin. Before
+     * the engine exists nobody can say: every action with a direction is refused (fail closed).
+     */
+    @Override
+    public io.cresco.library.security.ActionAuthorizer.Authority authority() {
+        ControllerEngine engine = controllerEngine;
+        return engine == null ? io.cresco.library.security.ActionAuthorizer.Authority.CLOSED : engine.authority();
     }
 
     @Override

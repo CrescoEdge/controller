@@ -1,9 +1,11 @@
 package io.cresco.agent.controller.communication;
 
 import io.cresco.library.security.ActionAuthorizer;
+import io.cresco.library.security.ActionAuthorizer.Direction;
 
 /**
- * Who may call every controller action, per tier (docs/caller-authorization.md section 3). One table per executor:
+ * Who may call every controller action, and from where, per tier (docs/caller-authorization.md sections 3 and 3a). One
+ * table per executor:
  * the agent tier (AgentExecutor, reached through the controller's PluginBuilder), the regional tier (RegionalExecutor,
  * which hands actions it does not serve to the agent executor) and the global tier (GlobalExecutor).
  *
@@ -11,6 +13,13 @@ import io.cresco.library.security.ActionAuthorizer;
  * ({@link ActionAuthorizer#PRIVILEGED}) applies on every tier. "any-tenant infra" marks the fabric mechanics a controller
  * serves to the nodes of every tenant (liveness, registration, keep-alive, KPI): nothing that reads or changes a tenant's
  * data. A drift test checks that every action an executor declares is listed here.
+ *
+ * <p>Every action also has a direction, declared here on purpose ({@link ActionAuthorizer.Direction}; authority follows the
+ * tree): {@code DOWN} for management -- honoured only from this node itself or a controller above it; {@code UP} for what
+ * a child reports to its parent -- only from this node itself or a node below it; {@code ANY} for what is open or only
+ * read, and what controllers ask each other. An action nobody listed is {@code DOWN} when it is of the privileged floor
+ * and {@code ANY} otherwise. {@code EveryActionHasADirectionTest} holds every action to a direction and the whole table
+ * to a checked-in copy, so a change is deliberate.
  */
 public final class ControllerActionRoles {
 
@@ -18,6 +27,18 @@ public final class ControllerActionRoles {
 
     static final String C = "CONFIG", E = "EXEC";
     static final String INFRA = "infra", ADMIN = "admin", PLUGIN = "plugin", USER = "user";
+
+    private static void down(ActionAuthorizer a, String type, String... actions) {
+        for (String f : actions) a.direct(type, f, Direction.DOWN);
+    }
+
+    private static void up(ActionAuthorizer a, String type, String... actions) {
+        for (String f : actions) a.direct(type, f, Direction.UP);
+    }
+
+    private static void any(ActionAuthorizer a, String type, String... actions) {
+        for (String f : actions) a.direct(type, f, Direction.ANY);
+    }
 
     /** The agent tier: the controller's own PluginBuilder table (the AgentExecutor's annotations are registered too). */
     public static ActionAuthorizer agentTier(ActionAuthorizer a) {
@@ -56,6 +77,24 @@ public final class ControllerActionRoles {
         a.open(E, "getcapabilityinventory");
         // no-ops at the agent tier, and plugins' prints
         for (String t : new String[]{"INFO", "WATCHDOG", "KPI", "DISCOVER", "ERROR"}) a.open(t, "*");
+
+        // ---- from where (authority follows the tree)
+        // management of this node: its plugins and the code they run, the controller and its JVM, its logging, its files
+        // and logs, its data directory, a network scan from it
+        down(a, C, "pluginadd", "pluginremove", "pluginupload", "pluginrepopull", "controllerupdate", "stopcontroller",
+                "restartcontroller", "restartframework", "killjvm", "setloglevel", "setlogdp", "getislogdp", "getagentinfo");
+        down(a, E, "getlog", "getfileinfo", "getfiledata", "getbroadcastdiscovery");
+        // this node's view of the whole mesh (every tenant's links and coordinators), for infra and admin only: narrow
+        down(a, E, "getnetworkstate", "getcoordinators");
+        // open and read-only: status, lists, inventories; a local plugin's CEP queries (their role confines them); what
+        // controllers ask each other
+        any(a, C, "pluginlist", "pluginstatus", "cepadd", "cepremove", "cepinput");
+        any(a, E, "listagents", "getcontrollerstatus", "iscontrolleractive", "getcryptopolicy", "ping", "indirectprobe",
+                "getmetricinventory", "gethealthinventory", "getcapabilities", "getcapabilityinventory");
+        for (String t : new String[]{"INFO", "DISCOVER", "ERROR"}) any(a, t, "*");
+        // what a child reports (no-ops on this tier; the regional and global tiers serve them)
+        up(a, "WATCHDOG", "*");
+        up(a, "KPI", "*");
         return a;
     }
 
@@ -73,6 +112,11 @@ public final class ControllerActionRoles {
         a.require("KPI", "*", INFRA, PLUGIN);
         a.allowAnyTenantInfra("KPI", "*");
         a.allowAnyTenantInfra(E, "ping");
+
+        // ---- from where: an agent registers, unregisters and reports to its own region controller; a pipeline is
+        // submitted to a region at the region or from its global (WATCHDOG, KPI, ping and the rest: as the agent tier)
+        up(a, C, "agent_enable", "agent_disable");
+        down(a, C, "rpipelinesubmit");
         return a;
     }
 
@@ -110,6 +154,20 @@ public final class ControllerActionRoles {
         a.require("KPI", "*", INFRA, PLUGIN);
         a.allowAnyTenantInfra("KPI", "*");
         for (String t : new String[]{"INFO", "DISCOVER", "ERROR"}) a.open(t, "*");
+
+        // ---- from where: a region reports to the global it joined; scheduling, the repository and an iNode's state are
+        // managed at the global itself (nothing is above it); the fabric registry is read from anywhere
+        up(a, C, "region_enable", "region_disable", "regionalimport");
+        down(a, C, "addplugin", "removeplugin", "gpipelinesubmit", "gpipelineremove", "plugindownload", "savetorepo", "setinodestatus");
+        down(a, E, "getnetworkstate", "getcoordinators");
+        any(a, E, "listregions", "listagents", "listplugins", "listpluginsbytype", "listpluginsrepo",
+                "listrepoinstances", "plugininfo", "pluginkpi", "resourceinfo", "netresourceinfo", "getenvstatus",
+                "getinodestatus", "resourceinventory", "plugininventory", "getgpipeline", "getgpipelineexport",
+                "getgpipelinestatus", "getisassignmentinfo", "getmetricinventory", "gethealthinventory", "getcapabilities",
+                "getcapabilityinventory", "ping", "getcryptopolicy");
+        up(a, "WATCHDOG", "*");
+        up(a, "KPI", "*");
+        for (String t : new String[]{"INFO", "DISCOVER", "ERROR"}) any(a, t, "*");
         return a;
     }
 }

@@ -74,6 +74,7 @@ final class BundleAgentService implements AgentService {
     @Override public KeyStore getPluginSigningTrust() { return core.getPluginSigningTrust(); }
     @Override public boolean isPluginSigningRequired() { return core.isPluginSigningRequired(); }
     @Override public io.cresco.library.security.SecurityProfile getSecurityProfile() { return core.getSecurityProfile(); }
+    @Override public io.cresco.library.security.ActionAuthorizer.Authority authority() { return core.authority(); }
 
     @Override
     public String toString() {

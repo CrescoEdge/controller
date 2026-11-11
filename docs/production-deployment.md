@@ -27,6 +27,7 @@ A controller with `security_profile=production` **refuses to start** (exit 78) a
 |---|---|
 | `revocation_file` | an operator CRL or deny list (must be readable when set) |
 | `controller_trust_anchors` | restrict which controllers a node joins (fingerprints) |
+| `authority_direction` | `log` (the default, also in production in this release), `enforce` or `off`: whether a management action is honoured only from the node itself or a controller above it. In `log` what `enforce` would refuse is allowed, counted (`authz.direction.would_refuse`) and logged (`AUTHORITY: WOULD REFUSE`); turn `enforce` on once those read zero for what the fabric is meant to keep doing (caller-authorization.md, section 3a) |
 
 | Refused in production | why |
 |---|---|

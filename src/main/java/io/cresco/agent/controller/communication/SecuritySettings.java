@@ -62,8 +62,29 @@ public final class SecuritySettings {
         }
         String tenant = tenantRefusal(c);
         if (tenant != null) out.add(tenant);
+        String direction = c == null ? null : c.getStringParam(AUTHORITY_DIRECTION);
+        if (io.cresco.library.security.ActionAuthorizer.Mode.parse(direction) == null) {
+            out.add(AUTHORITY_DIRECTION + "=" + direction + " is not a mode: off, log (the default) or enforce");
+        }
         out.addAll(profileRefusals(c, System.currentTimeMillis()));
         return out;
+    }
+
+    // ------------------------------------------------------------------ authority follows the tree
+
+    /** {@code authority_direction}: {@code off}, {@code log} (default) or {@code enforce}. */
+    public static final String AUTHORITY_DIRECTION = "authority_direction";
+
+    /**
+     * What a call from the wrong place in the tree meets on this node (docs/caller-authorization.md section 3a):
+     * {@code log} when unset -- it is allowed, counted and logged -- in every profile ({@code security_profile=production}
+     * does not force {@code enforce} in this release). A value that is no mode reads as {@code ENFORCE} here (fail
+     * closed) and refuses the node's start in {@link #startupRefusals}.
+     */
+    public static io.cresco.library.security.ActionAuthorizer.Mode authorityDirection(Config c) {
+        io.cresco.library.security.ActionAuthorizer.Mode m = io.cresco.library.security.ActionAuthorizer.Mode.parse(
+                c == null ? null : c.getStringParam(AUTHORITY_DIRECTION));
+        return m == null ? io.cresco.library.security.ActionAuthorizer.Mode.ENFORCE : m;
     }
 
     // ------------------------------------------------------------------ the security profile
@@ -189,6 +210,23 @@ public final class SecuritySettings {
                     + " not yet upgraded may join over the legacy unauthenticated discovery exchange and register and keep alive their own"
                     + " node with minimal rights (agent:<tenant>/<region>/<agent>, role user; their messages unsigned). Upgrade each"
                     + " before then; after the window closes they are refused");
+        }
+        if (brokerSecurity(c)) {
+            switch (authorityDirection(c)) {
+                case OFF:
+                    out.add(AUTHORITY_DIRECTION + "=off: authority does not follow the tree on this node -- a management action is"
+                            + " honoured from any node whose caller holds its role (a leaf's controller included), and nothing is"
+                            + " counted or logged");
+                    break;
+                case LOG:
+                    out.add(AUTHORITY_DIRECTION + "=log (this release's default): a management action from a node that is not this"
+                            + " node or a controller above it, and a report from a node that is not below it, is still ALLOWED --"
+                            + " counted (authz.direction.would_refuse) and logged once per action and position (AUTHORITY: WOULD"
+                            + " REFUSE). Set " + AUTHORITY_DIRECTION + "=enforce to refuse them");
+                    break;
+                default:
+                    break;
+            }
         }
         return out;
     }

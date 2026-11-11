@@ -1,0 +1,155 @@
+# Authority follows the tree: from where every controller action is honoured (docs/caller-authorization.md, section 3a).
+#   DOWN  management: only from the node itself or a controller above it
+#   UP    a child reporting to its parent: only from the node itself or a node below it
+#   ANY   from anywhere (role and tenant only)
+# One line per action a tier declares: <tier> <TYPE|action> <direction>  (TYPE|* is every action of the type not listed
+# itself). "floor" lines are the privileged floor of every bundle, DOWN unless that bundle's own tables or annotations
+# say otherwise (the controller's agent_enable/agent_disable are UP on the region tier, above).
+# EveryActionHasADirectionTest compares ControllerActionRoles with this file: change both, on purpose.
+agent CONFIG|cepadd ANY
+agent CONFIG|cepinput ANY
+agent CONFIG|cepremove ANY
+agent CONFIG|controllerupdate DOWN
+agent CONFIG|getagentinfo DOWN
+agent CONFIG|getislogdp DOWN
+agent CONFIG|killjvm DOWN
+agent CONFIG|pluginadd DOWN
+agent CONFIG|pluginlist ANY
+agent CONFIG|pluginremove DOWN
+agent CONFIG|pluginrepopull DOWN
+agent CONFIG|pluginstatus ANY
+agent CONFIG|pluginupload DOWN
+agent CONFIG|restartcontroller DOWN
+agent CONFIG|restartframework DOWN
+agent CONFIG|setlogdp DOWN
+agent CONFIG|setloglevel DOWN
+agent CONFIG|stopcontroller DOWN
+agent DISCOVER|* ANY
+agent ERROR|* ANY
+agent EXEC|getbroadcastdiscovery DOWN
+agent EXEC|getcapabilities ANY
+agent EXEC|getcapabilityinventory ANY
+agent EXEC|getcontrollerstatus ANY
+agent EXEC|getcoordinators DOWN
+agent EXEC|getcryptopolicy ANY
+agent EXEC|getfiledata DOWN
+agent EXEC|getfileinfo DOWN
+agent EXEC|gethealthinventory ANY
+agent EXEC|getlog DOWN
+agent EXEC|getmetricinventory ANY
+agent EXEC|getnetworkstate DOWN
+agent EXEC|indirectprobe ANY
+agent EXEC|iscontrolleractive ANY
+agent EXEC|listagents ANY
+agent EXEC|ping ANY
+agent INFO|* ANY
+agent KPI|* UP
+agent WATCHDOG|* UP
+region CONFIG|agent_disable UP
+region CONFIG|agent_enable UP
+region CONFIG|cepadd ANY
+region CONFIG|cepinput ANY
+region CONFIG|cepremove ANY
+region CONFIG|controllerupdate DOWN
+region CONFIG|getagentinfo DOWN
+region CONFIG|getislogdp DOWN
+region CONFIG|killjvm DOWN
+region CONFIG|pluginadd DOWN
+region CONFIG|pluginlist ANY
+region CONFIG|pluginremove DOWN
+region CONFIG|pluginrepopull DOWN
+region CONFIG|pluginstatus ANY
+region CONFIG|pluginupload DOWN
+region CONFIG|restartcontroller DOWN
+region CONFIG|restartframework DOWN
+region CONFIG|rpipelinesubmit DOWN
+region CONFIG|setlogdp DOWN
+region CONFIG|setloglevel DOWN
+region CONFIG|stopcontroller DOWN
+region DISCOVER|* ANY
+region ERROR|* ANY
+region EXEC|getbroadcastdiscovery DOWN
+region EXEC|getcapabilities ANY
+region EXEC|getcapabilityinventory ANY
+region EXEC|getcontrollerstatus ANY
+region EXEC|getcoordinators DOWN
+region EXEC|getcryptopolicy ANY
+region EXEC|getfiledata DOWN
+region EXEC|getfileinfo DOWN
+region EXEC|gethealthinventory ANY
+region EXEC|getlog DOWN
+region EXEC|getmetricinventory ANY
+region EXEC|getnetworkstate DOWN
+region EXEC|indirectprobe ANY
+region EXEC|iscontrolleractive ANY
+region EXEC|listagents ANY
+region EXEC|ping ANY
+region INFO|* ANY
+region KPI|* UP
+region WATCHDOG|* UP
+global CONFIG|addplugin DOWN
+global CONFIG|gpipelineremove DOWN
+global CONFIG|gpipelinesubmit DOWN
+global CONFIG|plugindownload DOWN
+global CONFIG|region_disable UP
+global CONFIG|region_enable UP
+global CONFIG|regionalimport UP
+global CONFIG|removeplugin DOWN
+global CONFIG|savetorepo DOWN
+global CONFIG|setinodestatus DOWN
+global DISCOVER|* ANY
+global ERROR|* ANY
+global EXEC|getcapabilities ANY
+global EXEC|getcapabilityinventory ANY
+global EXEC|getcoordinators DOWN
+global EXEC|getcryptopolicy ANY
+global EXEC|getenvstatus ANY
+global EXEC|getgpipeline ANY
+global EXEC|getgpipelineexport ANY
+global EXEC|getgpipelinestatus ANY
+global EXEC|gethealthinventory ANY
+global EXEC|getinodestatus ANY
+global EXEC|getisassignmentinfo ANY
+global EXEC|getmetricinventory ANY
+global EXEC|getnetworkstate DOWN
+global EXEC|listagents ANY
+global EXEC|listplugins ANY
+global EXEC|listpluginsbytype ANY
+global EXEC|listpluginsrepo ANY
+global EXEC|listregions ANY
+global EXEC|listrepoinstances ANY
+global EXEC|netresourceinfo ANY
+global EXEC|ping ANY
+global EXEC|plugininfo ANY
+global EXEC|plugininventory ANY
+global EXEC|pluginkpi ANY
+global EXEC|resourceinfo ANY
+global EXEC|resourceinventory ANY
+global INFO|* ANY
+global KPI|* UP
+global WATCHDOG|* UP
+floor io.cresco.controller agent_disable DOWN
+floor io.cresco.controller agent_enable DOWN
+floor io.cresco.controller controllerupdate DOWN
+floor io.cresco.controller getfiledata DOWN
+floor io.cresco.controller getfileinfo DOWN
+floor io.cresco.controller killjvm DOWN
+floor io.cresco.controller pluginadd DOWN
+floor io.cresco.controller pluginremove DOWN
+floor io.cresco.controller pluginrepopull DOWN
+floor io.cresco.controller pluginupload DOWN
+floor io.cresco.controller restartcontroller DOWN
+floor io.cresco.controller restartframework DOWN
+floor io.cresco.controller setlogdp DOWN
+floor io.cresco.controller setloglevel DOWN
+floor io.cresco.controller stopcontroller DOWN
+floor io.cresco.executor config_process DOWN
+floor io.cresco.executor end_process DOWN
+floor io.cresco.executor run_process DOWN
+floor io.cresco.executor start_process DOWN
+floor io.cresco.executor write_stdin DOWN
+floor io.cresco.filerepo clearrepo DOWN
+floor io.cresco.filerepo putfiles DOWN
+floor io.cresco.filerepo putjar DOWN
+floor io.cresco.filerepo removefile DOWN
+floor io.cresco.repo putjar DOWN

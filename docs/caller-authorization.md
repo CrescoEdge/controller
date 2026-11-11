@@ -73,6 +73,7 @@ of an action is (MsgEvent type, `action`).
   action on it (to `infra`).
 - The controller fails closed: an action its tables do not list needs `infra` or `admin`. A drift test checks that
   every `@CrescoAction` of the three executors is listed.
+- From where an allowed caller's action is honoured is section 3a (authority follows the tree).
 - Registry updates are bound to their maker (`RegistryBinding`): an agent registers, unregisters and keeps alive only
   itself in its region, a region only itself and its agents at the global -- by message (`agent_enable`,
   `agent_disable`, `region_enable`, `region_disable`, `regionalimport`, WATCHDOG) and on the dataplane
@@ -82,8 +83,103 @@ of an action is (MsgEvent type, `action`).
   region; a region unregisters only its own agents; a plugin record is removed only with its agent named (the registry
   never deletes a bare plugin id). An in-scope `admin` is not bound to one node, but names a plugin's agent too.
 
+## 3a. Authority follows the tree
+
+Role and tenant say WHO may call an action. They do not say FROM WHERE: every node's controller holds `infra` for its
+whole tenant, and any node's gateway may vouch for an API user with `admin` of its tenant. Without more, one leaf agent
+taken over could add plugins to, read files and logs of, or stop its region controller, its siblings and (same tenant)
+the global, and run commands on all of them through the executor plugin. So every action also has a **direction**, and
+every message a **speaker**.
+
+**The speaker** is the node whose word the caller is:
+
+- a `controller:` or `plugin:` caller: its own node (only that node's key signs for it, section 10; in the JVM only the
+  node's own controller stamps it);
+- an `api:` caller: the node that vouched for it -- the node whose key signed the message (the gateway the user is
+  connected to; never a relay), over a direct link the node the receiving broker attests delivered it first hand, and
+  for a user of the node's own gateway the node itself. The receiving node notes it on the message where it verifies it
+  (`cresco_sig_speaker`, `MsgSigning`). The note is the receiving node's own: it is never signed, never sent (it is
+  removed as a message leaves), and whatever a sender or a plugin wrote there is removed on arrival and at every stamping
+  point. An API user's message with no note (message signing off, `msg_signing_required=false`) has no speaker.
+
+**The position** of the speaker, as the receiving node sees it (`SpeakerPosition`, a few comparisons):
+
+| Position | An agent | A region controller | The global |
+|---|---|---|---|
+| `SELF` | itself | itself | itself |
+| `ABOVE` | its region controller; the global its region controller's signed trust bundle names (kind `global`) | the global it joined | nobody |
+| `BELOW` | nobody | every other node of its region | every other node of its own region; every node of a region whose controller joined it |
+| `ELSEWHERE` | a sibling, any other node | any other node | a node of a region that has not joined |
+| `UNKNOWN` | no speaker can be named | | |
+
+An agent takes the global only from the bundle its present parent signed (not an entry kept for its grace period, not a
+bundle of a parent it had before). The global holds a region as joined once that region's controller presented its
+certificate on a ping (section 10) -- and the controller itself already from its join, as discovery recorded it (the
+same record `RegistryBinding` asks, section 3). A message a region controller only carries on for one of its agents
+keeps the agent as its speaker: carrying lends no authority.
+
+**The direction** of an action (`ActionAuthorizer.Direction`):
+
+- `DOWN`, management: honoured only when the speaker is `SELF` or `ABOVE`.
+- `UP`, a child reporting to its parent: only when the speaker is `SELF` or `BELOW`.
+- `ANY`: from anywhere (role and tenant only).
+
+Role and tenant are checked first and are unchanged; direction only ever refuses more. Every action of the privileged
+floor (section 3: the controller's, the executor's, filerepo's and repo's) is `DOWN` unless declared otherwise; every
+other action is `ANY` unless declared. A plugin declares its own with `@CrescoAction(direction = "down" | "up" | "any")`
+(an unknown value fails the plugin's start). The controller's tables declare every action on purpose
+(`ControllerActionRoles`; `EveryActionHasADirectionTest` holds them to `src/test/resources/authority-directions.txt`):
+
+- `DOWN` on every tier: `pluginadd`, `pluginremove`, `pluginupload`, `pluginrepopull`, `controllerupdate`,
+  `stopcontroller`, `restartcontroller`, `restartframework`, `killjvm`, `setloglevel`, `setlogdp`, `getislogdp`,
+  `getlog`, `getfileinfo`, `getfiledata`, `getbroadcastdiscovery`, `getagentinfo`, `getnetworkstate`,
+  `getcoordinators`; at a region `rpipelinesubmit`; at the global `addplugin`, `removeplugin`, `gpipelinesubmit`,
+  `gpipelineremove`, `plugindownload`, `savetorepo`, `setinodestatus`.
+- `UP`: `agent_enable`, `agent_disable` (region tier), every WATCHDOG and KPI message; at the global `region_enable`,
+  `region_disable`, `regionalimport`.
+- `ANY`: what is open or only read (`ping`, status, inventories, lists, the global's registry reads,
+  `getcryptopolicy`), `cepadd`/`cepremove`/`cepinput` (a local plugin's; their role confines them), `indirectprobe`
+  (controllers ask each other), INFO/DISCOVER/ERROR.
+
+**What this means for an administrator.** A management call must enter the fabric at the node it manages or at a
+controller above it: the global's gateway for anything; a region controller's gateway for that controller and its
+agents; a leaf's own gateway for that leaf only. Scheduling, the repository and an iNode's state (`addplugin`,
+`gpipelinesubmit`, ...) are managed at the global's own gateway: nothing is above the global. An admin connected to a
+leaf still reads the fabric (lists, inventories, status) from there.
+
+**The mode**, `authority_direction` (`SecuritySettings.authorityDirection`; read again at most once a second):
+
+- `log` (the default in this release, in every profile -- `security_profile=production` does not force `enforce` yet): a
+  call `enforce` would refuse is allowed, counted, and logged once per action and position:
+
+  `AUTHORITY: WOULD REFUSE <type> <action> from <caller>, the word of <tenant>/<region>/<agent> (<POSITION>): it is
+  honoured only from the node itself or a controller above it; allowed (authority_direction=log); logged once per action
+  and position, every one counted in authz.direction.would_refuse`
+
+  The counts are in the metric inventory (group `authz`): `authz.direction.would_refuse`, and
+  `authz.direction.would_refuse.<action>` for every action above and every action of a plugin's privileged floor
+  (`.watchdog` and `.kpi` for those types; `.other` for an action a plugin gave a direction of its own). A plugin's
+  call is counted by its node's controller. Before `enforce` is turned on, these must read zero for everything the
+  fabric is meant to keep doing.
+- `enforce`: such a call is answered `status_code=403`, `status_desc=unauthorized: <action> is honoured only from the
+  node itself or a controller above it (caller <caller> speaks from a node elsewhere)` -- `or a node below it` for an
+  `UP` action -- counted in `cresco.authz.denied` and logged like every refusal. A speaker the node cannot place
+  (`UNKNOWN`) is refused too.
+- `off`: direction is not looked at; a WARNING on every boot.
+- any other value: the node refuses to start.
+
+A plugin asks through the `AgentService` its bundle is given (`AgentService.authority()`); a controller of an earlier
+release does not answer, and a plugin built against this library then behaves as before. Nothing changes on the wire.
+
+**Known to be caught in `log` mode on a healthy fabric** (legitimate today; each needs its own answer before `enforce`):
+agent-to-agent file pulls (`DataPlaneServiceImpl` sends `getfileinfo`/`getfiledata` to the node that holds the file:
+transfer tickets, the next step); an admin's `setloglevel`/`setlogdp` (the log streamer), `getlog`, `getnetworkstate`
+and plugin management through a gateway that is neither the target nor above it.
+
 ## 4. Defaults
 
+- **Authority follows the tree, logged.** `authority_direction=log` (section 3a): a management action from a node that
+  is neither the target nor above it is still allowed, counted and logged; `enforce` refuses it.
 - **Secure by default.** `broker_security_enabled`, `broker_require_client_auth` and `tenant_namespacing`
   all default to true.
 - **Refuse to start** (exit 78, every problem named) with security on but client auth or namespacing off, with a tenant

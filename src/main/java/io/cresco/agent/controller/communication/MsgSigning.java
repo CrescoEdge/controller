@@ -98,6 +98,15 @@ public final class MsgSigning {
     public static final String TO = "cresco_sig_to";
     /** On a message off the wire this node did not verify on arrival (never on the wire: every receiver removes it). */
     public static final String DEFERRED = "cresco_sig_deferred";
+    /**
+     * On a message whose caller is an API user, this node's own note of the SPEAKER: the node that vouched for the user
+     * ({@code <tenant>/<region>/<agent>}) -- the node whose key signed the message, the node this node's broker attests
+     * delivered it first hand, or this node itself for a user its own gateway sends for. Written only here (where a
+     * message is verified, and at this node's own stamping point); never on the wire, never signed, and a sender's value
+     * is removed on arrival like {@link #DEFERRED}. A controller's or plugin's speaker is its own node and needs no note.
+     * Read by {@link DirectionAuthority} (authority follows the tree).
+     */
+    public static final String SPEAKER = "cresco_sig_speaker";
 
     /** Ping/pong parameters: a child's certificate and what it holds; the parent's attestation and trust bundle. */
     static final String P_CERT = "sig_cert", P_ATT_EXP = "sig_att_exp", P_ATT = "sig_att", P_BUNDLE_HAVE = "sig_bundle_have",
@@ -165,6 +174,45 @@ public final class MsgSigning {
     private volatile String heldBundleDigest = "";
     // ---- at a global: the region controllers' certificates learned from their pings
     private final ConcurrentHashMap<String, BundleEntry> childControllers = new ConcurrentHashMap<>();
+    /** At a global: region -> its controller ({@code region/agent}) in {@link #childControllers}. Kept with that map. */
+    private final ConcurrentHashMap<String, String> childRegions = new ConcurrentHashMap<>();
+    /** The global(s) this node's present trust bundle names, with the parent that signed it; null: none. */
+    private volatile GlobalAbove globalAbove;
+
+    /**
+     * Who the trust bundle this node holds says is the global above it: the entries of kind {@code global} in the bundle
+     * as its parent last signed it (never an entry only kept for its grace period), with that parent's name.
+     */
+    static final class GlobalAbove {
+        final String parentRegion, parentAgent;
+        /** region, agent, region, agent, ... (one global, unless a parent ever names more). */
+        final String[] names;
+        GlobalAbove(String parentRegion, String parentAgent, String[] names) {
+            this.parentRegion = parentRegion; this.parentAgent = parentAgent; this.names = names;
+        }
+    }
+
+    /**
+     * Is {@code region/agent} the global above this node, on the word of the parent {@code parentRegion/parentAgent} it
+     * has now: named with kind {@code global} in the trust bundle that parent signed? False for a bundle another (earlier)
+     * parent signed. O(1), nothing allocated.
+     */
+    public boolean isGlobalAbove(String region, String agent, String parentRegion, String parentAgent) {
+        GlobalAbove g = globalAbove;
+        if (g == null || region == null || agent == null || !g.parentRegion.equals(parentRegion) || !g.parentAgent.equals(parentAgent)) return false;
+        for (int i = 0; i + 1 < g.names.length; i += 2) {
+            if (g.names[i].equals(region) && g.names[i + 1].equals(agent)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * At a global: did the controller of {@code region} present itself here on its pings, with a certificate that verifies
+     * as a controller that joined this global ({@link #onPingAtParent})? O(1), nothing allocated.
+     */
+    public boolean isChildRegion(String region) {
+        return region != null && childRegions.containsKey(region);
+    }
     /** Bumped on every change of what this node serves its children: a ping costs O(1) and takes no lock. */
     private final AtomicLong bundleVersion = new AtomicLong(1);
     private final Object servedLock = new Object();
@@ -457,7 +505,7 @@ public final class MsgSigning {
     static boolean covered(String key) {
         return key != null && !key.startsWith("routepath-") && !key.startsWith("linkcost-") && !key.startsWith("srcroute")
                 && !key.equals("ttl") && !key.equals(SIG) && !key.equals(PENDING) && !key.equals(MsgBatchSigner.TREE)
-                && !key.equals(MsgSessions.MAC) && !key.equals(DEFERRED) && !key.equals(DIRECT)
+                && !key.equals(MsgSessions.MAC) && !key.equals(DEFERRED) && !key.equals(DIRECT) && !key.equals(SPEAKER)
                 && !Caller.RESERVED_PARAMS.contains(key);
     }
 
@@ -675,6 +723,7 @@ public final class MsgSigning {
         m.removeParam(PENDING);
         m.removeParam(DIRECT);
         m.removeParam(DEFERRED);
+        m.removeParam(SPEAKER);                  // whoever hands this node a message never says whose word it is
     }
 
     /** A message off the wire never asks THIS node to sign it: only this node's own stamping points do. */
@@ -683,13 +732,28 @@ public final class MsgSigning {
             m.removeParam(PENDING);
             m.removeParam(DIRECT);               // a sender's word that it is the origin counts only as its broker attests it
             m.removeParam(DEFERRED);             // what this node checked is its own record, never a sender's
+            m.removeParam(SPEAKER);              // nor whose word the caller is: this node notes it when it has verified it
         }
+    }
+
+    /**
+     * Note on {@code m}, which this node has just stamped with an API user's caller (its own gateway sends for the user),
+     * that this node is the speaker ({@link #SPEAKER}). Call after {@link #markForSigning} (which removes any note).
+     */
+    public void spokenHere(MsgEvent m) {
+        if (m != null && m.getParams() != null && ce.cstate != null) m.setParam(SPEAKER, selfName());
+    }
+
+    /** The speaker noted on {@code m} ({@link #SPEAKER}): {@code <tenant>/<region>/<agent>}, or null. */
+    public static String speakerOf(MsgEvent m) {
+        return m == null || m.getParams() == null ? null : m.getParam(SPEAKER);
     }
 
     /** As a message this node originated leaves it (AgentProducer): sign it. Relayed messages carry their origin's signature. */
     public void signIfPending(MsgEvent m) {
         if (m == null || m.getParams() == null) return;
-        m.removeParam(DEFERRED);                 // this node's own note: never on the wire
+        m.removeParam(DEFERRED);                 // this node's own notes: never on the wire
+        m.removeParam(SPEAKER);
         if (m.getParam(PENDING) == null) return;
         m.removeParam(PENDING);
         if (!required) return;
@@ -907,6 +971,10 @@ public final class MsgSigning {
                     ce.getPluginBuilder() == null ? java.util.Set.of() : SecuritySettings.superuserTenants(ce.getPluginBuilder().getConfig())) == null) {
                 if (directAccepted.incrementAndGet() == 1) info("direct links ON: this node accepts unsigned messages its broker attests"
                         + " first hand (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + fromBroker + ")");
+                // an API user's word is that of the node that delivered it first hand (it vouched: vouchRefusal above)
+                if (fromBroker.getKind() == Caller.Kind.API) {
+                    m.setParam(SPEAKER, firstHand.getTenant() + "/" + firstHand.getRegion() + "/" + firstHand.getAgent());
+                }
                 return new Verdict(fromBroker);
             }
             return refuse(m, Refusal.UNSIGNED, "an unsigned message (from " + fromBroker + (firstHand == null ? ", not delivered first hand" : ", delivered by "
@@ -1028,6 +1096,8 @@ public final class MsgSigning {
                     + " key it holds (first: " + m.getMsgType() + " " + m.getParam("action") + " from " + by + ")");
             if (verifiedCount.incrementAndGet() == 1) info("message signatures ON: this node checks what it dispatches (first: "
                     + m.getMsgType() + " " + m.getParam("action") + " from " + signed + ", signed by " + by + " for " + to + ")");
+            // an API user's word is that of the node whose key vouched for it (the signer, never a relay)
+            if (signed.getKind() == Caller.Kind.API) m.setParam(SPEAKER, who.name);
             return new Verdict(signed);
         } catch (Exception | Error e) {
             if (e instanceof VirtualMachineError) throw (VirtualMachineError) e;
@@ -1435,6 +1505,7 @@ public final class MsgSigning {
             String[] why = new String[1];
             boolean bad = e.cert == null || reg.verifiedIdentity(new X509Certificate[]{e.cert}, why) == null;
             if (bad && childControllers.remove(en.getKey(), e)) {
+                childRegions.remove(e.r, en.getKey());
                 dropped++;
                 warn("trust bundle: DROPPED region controller " + en.getKey() + " (" + (why[0] == null ? "no certificate" : why[0]) + ")");
             }
@@ -1446,6 +1517,9 @@ public final class MsgSigning {
             if (why != null && bundle.remove(en.getKey(), e)) {
                 dropped++;
                 warn("trust bundle: DROPPED controller " + en.getKey() + " (" + why + ")");
+                // a global this node no longer takes the word of is no longer above it
+                GlobalAbove g = globalAbove;
+                if (g != null && "global".equals(e.role) && isGlobalAbove(e.r, e.a, g.parentRegion, g.parentAgent)) globalAbove = null;
             }
         }
         if (dropped > 0) bundleChanged();
@@ -1528,6 +1602,7 @@ public final class MsgSigning {
                                     intern(peers().pathRefs(new X509Certificate[]{leaf})));
                             e.cert = leaf;
                             childControllers.put(n, e);
+                            childRegions.put(id.getRegion(), n);
                             if (prev == null || !prev.fp.equals(e.fp) || !java.util.Objects.equals(prev.refs, e.refs)) bundleChanged();
                         }
                     }
@@ -1639,6 +1714,12 @@ public final class MsgSigning {
         // in place, never emptied: a message checked meanwhile sees the old entry or the new one
         bundle.putAll(next);
         bundle.keySet().removeIf(k -> !next.containsKey(k));
+        // who this parent says the global is: as it signed it now, never an entry only kept for its grace period
+        List<String> globals = new ArrayList<>();
+        for (BundleEntry e : next.values()) {
+            if (e.keepUntil == 0 && "global".equals(e.role)) { globals.add(e.r); globals.add(e.a); }
+        }
+        globalAbove = globals.isEmpty() ? null : new GlobalAbove(parentRegion, parentAgent, globals.toArray(new String[0]));
         heldBundleDigest = digest(json);
         bundleChanged();
     }

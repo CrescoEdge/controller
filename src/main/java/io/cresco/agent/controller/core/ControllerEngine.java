@@ -936,6 +936,36 @@ public class ControllerEngine {
         return false;
     }
 
+    /**
+     * At the global: did the controller {@code tenant/region/agent} join this node -- a recorded bridge peer, or a name
+     * bound here as a joining controller, in the peer trust registry ({@link #speaksForRegion} asks the same of a
+     * caller)? False when nothing records it (no registry yet, or {@code peer_identity_mode=off}): what is not known to
+     * have joined is not below this node. Lock-free; no I/O.
+     */
+    public boolean joinedAsController(String tenant, String region, String agent) {
+        if (tenant == null || region == null || agent == null) return false;
+        io.cresco.agent.controller.communication.CertificateManager cm = certificateManager;
+        io.cresco.agent.controller.communication.PeerTrustRegistry reg = cm == null ? null : cm.getPeerTrust();
+        return reg != null && reg.isJoinedController(tenant, region, agent);
+    }
+
+    private volatile io.cresco.agent.controller.communication.DirectionAuthority authority;
+
+    /**
+     * Where the speaker of a message stands relative to this node, and what a call from the wrong place meets
+     * ({@code authority_direction}): asked by every tier's authorization and by every plugin's (through the AgentService).
+     */
+    public io.cresco.agent.controller.communication.DirectionAuthority authority() {
+        io.cresco.agent.controller.communication.DirectionAuthority a = authority;
+        if (a == null) {
+            synchronized (this) {
+                if (authority == null) authority = new io.cresco.agent.controller.communication.DirectionAuthority(this);
+                a = authority;
+            }
+        }
+        return a;
+    }
+
     private void stampProblem(String what) {
         long now = System.currentTimeMillis();
         if (now - lastStampProblemLog > 60_000L) {

@@ -42,6 +42,7 @@ public class PerfControllerMonitor {
         initDataplaneLossMetrics();
         initControlPlaneFailureMetrics();
         initMsgMetrics();
+        initAuthorityMetrics();
         initBrokerMetrics();
         initRegionalMetrics();
         initGlobalMetrics();
@@ -107,6 +108,18 @@ public class PerfControllerMonitor {
             }
         } catch (Exception ex) {
             logger.error("initMsgMetrics ", ex);
+        }
+    }
+
+    // Authority follows the tree: the calls this node allowed in authority_direction=log that enforce would refuse, by
+    // action, as counters in the unified inventory (group "authz"): see AuthorityMetrics. Nothing here is on a message's path.
+    public void initAuthorityMetrics() {
+        try {
+            for (Map.Entry<String, String> m : AuthorityMetrics.register(me.getCrescoMeterRegistry(), controllerEngine).entrySet()) {
+                me.setExisting(m.getKey(), m.getValue());
+            }
+        } catch (Exception ex) {
+            logger.error("initAuthorityMetrics ", ex);
         }
     }
 
