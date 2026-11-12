@@ -86,16 +86,20 @@ HOW TO RUN IT
                              and the same key must be refused under another controller.
               revoke-name    one agent of a region is revoked at the global by NAME: `<region>/<agent>` in the global's
                              security/peer-trust.json.revoke (every profile). The global holds no key for that name (an
-                             agent is bound at its region's controller): it reserves the name and asks that controller,
-                             which must close the node within REVOKE_CLOSED_S and report the key; the global must say
-                             so ("Name revocation of ... CONFIRMED by ...") within REVOKE_NAME_CONFIRMED_S and drop the
-                             node within REVOKE_UNLISTED_S; started again, the node must be refused under its own
-                             region and (standard: the key is revoked for every name) under another region. The release
-                             of 2026-11-11 did nothing at all ("not applied: no key is bound to r3/a32"). With the
-                             region's controller on an earlier build (--old-nodes) the event checks the other half: that
-                             controller must NOT close the node and must log nothing about it, and the global must say
-                             within REVOKE_NAME_REMINDED_S that the revocation is outstanding and that the controller is
-                             an earlier build. Runs only when named until it has passed on a build with the fix.
+                             agent is bound at its region's controller): it reserves the name and asks that region's
+                             one controller, which must close the node within REVOKE_CLOSED_S and report the key; the
+                             global must log that report ("Name revocation of ...: REPORTED by <controller>, not
+                             verified: it says it revoked key <fingerprint>") within REVOKE_NAME_REPORTED_S, with the
+                             node's own key in it, and drop the node within REVOKE_UNLISTED_S; started again under its
+                             own region the node must be refused. The global revokes nothing on a region's word, so the
+                             event then does what that line tells the operator: it puts the reported fingerprint in the
+                             same file, and the node, started under ANOTHER region (standard profile), must be refused
+                             there too. The release of 2026-11-11 did nothing at all ("not applied: no key is bound to
+                             r3/a32"). With the region's controller on an earlier build (--old-nodes) the event checks
+                             the other half: that controller must NOT close the node and must log nothing about it,
+                             and the global must say within REVOKE_NAME_REMINDED_S that the revocation is outstanding
+                             and that the controller is an earlier build. Runs only when named until it has passed on a
+                             build with the fix.
 
 WHAT IT CANNOT SEE
   A node logs a refusal, a drop or a strip at most every 10 s, with a running count: the harness judges the reason of
@@ -256,19 +260,20 @@ KNOWN: list[Known] = [
           "a controller refuses the revoked node each time it tries to join (every ~3 s)", per_minute=True),
     # ---- revoke-name: the report of the revocation by name (the registry logs at ERROR, as it does a key's)
     Known("error-revoked-name", "error",
-          r"Name \S+ REVOKED (by name )?\(operator file|Name revocation of \S+ CONFIRMED by \S+: it revoked the key"
+          r"Name \S+ REVOKED (by name )?\(operator file|Name revocation of \S+: REPORTED by \S+, not verified: it says it revoked key"
           r"|Name \S+ REVOKED \(revoked by name at \S+, request [0-9a-f]+\): its key [0-9a-f]+ is REVOKED"
-          r"|Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED", ("revoke-name",), 2,
-          "the global reports the name it reserved and then the key its region reported (2 lines); the region's controller the"
-          " key it revoked for the name; every other node the key that reached it in a list (bounds as written, not measured:"
-          " the event has not run yet)"),
+          r"|Key [0-9a-f]+ (of \S+ )?REVOKED \(operator file|Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED",
+          ("revoke-name",), 3,
+          "the global reports the name it reserved, then the key its region reported, then that key when the operator revokes it"
+          " (3 lines); the region's controller the key it revoked for the name; every other node the operator's revocation that"
+          " reached it in a list (bounds as written, not measured: the event has not run yet)"),
     Known("error-revoked-name-refused", "error",
           r"Discovery REFUSED \S+: the key [0-9a-f]+ is REVOKED|Discovery REFUSED \S+: the name \S+ was REVOKED"
           r"|REFUSED the hello of \S+ from \S+ the certificate is REVOKED|REFUSED the hello of \S+ from \S+ the name \S+ was REVOKED",
           ("revoke-name",), 15, "a controller refuses the revoked node each time it tries to join (every ~3 s)", per_minute=True),
     Known("error-revoked-name-outstanding", "error", r"Name revocation of \S+ \(operator file[^)]*\) is still OUTSTANDING", ("revoke-name",), 2,
           "only with the region's controller on an earlier build (--old-nodes): the global says, a minute after the revocation"
-          " and then every ten, that the region has not confirmed it"),
+          " and then every ten, that the region has not answered it"),
     # ---- rekey-region: the report of the re-key and of the operator's rebind
     Known("error-rekey", "error", r"Discovery REFUSED \S+: the name is bound to another key|Identity \S+ REBOUND from key"
           r"|discovery v2: could not record|REFUSED this node: refused by|certDiscovery\.size\(\) == 0|CERT DISCOVERY != 1",
@@ -1129,9 +1134,11 @@ REVOKE_CLOSED_S = 30
 REVOKE_UNLISTED_S = 150
 # revoke-name (NOT measured yet: the event has not run): the controller closes the node as fast as for a key (the file
 # is read every 10 s, the request goes with the next pong); its answer goes with its next ping, one ping period later.
-REVOKE_NAME_CONFIRMED_S = 60
+REVOKE_NAME_REPORTED_S = 60
 # an earlier-build controller: the global's first reminder comes a minute after the revocation, on its 10 s timer
 REVOKE_NAME_REMINDED_S = 100
+# the operator's own revocation of the reported key: read within 10 s at the global, on the next pong at a region
+REVOKE_NAME_KEY_SPREAD_S = 60
 
 
 def ev_revoke_name(fab):
@@ -1147,14 +1154,15 @@ def ev_revoke_name(fab):
     start = {n.name: fab.size(n) for n in fab.nodes.values()}
     t0 = time.time()
     was = victim.path
-    append_owner_only(fab.data(g) / "security" / "peer-trust.json.revoke", was)
+    revoke_file = fab.data(g) / "security" / "peer-trust.json.revoke"
+    append_owner_only(revoke_file, was)
     how = "its name in the global's security/peer-trust.json.revoke"
     closing = r"CLOSING the connection of CrescoIdentity\{[^}]*region=%s, agent=%s\b" % (victim.region, victim.name)
     reserved = fab.wait_log(g, r"Name %s REVOKED (by name )?\(operator file" % re.escape(was), 40, start=start[g.name])
     if not reserved:
         fab.event_failures.append("revoke-name: the global did not reserve %s (its log has no 'Name %s REVOKED')" % (was, was))
     # a pre-provisioned global that verified the node's certificate itself holds its key: it revokes that key at once and
-    # its list carries it (no region is asked, none confirms); otherwise the name's region is asked ("REVOKED by name")
+    # its list carries it (no region is asked, none reports); otherwise the name's region is asked ("REVOKED by name")
     asked = bool(reserved) and "REVOKED by name" in reserved
     if earlier:
         # an earlier build knows no revocation by name: nothing may happen there, and the global must say what is outstanding
@@ -1163,26 +1171,27 @@ def ev_revoke_name(fab):
         t_said = time.time() - t0 if said else None
         closed = fab.wait_log(parent, closing, 1, start=start[parent.name])
         about = [l for l in fab.peek(parent, start[parent.name]) if re.search(r"rev_names|revocation by name|REVOKED", l)]
-        confirmed = fab.wait_log(g, r"Name revocation of %s CONFIRMED" % re.escape(was), 1, start=start[g.name])
+        reported = fab.wait_log(g, r"Name revocation of %s: REPORTED" % re.escape(was), 1, start=start[g.name])
         fab.revoked = {"node": was, "how": how, "earlier_build": parent.path, "outstanding_said_after_s": t_said,
-                       "closed": bool(closed), "confirmed": bool(confirmed)}
+                       "closed": bool(closed), "reported": bool(reported)}
         if not said:
             fab.event_failures.append("revoke-name: the global did not say within %d s that %s is outstanding at the earlier-build %s"
                                       % (REVOKE_NAME_REMINDED_S, was, parent.path))
         if closed or about:
             fab.event_failures.append("revoke-name: the earlier-build %s acted on (or logged) a revocation by name: %s"
                                       % (parent.path, (closed or about[0])[:200]))
-        if confirmed:
-            fab.event_failures.append("revoke-name: the global reports %s confirmed by a controller that does not know it" % was)
+        if reported:
+            fab.event_failures.append("revoke-name: the global logs a report for %s from a controller that does not know the request" % was)
         return "%s revoked by name (%s) under the earlier-build %s: the global said it is outstanding after %s; the node stays" % (
             was, how, parent.path, secs(t_said))
     victim.up = False                       # the global must not list it any more
     closed = fab.wait_log(parent, closing, 120, start=start[parent.name])
     t_closed = time.time() - t0 if closed else None
-    confirmed = fab.wait_log(g, r"Name revocation of %s CONFIRMED by %s: it revoked the key" % (re.escape(was), re.escape(parent.path)),
-                             120, start=start[g.name]) if asked else None
-    t_confirmed = time.time() - t0 if confirmed else None
-    reported = re.search(r"Key ([0-9a-f]+) REVOKED here on its report", confirmed or "")
+    report = fab.wait_log(g, r"Name revocation of %s: REPORTED by %s, not verified: it says it revoked key [0-9a-f]{64}"
+                          % (re.escape(was), re.escape(parent.path)), 120, start=start[g.name]) if asked else None
+    t_reported = time.time() - t0 if report else None
+    said_key = re.search(r"it says it revoked key ([0-9a-f]{64})", report or "")
+    said_key = said_key.group(1) if said_key else ""
     t_unlisted = fab.wait_listed(180)
     t_unlisted = (time.time() - t0) if t_unlisted is not None else None
     fab.stop(victim)
@@ -1195,42 +1204,48 @@ def ev_revoke_name(fab):
     time.sleep(40)
     again_own = [l for l in fab.peek(parent, mark) if re.search(admitted_rx, l)]
     fab.stop(victim)
-    # and under another region: the key is revoked for every name (a production certificate names its region, and a
-    # tenant's node joins only its own tenant's region: there the first half is the whole check)
+    # under another region: a region's word revokes nothing outside it, so the operator does what the global's line says and
+    # revokes the reported fingerprint there; that travels as any revocation, and the node is then refused everywhere
+    # (a production certificate names its region, and a tenant's node joins only its own tenant's region: no second half)
     others = [r for r in regions if r is not parent and r.tenant == parent.tenant] if fab.profile.name != "production" else []
-    again_other, elsewhere = [], None
-    if others:
+    again_other, elsewhere, spread = [], None, True
+    if others and said_key:
         elsewhere = others[0]
         mark = fab.size(elsewhere)
+        append_owner_only(revoke_file, said_key)
+        spread = bool(fab.wait_log(elsewhere, r"Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED", REVOKE_NAME_KEY_SPREAD_S, start=mark))
         victim.parent, victim.region = elsewhere, elsewhere.region
         fab.launch(victim)
         victim.up = False
         time.sleep(40)
         again_other = [l for l in fab.peek(elsewhere, mark) if re.search(admitted_rx, l)]
         fab.stop(victim)
-    fab.revoked = {"node": was, "how": how, "closed_after_s": t_closed, "confirmed_after_s": t_confirmed, "unlisted_after_s": t_unlisted,
+    fab.revoked = {"node": was, "how": how, "closed_after_s": t_closed, "reported_after_s": t_reported, "unlisted_after_s": t_unlisted,
                    "tried_again_under": parent.path + (" and " + elsewhere.path if elsewhere else ""),
                    "readmitted": bool(again_own or again_other)}
     if t_closed is None or t_closed > REVOKE_CLOSED_S:
         fab.event_failures.append("revoke-name: %s did not close %s within %d s" % (parent.path, was, REVOKE_CLOSED_S))
     if not asked:
-        pass                                # the global held the key itself: nothing to confirm
-    elif t_confirmed is None or t_confirmed > REVOKE_NAME_CONFIRMED_S:
-        fab.event_failures.append("revoke-name: the global did not report %s confirmed by %s within %d s" % (was, parent.path, REVOKE_NAME_CONFIRMED_S))
-    elif key and not (reported and key.startswith(reported.group(1))):
-        fab.event_failures.append("revoke-name: the key the global revoked on %s's report is not %s's (%s...)" % (parent.path, was, key[:16]))
+        pass                                # the global held the key itself: nothing to report
+    elif t_reported is None or t_reported > REVOKE_NAME_REPORTED_S:
+        fab.event_failures.append("revoke-name: the global did not log %s's report on %s within %d s" % (parent.path, was, REVOKE_NAME_REPORTED_S))
+    elif key and said_key != key:
+        fab.event_failures.append("revoke-name: the key %s reported for %s (%s...) is not the node's (%s...)" % (parent.path, was, said_key[:16], key[:16]))
     if t_unlisted is None or t_unlisted > REVOKE_UNLISTED_S:
         fab.event_failures.append("revoke-name: the global still listed %s after %d s" % (was, REVOKE_UNLISTED_S))
     if again_own:
         fab.event_failures.append("revoke-name: %s admitted the revoked node again (%s)" % (parent.path, again_own[0][:200]))
+    if not spread:
+        fab.event_failures.append("revoke-name: the operator's revocation of the reported key did not reach %s within %d s" % (elsewhere.path, REVOKE_NAME_KEY_SPREAD_S))
     if again_other:
-        fab.event_failures.append("revoke-name: %s admitted the revoked key under another region (%s)" % (elsewhere.path, again_other[0][:200]))
+        fab.event_failures.append("revoke-name: %s admitted the key after the operator revoked the reported fingerprint (%s)" % (elsewhere.path, again_other[0][:200]))
     return "%s revoked by name (%s): its controller closed it after %s, the global %s and dropped the node after %s;" \
            " started again under %s: %s%s" % (was, how, secs(t_closed),
-                                              "had the key from %s after %s" % (parent.path, secs(t_confirmed)) if asked
+                                              "logged the key %s reported after %s" % (parent.path, secs(t_reported)) if asked
                                               else "held its key itself (nobody was asked)", secs(t_unlisted), parent.path,
                                               "ADMITTED" if again_own else "refused",
-                                              "; under %s: %s" % (elsewhere.path, "ADMITTED" if again_other else "refused") if elsewhere else "")
+                                              "; the operator revoked the reported fingerprint, then under %s: %s" % (
+                                                  elsewhere.path, "ADMITTED" if again_other else "refused") if elsewhere else "")
 
 
 def secs(t):
@@ -1668,11 +1683,11 @@ def report(cell, result):
         if r and "earlier_build" in r:
             print("\nrevoke-name: %s under the earlier-build %s: the global said it is outstanding after %s (bound %d s)"
                   % (r["node"], r["earlier_build"], secs(r["outstanding_said_after_s"]), REVOKE_NAME_REMINDED_S))
-        elif r and "confirmed_after_s" in r:
+        elif r and "reported_after_s" in r:
             print("\nrevoke-name: %s closed by its controller after %s (bound %d s), its key reported to the global after %s (bound %d s;"
                   " not applicable when the global held the key itself), dropped by the global after %s (bound %d s), started again under %s: %s"
                   % (r["node"], secs(r["closed_after_s"]), REVOKE_CLOSED_S,
-                     secs(r["confirmed_after_s"]) if r["confirmed_after_s"] is not None else "n/a", REVOKE_NAME_CONFIRMED_S,
+                     secs(r["reported_after_s"]) if r["reported_after_s"] is not None else "n/a", REVOKE_NAME_REPORTED_S,
                      secs(r["unlisted_after_s"]), REVOKE_UNLISTED_S, r["tried_again_under"], "ADMITTED" if r["readmitted"] else "refused"))
         elif r:
             print("\nrevoke: %s closed by its controller after %s (bound %d s), dropped by the global after %s (bound %d s), "

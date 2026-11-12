@@ -341,8 +341,9 @@ These change code that only this branch runs (discovery v2, the peer trust regis
   node needs a new key). Each controller signs its revocation list with its identity key and it travels on the parent/child
   pings as deltas (§9): a region's list is accepted at the global only from a controller bound there, for the region's own
   names, and the global's (and a region's) list applies to everything below it. Agents' lists are not accepted. A NAME
-  revoked at a global that holds no key for it (an agent of another region) is reserved there and revoked by the region's
-  controller that holds the key (§9, "By name at a global").
+  revoked at a global that holds no key for it (an agent of another region) is reserved there, and that region's one
+  controller is asked to revoke the key it holds for it (§9, "By name at a global"): the global revokes no key on a
+  region's answer.
 - **Expired identities**: the broker refuses an expired certificate at authorization (both the bound-key and the CA path)
   and closes, within a minute, a connection whose certificate expires or whose key is revoked while it is up.
 - **The broker's identity check is the authoritative gate.** A client that reconnects by resuming a TLS 1.3 session (a
@@ -576,33 +577,44 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   revocation closes each one whose peer is now refused (bridges and client connections, after invalidating the TLS session
   so a reconnect cannot resume it unchecked), removes the bridge groups to tombstoned peers, and the broker closes inbound
   connections refused for any revocation reason (key, name, region CA), not only by key.
-- **By name at a global (2026-11-11).** Under per-node trust an agent's key is bound at its region's controller, so a
-  global has no key for `<region>/<agent>`; until this change `peer_identity_revoke` / `peer-trust.json.revoke` with such a
-  name did nothing there ("no key is bound"). Now the global RESERVES the name at once (no key is accepted for it, no
-  message signed in it) and records a revocation by name; while it is open the pong to the verified controller of the
-  name's region carries it (signed like a list, addressed to that controller, with a random request id). That controller
-  -- which takes it only from the controller it joined and only for names of its own region -- revokes the key it holds
-  for the name, reserves the name, closes the node, and answers with the key on its next ping (signed, addressed to its
-  global). The global takes an answer only from a controller bound there as that region's, for a name of that region
-  that it asked about, with the id of that request, once; it then revokes the key for every name and its list carries it
-  down MARKED with that region. The key is that region's word, so nowhere does it revoke something else: the global
-  refuses a key it holds as its own, a CA's, a controller's or bound outside that region, and every node below leaves a
-  key it holds bound outside that region alone (and logs it); a node of an earlier build, which could not tell, is not
-  sent such a key; and a pre-provisioned node, which holds no bindings to tell by, applies it to that region's names only
-  (a certificate names its region). `Key ... REVOKED here on its report` names the key: revoke that fingerprint at the
-  global to make it the global's own word for every node and every name. What the operator sees: `Name ... REVOKED by name ...: RESERVED here ... has NOT
-  confirmed yet`, then `Name revocation of ... CONFIRMED by <controller>`; until then the `identity` health check is WARN
-  and the global says `is still OUTSTANDING` a minute later and every ten minutes, with what the region's controller did
-  (never pinged, an earlier build, has not answered, or its answer and why it was refused). At most 1,024 revocations by
-  name are open at a global at once. **Rebind:** the usual token line (`<region>/<agent>=<new key fingerprint>`) in the
-  GLOBAL's `peer-trust.json.rebind` (or `peer_identity_rebind`) is taken within 10 s: the global lifts its reservation
-  and tells the region's controller, where the token rebinds the name when that key presents, as any rebind does; the
-  revoked key stays revoked. A rebind at the region's controller alone leaves the name refused at the global. A rebind
-  that overtakes its revocation (the region's controller was away, or of an earlier build, while it was asked) does not
-  undo it: that controller revokes the key the name holds before it takes the rebind, and the global says at the rebind
-  that the revocation was never confirmed. As for any
-  name: take it out of the revoke file when it is rebound, or it is revoked again when the file is next read. A name of
-  the global's own region that is bound to no key is reserved and nothing more (nobody else binds it).
+- **By name at a global (2026-11-12).** Under per-node trust an agent's key is bound at its region's controller, so a
+  global has no key for `<region>/<agent>`; `peer_identity_revoke` / `peer-trust.json.revoke` with such a name did nothing
+  there ("no key is bound"). Now:
+  - *The global* RESERVES the name at once, always (no key is accepted for it, no message signed in it, until an operator
+    rebind), and records a request with a random id and the time of the operator's act. Its own name is never revoked
+    this way, and an unbound name of its OWN region stays an error (it is bound nowhere: a typo).
+  - *Who is asked:* the ONE controller the global records as that region's joined controller, in the tenant recorded for
+    it, on its pongs, and only when its ping said that it takes such requests (a fresh random value, which an earlier
+    build does not send). With no controller of the region joined, or MORE than one name recorded under the region as a
+    controller, nobody is asked and the reason is reported: which of two is the region's is not the global's to guess --
+    revoke the other here.
+  - *The region's controller* takes a request only from the global it joined (verified as its list is, in its tenant,
+    addressed to it), only for a name of its own region, and only FRESH: the request repeats the random value of one of
+    its last three pings, so one that was held back or is delivered again is refused. It then acts as if its operator
+    had revoked the name there -- the bound key revoked for every name, the name reserved, the node's connections closed
+    -- and answers with the key on its next ping. A binding made AFTER the operator's act (the request carries its age;
+    the clocks are not compared), or within one ping of it, is left alone and the answer says so: the operator meant the
+    node that held the name then. Every request is answered once, whatever the answer (the last 4,096 are remembered).
+  - *The answer* is read only while a request is open, only from that one controller, and it SETTLES that request,
+    once -- nothing else. The global revokes NO key on a region's word and distributes nothing: it cannot check which key
+    a region bound to a name. It logs `Name revocation of <name>: REPORTED by <controller>, not verified: it says it
+    revoked key <fingerprint> ... To have every region refuse that key, revoke the fingerprint <fingerprint> here.` That
+    second step is the operator's own word and travels as any revocation does. A malformed answer, or one that names
+    another request, closes the request as REFUSED: it is not asked again and the operator must act.
+  - *What the operator sees:* `Name ... REVOKED by name ...: RESERVED here ... OUTSTANDING until it answers`, then the
+    `REPORTED` line. While a request is unanswered or was refused the `identity` health check is WARN and says which,
+    and the global says it again a minute later and every ten minutes, with why (no controller joined; several recorded;
+    not pinged since; an earlier build; sent N times and not answered; the refused answer).
+  - *Bounds:* at most 64 requests open for one region and 1,024 in all (unanswered, or rebound and unconfirmed). Beyond
+    that a name is still reserved; its region is not asked and the revocation's result says so.
+  - *Rebind (and withdrawal):* the usual token line (`<region>/<agent>=<new key fingerprint>`) in the GLOBAL's
+    `peer-trust.json.rebind` (or `peer_identity_rebind`) is taken within 10 s, in any state: the global lifts its
+    reservation and tells the region's controller for at most 24 h (then it says that the rebind was never confirmed and
+    stops), where the token rebinds the name when that key presents, as any rebind does -- a token without a key lets
+    the first key presented there take the reserved name. A request the region never applied is WITHDRAWN by it and
+    revokes nothing later. The key the region revoked stays revoked there. A rebind at the region's controller alone
+    leaves the name refused at the global. Deleting the line from the revoke file withdraws nothing (as for a key), and
+    a name left in that file is revoked again when the file is next read: take it out when it is rebound.
 - **Fail closed.** A revocation is in force in memory before it is recorded. When it cannot be recorded (full disk, a sealed
   or fenced registry) it stays in force, the write is retried (1 s, doubling to 30 s) and the `identity` health check is
   CRITICAL until it is recorded. The operator file counts as applied only once its entries are recorded (else it is read

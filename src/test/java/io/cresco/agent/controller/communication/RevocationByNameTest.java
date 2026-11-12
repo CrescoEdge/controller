@@ -3,16 +3,16 @@ package io.cresco.agent.controller.communication;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import io.cresco.agent.controller.core.ControllerEngine;
+import io.cresco.agent.test.TestAgentService;
 import io.cresco.library.messaging.MsgEvent;
+import io.cresco.library.plugin.PluginBuilder;
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,21 +22,31 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * A node revoked by NAME at the global, where no key is bound to that name (an agent is bound at its region's
- * controller): the name is reserved at the global at once, the region's controller revokes the key and closes the node,
- * the key becomes revoked for every name in the fabric, and nothing a region answers can have another region's node
- * revoked. On the wire only -- pings and pongs through {@link RevocationSync}, and reports an attacker makes with its own
- * key -- and with nothing this change added to the code's interface: every test here runs (and fails) against the code
- * before the change, where the revocation ends at "no key is bound to rgB/b1".
+ * controller): the name is reserved at the global at once; the region's one controller revokes the key, reserves the
+ * name, closes the node and reports the key; the global records that report as the region's word and revokes nothing on
+ * it -- the operator revokes the reported fingerprint to have the whole fabric refuse the key.
+ *
+ * <p>On the wire only: pings and pongs through {@link RevocationSync} between real nodes, with nothing this change added
+ * to the code's interface. Every test runs against the code before the change too, where the revocation ended at "no key
+ * is bound to rgB/b1": each test goes through all its steps and reports every one that failed, not only the first.
  */
 class RevocationByNameTest {
 
     private static final Gson GSON = new Gson();
+    private static final long DAY = 24L * 3600 * 1000;
 
-    /** A node with a persistent registry at a known place (its operator files are next to it). */
-    private static ControllerEngine node(String region, String agent, boolean global) throws Exception {
-        Path dir = Files.createTempDirectory("byname-" + region);
+    /** Every step of a test is looked at; the test fails at its end with all that did not hold. */
+    private static final class Steps {
+        private final List<String> failed = new ArrayList<>();
+        void check(boolean ok, String what) { if (!ok) failed.add(what); }
+        void done() { assertTrue(failed.isEmpty(), failed.size() + " step(s) did not hold:\n  - " + String.join("\n  - ", failed)); }
+    }
+
+    /** A node whose identity and registry are in {@code dir}: started again on the same directory it is the same node. */
+    private static ControllerEngine node(String region, String agent, boolean global, Path dir) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
+        cfg.put("node_identity_dir", dir.resolve("security").toString());
         cfg.put("peer_trust_file", dir.resolve("security").resolve("peer-trust.json").toString());
         if (global) cfg.put("is_global", "true");
         ControllerEngine e = TlsTestSupport.engine(region, agent, cfg);
@@ -47,19 +57,33 @@ class RevocationByNameTest {
         return e;
     }
 
+    private static ControllerEngine node(String region, String agent, boolean global) throws Exception {
+        return node(region, agent, global, Files.createTempDirectory("byname-" + region));
+    }
+
     private static PeerTrustRegistry reg(ControllerEngine e) { return e.getCertificateManager().getPeerTrust(); }
 
     private static Path fileOf(ControllerEngine e) {
         return Path.of(e.getPluginBuilder().getConfig().getStringParam("peer_trust_file"));
     }
 
+    private static X509Certificate leaf(ControllerEngine e) { return e.getCertificateManager().getPublicCertificate()[0]; }
+
     private static String fp(java.security.PublicKey k) { return PeerTrustRegistry.fingerprint(k.getEncoded()); }
 
-    /** The two controllers join: each binds the other's key as a controller's. */
+    /** The two controllers join: each binds the other's key as a controller's, and the joiner becomes a bridge peer (discovery). */
     private static void join(ControllerEngine global, ControllerEngine region) {
-        X509Certificate r = region.getCertificateManager().getPublicCertificate()[0], g = global.getCertificateManager().getPublicCertificate()[0];
-        assertNull(reg(global).pin(region.cstate.getRegion(), region.cstate.getAgent(), r, PeerTrustRegistry.ROLE_CONTROLLER, false));
-        assertNull(reg(region).pin(global.cstate.getRegion(), global.cstate.getAgent(), g, PeerTrustRegistry.ROLE_CONTROLLER, true));
+        assertNull(reg(global).pin(region.cstate.getRegion(), region.cstate.getAgent(), leaf(region), PeerTrustRegistry.ROLE_CONTROLLER, false));
+        reg(global).allowBridgePeer(region.cstate.getRegion(), region.cstate.getAgent());
+        assertNull(reg(region).pin(global.cstate.getRegion(), global.cstate.getAgent(), leaf(global), PeerTrustRegistry.ROLE_CONTROLLER, true));
+    }
+
+    /** An agent bound at its region's controller -- some time before anything the operator does next. */
+    private static KeyPair agentOf(ControllerEngine region, String agent) throws Exception {
+        KeyPair kp = TlsTestSupport.rsa();
+        assertTrue(reg(region).bind("t1", region.cstate.getRegion(), agent, kp.getPublic(), "discovery").ok);
+        Thread.sleep(40);
+        return kp;
     }
 
     private static MsgEvent ping(ControllerEngine region) {
@@ -68,16 +92,19 @@ class RevocationByNameTest {
         return m;
     }
 
-    /** One ping of {@code region} to {@code global} and the pong back, as the health watchers and executors do it. */
     private static MsgEvent exchange(ControllerEngine region, ControllerEngine global) {
         return exchange(region, global, true);
     }
 
-    /** {@code thisBuild} false: the region is of an earlier build -- its ping says nothing of what it knows. */
+    /**
+     * One ping of {@code region} to {@code global} and the pong back, as the health watchers and executors do it.
+     * {@code thisBuild} false: the region's controller is of an earlier build -- its ping says nothing of revocations by
+     * name, and it reads the list on the pong and nothing else.
+     */
     private static MsgEvent exchange(ControllerEngine region, ControllerEngine global, boolean thisBuild) {
         MsgEvent p = ping(region);
         RevocationSync.onChildPing(region, p);
-        if (!thisBuild) { p.removeParam("rev_cap"); p.removeParam("rev_name_report"); }
+        if (!thisBuild) for (String k : new String[]{"rev_names_fresh", "rev_cap", "rev_name_report"}) p.removeParam(k);
         // what the global's broker stamps on a message of a verified controller
         p.setParam("cresco_caller", "controller:t1/" + region.cstate.getRegion() + "/" + region.cstate.getAgent());
         RevocationSync.onPingAtParent(global, p, true);
@@ -85,7 +112,6 @@ class RevocationByNameTest {
         if (thisBuild) {
             RevocationSync.onParentPong(region, p, "rgG", "gc");
         } else {
-            // an earlier build reads the list and nothing else
             MsgEvent q = ping(region);
             for (String k : new String[]{"rev_epoch", "rev_seq", "rev_ack", "rev_parent_list"}) if (p.getParam(k) != null) q.setParam(k, p.getParam(k));
             RevocationSync.onParentPong(region, q, "rgG", "gc");
@@ -94,7 +120,17 @@ class RevocationByNameTest {
         return p;
     }
 
-    /** The request ids a pong carries, by name ({@code A|id|name} / {@code L|id|name|key}). */
+    /** An agent of {@code region} pings its controller and reads the pong. */
+    private static void agentExchange(ControllerEngine agent, ControllerEngine region) {
+        MsgEvent ap = new MsgEvent(MsgEvent.Type.EXEC, agent.cstate.getRegion(), agent.cstate.getAgent(), null, region.cstate.getRegion(),
+                region.cstate.getAgent(), null, true, false);
+        RevocationSync.onChildPing(agent, ap);
+        RevocationSync.onPingAtParent(region, ap, false);
+        RevocationSync.onParentPong(agent, ap, region.cstate.getRegion(), region.cstate.getAgent());
+        reg(agent).awaitRevocations();
+    }
+
+    /** The names a pong asks about ({@code A|id|name|..} / {@code L|id|name|..}), with their request ids. */
     private static Map<String, String> requests(MsgEvent pong) {
         Map<String, String> out = new HashMap<>();
         if (pong.getParam("rev_names") == null) return out;
@@ -103,48 +139,10 @@ class RevocationByNameTest {
         return out;
     }
 
-    /** The request the global makes of {@code region}'s controller for {@code name}, read off a pong and not applied. */
-    private static String asked(ControllerEngine global, ControllerEngine region, String name) {
-        MsgEvent p = ping(region);
-        p.setParam("rev_cap", "names");
-        p.setParam("cresco_caller", "controller:t1/" + region.cstate.getRegion() + "/" + region.cstate.getAgent());
-        RevocationSync.onPingAtParent(global, p, true);
-        return requests(p).get(name);
-    }
-
-    /**
-     * Answers to revocations by name as a node makes them with its OWN identity key and whatever it likes to say: what a
-     * compromised controller (or anybody holding a key) can put on a ping.
-     */
-    private static String answersBy(ControllerEngine signer, String issuer, String to, String... items) throws Exception {
-        CertificateManager cm = signer.getCertificateManager();
-        long issued = System.currentTimeMillis();
-        String signed = "cresco-name-revocations-v1|1|report|" + issuer + "|t1|" + to + "|" + issued + "|" + String.join(",", items);
-        Map<String, Object> o = new java.util.LinkedHashMap<>();
-        o.put("v", 1);
-        o.put("kind", "report");
-        o.put("issuer", issuer);
-        o.put("tenant", "t1");
-        o.put("to", to);
-        o.put("issued", issued);
-        o.put("items", List.of(items));
-        o.put("cert", Base64.getEncoder().encodeToString(cm.getPublicCertificate()[0].getEncoded()));
-        o.put("sig", Base64.getEncoder().encodeToString(cm.signWithIdentity(signed.getBytes(StandardCharsets.UTF_8))));
-        return GSON.toJson(o);
-    }
-
-    /** Deliver {@code answers} to the global on a ping from {@code from}, stamped by the broker as {@code caller}. */
-    private static void deliver(ControllerEngine global, ControllerEngine from, String caller, String answers) {
-        MsgEvent p = ping(from);
-        p.setParam("rev_cap", "names");
-        p.setCompressedParam("rev_name_report", answers);
-        if (caller != null) p.setParam("cresco_caller", caller);
-        RevocationSync.onPingAtParent(global, p, true);
-        reg(global).awaitRevocations();
-    }
+    private static String[] health(ControllerEngine e) { return e.getCertificateManager().identityHealth(); }
 
     private static boolean outstanding(ControllerEngine global, String name) {
-        String[] h = global.getCertificateManager().identityHealth();
+        String[] h = health(global);
         return !"OK".equals(h[0]) && h[1] != null && h[1].contains(name);
     }
 
@@ -153,307 +151,334 @@ class RevocationByNameTest {
     /** By name, with no key bound here: the name is reserved at once, the revocation is recorded, and it is said to be outstanding. */
     @Test
     void aNameRevokedAtTheGlobalIsReservedThereAtOnceAndSaidToBeOutstanding() throws Exception {
+        Steps s = new Steps();
         ControllerEngine global = node("rgG", "gc", true);
         PeerTrustRegistry atGlobal = reg(global);
-        assertNull(atGlobal.revoke("rgB/b1", "operator"), "a revocation by name at the global was not applied");
-        assertTrue(atGlobal.isTombstoned("rgB", "b1"), "the name is not reserved at the global");
-        assertNotNull(atGlobal.nameRefusal("rgB", "b1"), "messages signed in the revoked name are accepted at the global");
-        assertFalse(atGlobal.bind("t1", "rgB", "b1", TlsTestSupport.rsa().getPublic(), "discovery").ok, "a key was bound to the reserved name");
-        // the operator is told the truth: reserved here, not confirmed by the region that holds the key
-        String[] h = global.getCertificateManager().identityHealth();
-        assertEquals("WARN", h[0], h[1]);
-        assertTrue(h[1].contains("rgB/b1") && h[1].contains("NOT confirmed"), h[1]);
-        // again: nothing new, nothing refused
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
+        String why = atGlobal.revoke("rgB/b1", "operator");
+        s.check(why == null, "a revocation by name at the global was not applied: " + why);
+        s.check(atGlobal.isTombstoned("rgB", "b1"), "the name is not reserved at the global");
+        s.check(atGlobal.nameRefusal("rgB", "b1") != null, "messages signed in the revoked name are accepted at the global");
+        s.check(!atGlobal.bind("t1", "rgB", "b1", TlsTestSupport.rsa().getPublic(), "discovery").ok, "a key was bound to the reserved name");
+        // the operator is told the truth: reserved here, not answered by the region that holds the key, and why
+        String[] h = health(global);
+        s.check("WARN".equals(h[0]) && h[1] != null && h[1].contains("rgB/b1") && h[1].contains("NOT answered")
+                && h[1].contains("no controller of region rgB has joined"), "the health check does not say what is outstanding: " + h[0] + " " + h[1]);
+        s.check(atGlobal.revoke("rgB/b1", "operator") == null, "the same revocation again was refused");
+        // its own name, and an unbound name of its own region, are not revoked this way
+        s.check(atGlobal.revoke("rgG/gc", "operator") != null && !atGlobal.isTombstoned("rgG", "gc"), "the global reserved its own name");
+        s.check("no key is bound to rgG/typo (revoke its key fingerprint instead)".equals(atGlobal.revoke("rgG/typo", "operator"))
+                && !atGlobal.isTombstoned("rgG", "typo"), "an unbound name of the global's own region was not refused as before");
         // durable: a registry opened on the same files holds the reservation
         atGlobal.awaitRevocations();
         PeerTrustRegistry again = PeerTrustRegistry.open(fileOf(global), List.of(), List.of(), 30, m -> { });
-        assertTrue(again.isTombstoned("rgB", "b1"), "the reservation did not survive a restart");
-        assertFalse(again.isSealed(), again.sealReason());
+        s.check(again.isTombstoned("rgB", "b1"), "the reservation did not survive a restart");
+        s.check(!again.isSealed(), "the registry is sealed after a restart: " + again.sealReason());
+        s.done();
     }
 
     // ------------------------------------------------------------------ the whole way
 
     /**
      * The region's controller applies it as if its own operator had revoked the name -- the bound key revoked, the name
-     * reserved, the node's connections closed (the revocation listener) -- and reports the key; the global then refuses
-     * that key under every name, and so does every other region and the region's own agents.
+     * reserved, the node's connections closed (the revocation listener) -- and reports the key. The global records the
+     * report and revokes NOTHING on it: no other region learns the key until the operator revokes the reported
+     * fingerprint at the global, which then travels as any revocation does.
      */
     @Test
-    void theRegionRevokesTheKeyAndReportsItAndTheFabricRefusesItUnderAnyName() throws Exception {
+    void theRegionRevokesTheKeyAndReportsItAndTheGlobalRevokesNothingOnItsWord() throws Exception {
+        Steps s = new Steps();
         ControllerEngine global = node("rgG", "gc", true), regionB = node("rgB", "rc", false), regionC = node("rgC", "rc", false);
         join(global, regionB);
         join(global, regionC);
         PeerTrustRegistry atGlobal = reg(global), atB = reg(regionB), atC = reg(regionC);
-        KeyPair b1 = TlsTestSupport.rsa();
-        assertTrue(atB.bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);       // bound where it joined, and nowhere else
+        KeyPair b1 = agentOf(regionB, "b1");                                           // bound where it joined, and nowhere else
         String k = fp(b1.getPublic());
         List<String> closedAtB = new CopyOnWriteArrayList<>();
         atB.setRevokedListener(closedAtB::add);                                        // what closes the key's connections
         exchange(regionB, global);
         exchange(regionC, global);
 
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
-        assertFalse(atGlobal.isRevokedKey(k));                                          // the global never saw the key
-        assertTrue(outstanding(global, "rgB/b1"));
+        s.check(atGlobal.revoke("rgB/b1", "operator") == null, "the revocation by name was not applied at the global");
+        s.check(atGlobal.isTombstoned("rgB", "b1"), "the name is not reserved at the global");
+        s.check(outstanding(global, "rgB/b1"), "the global does not say the revocation is outstanding");
 
         // the next pong takes it to the controller that holds the binding
         MsgEvent pong = exchange(regionB, global);
-        assertNotNull(requests(pong).get("rgB/b1"), "the pong to region rgB's controller did not carry the revocation by name");
-        assertTrue(atB.isRevokedFor(k, "rgB") && atB.isRevokedFor(k, "rgZ"), "the region did not revoke the bound key for every name");
-        assertTrue(atB.isTombstoned("rgB", "b1"), "the region did not reserve the name");
-        assertEquals(List.of(k), closedAtB, "the region did not close the node's connections");
-        assertFalse(atB.bind("t1", "rgB", "b1", TlsTestSupport.rsa().getPublic(), "discovery").ok, "another key took the revoked name at its region");
-        assertFalse(atB.bind("t1", "rgB", "other", b1.getPublic(), "discovery").ok, "the revoked key came back under another name at its region");
-        assertTrue(outstanding(global, "rgB/b1"), "the global reported success before the region's answer reached it");
+        s.check(requests(pong).get("rgB/b1") != null, "the pong to region rgB's controller did not carry the revocation by name");
+        s.check(requests(exchange(regionC, global)).isEmpty(), "another region's controller was asked");
+        s.check(atB.isRevokedFor(k, "rgB") && atB.isRevokedFor(k, "rgZ"), "the region did not revoke the bound key for every name");
+        s.check(atB.isTombstoned("rgB", "b1"), "the region did not reserve the name");
+        s.check(List.of(k).equals(closedAtB), "the region did not close the node's connections: " + closedAtB);
+        s.check(!atB.bind("t1", "rgB", "b1", TlsTestSupport.rsa().getPublic(), "discovery").ok, "another key took the revoked name at its region");
+        s.check(!atB.bind("t1", "rgB", "other", b1.getPublic(), "discovery").ok, "the revoked key came back under another name at its region");
+        s.check(outstanding(global, "rgB/b1"), "the global reported the revocation done before the region's answer reached it");
 
-        // the region's next ping reports the key: revoked at the global for every name, nothing outstanding
+        // the region's next ping answers: the request is settled, and the global revoked nothing on the region's word
         exchange(regionB, global);
-        assertTrue(atGlobal.isRevokedFor(k, "rgB") && atGlobal.isRevokedFor(k, "rgC") && atGlobal.isRevokedFor(k, "rgG"),
-                "the global does not refuse the reported key under every name");
-        assertFalse(atGlobal.bind("t1", "rgG", "x", b1.getPublic(), "discovery").ok, "the revoked key was bound at the global under another name");
-        assertEquals("OK", global.getCertificateManager().identityHealth()[0], global.getCertificateManager().identityHealth()[1]);
-        assertTrue(requests(exchange(regionB, global)).isEmpty(), "a settled revocation by name is still sent");
-
-        // every other region gets the key on the global's list, and refuses it under its own names
+        s.check("OK".equals(health(global)[0]), "the request is not settled by the region's answer: " + health(global)[1]);
+        s.check(requests(exchange(regionB, global)).isEmpty(), "a settled revocation by name is still sent");
+        s.check(atGlobal.revocations().isEmpty(), "the global revoked a key on a region's word: " + atGlobal.revocations());
         exchange(regionC, global);
-        assertTrue(atC.isRevokedFor(k, "rgC"), "another region does not refuse the revoked key");
-        assertFalse(atC.bind("t1", "rgC", "b1", b1.getPublic(), "discovery").ok, "the revoked node came back under another region");
-        // the name is reserved where it was revoked and where it was bound -- not at every node (a rebind must reach each)
-        assertFalse(atC.isTombstoned("rgB", "b1"));
+        s.check(atC.revocations().isEmpty(), "a key went to another region on a region's word");
+        s.check(atGlobal.isTombstoned("rgB", "b1"), "the name is no longer reserved at the global");
+        s.check(!atC.isTombstoned("rgB", "b1"), "the name is reserved at a region it was never bound at (no rebind could lift it there)");
 
-        // and the region's own agents hold the key on their region's list
+        // the region's own agents hold the key on their region's list
         ControllerEngine agent = TlsTestSupport.engine("rgB", "b2", Map.of("broker_security_enabled", "true"));
-        assertTrue(atB.bind("t1", "rgB", "b2", agent.getCertificateManager().getPublicCertificate()[0].getPublicKey(), "discovery").ok);
-        assertNull(reg(agent).pin("rgB", "rc", regionB.getCertificateManager().getPublicCertificate()[0], PeerTrustRegistry.ROLE_CONTROLLER, true));
-        MsgEvent ap = new MsgEvent(MsgEvent.Type.EXEC, "rgB", "b2", null, "rgB", "rc", null, true, false);
-        RevocationSync.onChildPing(agent, ap);
-        RevocationSync.onPingAtParent(regionB, ap, false);
-        RevocationSync.onParentPong(agent, ap, "rgB", "rc");
-        assertTrue(reg(agent).isRevokedKey(k), "the region's agents do not hold the revoked key");
+        assertTrue(atB.bind("t1", "rgB", "b2", leaf(agent).getPublicKey(), "discovery").ok);
+        assertNull(reg(agent).pin("rgB", "rc", leaf(regionB), PeerTrustRegistry.ROLE_CONTROLLER, true));
+        agentExchange(agent, regionB);
+        s.check(reg(agent).isRevokedKey(k), "the region's agents do not hold the revoked key");
+        s.check(!reg(agent).isTombstoned("rgB", "b1"), "the name is reserved at the region's agents");
+
+        // the operator's own word for the key the region reported: every node refuses it, under any name
+        s.check(atGlobal.revoke(k, "operator") == null, "the operator could not revoke the reported fingerprint");
+        exchange(regionC, global);
+        s.check(atGlobal.isRevokedFor(k, "rgG") && atC.isRevokedFor(k, "rgC"), "the operator's revocation of the key did not reach the fabric");
+        s.check(!atC.bind("t1", "rgC", "b1", b1.getPublic(), "discovery").ok, "the revoked node came back under another region");
+        s.done();
     }
 
-    /** A name its region holds no key for: reserved there too, and the global says exactly that (no key was revoked). */
+    /** A name its region holds no key for: reserved there too, and the request is settled (no key was revoked anywhere). */
     @Test
     void aNameItsRegionHoldsNoKeyForIsReservedThereAndSettled() throws Exception {
+        Steps s = new Steps();
         ControllerEngine global = node("rgG", "gc", true), regionB = node("rgB", "rc", false);
         join(global, regionB);
-        assertNull(reg(global).revoke("rgB/never", "operator"));
+        s.check(reg(global).revoke("rgB/never", "operator") == null, "the revocation by name was not applied at the global");
         exchange(regionB, global);
-        assertTrue(reg(regionB).isTombstoned("rgB", "never"), "the region did not reserve the name");
+        s.check(reg(regionB).isTombstoned("rgB", "never"), "the region did not reserve the name");
         exchange(regionB, global);
-        assertEquals("OK", global.getCertificateManager().identityHealth()[0], global.getCertificateManager().identityHealth()[1]);
-        assertTrue(reg(global).isTombstoned("rgB", "never"));
-        assertEquals(0, reg(global).revocations().size(), "a key was revoked for a name that had none");
-    }
-
-    // ------------------------------------------------------------------ what a region cannot do with an answer
-
-    /**
-     * A region's answer is its word. A region that names the key of ANOTHER region's node as "the key of my rgB/b1" does
-     * not get that node revoked: where the key is bound outside rgB -- at the node's own region -- it is not applied, and
-     * the node keeps its name; at the global a key bound there outside rgB is refused outright.
-     */
-    @Test
-    void aLyingRegionCannotHaveAnotherRegionsNodeRevoked() throws Exception {
-        ControllerEngine global = node("rgG", "gc", true), liar = node("rgB", "rc", false), regionC = node("rgC", "rc", false);
-        join(global, liar);
-        join(global, regionC);
-        PeerTrustRegistry atGlobal = reg(global), atC = reg(regionC);
-        KeyPair victim = TlsTestSupport.rsa();                                         // rgC/c1: bound at its own region only
-        assertTrue(atC.bind("t1", "rgC", "c1", victim.getPublic(), "discovery").ok);
-        String vk = fp(victim.getPublic());
-        exchange(regionC, global);
-
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
-        String id = asked(global, liar, "rgB/b1");                                      // it reads the request, and applies nothing
-        assertNotNull(id, "the region was not asked");
-        // the lie, properly signed by the region's controller, for the request it was asked
-        deliver(global, liar, "controller:t1/rgB/rc", answersBy(liar, "rgB/rc", "rgG/gc", id + "|rgB/b1|K|" + vk));
-        // the global cannot know better (it never saw the key): it takes the region's word -- marked as that region's word
-        exchange(regionC, global);
-        assertFalse(atC.isRevokedFor(vk, "rgC"), "region rgB had region rgC's node revoked");
-        assertFalse(atC.isTombstoned("rgC", "c1"), "region rgB had region rgC's name reserved");
-        assertTrue(atC.bind("t1", "rgC", "c1", victim.getPublic(), "discovery").ok, "the victim lost its binding at its own region");
-
-        // a key the global itself holds bound outside the answering region is refused there: nothing is revoked anywhere
-        KeyPair own = TlsTestSupport.rsa();
-        assertTrue(atGlobal.bind("t1", "rgG", "g1", own.getPublic(), "discovery").ok);
-        assertNull(atGlobal.revoke("rgB/b2", "operator"));
-        String id2 = asked(global, liar, "rgB/b2");
-        assertNotNull(id2);
-        String regionCKey = fp(regionC.getCertificateManager().getPublicCertificate()[0].getPublicKey());
-        String globalKey = fp(global.getCertificateManager().getPublicCertificate()[0].getPublicKey());
-        for (String k : List.of(fp(own.getPublic()), regionCKey, globalKey)) {
-            deliver(global, liar, "controller:t1/rgB/rc", answersBy(liar, "rgB/rc", "rgG/gc", id2 + "|rgB/b2|K|" + k));
-            assertFalse(atGlobal.isRevokedKey(k), "a region's answer revoked a key bound at the global outside that region");
-            assertTrue(outstanding(global, "rgB/b2"), "a refused answer settled the revocation");
-        }
-        assertNotNull(atGlobal.verifiedIdentity(regionC.getCertificateManager().getPublicCertificate()), "region rgC's controller is refused");
-    }
-
-    /**
-     * Ignored: an answer for a name of another region, for a name nobody asked about, for another request than the one
-     * made (replayed or made up), one not signed by a controller bound at the global, one altered after signing, one
-     * addressed to another node, and a second answer to a request already answered.
-     */
-    @Test
-    void answersNobodyAskedForForgedOrReplayedAreIgnored() throws Exception {
-        ControllerEngine global = node("rgG", "gc", true), regionB = node("rgB", "rc", false), regionC = node("rgC", "rc", false);
-        join(global, regionB);
-        join(global, regionC);
-        PeerTrustRegistry atGlobal = reg(global), atB = reg(regionB);
-        KeyPair b1 = TlsTestSupport.rsa();
-        assertTrue(atB.bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);
-        String k = fp(b1.getPublic());
-        String other = fp(TlsTestSupport.rsa().getPublic());
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
-        String id = asked(global, regionB, "rgB/b1");
-        assertNotNull(id);
-        String stale = "0123456789abcdef0123456789abcdef";
-
-        // another region's controller answers for rgB's name (it even knows the request)
-        deliver(global, regionC, "controller:t1/rgC/rc", answersBy(regionC, "rgC/rc", "rgG/gc", id + "|rgB/b1|K|" + other));
-        // ... or claims to be rgB's controller: its certificate does not verify as that issuer
-        deliver(global, regionC, "controller:t1/rgC/rc", answersBy(regionC, "rgB/rc", "rgG/gc", id + "|rgB/b1|K|" + other));
-        // rgB's controller answers for a name nobody asked about, and for another request than the one made
-        deliver(global, regionB, "controller:t1/rgB/rc", answersBy(regionB, "rgB/rc", "rgG/gc", id + "|rgB/zz|K|" + other));
-        deliver(global, regionB, "controller:t1/rgB/rc", answersBy(regionB, "rgB/rc", "rgG/gc", stale + "|rgB/b1|K|" + other));
-        // an agent of rgB (bound at the global as an agent) signs an answer in its own name
-        ControllerEngine agent = TlsTestSupport.engine("rgB", "b7", Map.of("broker_security_enabled", "true"));
-        assertTrue(atGlobal.bind("t1", "rgB", "b7", agent.getCertificateManager().getPublicCertificate()[0].getPublicKey(), "test").ok);
-        deliver(global, agent, "agent:t1/rgB/b7", answersBy(agent, "rgB/b7", "rgG/gc", id + "|rgB/b1|K|" + other));
-        // rgB's controller's answer altered on the way, and one it made for another node
-        String good = answersBy(regionB, "rgB/rc", "rgG/gc", id + "|rgB/b1|K|" + k);
-        deliver(global, regionB, "controller:t1/rgB/rc", good.replace(k, other));
-        deliver(global, regionB, "controller:t1/rgB/rc", answersBy(regionB, "rgB/rc", "rgX/gc", id + "|rgB/b1|K|" + other));
-        // rgB's controller's answer on a ping the broker stamped as another caller's
-        deliver(global, regionB, "controller:t1/rgC/rc", answersBy(regionB, "rgB/rc", "rgG/gc", id + "|rgB/b1|K|" + other));
-
-        assertFalse(atGlobal.isRevokedKey(other), "an ignored answer revoked a key");
-        assertFalse(atGlobal.isRevokedKey(k));
-        assertTrue(outstanding(global, "rgB/b1"), "an ignored answer settled the revocation");
-        assertFalse(atGlobal.isTombstoned("rgB", "zz"));
-
-        // the answer that counts, then a second one for the same request with another key: answered once
-        deliver(global, regionB, "controller:t1/rgB/rc", good);
-        assertTrue(atGlobal.isRevokedFor(k, "rgC"));
-        deliver(global, regionB, "controller:t1/rgB/rc", answersBy(regionB, "rgB/rc", "rgG/gc", id + "|rgB/b1|K|" + other));
-        deliver(global, regionB, "controller:t1/rgB/rc", good);                          // the same answer again: nothing
-        assertFalse(atGlobal.isRevokedKey(other), "a second answer to an answered request revoked another key");
-        assertEquals(1, atGlobal.revocations().size());
+        s.check("OK".equals(health(global)[0]) && reg(global).isTombstoned("rgB", "never"), "the request is not settled: " + health(global)[1]);
+        s.check(reg(global).revocations().isEmpty() && reg(regionB).revocations().isEmpty(), "a key was revoked for a name that had none");
+        // the region's controller's own name is not revoked for its global
+        s.check(reg(global).revoke("rgB/rc", "operator") == null && reg(global).isRevokedKey(fp(leaf(regionB).getPublicKey())),
+                "a controller bound at the global is not revoked there by its name, as before");
+        s.done();
     }
 
     // ------------------------------------------------------------------ earlier builds
 
     /**
-     * A region controller of an earlier build is sent nothing it does not know (no request, no key revoked on a region's
-     * report), and the global says the revocation is outstanding and why. Such a region gets a reported key when the
-     * operator revokes the fingerprint itself.
+     * A region's controller of an earlier build says nothing of revocations by name on its pings: it is sent no request
+     * (nothing new reaches it), and the global says the revocation is outstanding and why. Once it is upgraded it is asked.
      */
     @Test
-    void anEarlierBuildIsSentNothingItDoesNotKnowAndTheGlobalSaysWhatIsOutstanding() throws Exception {
-        ControllerEngine global = node("rgG", "gc", true), old = node("rgO", "rc", false), regionB = node("rgB", "rc", false);
+    void anEarlierBuildIsAskedNothingAndTheGlobalSaysWhatIsOutstanding() throws Exception {
+        Steps s = new Steps();
+        ControllerEngine global = node("rgG", "gc", true), old = node("rgO", "rc", false);
         join(global, old);
-        join(global, regionB);
-        PeerTrustRegistry atGlobal = reg(global), atOld = reg(old), atB = reg(regionB);
-        KeyPair o1 = TlsTestSupport.rsa(), b1 = TlsTestSupport.rsa();
-        assertTrue(atOld.bind("t1", "rgO", "o1", o1.getPublic(), "discovery").ok);
-        assertTrue(atB.bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);
-
-        assertNull(atGlobal.revoke("rgO/o1", "operator"));
+        PeerTrustRegistry atGlobal = reg(global), atOld = reg(old);
+        KeyPair o1 = agentOf(old, "o1");
+        s.check(atGlobal.revoke("rgO/o1", "operator") == null, "the revocation by name was not applied at the global");
+        boolean sent = false;
         for (int i = 0; i < 3; i++) {
             MsgEvent pong = exchange(old, global, false);
-            assertNull(pong.getParam("rev_names"), "an earlier build was sent a revocation by name");
+            sent |= pong.getParam("rev_names") != null;
         }
-        assertFalse(atOld.isRevokedKey(fp(o1.getPublic())));
-        String[] h = global.getCertificateManager().identityHealth();
-        assertEquals("WARN", h[0], h[1]);
-        assertTrue(h[1].contains("rgO/o1") && h[1].contains("earlier build"), h[1]);
-
-        // a key revoked on region rgB's report is not sent to the earlier build ...
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
-        exchange(regionB, global);
-        exchange(regionB, global);
-        String k = fp(b1.getPublic());
-        assertTrue(atGlobal.isRevokedFor(k, "rgO"));
-        exchange(old, global, false);
-        assertFalse(atOld.isRevokedKey(k), "a key revoked on a region's report was sent to a build that cannot tell whose word it is");
-        // ... until the operator revokes that fingerprint at the global: its own word, for all
-        assertNull(atGlobal.revoke(k, "operator"));
-        exchange(old, global, false);
-        assertTrue(atOld.isRevokedKey(k), "the operator's own revocation of the key did not reach the earlier build");
+        s.check(!sent, "an earlier build was sent a revocation by name");
+        s.check(!atOld.isRevokedKey(fp(o1.getPublic())) && !atOld.isTombstoned("rgO", "o1"), "something was applied at the earlier build");
+        String[] h = health(global);
+        s.check("WARN".equals(h[0]) && h[1] != null && h[1].contains("rgO/o1") && h[1].contains("earlier build"),
+                "the global does not say that the region's controller is an earlier build: " + h[0] + " " + h[1]);
+        // upgraded: asked, applied, answered
+        s.check(requests(exchange(old, global)).get("rgO/o1") != null, "the upgraded controller was not asked");
+        exchange(old, global);
+        s.check(atOld.isRevokedKey(fp(o1.getPublic())) && atOld.isTombstoned("rgO", "o1"), "the upgraded controller did not apply the request");
+        s.check("OK".equals(health(global)[0]), "the request is not settled after the upgrade: " + health(global)[1]);
+        s.done();
     }
 
-    /** The node of this build that holds the reported key under ITS region's name keeps it, until the operator's own word. */
+    // ------------------------------------------------------------------ restarts and re-keys while a request is open
+
+    /** The global restarts between its request and the region's answer: the request, with its id, is the same after it. */
     @Test
-    void theOperatorsOwnRevocationOfTheKeyOverridesARegionsWord() throws Exception {
-        ControllerEngine global = node("rgG", "gc", true), regionB = node("rgB", "rc", false), regionC = node("rgC", "rc", false);
+    void aGlobalRestartBetweenRequestAndAnswerKeepsTheRequest() throws Exception {
+        Steps s = new Steps();
+        Path gDir = Files.createTempDirectory("byname-rgG");
+        ControllerEngine global = node("rgG", "gc", true, gDir), regionB = node("rgB", "rc", false);
         join(global, regionB);
-        join(global, regionC);
-        PeerTrustRegistry atGlobal = reg(global), atB = reg(regionB), atC = reg(regionC);
-        KeyPair node = TlsTestSupport.rsa();                                           // one key, joined to two regions
-        assertTrue(atB.bind("t1", "rgB", "b1", node.getPublic(), "discovery").ok);
-        assertTrue(atC.bind("t1", "rgC", "c9", node.getPublic(), "discovery").ok);
-        String k = fp(node.getPublic());
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
-        exchange(regionB, global);
-        exchange(regionB, global);
-        assertTrue(atGlobal.isRevokedFor(k, "rgC"));
-        exchange(regionC, global);
-        assertFalse(atC.isRevokedFor(k, "rgC"), "region rgC dropped its own node on region rgB's word");
-        assertNull(atGlobal.revoke(k, "operator"));                                    // the operator: that key, whatever it is bound to
-        exchange(regionC, global);
-        assertTrue(atC.isRevokedFor(k, "rgC"), "the operator's own revocation of the key did not reach region rgC");
-        assertTrue(atC.isTombstoned("rgC", "c9"));
-        // and it survives a restart of the global as the operator's word
-        atGlobal.awaitRevocations();
-        PeerTrustRegistry again = PeerTrustRegistry.open(fileOf(global), List.of(), List.of(), 30, m -> { });
-        List<PeerTrustRegistry.Revocation> all = again.revocationsAfter(0, 10, false);
-        assertEquals(1, all.size());
-        assertEquals(4, PeerTrustRegistry.ListEntry.of(all.get(0)).format().split("\\|", -1).length, "the entry is still marked as a region's word");
+        KeyPair b1 = agentOf(regionB, "b1");
+        s.check(reg(global).revoke("rgB/b1", "operator") == null, "the revocation by name was not applied at the global");
+        MsgEvent pong = exchange(regionB, global);                                     // asked; applied at the region
+        String id = requests(pong).get("rgB/b1");
+        s.check(id != null, "the region was not asked");
+        s.check(reg(regionB).isRevokedKey(fp(b1.getPublic())), "the region did not revoke the key");
+        // the global stops before the answer comes, and starts again: the same node (its key), its registry read from its files
+        reg(global).awaitRevocations();
+        String key = fp(leaf(global).getPublicKey());
+        PeerTrustRegistry.open(fileOf(global), List.of(), List.of(), 30, m -> { });
+        ControllerEngine restarted = node("rgG", "gc", true, gDir);
+        assertEquals(key, fp(leaf(restarted).getPublicKey()), "the restarted global is not the same node");
+        assertNotSame(reg(global), reg(restarted));
+        s.check(reg(restarted).isTombstoned("rgB", "b1"), "the reservation did not survive the restart");
+        s.check(outstanding(restarted, "rgB/b1"), "the restarted global does not hold the revocation as outstanding");
+        MsgEvent pong2 = exchange(regionB, restarted);                                 // (carries the region's answer, and is asked again)
+        s.check("OK".equals(health(restarted)[0]), "the answer to the request made before the restart was not taken: " + health(restarted)[1]);
+        MsgEvent pong3 = exchange(regionB, restarted);
+        s.check(requests(pong3).isEmpty(), "a settled request is sent after the restart");
+        s.check(id == null || requests(pong2).isEmpty() || id.equals(requests(pong2).get("rgB/b1")), "the request changed its id across the restart");
+        s.check(reg(restarted).revocations().isEmpty(), "the restarted global revoked a key on the region's word");
+        s.done();
+    }
+
+    /**
+     * The region's controller is re-installed with a new key while a request is open, and the operator rebinds it at the
+     * global: the request is answered by that controller, with its new key; an answer signed with the former key -- by
+     * whoever still holds it -- is not read.
+     */
+    @Test
+    void aControllerReKeyedWhileARequestIsOpenAnswersWithItsNewKey() throws Exception {
+        Steps s = new Steps();
+        Path bDir = Files.createTempDirectory("byname-rgB");
+        ControllerEngine global = node("rgG", "gc", true), former = node("rgB", "rc", false, bDir);
+        join(global, former);
+        KeyPair b1 = agentOf(former, "b1");
+        s.check(reg(global).revoke("rgB/b1", "operator") == null, "the revocation by name was not applied at the global");
+        // the request is on its way to the former key's controller ...
+        MsgEvent heldBack = ping(former);
+        RevocationSync.onChildPing(former, heldBack);
+        heldBack.setParam("cresco_caller", "controller:t1/rgB/rc");
+        RevocationSync.onPingAtParent(global, heldBack, true);
+        s.check(requests(heldBack).get("rgB/b1") != null, "the region was not asked");
+        // ... when the controller loses its identity and starts with a new key: the same name, its registry as it was (a copy:
+        // the former key's holder goes on below); the operator rebinds it at the global
+        reg(former).awaitRevocations();
+        Path copy = Files.createTempDirectory("byname-rgB-rekeyed");
+        Files.createDirectories(copy.resolve("security"));
+        try (var files = Files.list(bDir.resolve("security"))) {
+            for (Path f : (Iterable<Path>) files::iterator) {
+                String n = f.getFileName().toString();
+                if (Files.isRegularFile(f) && !n.startsWith("node-identity") && !n.endsWith(".lock")) Files.copy(f, copy.resolve("security").resolve(n));
+            }
+        }
+        ControllerEngine reKeyed = node("rgB", "rc", false, copy);
+        String newKey = fp(leaf(reKeyed).getPublicKey());
+        assertNotEquals(fp(leaf(former).getPublicKey()), newKey, "the controller was not re-keyed");
+        assertFalse(reg(reKeyed).isSealed(), reg(reKeyed).sealReason());
+        assertFalse(reg(reKeyed).bind("t1", "rgB", "b1", TlsTestSupport.rsa().getPublic(), "discovery").ok, "the re-keyed controller lost its bindings");
+        assertNotNull(reg(global).pin("rgB", "rc", leaf(reKeyed), PeerTrustRegistry.ROLE_CONTROLLER, false), "a re-keyed controller was bound without a rebind");
+        Files.writeString(Path.of(fileOf(global) + ".rebind"), "rgB/rc=" + newKey + "\n");
+        assertNull(reg(global).pin("rgB", "rc", leaf(reKeyed), PeerTrustRegistry.ROLE_CONTROLLER, false));
+        assertNull(reg(reKeyed).pin("rgG", "gc", leaf(global), PeerTrustRegistry.ROLE_CONTROLLER, true));
+        // the former key's holder takes the request and answers it: signed with a key that is no longer rgB/rc's at the global
+        RevocationSync.onParentPong(former, heldBack, "rgG", "gc");
+        reg(former).awaitRevocations();
+        MsgEvent late = ping(former);
+        RevocationSync.onChildPing(former, late);
+        s.check(late.getParam("rev_name_report") != null, "(the former key's holder made no answer: the next step shows nothing)");
+        late.setParam("cresco_caller", "controller:t1/rgB/rc");
+        RevocationSync.onPingAtParent(global, late, true);
+        reg(global).awaitRevocations();
+        s.check(outstanding(global, "rgB/b1"), "an answer signed with the controller's former key settled the request");
+        // the re-keyed controller is asked and answers
+        s.check(requests(exchange(reKeyed, global)).get("rgB/b1") != null, "the re-keyed controller was not asked");
+        exchange(reKeyed, global);
+        s.check(reg(reKeyed).isRevokedKey(fp(b1.getPublic())) && reg(reKeyed).isTombstoned("rgB", "b1"), "the re-keyed controller did not apply the request");
+        s.check("OK".equals(health(global)[0]), "the re-keyed controller's answer did not settle the request: " + health(global)[1]);
+        s.done();
     }
 
     // ------------------------------------------------------------------ rebind
 
     /**
      * The operator rebinds the name where it was revoked -- the existing token line in the global's rebind file: the
-     * global lifts its reservation, the region accepts exactly that key for the name, once, and the revoked key stays
-     * revoked everywhere.
+     * global lifts its reservation, the region accepts exactly that key for the name, once, and the key the region revoked
+     * stays revoked there.
      */
     @Test
     void anOperatorRebindAtTheGlobalLiftsTheNameThereAndAtItsRegion() throws Exception {
+        Steps s = new Steps();
         ControllerEngine global = node("rgG", "gc", true), regionB = node("rgB", "rc", false);
         join(global, regionB);
         PeerTrustRegistry atGlobal = reg(global), atB = reg(regionB);
-        KeyPair b1 = TlsTestSupport.rsa(), fresh = TlsTestSupport.rsa(), thief = TlsTestSupport.rsa();
-        assertTrue(atB.bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);
+        KeyPair b1 = agentOf(regionB, "b1"), fresh = TlsTestSupport.rsa(), thief = TlsTestSupport.rsa();
         String k = fp(b1.getPublic());
-        assertNull(atGlobal.revoke("rgB/b1", "operator"));
+        s.check(atGlobal.revoke("rgB/b1", "operator") == null, "the revocation by name was not applied at the global");
         exchange(regionB, global);
         exchange(regionB, global);
-        assertTrue(atGlobal.isRevokedFor(k, "rgB") && atB.isTombstoned("rgB", "b1") && atGlobal.isTombstoned("rgB", "b1"));
-        assertFalse(atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok, "the reserved name was bound without a rebind");
+        s.check(atB.isRevokedFor(k, "rgB") && atB.isTombstoned("rgB", "b1") && atGlobal.isTombstoned("rgB", "b1"), "the name was not revoked at its region and reserved at both");
+        s.check(!atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok, "the reserved name was bound without a rebind");
 
         Files.writeString(Path.of(fileOf(global) + ".rebind"), "rgB/b1=" + fp(fresh.getPublic()) + "\n");
         long until = System.currentTimeMillis() + 25_000;                              // the operator files are read every 10 s
         while (atGlobal.isTombstoned("rgB", "b1") && System.currentTimeMillis() < until) Thread.sleep(200);
-        assertFalse(atGlobal.isTombstoned("rgB", "b1"), "the operator rebind did not lift the name at the global");
-        assertNull(atGlobal.nameRefusal("rgB", "b1"));
+        s.check(!atGlobal.isTombstoned("rgB", "b1") && atGlobal.nameRefusal("rgB", "b1") == null, "the operator rebind did not lift the name at the global");
 
         MsgEvent pong = exchange(regionB, global);
-        assertNotNull(requests(pong).get("rgB/b1"), "the rebind was not sent to the name's region");
-        assertFalse(atB.bind("t1", "rgB", "b1", thief.getPublic(), "discovery").ok, "the rebind let ANOTHER key take the name");
-        assertTrue(atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok, "the key the operator named was refused at the region");
-        assertFalse(atB.isTombstoned("rgB", "b1"));
-        assertTrue(atB.isRevokedFor(k, "rgB") && atGlobal.isRevokedFor(k, "rgB"), "the revoked key did not stay revoked");
-        assertFalse(atB.bind("t1", "rgB", "b9", b1.getPublic(), "discovery").ok);
+        s.check(requests(pong).get("rgB/b1") != null, "the rebind was not sent to the name's region");
+        s.check(!atB.bind("t1", "rgB", "b1", thief.getPublic(), "discovery").ok, "the rebind let ANOTHER key take the name");
+        s.check(atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok, "the key the operator named was refused at the region");
+        s.check(!atB.isTombstoned("rgB", "b1"), "the name is still reserved at the region");
+        s.check(atB.isRevokedFor(k, "rgB") && !atB.bind("t1", "rgB", "b9", b1.getPublic(), "discovery").ok, "the revoked key did not stay revoked at its region");
 
         exchange(regionB, global);                                                     // the region confirms
-        assertTrue(requests(exchange(regionB, global)).isEmpty(), "a confirmed rebind is still sent");
-        // the old request, delivered again (its answer lost, or replayed), does not revoke the key the name was rebound to
+        s.check(requests(exchange(regionB, global)).isEmpty(), "a confirmed rebind is still sent");
+        s.check(!atB.isRevokedKey(fp(fresh.getPublic())) && atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok, "the rebound key was revoked");
+        s.done();
+    }
+
+    // ------------------------------------------------------------------ pre-provisioned identities, on the wire
+
+    private static ControllerEngine provisioned(PkiTestSupport.Node n, Path anchors, String region, String agent, boolean regional, boolean global) throws Exception {
+        Path dir = Files.createTempDirectory("byname-pki-" + agent);
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("tenant_id", "t1");
+        cfg.put("broker_security_enabled", "true");
+        cfg.put("identity_keystore", n.keystore.toString());
+        cfg.put("identity_keystore_password_file", n.password.toString());
+        cfg.put("trust_anchors", anchors.toString());
+        cfg.put("identity_keystore_reload_seconds", "3600");
+        cfg.put("node_identity_dir", Files.createDirectories(dir.resolve("security")).toString());
+        cfg.put("public_key_directory", dir.resolve("public-keys").toString());
+        if (global) cfg.put("is_global", "true");
+        PluginBuilder pb = TestAgentService.plugin(dir.toString(), cfg, m -> { }, region, agent);
+        ControllerEngine e = new ControllerEngine(null, pb, null, null);
+        TlsTestSupport.State st = TlsTestSupport.state(pb, region, agent);
+        st.regional = regional;
+        st.global = global;
+        if (regional && !global) { st.globalRegion = "rgG"; st.globalAgent = "gc"; }
+        e.cstate = st;
+        e.setCertificateManager(new CertificateManager(e));
+        assertTrue(e.getCertificateManager().isProvisioned());
+        return e;
+    }
+
+    /**
+     * Pre-provisioned (the production profile): the global never verified the agent's certificate, so it holds no key for
+     * the name either. It asks the region's controller, which verified it: that controller revokes the key of the
+     * certificate it saw for the name, refuses the name, and reports the key; the global revokes nothing on its word.
+     */
+    @Test
+    void preProvisionedTheGlobalAsksTheRegionThatVerifiedTheCertificate() throws Exception {
+        Steps s = new Steps();
+        TlsTestSupport.provider();
+        long now = System.currentTimeMillis();
+        PkiTestSupport.Ca root = PkiTestSupport.root("By Name Root");
+        Path pki = Files.createTempDirectory("byname-pki");
+        Path anchors = PkiTestSupport.pem(pki.resolve("trust-anchors.pem"), root.cert);
+        PkiTestSupport.Node gN = PkiTestSupport.write(PkiTestSupport.global(root, "t1", "rgG", "gc", now - 60_000, 10 * DAY), pki.resolve("g"));
+        PkiTestSupport.Node rN = PkiTestSupport.write(PkiTestSupport.node(root, "t1", "rgB", "rc", true, now - 60_000, 10 * DAY), pki.resolve("rc"));
+        PkiTestSupport.Node b1 = PkiTestSupport.node(root, "t1", "rgB", "b1", false, now - 60_000, 10 * DAY);
+        ControllerEngine global = provisioned(gN, anchors, "rgG", "gc", true, true), regionB = provisioned(rN, anchors, "rgB", "rc", true, false);
+        PeerTrustRegistry atGlobal = reg(global), atB = reg(regionB);
+        // what a join leaves: each verified the other's certificate, and the global recorded the region's controller
+        assertNotNull(atGlobal.verifiedIdentity(regionB.getCertificateManager().getPublicCertificate()));
+        assertNotNull(atB.verifiedIdentity(global.getCertificateManager().getPublicCertificate()));
+        assertNull(atGlobal.allowBridgePeer("t1", "rgB", "rc"));
+        assertNotNull(atB.verifiedIdentity(b1.chain), "precondition: the region verifies its agent's certificate");
+        Thread.sleep(40);
+        String k = fp(b1.kp.getPublic());
+
+        s.check(atGlobal.revoke("rgB/b1", "operator") == null, "the revocation by name was not applied at the global");
+        s.check(atGlobal.verifiedIdentity(b1.chain) == null, "the global still verifies the revoked name's certificate");
+        s.check(outstanding(global, "rgB/b1"), "the global does not say the revocation is outstanding");
+        s.check(requests(exchange(regionB, global)).get("rgB/b1") != null, "the region's controller was not asked");
+        s.check(atB.isRevokedFor(k, "rgB") && atB.verifiedIdentity(b1.chain) == null, "the region still verifies the revoked certificate");
+        s.check(atB.isTombstoned("rgB", "b1"), "the region did not reserve the name");
         exchange(regionB, global);
-        assertFalse(atB.isRevokedKey(fp(fresh.getPublic())));
-        assertTrue(atB.bind("t1", "rgB", "b1", fresh.getPublic(), "discovery").ok);
+        s.check("OK".equals(health(global)[0]), "the request is not settled: " + health(global)[1]);
+        s.check(atGlobal.revocations().isEmpty(), "the global revoked a key on a region's word: " + atGlobal.revocations());
+        s.done();
     }
 }
