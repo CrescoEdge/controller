@@ -16,6 +16,10 @@ lines stamped inside the step). An agent that logs at INFO (gate.sh SCALE_TRACE_
 Times are seconds from the step's start (steps.txt: when gate.sh released the step; else its first JVM start). A JSON
 list (one object per step) on stdout, a table on stderr; with --rate also the joins each controller completed per 5 s
 against those already joined.
+
+joinstages.py <rundir>/logs <agents> --since <epoch seconds> --controller rc|gc: a controller was restarted at that
+time (gate.sh SCALE_RESTART); one JSON object: how many of its agents are back (their first health answer after it),
+how long after the stop and after the controller's first answer, the discoveries that went unanswered meanwhile.
 """
 import datetime
 import json
@@ -44,7 +48,50 @@ def pct(xs, p):
     return None if not xs else round(xs[min(len(xs) - 1, int(p * len(xs)))], 1)
 
 
+def rejoin(d, since, controller):
+    """A controller was restarted at `since`: when its agents were back, from its log and theirs, as one JSON object."""
+    first = {}  # stage -> {agent: time}
+    for l in open(os.path.join(d, controller + ".log"), errors="replace"):
+        m = LOG4J.match(l)
+        if not m or t4j(m) < since:
+            continue
+        for key, rx in (("auth", AUTH), ("tls", TLS), ("ok", OK)):
+            x = rx.search(l)
+            if x:
+                first.setdefault(key, {}).setdefault(x.group(2), t4j(m))
+    mine = set(first.get("auth", {})) | set(first.get("ok", {}))
+    unanswered = errors = agents_unanswered = 0
+    for n in mine:
+        u = 0
+        try:
+            for l in open(os.path.join(d, n + ".log"), errors="replace"):
+                m = LOG4J.match(l)
+                if not m or t4j(m) < since:
+                    continue
+                errors += m.group(3) == "ERROR"
+                u += bool(UNANSWERED.search(l))
+        except OSError:
+            pass
+        unanswered += u
+        agents_unanswered += u > 0
+    ok = sorted(first.get("ok", {}).values())
+    auth = sorted(first.get("auth", {}).values())
+    up = auth[0] if auth else None
+
+    def span(xs, base):
+        return None if not xs or base is None else {"p50": pct([x - base for x in xs], 0.5), "p90": pct([x - base for x in xs], 0.9),
+                                                    "max": round(xs[-1] - base, 1)}
+    print(json.dumps({"controller": controller, "back": len(ok), "authenticated": len(auth),
+                      "first_answer_after_s": None if up is None else round(up - since, 1),
+                      "back_after_stop_s": span(ok, since), "back_after_first_answer_s": span(ok, up),
+                      "authenticated_after_first_answer_s": span(auth, up),
+                      "agents_unanswered": agents_unanswered, "unanswered_lines": unanswered, "agent_error_lines": errors}))
+
+
 def main():
+    if "--since" in sys.argv:
+        rejoin(sys.argv[1], float(sys.argv[sys.argv.index("--since") + 1]), sys.argv[sys.argv.index("--controller") + 1])
+        return
     d, steps = sys.argv[1], [int(x) for x in sys.argv[2].split()]
     a = {}  # name -> stages
     for f in os.listdir(d):

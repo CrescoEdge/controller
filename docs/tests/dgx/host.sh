@@ -7,7 +7,9 @@
 #
 # run: every spec file <rundir>/spawn/<host>.<n> (lines "name|region|xmx|flags") is started once, in order, each JVM in a
 # node-local directory (/tmp, removed at the end), its output in <rundir>/logs/<name>.log; secrets come from
-# <rundir>/secrets (environment, as an operator's service would set them). <rundir>/stop (or stop.<host>) stops this
+# <rundir>/secrets (environment, as an operator's service would set them). <rundir>/restart/<host>.<name> (made by
+# gate.sh) stops the JVM <name> of this host and starts it again from its spec, in its own directory (its data is kept,
+# its log goes on), as an operator restarts a node. <rundir>/stop (or stop.<host>) stops this
 # host's JVMs (TERM, then KILL) and exits. Only this host's own JVMs are ever signalled (their PIDs are in <rundir>/pids/<host>).
 set -uo pipefail
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -29,6 +31,8 @@ run)
     local d="$LOCAL/$1" f="$4"; mkdir -p "$d"
     if [ -d "$LOCAL/pki" ]; then f="${f//"$RD/pki/"/$LOCAL/pki/}"; f="${f//"$RD/codesign.pem"/$LOCAL/codesign.pem}"; fi
     (
+      # a restarted JVM's log goes on after what it wrote before
+      if [ -n "${APPEND_LOG:-}" ]; then exec >> "$RD/logs/$1.log" 2>&1; else exec > "$RD/logs/$1.log" 2>&1; fi
       cd "$d" || exit 1
       if [ -f "$RD/secrets/sk" ]; then
         export CRESCO_cresco_service_key="$(cat "$RD/secrets/sk")" CRESCO_discovery_secret_global="$(cat "$RD/secrets/dg")" \
@@ -40,7 +44,7 @@ run)
       # shellcheck disable=SC2086
       exec $pre "$J" -Djava.net.preferIPv4Stack=true -Xmx"$3" -Denable_console=false -Denable_dashboard=false \
         -Dregionname="$2" -Dagentname="$1" $f -jar "$JAR"
-    ) > "$RD/logs/$1.log" 2>&1 < /dev/null &
+    ) < /dev/null &
     echo "$1 $!" >> "$RD/pids/$H"
   }
   while [ ! -f "$RD/stop" ] && [ ! -f "$RD/stop.$H" ]; do
@@ -52,6 +56,18 @@ run)
       while IFS='|' read -r name region xmx flags; do
         [ -n "$name" ] && launch "$name" "$region" "$xmx" "$flags"
       done < "$f"
+    done
+    for r in "$RD"/restart/"$H".*; do
+      [ -f "$r" ] || continue
+      case "$r" in *.done) continue ;; esac
+      n="${r##*.}"; rm -f "$r"
+      p=$(awk -v n="$n" '$1==n {p=$2} END {print p}' "$RD/pids/$H")
+      [ -n "$p" ] && kill "$p" 2>/dev/null
+      for _ in $(seq 1 30); do kill -0 "$p" 2>/dev/null || break; sleep 1; done
+      kill -9 "$p" 2>/dev/null
+      spec=$(cat "$RD"/spawn/"$H".* 2>/dev/null | awk -F'|' -v n="$n" '$1==n' | tail -1)
+      IFS='|' read -r name region xmx flags <<< "$spec"
+      [ -n "$name" ] && { APPEND_LOG=1 launch "$name" "$region" "$xmx" "$flags"; touch "$RD/restart/$H.$n.done"; }
     done
     sleep 1
   done
@@ -66,7 +82,7 @@ run)
   ;;
 stats)
   name="$3"; p=""
-  for f in "$RD"/pids/*; do p=$(awk -v n="$name" '$1==n {print $2}' "$f"); [ -n "$p" ] && break; done
+  for f in "$RD"/pids/*; do p=$(awk -v n="$name" '$1==n {p=$2} END {print p}' "$f"); [ -n "$p" ] && break; done
   [ -n "$p" ] && kill -0 "$p" 2>/dev/null || { echo "{\"name\": \"$name\", \"error\": \"not running\"}"; exit 0; }
   tck=$(getconf CLK_TCK)
   cpu=$(awk -v t="$tck" '{printf "%.2f", ($14+$15)/t}' "/proc/$p/stat")
@@ -77,7 +93,7 @@ stats)
 jfr)
   # host.sh jfr <rundir> <name> start | dump <file>: a JFR recording (profile settings) of a JVM running on this host
   name="$3"; p=""
-  for f in "$RD"/pids/*; do p=$(awk -v n="$name" '$1==n {print $2}' "$f"); [ -n "$p" ] && break; done
+  for f in "$RD"/pids/*; do p=$(awk -v n="$name" '$1==n {p=$2} END {print p}' "$f"); [ -n "$p" ] && break; done
   [ -n "$p" ] && kill -0 "$p" 2>/dev/null || { echo "jfr: $name is not running"; exit 1; }
   case "$4" in
   start) "$(dirname "$J")/jcmd" "$p" JFR.start name=gate settings=profile ;;

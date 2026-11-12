@@ -42,6 +42,10 @@
 #   cpus with the agents that start there. To measure the controllers' part instead: LIGHT_JVM="-XX:+UseSerialGC" (the
 #   JVM's normal compilers) and GATE_LIGHT_NICE=<n> (light agents run at that niceness, so a controller on the same
 #   host is not starved by them). Both builds of a run get the same.
+#   SCALE_RESTART=rc (or gc): after the last step that controller is stopped and started again in place (its data
+#   kept), and the result says how long until its agents were back (restart: seconds from the stop and from its first
+#   answer to the last agent's first health answer, the discoveries that went unanswered, the ERROR lines). The agents
+#   are up and hold their identities: this is a storm of joins alone.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -282,6 +286,25 @@ EOF
     prev=$step
   done
   put scale "$sc}"
+
+  # ---- 3b. a controller is restarted under its agents (SCALE_RESTART=rc or gc): how long until they are back.
+  # Its agents are up and hold their identities, so this is a storm of joins alone: no JVM starts, no key is made.
+  if [ -n "$steps_run" ] && [ -n "${SCALE_RESTART:-}" ]; then
+    local rn="$SCALE_RESTART" rh=$H2 expect=$(( prev / 2 )) rt0 rs=null back=0
+    [ "$rn" = gc ] && rh=$H1
+    mkdir -p "$RD/restart"
+    rt0=$(date +%s.%N); echo "restart $rt0" >> "$RD/steps.txt"
+    touch "$RD/restart/$rh.$rn"
+    for _ in $(seq 1 200); do
+      rs=$("$PY" "$HERE/joinstages.py" "$RD/logs" "$prev" --since "$rt0" --controller "$rn" 2>/dev/null)
+      back=$(echo "$rs" | jq_ 'd.get("back", 0)' 2>/dev/null || echo 0)
+      [ "${back:-0}" -ge "$expect" ] && break
+      sleep 3
+    done
+    sleep 20      # what the agents log after the last of them is back
+    rs=$("$PY" "$HERE/joinstages.py" "$RD/logs" "$prev" --since "$rt0" --controller "$rn" 2>/dev/null)
+    put restart "${rs:-null}"; log "$B: restart of $rn under $expect agents: $rs"
+  fi
   if [ -n "$steps_run" ]; then
     put join_stages "$("$PY" "$HERE/joinstages.py" "$RD/logs" "$steps_run" --rate --steps-file "$RD/steps.txt" 2> "$OUT/$B-joinstages.txt")"
     cat "$OUT/$B-joinstages.txt"
