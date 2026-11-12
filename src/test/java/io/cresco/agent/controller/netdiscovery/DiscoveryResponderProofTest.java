@@ -29,6 +29,7 @@ class DiscoveryResponderProofTest {
         m.put("broker_security_enabled", "true");
         m.put("msg_signing_sessions", "false");
         m.put("tenant_id", "t1");
+        m.put("discovery_proof_grace_days", "0");      // (the grace after a first proof has its own tests: DiscoveryProofGraceTest)
         ControllerEngine e = TlsTestSupport.engine(region, agent, m);
         TlsTestSupport.State st = (TlsTestSupport.State) e.cstate;
         st.regional = controller;

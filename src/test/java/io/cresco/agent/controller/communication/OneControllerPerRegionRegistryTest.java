@@ -84,8 +84,10 @@ class OneControllerPerRegionRegistryTest {
         for (boolean window : new boolean[]{false, true}) {
             assertFalse(join(r, "t1", "rgB", "rc", fresh, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.window = window).ok,
                     "another key for a recorded name was taken without proof (window " + window + "), on the operator's rebind line");
-            assertFalse(join(r, "t1", "rgB", "agent-9", old, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.window = window).ok,
-                    "a second name of a recorded key was taken without proof (window " + window + ")");
+            // (another agent name of this unproved key: refused outside the window; IN the window it replaces the former name --
+            // a controller of release 1.3.378 with a generated agent name: OneControllerSecondReviewTest)
+            if (!window) assertFalse(join(r, "t1", "rgB", "agent-9", old, PeerTrustRegistry.ROLE_CONTROLLER, false, null).ok,
+                    "a second name of a recorded key was taken without proof, outside the window");
             assertFalse(join(r, "t1", "rgB", "zz", fresh, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.window = window).ok,
                     "a replacement controller was taken without proof (window " + window + ")");
         }
@@ -96,11 +98,13 @@ class OneControllerPerRegionRegistryTest {
         assertTrue(controller(r, "rgB", "rc", old, true).ok);
         assertTrue(r.provedKey("rgB", "rc"));
         PeerTrustRegistry.BindResult back = controller(r, "rgB", "rc", old, false);
-        assertFalse(back.ok, "a name and key that proved itself was accepted without proof afterwards");
+        assertFalse(back.ok, "a name and key that proved itself was accepted without proof afterwards (no grace given)");
         assertTrue(back.reason.contains("PROVED its key to this node before") && back.reason.contains("discovery_auth=compat"), back.reason);
-        // ... except in the window (a node put back on the earlier release), said loudly
-        assertTrue(join(r, "t1", "rgB", "rc", old, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.window = true).ok);
-        assertTrue(log.stream().anyMatch(l -> l.contains("UPGRADE WINDOW") && l.contains("sent NO proof now")), log.toString());
+        // ... except in the window (a node put back on the earlier release): taken as recorded, nothing changed, and said
+        PeerTrustRegistry.BindResult inWindow = join(r, "t1", "rgB", "rc", old, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.window = true);
+        assertTrue(inWindow.ok && inWindow.unchanged);
+        assertTrue(inWindow.warn != null && inWindow.warn.contains("proved its key before and sent no proof now")
+                && inWindow.warn.contains("the upgrade window is open"), inWindow.warn);
         // what was learned is durable, and an agent's first join follows the same rule
         PeerTrustRegistry again = open(f, new CopyOnWriteArrayList<>());
         assertTrue(again.provedKey("rgB", "rc"));
@@ -148,6 +152,54 @@ class OneControllerPerRegionRegistryTest {
         r = open(file(), new CopyOnWriteArrayList<>());
         assertTrue(r.bind("t1", "rgW", "x", v.getPublic(), "discovery", PeerTrustRegistry.ROLE_CONTROLLER, false).ok);
         assertFalse(controller(r, "rgV", "rc", v, true).ok, "a key recorded by an earlier release as one region's controller was taken as another's");
+    }
+
+    /**
+     * A name and key that proved itself must prove itself again -- after a grace that starts at its FIRST proof here: within it
+     * a re-join of exactly that name and key without proof (a node put back on an earlier release) is taken as that release
+     * would take it, said once per ten minutes, and NOTHING recorded changes by it. After it: refused.
+     */
+    @Test
+    void forAGraceAfterItsFirstProofARecordedPairIsStillTakenWithoutProofAndNothingChanges() throws Exception {
+        Path f = file();
+        PeerTrustRegistry r = open(f, new CopyOnWriteArrayList<>());
+        KeyPair k = TlsTestSupport.rsa();
+        long week = 7L * 86_400_000L;
+        assertTrue(join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, true, j -> j.graceMs = week).ok);
+        X509Certificate[] kept = r.recordedChain("rgB/rc");
+        String before = Files.readString(f);
+        PeerTrustRegistry.BindResult back = join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.graceMs = week);
+        assertTrue(back.ok, "a node put back on the earlier release within the grace was refused: " + back.reason);
+        assertTrue(back.unchanged, "(the caller is told that nothing may change)");
+        assertTrue(back.warn != null && back.warn.contains("rgB/rc proved its key before and sent no proof now: rolled back to an earlier release,"
+                + " or a holder of the secret answers in its name") && back.warn.contains("discovery_proof_grace_days"), back.warn);
+        PeerTrustRegistry.BindResult again = join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.graceMs = week);
+        assertTrue(again.ok && again.unchanged && again.warn == null, "said again within ten minutes");
+        assertEquals(List.of("rgB/rc"), r.unprovedRejoins(), "the health check is not told");
+        // nothing recorded changed: not a record, not the kept chain, not the marks; and it cannot be more than it was
+        assertEquals(before, Files.readString(f), "a re-join without proof wrote to the registry");
+        assertArrayEquals(kept, r.recordedChain("rgB/rc"));
+        assertTrue(r.provedKey("rgB", "rc"));
+        Consumer<PeerTrustRegistry.Join> grace = j -> j.graceMs = week;
+        assertFalse(join(r, "t2", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, grace).ok, "another tenant, without proof");
+        assertFalse(join(r, "t1", "rgB", "rc2", k, PeerTrustRegistry.ROLE_CONTROLLER, false, grace).ok, "another name, without proof");
+        assertFalse(join(r, "t1", "rgB", "rc", TlsTestSupport.rsa(), PeerTrustRegistry.ROLE_CONTROLLER, false, grace).ok, "another key, without proof");
+        assertFalse(join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> { j.graceMs = week; j.client = true; j.global = true; }).unchanged
+                && r.globalRecorded() != null, "a re-join without proof made it this node's global");
+        assertNull(r.globalRecorded());
+        assertEquals(before, Files.readString(f));
+        // the grace counts from the FIRST proof, also across a restart, and a later proof does not start it again
+        r = open(f, new CopyOnWriteArrayList<>());
+        assertTrue(join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, grace).ok);
+        Thread.sleep(30);
+        assertTrue(join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, true, j -> j.graceMs = 20).ok);
+        PeerTrustRegistry.BindResult late = join(r, "t1", "rgB", "rc", k, PeerTrustRegistry.ROLE_CONTROLLER, false, j -> j.graceMs = 20);
+        assertFalse(late.ok, "after the grace a proved pair was still taken without proof");
+        assertTrue(late.reason.contains("PROVED its key to this node before") && late.reason.contains("refused"), late.reason);
+        // 0: at once
+        KeyPair k2 = TlsTestSupport.rsa();
+        assertTrue(join(r, "t1", "rgC", "rc", k2, PeerTrustRegistry.ROLE_CONTROLLER, true, null).ok);
+        assertFalse(join(r, "t1", "rgC", "rc", k2, PeerTrustRegistry.ROLE_CONTROLLER, false, null).ok);
     }
 
     /** The same key under another agent name: with proof the new name REPLACES the former one; never two names of one key. */
@@ -361,30 +413,45 @@ class OneControllerPerRegionRegistryTest {
 
     /**
      * In the upgrade window a region's first GLOBAL exchange may be answered without proof -- by its real global of release
-     * 1.3.378, or by anyone with the secret and a copy of some controller's certificate. The global recorded that way is
-     * confirmed when it proves its key in a GLOBAL exchange; a proof the key's holder makes in ANOTHER kind of exchange (it is
-     * a peer region's controller) does not make it this node's global.
+     * 1.3.378, or by anyone with the secret and a copy of some controller's certificate. The global recorded that way holds
+     * the place UNCONFIRMED: no other identity becomes this node's global, whatever it proves, and the place is confirmed
+     * only by THAT identity's proof in a GLOBAL exchange -- not by a proof it makes in another kind of exchange -- or
+     * settled by the operator.
      */
     @Test
-    void aGlobalRecordedWithoutProofIsConfirmedOnlyByAProofInAGlobalExchange() throws Exception {
+    void aGlobalRecordedWithoutProofHoldsThePlaceUnconfirmedUntilItProvesItsKeyAsTheGlobal() throws Exception {
         Consumer<PeerTrustRegistry.Join> firstGlobal = j -> { j.client = true; j.global = true; j.window = true; };
         Consumer<PeerTrustRegistry.Join> asGlobal = j -> { j.client = true; j.global = true; };
         KeyPair v = TlsTestSupport.rsa(), g = TlsTestSupport.rsa();
-        PeerTrustRegistry r = open(file(), new CopyOnWriteArrayList<>());
+        Path f = file();
+        List<String> log = new CopyOnWriteArrayList<>();
+        PeerTrustRegistry r = open(f, log);
         assertTrue(join(r, "t1", "rgV", "rc", v, PeerTrustRegistry.ROLE_CONTROLLER, false, firstGlobal).ok);
         assertEquals("rgV/rc", r.globalRecorded());
-        // the key's holder turns out to be a peer region's controller: it joins this node in a REGION exchange, with proof
+        assertTrue(r.globalUnconfirmed());
+        assertTrue(log.stream().anyMatch(l -> l.contains("rgV/rc") && l.contains("GLOBAL") && l.contains("UNCONFIRMED")), log.toString());
+        // the key's holder proves it in a REGION exchange (it is a peer region's controller, or the global peering first)
         assertTrue(controller(r, "rgV", "rc", v, true).ok);
         assertTrue(r.provedKey("rgV", "rc"));
-        assertNull(r.globalRecorded(), "a global recorded without proof was confirmed by a proof made in another kind of exchange");
-        assertTrue(join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal).ok, "the real global was kept out");
+        assertEquals("rgV/rc", r.globalRecorded(), "the node was left without a global: the next responder with any proven key would be it");
+        assertTrue(r.globalUnconfirmed(), "a proof made in another kind of exchange confirmed the global");
+        PeerTrustRegistry.BindResult other = join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal);
+        assertFalse(other.ok, "another responder was taken as the global while the place is held");
+        assertTrue(other.reason.contains("not confirmed yet") && other.reason.contains("'rgG/gc=" + fp(g.getPublic()) + "'"), other.reason);
+        // it holds across a restart; the operator settles it with the line the refusal prints
+        r = open(f, new CopyOnWriteArrayList<>());
+        assertTrue(r.globalUnconfirmed());
+        Files.writeString(Path.of(f + ".rebind"), "rgG/gc=" + fp(g.getPublic()) + "\n");
+        assertTrue(join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal).ok);
         assertEquals("rgG/gc", r.globalRecorded());
+        assertFalse(r.globalUnconfirmed());
         // the usual case: the global of release 1.3.378, recorded in the window, is upgraded and proves its key as the global
         r = open(file(), new CopyOnWriteArrayList<>());
         assertTrue(join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, false, firstGlobal).ok);
+        assertTrue(r.globalUnconfirmed());
         assertTrue(join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal).ok);
         assertEquals("rgG/gc", r.globalRecorded());
-        assertTrue(r.provedKey("rgG", "gc"));
+        assertFalse(r.globalUnconfirmed());
         assertFalse(join(r, "t1", "rgV", "rc", v, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal).ok);
     }
 
@@ -403,9 +470,9 @@ class OneControllerPerRegionRegistryTest {
         PeerTrustRegistry.BindResult no = join(r, "t1", "rgH", "zz", z, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal);
         assertFalse(no.ok);
         assertTrue(no.reason.contains("written by an earlier release") && no.reason.contains("'rgH/zz=" + fp(z.getPublic()) + "'"), no.reason);
-        // a peer that has joined under this release (it proved its key in a REGION exchange) is known not to be "one of them"
+        // (a controller that release recorded stays a candidate when it proves its key in another kind of exchange -- the real
+        // global may peer first: OneControllerSecondReviewTest -- so the peer here is one until the global is marked)
         assertTrue(join(r, "t1", "rgP", "rc", p, PeerTrustRegistry.ROLE_CONTROLLER, true, null).ok);
-        assertFalse(join(r, "t1", "rgP", "rc", p, PeerTrustRegistry.ROLE_CONTROLLER, true, asGlobal).ok, "a controller that joined as a peer was taken as the global");
         // its global, still on the earlier release (no proof): accepted as recorded, each time, and not marked
         assertTrue(join(r, "t1", "rgG", "gc", g, PeerTrustRegistry.ROLE_CONTROLLER, false, asGlobal).ok);
         assertNull(r.globalRecorded());

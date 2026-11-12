@@ -146,6 +146,46 @@ public final class DiscoveryAuth {
         return id == null || id.getTenant() == null ? "" : id.getTenant();
     }
 
+    /**
+     * The signature algorithm of a proof of possession: FIXED per key type, like the key derivation -- never the node's crypto
+     * policy ({@code crypto_allow_sig}), which a joiner does not hold yet and two nodes need not share: both sides must sign
+     * and verify alike before anything else is agreed. RSA: SHA384withRSA; EC: SHA384withECDSA (FIPS 186, CNSA 1.0). Another
+     * key type has none (null): its holder cannot prove it in this exchange, and is told so by name.
+     */
+    public static String proofAlgorithm(String keyType) {
+        if ("RSA".equalsIgnoreCase(keyType)) return "SHA384withRSA";
+        if ("EC".equalsIgnoreCase(keyType) || "ECDSA".equalsIgnoreCase(keyType)) return "SHA384withECDSA";
+        return null;
+    }
+
+    /** A proof of possession: {@code key}'s signature over {@link #authBytes} with {@link #proofAlgorithm}, base64; null for a key type that has none. */
+    static String proofSign(java.security.PrivateKey key, String label, byte[] transcript, String... extra) {
+        String alg = key == null ? null : proofAlgorithm(key.getAlgorithm());
+        if (alg == null) return null;
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(alg);
+            s.initSign(key);
+            s.update(authBytes(label, transcript, extra));
+            return Base64.getEncoder().encodeToString(s.sign());
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot sign the discovery exchange: " + e.getMessage(), e);
+        }
+    }
+
+    /** Does {@code sigB64} verify under {@code key} as a proof of possession ({@link #proofAlgorithm})? */
+    static boolean proofVerify(java.security.PublicKey key, String sigB64, String label, byte[] transcript, String... extra) {
+        String alg = key == null || sigB64 == null ? null : proofAlgorithm(key.getAlgorithm());
+        if (alg == null) return false;
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(alg);
+            s.initVerify(key);
+            s.update(authBytes(label, transcript, extra));
+            return s.verify(Base64.getDecoder().decode(sigB64));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** What a proof of possession signs (see above); each field length-prefixed. */
     static byte[] possessionTranscript(Msg hello, Msg challenge, X509Certificate cleaf, X509Certificate sleaf) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();

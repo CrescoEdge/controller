@@ -344,6 +344,8 @@ public class DiscoveryProcessor {
 		}
 		// per-node trust: bind the responder's key first (it can be refused); only then trust its chain for TLS
 		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, true, true, true, discoveryNode.discovered_rebind)) return false;
+		// (taken without proof although it proved its key before: the certificates this node holds for it stay as they are)
+		if (discoveryNode.unchanged) return true;
 		return setCertTrust(discoveryNode.getDiscoveredPath(), discoveryNode.discovered_cert);
 	}
 
@@ -437,17 +439,26 @@ public class DiscoveryProcessor {
 					return false;
 				}
 			}
-			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
-				// per-node trust: everything this exchange may record of the peer is decided, and recorded, by ONE call under the
-				// registry's lock (PeerTrustRegistry.join): the name's own rules, the proof of possession, one controller per
-				// region, one global above this node. With record=false only the checks run.
+			DiscoveryNode at = JUDGING.get();
+			// The chain the peer presented as ITSELF. Per-node trust: the one it is bound by. Under the regional CA (pinLeaf false)
+			// certJson is, for this node as the joiner, what the responder's CA RETURNED -- the responder's own chain is the one of
+			// its CHALLENGE; for this node as the responder it is the joiner's chain, as before.
+			java.security.cert.X509Certificate[] itsChain = pinLeaf || !asClient ? certs
+					: at == null || at.discovered_server_cert == null ? null
+					: controllerEngine.getCertificateManager().getCertsfromJson(at.discovered_server_cert);
+			boolean unchanged = false;
+			if (itsChain != null && itsChain.length > 0 && itsChain[0] != null) {
+				// Everything this exchange may record of the peer is decided, and recorded, by ONE call under the registry's lock
+				// (PeerTrustRegistry.join): the name's own rules, the proof of possession, one controller per region, one global
+				// above this node. With record=false only the checks run. Under the regional CA the same call decides -- before
+				// the CA issues or records anything -- and what the CA then records is its own, as before.
 				io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
-				String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(certs[0]);
-				DiscoveryNode at = JUDGING.get();
+				String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(itsChain[0]);
+				io.cresco.library.security.CrescoIdentity its = io.cresco.agent.controller.communication.CrescoNames.identityOf(itsChain[0]);
 				io.cresco.agent.controller.communication.PeerTrustRegistry.Join j = new io.cresco.agent.controller.communication.PeerTrustRegistry.Join();
 				j.region = region;
 				j.agent = agent;
-				j.chain = certs;
+				j.chain = itsChain;
 				j.role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
 						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
 				j.source = legacyExchange ? io.cresco.agent.controller.communication.PeerTrustRegistry.SOURCE_LEGACY : "discovery";
@@ -461,8 +472,10 @@ public class DiscoveryProcessor {
 					if (statementWhy == null) j.statement = "an operator-signed rebind statement";
 					else if (record) logger.warn("Discovery: the rebind statement " + region + "/" + agent + " served was not accepted: " + statementWhy);
 				}
-				j.anchored = (asClient || controllerExchange) && cm.controllerAnchorVouches(certs);
+				j.anchored = (asClient || controllerExchange) && cm.controllerAnchorVouches(itsChain);
+				j.scopedAnchor = (asClient || controllerExchange) ? cm.controllerAnchorScoped(itsChain) : null;
 				j.recordedAnchored = cm::recordedControllerAnchored;
+				j.graceMs = Math.max(0L, plugin.getConfig().getLongParam("discovery_proof_grace_days", 7L)) * 86_400_000L;
 				j.peerAddress = at == null ? null : at.remote;
 				j.exchange = type.name();
 				j.record = record;
@@ -472,7 +485,7 @@ public class DiscoveryProcessor {
 					if (at != null) at.refusal = res.toPeer;
 					if (res.limited == null || reg.refusalLogged(res.limited, region, agent, keyFp)) {
 						logger.error("Discovery REFUSED " + (j.role.equals(io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT) ? "agent " : "controller ")
-								+ region + "/" + agent + (named == null ? "" : " (tenant " + named.getTenant() + ", key " + keyFp + ")") + " at "
+								+ region + "/" + agent + (its == null ? "" : " (tenant " + its.getTenant() + ", key " + keyFp + ")") + " at "
 								+ (at == null || at.remote == null ? "an unknown address" : at.remote)
 								+ (asClient ? ", which answered a " + type + " exchange" : ", which joined in a " + type + " exchange") + ": " + res.reason
 								+ (res.limited == null ? "" : " (refused " + reg.refusedTimes(res.limited, region, agent, keyFp)
@@ -480,8 +493,12 @@ public class DiscoveryProcessor {
 					}
 					return false;
 				}
+				// taken without proof although it proved its key here before (the grace, the window): nothing recorded changes
+				unchanged = res.unchanged;
+				if (at != null) at.unchanged = unchanged;
+				if (res.warn != null) logger.warn("Discovery: " + res.warn);
 			}
-			if (!record) return true;
+			if (!record || unchanged) return true;
 			if (controllerExchange) {
 				reg.allowBridgePeer(region, agent);
 			}
@@ -552,9 +569,11 @@ public class DiscoveryProcessor {
 			}
 			io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult free = (id == null) ? null
 					: controllerEngine.getCertificateManager().getPeerTrust().canBind(id.getTenant(), discoveryNode.discover_region, discoveryNode.discover_agent, c[0].getPublicKey());
-			if (free != null && !free.ok && legacyUpgrade(discoveryNode.discovery_type, false, discoveryNode.legacy_exchange,
-					discoveryNode.discover_region, discoveryNode.discover_agent)) {
-				free = null;                                    // learnPeer replaces the legacy binding (or refuses)
+			if (free != null && !free.ok && (legacyUpgrade(discoveryNode.discovery_type, false, discoveryNode.legacy_exchange,
+					discoveryNode.discover_region, discoveryNode.discover_agent)
+					|| (discoveryNode.discovery_type != DiscoveryType.AGENT && controllerEngine.getCertificateManager().controllerAnchorScoped(c) != null))) {
+				// learnPeer replaces the legacy binding, or the key of a controller the operator's scoped anchor states (or refuses)
+				free = null;
 			} else if (free == null || !free.ok) {
 				logger.error("Discovery REFUSED " + discoveryNode.discover_region + "/" + discoveryNode.discover_agent + ": "
 						+ (free == null ? "its certificate names no valid identity" : free.reason));
@@ -566,6 +585,10 @@ public class DiscoveryProcessor {
 			if (!learnPeer(discoveryNode.discovery_type, discoveryNode.discover_region, discoveryNode.discover_agent,
 					discoveryNode.discover_cert, true, false, true, null, discoveryNode.legacy_exchange)) {
 				return null;
+			}
+			// (taken without proof although it proved its key before: the certificates this node holds for it stay as they are)
+			if (discoveryNode.unchanged) {
+				return controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 			}
 			return configureCertTrust(discoveryNode.getDiscoverPath(), discoveryNode.discover_cert, discoveryNode.discovery_type);
 		}
@@ -752,7 +775,12 @@ public class DiscoveryProcessor {
 			logger.error("discovery v2: this node's identity key is not readable: it cannot prove its key to " + remote);
 			return null;
 		}
-		p.pop = DiscoveryAuth.sign(own, DiscoveryAuth.POP_CLIENT, DiscoveryAuth.possessionTranscript(hello, ch, leafOf(hello.ccert), sleaf));
+		p.pop = DiscoveryAuth.proofSign(own, DiscoveryAuth.POP_CLIENT, DiscoveryAuth.possessionTranscript(hello, ch, leafOf(hello.ccert), sleaf));
+		if (p.pop == null) {
+			logger.error("discovery v2: this node's identity key is of type " + own.getAlgorithm() + ": the proof of its key is defined for RSA"
+					+ " and EC keys only, so it cannot join a node of this build (give it an RSA or EC identity)");
+			return null;
+		}
 		return p;
 	}
 
@@ -816,8 +844,13 @@ public class DiscoveryProcessor {
 		boolean proved = false;
 		if (!pkiDiscovery()) {
 			java.security.cert.X509Certificate sleaf = leafOf(ch.scert);
-			proved = sleaf != null && DiscoveryAuth.verify(sleaf.getPublicKey(), r.pop, DiscoveryAuth.POP_RESULT,
+			proved = sleaf != null && DiscoveryAuth.proofVerify(sleaf.getPublicKey(), r.pop, DiscoveryAuth.POP_RESULT,
 					DiscoveryAuth.possessionTranscript(hello, ch, leafOf(hello.ccert), sleaf), DiscoveryAuth.resultDigest(r));
+			if (!proved && DiscoveryAuth.claimsProof(ch.ns) && sleaf != null && DiscoveryAuth.proofAlgorithm(sleaf.getPublicKey().getAlgorithm()) == null) {
+				logger.error("discovery v2: " + ch.sreg + "/" + ch.sagt + " at " + remoteAddress + " presents a certificate with a key of type "
+						+ sleaf.getPublicKey().getAlgorithm() + ": the proof of a key is defined for RSA and EC keys only: REFUSED, nothing recorded");
+				return null;
+			}
 			if (!proved && DiscoveryAuth.claimsProof(ch.ns)) {
 				logger.error("discovery v2: " + remoteAddress + " answered as " + ch.sreg + "/" + ch.sagt + " and holds the " + hello.type
 						+ " discovery secret, but did NOT prove the key of the certificate it presented (no signature by that key, or one"
@@ -928,13 +961,20 @@ public class DiscoveryProcessor {
 				: DiscoveryAuth.macEquals(p.mac, DiscoveryAuth.mac(key, "C", t)));
 		// proof of possession (the secret's exchange): the client's signature over this exchange by the key of the leaf it sent
 		byte[] pt = pki || !authentic ? null : DiscoveryAuth.possessionTranscript(h, ch, cleaf, leafOf(ch.scert));
-		boolean proved = pt != null && cleaf != null && DiscoveryAuth.verify(cleaf.getPublicKey(), p.pop, DiscoveryAuth.POP_CLIENT, pt);
+		boolean proved = pt != null && cleaf != null && DiscoveryAuth.proofVerify(cleaf.getPublicKey(), p.pop, DiscoveryAuth.POP_CLIENT, pt);
 		if (!authentic) {
 			logger.warn("discovery " + (pki ? "(PKI)" : "v2") + ": " + remote + " (claiming " + h.creg + "/" + h.cagt + ") failed"
 					+ " authentication: " + (pki ? "its signature does not verify under its certificate" : "wrong " + h.type + " secret")
 					+ ", a replay, or an altered exchange; nothing recorded");
 			r.ok = false;
 			r.reason = "authentication failed";
+		} else if (!pki && !proved && DiscoveryAuth.claimsProof(h.nc) && cleaf != null
+				&& DiscoveryAuth.proofAlgorithm(cleaf.getPublicKey().getAlgorithm()) == null) {
+			logger.error("discovery v2: " + remote + " presented for " + h.creg + "/" + h.cagt + " a certificate with a key of type "
+					+ cleaf.getPublicKey().getAlgorithm() + ": the proof of a key is defined for RSA and EC keys only: REFUSED, nothing recorded");
+			r.ok = false;
+			r.reason = "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + ": the key of " + h.creg + "/" + h.cagt + " is of type "
+					+ cleaf.getPublicKey().getAlgorithm() + ", and the proof of a key is defined for RSA and EC keys only";
 		} else if (!pki && !proved && DiscoveryAuth.claimsProof(h.nc)) {
 			// its nonce says it is a build that proves its key, and it did not: never taken as an earlier build instead
 			logger.error("discovery v2: " + remote + " presented the certificate of " + h.creg + "/" + h.cagt + " and holds the " + h.type
@@ -970,7 +1010,7 @@ public class DiscoveryProcessor {
 			// client whose MAC verified: a stranger cannot make this node sign.
 			java.security.PrivateKey own = ownKey();
 			if (own == null) logger.error("discovery v2: this node's identity key is not readable: it cannot prove its key to " + remote);
-			else r.pop = DiscoveryAuth.sign(own, DiscoveryAuth.POP_RESULT,
+			else r.pop = DiscoveryAuth.proofSign(own, DiscoveryAuth.POP_RESULT,
 					DiscoveryAuth.possessionTranscript(h, ch, cleaf, leafOf(ch.scert)), DiscoveryAuth.resultDigest(r));
 		}
 		return r;

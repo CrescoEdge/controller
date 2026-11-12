@@ -422,6 +422,94 @@ class OneControllerProofTest {
         assertEquals(key(g), pinned(moved, "rgG", "gc"), "the former global was unbound: an anchor replaces nothing that is recorded");
     }
 
+    // ------------------------------------------------------------------ scoped anchors; a node put back on the earlier release
+
+    /**
+     * A SCOPED entry of controller_trust_anchors, {@code <region>/<agent>=<fingerprint>}, is the operator's standing statement
+     * on that node that this key is that controller: it re-keys exactly that name without a rebind line -- at a joiner and at
+     * a responder -- on proof only, never for a revoked key, and it vouches for no other name.
+     */
+    @Test
+    void aScopedAnchorReKeysExactlyTheNameItStatesOnProofAndNothingElse() throws Exception {
+        // at a joiner: a region and its re-installed global
+        Path rdir = Files.createTempDirectory("onectl-region"), g2dir = Files.createTempDirectory("onectl-g2");
+        ControllerEngine g = controller("rgG", "gc", "t1", "is_global", "true"), g2 = controller("rgG", "gc", "t1", g2dir, "is_global", "true");
+        ControllerEngine region = controller("rgA", "rc", "t1", rdir);
+        assertNotNull(join(region, g));
+        assertNull(join(region, g2), "(a re-keyed global is refused without the operator)");
+        ControllerEngine stated = controller("rgA", "rc", "t1", rdir, "controller_trust_anchors", "rgG/gc=" + key(g2));
+        assertNotNull(join(stated, g2), "the operator's scoped anchor on the region did not re-key its global");
+        assertEquals(key(g2), pinned(stated, "rgG", "gc"));
+        assertNull(join(stated, g), "the former key was taken again");
+        assertNotNull(join(stated, g2), "(and it is still the region's global)");
+        // the entry states that name only: the same key under another name is not vouched for by it
+        ControllerEngine otherName = controller("rgH", "zz", "t1", g2dir, "is_global", "true");
+        assertEquals(key(g2), key(otherName));
+        assertNull(join(stated, otherName), "a scoped anchor vouched for its key under another name");
+        // at a responder: the global states the new key of a region's controller
+        Path gdir = Files.createTempDirectory("onectl-g");
+        ControllerEngine rc = controller("rgB", "rc", "t1"), rc2 = controller("rgB", "rc", "t1"), rc3 = controller("rgB", "rc", "t1");
+        ControllerEngine global = controller("rgG", "gc", "t1", gdir, "is_global", "true");
+        assertNotNull(join(rc, global));
+        ControllerEngine global2 = controller("rgG", "gc", "t1", gdir, "is_global", "true", "controller_trust_anchors", "rgB/rc=" + key(rc2) + ",rgB/rc=" + key(rc3));
+        // ... on proof only: the stated key's certificate without its key is nobody
+        assertFalse(taken(Release378.join(global2, DiscoveryType.GLOBAL, SECRET, "rgB", "rc", rc2.getCertificateManager().getPublicCertificate())),
+                "a scoped anchor re-keyed a name for a certificate presented without its key");
+        assertEquals(key(rc), pinned(global2, "rgB", "rc"));
+        assertNotNull(join(rc2, global2), "the operator's scoped anchor on the global did not re-key the region's controller");
+        assertEquals(key(rc2), pinned(global2, "rgB", "rc"));
+        // ... never a revoked key
+        assertNull(reg(global2).revoke(key(rc3), "operator"));
+        reg(global2).awaitRevocations();
+        assertNull(join(rc3, global2), "a scoped anchor lifted a revoked key");
+        // ... and never another name: a controller of region rgB under another agent name is still a second controller
+        assertNull(join(controller("rgB", "zz", "t1"), global2));
+        assertEquals("OK", global2.getCertificateManager().identityHealth()[0], global2.getCertificateManager().identityHealth()[1]);
+    }
+
+    /**
+     * A controller that proved its key and is then put back on release 1.3.378 sends no proof. For a grace after its first
+     * proof (discovery_proof_grace_days, 7 by default) it is taken as that release would take it -- and so is a holder of the
+     * secret answering in its name -- but NOTHING the recording node holds changes by it: not the certificates, not the
+     * kept chain, not the tenant or the marks. The node's identity health says so while it lasts.
+     */
+    @Test
+    void aProvedControllerTakenWithoutProofInTheGraceChangesNothingThatIsRecorded() throws Exception {
+        ControllerEngine global = controller("rgG", "gc", "t1", "is_global", "true"), region = controller("rgB", "rc", "t1");
+        assertNotNull(join(region, global));
+        X509Certificate[] its = region.getCertificateManager().getPublicCertificate();
+        X509Certificate root = its[its.length - 1];
+        assertTrue(held(global).contains(root), "(precondition)");
+        assertEquals("OK", global.getCertificateManager().identityHealth()[0]);
+        // put back on the earlier release: the same name and key, no proof
+        DiscoveryAuth.Msg back = Release378.join(region, global, DiscoveryType.GLOBAL, SECRET);
+        assertTrue(taken(back), "a controller put back on the earlier release within the grace was refused: " + (back == null ? null : back.reason));
+        String[] health = global.getCertificateManager().identityHealth();
+        assertEquals("WARN", health[0], health[1]);
+        assertTrue(health[1].contains("rgB/rc") && health[1].contains("WITHOUT proof") && health[1].contains("rolled back"), health[1]);
+        // a holder of the secret in its name, with a chain of its own making around the recorded PUBLIC key
+        X509Certificate[] made = forged(leaf(region).getPublicKey(), "t1", "rgB", "rc");
+        assertTrue(taken(Release378.join(global, DiscoveryType.GLOBAL, SECRET, "rgB", "rc", made)), "(taken as the recorded name and key)");
+        assertTrue(held(global).contains(root), "the certificates the global holds for rgB/rc were replaced by an exchange without proof");
+        assertFalse(held(global).contains(made[1]), "a root made by a holder of the secret became a trust anchor of the global");
+        assertEquals(leaf(region), reg(global).recordedChain("rgB/rc")[0], "the chain kept with the binding was replaced without proof");
+        assertEquals(key(region), pinned(global, "rgB", "rc"));
+        assertEquals("t1", reg(global).boundTenant("rgB", "rc"));
+        // not another tenant, another name or another key
+        assertFalse(taken(Release378.join(global, DiscoveryType.GLOBAL, SECRET, "rgB", "rc", forged(leaf(region).getPublicKey(), "t2", "rgB", "rc"))));
+        assertFalse(taken(Release378.join(global, DiscoveryType.GLOBAL, SECRET, "rgB", "zz", forged(leaf(region).getPublicKey(), "t1", "rgB", "zz"))));
+        // the joiner's side: answered in its global's name without proof within the grace -- taken, as release 1.3.378 takes it
+        // (it is then sent to that address, where TLS needs the recorded key); what it holds of its global does not change
+        X509Certificate[] gs = global.getCertificateManager().getPublicCertificate();
+        assertTrue(held(region).contains(gs[gs.length - 1]), "(precondition)");
+        DiscoveryNode n = Release378.answer(region, global, DiscoveryType.GLOBAL, SECRET, "10.66.66.66", 6666);
+        assertNotNull(n, "a region whose global was put back on the earlier release within the grace refused it");
+        assertTrue(held(region).contains(gs[gs.length - 1]));
+        assertEquals(key(global), pinned(region, "rgG", "gc"));
+        // and the real exchange is what it was
+        assertNotNull(join(region, global));
+    }
+
     // ------------------------------------------------------------------ the regional CA is unchanged
 
     /** P12. Two controller names issued by a region's ONE CA are not "2 CONTROLLERS ... revoke one". */

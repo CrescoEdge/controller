@@ -34,6 +34,7 @@ class DiscoveryProofOfPossessionTest {
         m.put("broker_security_enabled", "true");
         m.put("msg_signing_sessions", "false");
         m.put("tenant_id", "t1");
+        m.put("discovery_proof_grace_days", "0");      // (the grace after a first proof has its own tests: DiscoveryProofGraceTest)
         for (int i = 0; i + 1 < extra.length; i += 2) m.put(extra[i], extra[i + 1]);
         ControllerEngine e = TlsTestSupport.engine(region, agent, m);
         TlsTestSupport.State st = (TlsTestSupport.State) e.cstate;
@@ -291,5 +292,37 @@ class DiscoveryProofOfPossessionTest {
         assertNull(r.node);
         assertTrue(r.result.reason.contains("'rgB/rc2=" + key(replacement) + "'") && r.result.reason.contains("peer-trust.json.rebind"),
                 "the refused replacement controller is not told its rebind line: " + r.result.reason);
+    }
+
+    /**
+     * E1. The proof's algorithm is fixed per key type; it is not each node's crypto policy. A global that holds the fabric's
+     * policy (one that allows no SHA-384 signature) and a joiner that holds none yet sign and verify alike.
+     */
+    @Test
+    void twoNodesWithDifferentCryptoPoliciesProveTheirKeysToEachOther() throws Exception {
+        ControllerEngine global = global(), region = node("rgB", "rc", true, false);
+        io.cresco.library.crypto.CryptoPolicy before = io.cresco.library.crypto.CryptoPolicy.current();
+        String beforeSrc = io.cresco.library.crypto.CryptoPolicy.currentSource();
+        io.cresco.library.crypto.CryptoPolicy fabric = io.cresco.library.crypto.CryptoPolicy.of(io.cresco.library.crypto.CryptoPolicy.LEVEL_FIPS140_3, Map.of(io.cresco.library.crypto.CryptoPolicy.Family.SIGNATURE, "SHA512withRSA,SHA512withECDSA"));
+        try {
+            DiscoveryProcessor c = new DiscoveryProcessor(region), s = new DiscoveryProcessor(global);
+            io.cresco.library.crypto.CryptoPolicy.uninstall();                                       // the joiner: no fabric policy yet
+            DiscoveryAuth.Msg hello = c.clientHello(DiscoveryType.GLOBAL);
+            io.cresco.library.crypto.CryptoPolicy.install(fabric, "config of the global");            // the global
+            DiscoveryAuth.Msg ch = s.serverChallenge(copy(hello), "10.1.2.3");
+            io.cresco.library.crypto.CryptoPolicy.uninstall();
+            DiscoveryAuth.Msg proof = c.clientProof(hello, copy(ch), "10.9.9.9");
+            assertNotNull(proof);
+            io.cresco.library.crypto.CryptoPolicy.install(fabric, "config of the global");
+            DiscoveryAuth.Msg result = s.serverResult(copy(hello), ch, copy(proof), "10.1.2.3");
+            assertTrue(result.ok, "a joiner of this build with its own key was refused by a global with another crypto policy: " + result.reason);
+            io.cresco.library.crypto.CryptoPolicy.uninstall();
+            assertNotNull(c.clientResult(hello, copy(ch), copy(result), "10.9.9.9", 32005),
+                    "a result signed under one crypto policy was not taken under another");
+            assertTrue(reg(global).provedKey("rgB", "rc"));
+            assertTrue(reg(region).provedKey("rgG", "gc"));
+        } finally {
+            if (before == null) io.cresco.library.crypto.CryptoPolicy.uninstall(); else io.cresco.library.crypto.CryptoPolicy.install(before, beforeSrc);
+        }
     }
 }

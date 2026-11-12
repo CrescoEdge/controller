@@ -19,6 +19,11 @@ public class DiscoveryNode {
 	 * already has (PeerTrustRegistry.join).
 	 */
 	public transient boolean proved;
+	/**
+	 * The peer was taken WITHOUT proof although it proved its key to this node before (the grace after its first proof, the
+	 * upgrade window): nothing this node holds of it changes by this exchange (PeerTrustRegistry.BindResult.unchanged).
+	 */
+	public transient boolean unchanged;
 	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
 	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
 	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port

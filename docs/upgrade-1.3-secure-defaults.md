@@ -80,6 +80,13 @@ closed until the two settings are removed. The window is not available under `se
 
 Controllers first, from the top: a parent must understand everything its children send.
 
+0. **Give every controller a fixed `agentname`** (and `regionname`) in its configuration, BEFORE the first node is
+   upgraded, and restart it once so that it is recorded under that name. A controller without one takes a new generated
+   agent name at each start; to the nodes that recorded it that is a new name of a known key, which a node of this build
+   records only on proof of the key -- and a node of release 1.3.378 sends none. Such a controller is then refused where
+   it is recorded (`... recorded as <region>/<old name> ...: set agentname=<old name> on that node ...; upgrade it; or open
+   the upgrade window on this node`) until one of the three is done. With fixed names none of this arises, in either
+   direction, also on a roll back. (Agents: a generated agent name is a first join at each start; see below.)
 1. **Global.** Upgrade it with the window settings (section 3), and the same security settings every node will use.
    Verify: it starts (no `REFUSING TO START`), logs `UPGRADE WINDOW OPEN`, `AgentConsumer also consumes the raw inbox`,
    and `Discovery: accepting the LEGACY unauthenticated certificate exchange` once its earlier-build agents rejoin; they
@@ -107,25 +114,37 @@ controller per region, and the proof of its key") a node records a new name or k
 its certificate in the discovery exchange, and refuses a second controller for a region, and a second global. It is the
 recording node that enforces it, so upgrade the global first, then the region controllers, then the agents.
 
-- **Registries kept (the usual upgrade):** nothing to do. A node of release 1.3.378 sends no proof and is accepted where
-  its name and key are recorded, exactly as before; after it is upgraded it proves its key, and from then on that name
-  and key is not accepted without proof.
-- **A first join across releases needs the upgrade window on the recording node** (`discovery_auth=compat` with
-  `discovery_compat_until`): a 1.3.378 node joining a NEW (empty-registry) node of this build, a 1.3.378 node whose agent
-  name is generated at each start (a new name is a first join), a new joiner of this build at a 1.3.378 controller. Each
-  is logged (`UPGRADE WINDOW: ... recorded WITHOUT proof`); without the window it is refused with a line that says to
-  upgrade the joiner. The window admits a first join only: a re-key or a replacement needs the upgraded node.
-- **Rolling a node back to 1.3.378** after it proved its key: it is refused where it proved it, unless the window is open
-  there.
+- **Registries kept, fixed agent names (the usual upgrade):** nothing to do. A node of release 1.3.378 sends no proof and
+  is accepted where its name and key are recorded, exactly as before; after it is upgraded it proves its key.
+- **What needs the upgrade window on the RECORDING node** (`discovery_auth=compat` with `discovery_compat_until`; it is
+  read when that node starts): (a) a FIRST join without proof -- a 1.3.378 node at a NEW (empty-registry) node of this
+  build, a 1.3.378 agent whose agent name is generated at each start, a new joiner of this build at a 1.3.378
+  controller; (b) a 1.3.378 CONTROLLER whose agent name is generated at each start: in the window its new name replaces
+  the former one (same key, same tenant, one name at a time). Each is logged (`UPGRADE WINDOW: ...`). Without the window
+  (a) is refused with a line that says to upgrade the joiner, (b) with the line of step 0. The window admits nothing
+  else without proof: a re-key or a replacement needs the upgraded node.
+- **Rolling a node back to 1.3.378** after it proved its key. Within `discovery_proof_grace_days` (default 7; 0 = none)
+  of its FIRST proof at a node: nothing to do -- it is taken there as 1.3.378 takes it, with a WARN per ten minutes (`...
+  proved its key before and sent no proof now: rolled back to an earlier release, or a holder of the secret answers in its
+  name`) and a WARN in that node's `identity` health while it lasts; nothing that node holds of it changes meanwhile.
+  After the grace: open the upgrade window on the nodes that recorded it (its joiners, its parent) and restart them --
+  or upgrade it again. A rolled-back controller needs its fixed `agentname` (step 0): under a new generated name it is
+  not "the recorded name and key".
 - At its first start on this build a node says (ERROR at start, CRITICAL in its `identity` health) when its registry
   already holds two controllers under one region; both keep working until the operator revokes the one that is not the
   region's. A region's registry of an earlier release does not say which recorded controller is its global: the region
-  takes only one of them as its global until that one has proved its key.
+  takes only one of THEM as its global (also after that one proved its key in a peering exchange first, or came back
+  under another agent name of its key), and marks it when it proves its key as the global.
 - A controller that returns with a new key AND a new agent name (its `security` directory was lost and its `agentname`
   is not configured) is refused where its region's former identity is recorded: keep the directory, set `agentname`, or
   replace the controller as that section says.
-- `controller_trust_anchors` no longer re-key or replace a recorded controller (they admit one): use the rebind line or
-  a signed rebind statement (`controller_rebind_signers`).
+- `controller_trust_anchors`: a plain entry (a fingerprint) no longer re-keys or replaces a recorded controller -- it
+  admits one. To have a re-installed controller followed without a rebind line on every node, list it SCOPED:
+  `<region>/<agent>=<key or certificate fingerprint>` (the operator's statement that this key is that controller), or
+  use a signed rebind statement (`controller_rebind_signers`).
+- **A registry restored from a backup** forgets what was recorded since (which peers proved their key, which controller
+  is the global, spent rebind lines). The node says so at start (`PEER TRUST REGISTRY IS BEHIND ITS OWN RECORD ...`, WARN
+  in its `identity` health until its next start) with what to check.
 
 ## 5. Checking a node
 

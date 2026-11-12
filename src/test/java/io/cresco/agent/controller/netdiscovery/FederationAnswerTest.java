@@ -44,7 +44,7 @@ class FederationAnswerTest {
         r.mac = DiscoveryAuth.mac(k, "S2", DiscoveryAuth.transcript(hello, ch, cl, sl), DiscoveryAuth.resultDigest(r));
         // (the responder is the one answering here: it signs its result with its own key, as every responder of this build does)
         try {
-            r.pop = DiscoveryAuth.sign(responder.getCertificateManager().identityPrivateKey(), DiscoveryAuth.POP_RESULT,
+            r.pop = DiscoveryAuth.proofSign(responder.getCertificateManager().identityPrivateKey(), DiscoveryAuth.POP_RESULT,
                     DiscoveryAuth.possessionTranscript(hello, ch, cl, sl), DiscoveryAuth.resultDigest(r));
         } catch (Exception e) {
             throw new IllegalStateException(e);

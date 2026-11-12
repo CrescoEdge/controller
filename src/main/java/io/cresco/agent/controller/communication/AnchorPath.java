@@ -55,7 +55,9 @@ public final class AnchorPath {
         }
     }
 
+    /** {@code now} null: validity dates are not judged (a chain kept on record: what it vouched for does not lapse with a leaf). */
     private static boolean validAt(X509Certificate c, Date now) {
+        if (now == null) return true;
         try { c.checkValidity(now); return true; } catch (Exception e) { return false; }
     }
 }

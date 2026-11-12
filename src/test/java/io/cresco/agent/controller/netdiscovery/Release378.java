@@ -9,6 +9,11 @@ import java.security.cert.X509Certificate;
  * The secret's discovery exchange exactly as a node of release 1.3.378 runs it: the MACs of the discovery secret and
  * nothing else -- a plain nonce, no signature by any key. It is also all that a holder of the secret WITHOUT a
  * certificate's private key can send: every certificate here may be somebody else's (they are public).
+ *
+ * <p>This is NOT the released code: it is written with THIS build's classes ({@link DiscoveryAuth}'s MAC, key derivation
+ * and transcript, which the proof left as release 1.3.378 has them), so it shows what this build does when it is spoken to
+ * as that release speaks -- not that the released jar speaks so. The released jar itself is exercised by the live
+ * suites (rolling updates from the released agent, with and without fixed agent names).
  */
 public final class Release378 {
 
