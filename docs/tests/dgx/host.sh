@@ -9,7 +9,8 @@
 # node-local directory (/tmp, removed at the end), its output in <rundir>/logs/<name>.log; secrets come from
 # <rundir>/secrets (environment, as an operator's service would set them). <rundir>/restart/<host>.<name> (made by
 # gate.sh) stops the JVM <name> of this host and starts it again from its spec, in its own directory (its data is kept,
-# its log goes on), as an operator restarts a node. <rundir>/stop (or stop.<host>) stops this
+# its log goes on), as an operator restarts a node; a number in that file is the seconds it stays down in between.
+# <rundir>/stop (or stop.<host>) stops this
 # host's JVMs (TERM, then KILL) and exits. Only this host's own JVMs are ever signalled (their PIDs are in <rundir>/pids/<host>).
 set -uo pipefail
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -59,12 +60,14 @@ run)
     done
     for r in "$RD"/restart/"$H".*; do
       [ -f "$r" ] || continue
-      case "$r" in *.done) continue ;; esac
-      n="${r##*.}"; rm -f "$r"
+      case "$r" in *.done|*.tmp) continue ;; esac
+      n="${r##*.}"; down=$(cat "$r" 2>/dev/null); rm -f "$r"
       p=$(awk -v n="$n" '$1==n {p=$2} END {print p}' "$RD/pids/$H")
       [ -n "$p" ] && kill "$p" 2>/dev/null
       for _ in $(seq 1 30); do kill -0 "$p" 2>/dev/null || break; sleep 1; done
       kill -9 "$p" 2>/dev/null
+      # the file's content: how many seconds the node stays down before it is started again (a host that reboots)
+      case "$down" in ''|*[!0-9]*) ;; *) sleep "$down" ;; esac
       spec=$(cat "$RD"/spawn/"$H".* 2>/dev/null | awk -F'|' -v n="$n" '$1==n' | tail -1)
       IFS='|' read -r name region xmx flags <<< "$spec"
       [ -n "$name" ] && { APPEND_LOG=1 launch "$name" "$region" "$xmx" "$flags"; touch "$RD/restart/$H.$n.done"; }

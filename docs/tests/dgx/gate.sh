@@ -45,7 +45,10 @@
 #   SCALE_RESTART=rc (or gc): after the last step that controller is stopped and started again in place (its data
 #   kept), and the result says how long until its agents were back (restart: seconds from the stop and from its first
 #   answer to the last agent's first health answer, the discoveries that went unanswered, the ERROR lines). The agents
-#   are up and hold their identities: this is a storm of joins alone.
+#   are up and hold their identities: this is a storm of joins alone. SCALE_RESTART_DOWN_S (default 0): how long the
+#   controller stays down. Back within some 25 s, its agents' connections simply reconnect (no discovery, nothing to
+#   measure here); down for longer (90), they declare it lost and look for it again every few seconds, and all of them
+#   find it at the same moment.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -295,7 +298,7 @@ EOF
     [ "$rn" = gc ] && rh=$H1
     mkdir -p "$RD/restart"
     rt0=$(date +%s.%N); echo "restart $rt0" >> "$RD/steps.txt"
-    touch "$RD/restart/$rh.$rn"
+    echo "${SCALE_RESTART_DOWN_S:-0}" > "$RD/restart/$rh.$rn.tmp" && mv "$RD/restart/$rh.$rn.tmp" "$RD/restart/$rh.$rn"
     for _ in $(seq 1 200); do
       rs=$("$PY" "$HERE/joinstages.py" "$RD/logs" "$prev" --since "$rt0" --controller "$rn" 2>/dev/null)
       back=$(echo "$rs" | jq_ 'd.get("back", 0)' 2>/dev/null || echo 0)
