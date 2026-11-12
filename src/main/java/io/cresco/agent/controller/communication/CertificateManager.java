@@ -1462,7 +1462,9 @@ public class CertificateManager {
                 for (String alias : stale) tsDelete(alias);
             }
             java.util.List<String> added = addCertificatesToTrustStore(prefix, certs);
-            if (!stale.isEmpty() && added.isEmpty()) saveAfterChange(prefix);
+            // a REMOVAL is written through (file-backed stores): saved a second later, a crash in that second brought a
+            // replaced chain's anchors back from the file. (Additions of a peer are saved within the second.)
+            if (!stale.isEmpty()) saveKeyAndTrustStore();
             return !stale.isEmpty() || !added.isEmpty();
         } catch (Exception ex) {
             logger.error("replaceTrustStoreEntries(" + prefix + "): " + ex.getMessage());
@@ -1538,7 +1540,7 @@ public class CertificateManager {
                         continue;
                     }
                     synchronized (trustStoreLock) {
-                        tsPut("imported#" + fp, cert);
+                        if (!tsPut("imported#" + fp, cert)) continue;
                     }
                     imported.add(fp);
                     logger.info("Imported trust anchor " + f.getFileName() + " (" + fp + ") from " + dir + " (listed in public_key_trusted_fingerprints)");
@@ -1591,7 +1593,7 @@ public class CertificateManager {
                 synchronized (trustStoreLock) {
                     if (trustStore.containsAlias(name)) continue;
                     logger.debug("addCertificatesToTrustStore: adding " + name);
-                    tsPut(name, cert);
+                    if (!tsPut(name, cert)) continue;
                 }
                 added.add(name);
             }
@@ -1747,17 +1749,36 @@ public class CertificateManager {
      */
     private void swapTrustStore(KeyStore store) throws KeyStoreException {
         TrustAnchorIndex index = new TrustAnchorIndex();
-        index.rebuild(store);
+        int left = index.rebuild(store);
+        if (left > 0) {
+            logger.error("Truststore: " + left + " certificate(s) of the store put in force are NOT used as anchors: more than "
+                    + TrustAnchorIndex.MAX_PER_SUBJECT + " different certificates carry one subject. Chains that end at them are refused.");
+        }
         synchronized (trustStoreLock) {
             this.trustStore = store;
             this.anchorIndex = index;
         }
     }
 
-    /** With {@link #trustStoreLock}: set a truststore entry, in the KeyStore and in the index TLS reads. */
-    private void tsPut(String alias, Certificate cert) throws KeyStoreException {
+    /**
+     * With {@link #trustStoreLock}: set a truststore entry, in the KeyStore and in the index TLS reads.
+     *
+     * @return false when it was NOT recorded: its subject has as many different certificates as one subject may
+     * ({@link TrustAnchorIndex#MAX_PER_SUBJECT}); said once in 10 s. Its holder, if bound, is trusted by its bound key.
+     */
+    private boolean tsPut(String alias, Certificate cert) throws KeyStoreException {
+        if (!anchorIndex.accepts(cert)) {
+            anchorIndex.put(alias, cert);                 // (counts the refusal)
+            io.cresco.agent.controller.netdiscovery.DiscoveryGuard.warnLimited(logger, "truststore-subject-full",
+                    "Truststore: a certificate was NOT recorded as an anchor (entry " + alias + "): " + TrustAnchorIndex.MAX_PER_SUBJECT
+                            + " different certificates of its subject are recorded already, and one subject has no more (every trust"
+                            + " decision for that name tries each of them). A node bound here is still trusted by its bound key; "
+                            + anchorIndex.refused() + " not recorded so far");
+            return false;
+        }
         trustStore.setCertificateEntry(alias, cert);
         anchorIndex.put(alias, cert);
+        return true;
     }
 
     /** With {@link #trustStoreLock}: remove a truststore entry, from the KeyStore and from the index TLS reads. */

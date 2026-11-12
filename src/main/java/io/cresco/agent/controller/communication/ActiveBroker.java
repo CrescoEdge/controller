@@ -710,6 +710,32 @@ public class ActiveBroker {
 	}
 
 	/**
+	 * Invalidate every cached server TLS session of {@code sessions} whose peer {@code peers} refuses now (its key revoked
+	 * for its name, its name tombstoned, its region CA revoked): a session that is resumed skips the trust manager, so a
+	 * revoked peer's reconnect would otherwise be accepted at the TLS layer as it was before. How many were invalidated.
+	 * Only sessions the context CACHES are found here: a client that resumes by a session ticket (the JDK's default) has
+	 * none (JoinTrustIsLiveTest measures 0), and its ticket still completes a handshake -- the connection then gets no
+	 * identity from the registry (CrescoAuthorizationBroker.resolve) and is treated as one without a certificate.
+	 */
+	static int invalidateRefusedSessions(javax.net.ssl.SSLSessionContext sessions, PeerTrustRegistry peers) {
+		int n = 0;
+		for (byte[] id : java.util.Collections.list(sessions.getIds())) {
+			javax.net.ssl.SSLSession ss = sessions.getSession(id);
+			if (ss == null) continue;
+			try {
+				java.security.cert.Certificate[] peer = ss.getPeerCertificates();
+				java.security.cert.X509Certificate[] pc = new java.security.cert.X509Certificate[peer.length];
+				int k = 0;
+				for (java.security.cert.Certificate c : peer) if (c instanceof java.security.cert.X509Certificate) pc[k++] = (java.security.cert.X509Certificate) c;
+				if (k > 0 && peers.revokedReason(java.util.Arrays.copyOf(pc, k)) != null) { ss.invalidate(); n++; }
+			} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
+				// no client certificate in this session
+			}
+		}
+		return n;
+	}
+
+	/**
 	 * Revocations changed: invalidate every cached server TLS session whose peer is refused now (a resumed session would not
 	 * have its certificate checked again), close every live connection to this broker whose peer is refused now (key revoked
 	 * for its name, name tombstoned, region CA revoked), and remove the bridges this broker opened to a peer whose name is now
@@ -718,20 +744,7 @@ public class ActiveBroker {
 	public void closeRevokedConnections() {
 		PeerTrustRegistry peers = controllerEngine.getCertificateManager().getPeerTrust();
 		try {
-			javax.net.ssl.SSLSessionContext sessions = broker.getSslContext().getSSLContext().getServerSessionContext();
-			for (byte[] id : java.util.Collections.list(sessions.getIds())) {
-				javax.net.ssl.SSLSession ss = sessions.getSession(id);
-				if (ss == null) continue;
-				try {
-					java.security.cert.Certificate[] peer = ss.getPeerCertificates();
-					java.security.cert.X509Certificate[] pc = new java.security.cert.X509Certificate[peer.length];
-					int k = 0;
-					for (java.security.cert.Certificate c : peer) if (c instanceof java.security.cert.X509Certificate) pc[k++] = (java.security.cert.X509Certificate) c;
-					if (k > 0 && peers.revokedReason(java.util.Arrays.copyOf(pc, k)) != null) ss.invalidate();
-				} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
-					// no client certificate in this session
-				}
-			}
+			invalidateRefusedSessions(broker.getSslContext().getSSLContext().getServerSessionContext(), peers);
 		} catch (Exception ex) {
 			logger.error("invalidating the TLS sessions of revoked peers: " + ex.getMessage());
 		}

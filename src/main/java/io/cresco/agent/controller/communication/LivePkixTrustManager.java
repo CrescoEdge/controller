@@ -33,8 +33,10 @@ final class LivePkixTrustManager extends X509ExtendedTrustManager {
         if (chain == null || chain.length == 0) throw new IllegalArgumentException("null or zero-length certificate chain");
         List<X509Certificate> anchors = index.get().anchorsFor(chain);
         if (anchors.isEmpty()) {
-            throw new CertificateException("no entry of this node's truststore is, or issued, a certificate of the presented chain ("
-                    + (chain[0] == null ? "?" : chain[0].getSubjectX500Principal().getName()) + ")");
+            // (the peer is not authenticated and wrote its certificate's names itself: none of its text goes into this
+            // message, which ends up in logs -- its key's fingerprint says which certificate it was)
+            throw new CertificateException("no entry of this node's truststore is, or issued, a certificate of the presented chain"
+                    + (chain[0] == null ? "" : " (leaf key " + PeerIdentity.shortFp(PeerIdentity.spkiFingerprint(chain[0])) + ")"));
         }
         try {
             KeyStore ks = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
