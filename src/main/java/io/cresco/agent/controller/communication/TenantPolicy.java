@@ -31,7 +31,9 @@ import java.util.Set;
  *   <li><b>Tenant-namespaced destination</b> ({@code T.<tenant>.*}, when {@code tenant_namespacing} is on) —
  *       allow iff it is in the principal's own {@code T.<tenant>.} subtree; any other tenant's subtree (or a
  *       {@code T.*.} wildcard) is denied. This is the strong, prefix-clean isolation boundary and it closes
- *       the flat-name same-region write hole.</li>
+ *       the flat-name same-region write hole. Within its own subtree a principal WRITES any destination and reads any
+ *       topic, but a QUEUE there is a node's inbox: it READS (consumes, browses) only its own ({@link #isOwnInbox}), so
+ *       no other node's and no pattern (docs/tenant-isolation-design.md section 12a).</li>
  *   <li>(Legacy, un-namespaced) the principal's tenant namespace ({@code <tenant>}/{@code <tenant>.*}),
  *       own inbox ({@code <region>_<agent>}), same-region peer write into its OWN tenant's inboxes only (the inbox's
  *       tenant is the one bound to that name) -- for back-compat when namespacing is off.</li>
@@ -145,6 +147,41 @@ public final class TenantPolicy {
         return false;
     }
 
+    /** Is {@code name} in {@code principal}'s own tenant's namespace ({@code T.<tenant>.})? No allocation. */
+    public static boolean inOwnNamespace(CrescoIdentity principal, String name) {
+        String tenant = principal == null ? null : principal.getTenant();
+        if (tenant == null || tenant.isEmpty() || name == null) return false;
+        int dot = NS + tenant.length();                          // the '.' that ends "T.<tenant>"
+        return name.length() > dot && TenantNamespace.isNamespaced(name) && name.startsWith(tenant, NS) && name.charAt(dot) == '.';
+    }
+
+    /** Where the tenant begins in a namespaced name: past {@code "T."}. */
+    private static final int NS = TenantNamespace.MARKER.length() + 1;
+
+    /**
+     * Is the queue {@code name} an inbox of the node {@code principal}: its own, {@code T.<tenant>.<region>_<agent>}, or the
+     * one of its former address, {@code T.<tenant>.<former region>_<agent>} (region_alias, {@link RegionAlias}: a plain
+     * region name, {@code Caller.validAlias})? These are the queues {@code AgentConsumer} reads for that identity.
+     *
+     * <p>What binds either to the node is the agent name in its certificate: the name must end in {@code _<agent>}, whole,
+     * and no other identity of the region has that agent name (a name is bound to one key). The region of the alias form
+     * is the node's own statement: it reads the inbox of a node of the same agent name in another region, which the fabric
+     * must not have (RegionAlias), and which the broker refuses when it is a controller it knows ({@code CrescoAuthorizationBroker
+     * .formerAddressOfAController}). An inbox name holds no wildcard and no separator of a composite: never a pattern.
+     *
+     * <p>Asked per message as well as per subscription: no allocation for the node's own inbox, no lookup.
+     */
+    public static boolean isOwnInbox(CrescoIdentity principal, String name) {
+        if (!inOwnNamespace(principal, name)) return false;
+        String region = principal.getRegion(), agent = principal.getAgent();
+        if (region == null || region.isEmpty() || agent == null || agent.isEmpty()) return false;
+        int from = NS + principal.getTenant().length() + 1;      // past "T.<tenant>."
+        int sep = name.length() - agent.length() - 1;            // the '_' before the agent name
+        if (sep <= from || name.charAt(sep) != '_' || !name.endsWith(agent)) return false;
+        if (sep - from == region.length() && name.startsWith(region, from)) return true;
+        return io.cresco.library.security.Caller.validAlias(name.substring(from, sep), region) != null;
+    }
+
     /** Back-compat entry point: evaluates as an ordinary {@link Role#TENANT} principal. */
     public static Decision check(CrescoIdentity principal, String destination, Access access, Set<String> sharedPrefixes) {
         return check(principal, destination, access, sharedPrefixes, Role.TENANT);
@@ -168,6 +205,19 @@ public final class TenantPolicy {
     public static Decision check(CrescoIdentity principal, String destination, Access access,
                                  Set<String> sharedPrefixes, Role role, List<CrossTenantSink> sinks,
                                  java.util.function.Function<String, String> tenantOfInbox) {
+        return check(principal, destination, access, sharedPrefixes, role, sinks, tenantOfInbox, false);
+    }
+
+    /**
+     * As above, for a destination whose kind is known. {@code queue}: {@code destination} is a QUEUE. A queue of a tenant's
+     * namespace is a node's inbox ({@code T.<tenant>.<region>_<agent>}): every node of the tenant writes it, and only the
+     * node it names READS it -- a consumer or a browser on any other queue of the namespace, or on a pattern ({@code
+     * T.<tenant>.>}), took other nodes' control messages away from them. Without it (a topic, or a caller that judges a
+     * name alone: a bridge's reach, an advisory about a destination) the name is judged as before.
+     */
+    public static Decision check(CrescoIdentity principal, String destination, Access access,
+                                 Set<String> sharedPrefixes, Role role, List<CrossTenantSink> sinks,
+                                 java.util.function.Function<String, String> tenantOfInbox, boolean queue) {
         if (destination == null || destination.isEmpty()) {
             return Decision.deny("null/empty destination");
         }
@@ -202,6 +252,12 @@ public final class TenantPolicy {
         // is denied. This is what closes the flat-name same-region cross-tenant write hole.
         if (TenantNamespace.isNamespaced(destination)) {
             if (destination.startsWith(TenantNamespace.prefix(tenant))) {
+                // a queue here is a node's inbox: written by every node of the tenant, read by the node it names only
+                // (the rule the un-namespaced branch below always had: "own-queue", "read of peer inbox ... denied")
+                if (queue && access == Access.READ && !(CrescoNames.isValid(principal.getRegion())
+                        && CrescoNames.isValid(principal.getAgent()) && isOwnInbox(principal, destination))) {
+                    return Decision.deny("a node reads no queue of its tenant's namespace but its own inbox");
+                }
                 return Decision.allow("tenant-namespace");
             }
             // W-GFS-1: an explicitly named cross-tenant sink is the ONLY way across the boundary.
