@@ -801,6 +801,44 @@ public class CertificateManager {
         return !controllerAnchors().isEmpty() && controllerAnchorRefusal(chain, null) == null;
     }
 
+    /**
+     * Do {@code controller_trust_anchors} vouch for the controller RECORDED here as {@code name} (its bound key {@code keyFp}),
+     * judged as a joiner's chain is ({@link #controllerAnchorVouches}): its key is listed, or the certificates this node holds
+     * for it (the chain kept with its binding, {@link PeerTrustRegistry#recordedChain}, else its truststore entries) have a
+     * validated path from its leaf to a listed certificate or key. A listing by certificate counts exactly as one by key. When this node holds no certificate
+     * for the name (it cannot judge), the answer is YES: nothing recorded is given up on an anchor's word unless this node can
+     * see that the anchors do not vouch for it.
+     */
+    public boolean recordedControllerAnchored(String name, String keyFp) {
+        java.util.Set<String> anchors = controllerAnchors();
+        if (anchors.isEmpty() || name == null || keyFp == null) return false;
+        if (controllerAnchorListsKey(keyFp)) return true;
+        try {
+            X509Certificate[] kept = peerTrust == null ? null : peerTrust.recordedChain(name);
+            if (kept != null && kept.length > 0 && keyFp.equals(PeerTrustRegistry.fingerprint(kept[0].getPublicKey().getEncoded()))) {
+                return AnchorPath.path(kept, anchors, new java.util.Date()) != null;
+            }
+            if (trustStore == null) return true;
+            String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
+            java.util.List<X509Certificate> held = new java.util.ArrayList<>();
+            synchronized (trustStoreLock) {
+                for (String alias : java.util.Collections.list(trustStore.aliases())) {
+                    if (!alias.toLowerCase(java.util.Locale.ROOT).startsWith(prefix)) continue;
+                    Certificate c = trustStore.getCertificate(alias);
+                    if (!(c instanceof X509Certificate)) continue;
+                    // the leaf first: the certificate that carries the recorded key
+                    if (keyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) held.add(0, (X509Certificate) c);
+                    else held.add((X509Certificate) c);
+                }
+            }
+            if (held.isEmpty() || !keyFp.equals(PeerTrustRegistry.fingerprint(held.get(0).getPublicKey().getEncoded()))) return true;
+            return AnchorPath.path(held.toArray(new X509Certificate[0]), anchors, new java.util.Date()) != null;
+        } catch (Exception ex) {
+            logger.error("recordedControllerAnchored(" + name + "): " + ex.getMessage());
+            return true;
+        }
+    }
+
     /** Is the key with this fingerprint (SHA-256 of its SubjectPublicKeyInfo, hex) itself listed in {@code controller_trust_anchors}? */
     public boolean controllerAnchorListsKey(String keyFp) {
         return keyFp != null && controllerAnchors().contains(keyFp.replace(":", "").toLowerCase(java.util.Locale.ROOT));
@@ -888,7 +926,9 @@ public class CertificateManager {
             if (s <= 0 || controllerEngine == null) return;
             String region = name.substring(0, s), agent = name.substring(s + 1);
             String present = peerTrust == null ? null : peerTrust.pinnedKey(new PeerIdentity.Expected(region, agent));
-            if (present != null) controllerEngine.msgSigning().keyChanged(region, agent, present);
+            // (no key at all: the name is no longer recorded -- its controller was replaced, or took another agent name: what was
+            // verified or agreed on its word under that name ends as it does for a replaced key)
+            controllerEngine.msgSigning().keyChanged(region, agent, present != null ? present : MsgSigning.NO_KEY);
         } catch (Exception ex) {
             logger.error("onKeyReplaced(" + name + "): " + ex.getMessage());
         }

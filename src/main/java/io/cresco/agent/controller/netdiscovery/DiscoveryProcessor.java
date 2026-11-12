@@ -358,9 +358,12 @@ public class DiscoveryProcessor {
 	 *
 	 * <p>As the CLIENT (we joined the peer): the responder is our controller. An AGENT responder must be in the region and
 	 * tenant we joined; a REGION/GLOBAL responder must not claim our region, nor a superuser tenant unless the operator
-	 * listed it. Its key is bound as a controller and FOLLOWS
-	 * authenticated discovery: a re-installed controller is accepted (logged), because a joiner cannot tell a re-install from
-	 * anything else and refusing would cut every agent off until each was reconfigured.
+	 * listed it. Its key is bound as a controller, strictly: another key for that name later needs the operator (a rebind
+	 * line, a signed rebind statement) or the CA this node pinned for the region.
+	 *
+	 * <p>Under per-node trust everything recorded is decided and written by one call,
+	 * {@link io.cresco.agent.controller.communication.PeerTrustRegistry#join}: nothing new without proof of the peer's key
+	 * ({@link DiscoveryNode#proved}), one controller per region, one region per key, one global above this node.
 	 */
 	private boolean learnPeer(DiscoveryType type, String region, String agent, String certJson, boolean pinLeaf, boolean asClient) {
 		return learnPeer(type, region, agent, certJson, pinLeaf, asClient, true);
@@ -434,89 +437,51 @@ public class DiscoveryProcessor {
 					return false;
 				}
 			}
-			if (pinLeaf && (asClient || controllerExchange) && named != null && certs[0] != null) {
-				// ONE controller per region (PeerTrustRegistry.claimController): where this node has a controller recorded for the
-				// region this peer claims, another identity is refused before anything of it is recorded -- a joining controller, a
-				// controller that answers this node's exchange, the controller an agent finds for its own region -- unless the
-				// operator vouches for it. With `record`, a vouched one replaces what was recorded, and is then bound below.
+			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
+				// per-node trust: everything this exchange may record of the peer is decided, and recorded, by ONE call under the
+				// registry's lock (PeerTrustRegistry.join): the name's own rules, the proof of possession, one controller per
+				// region, one global above this node. With record=false only the checks run.
 				io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
 				String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(certs[0]);
-				boolean anchored = cm.controllerAnchorVouches(certs);
-				String voucher = anchored ? "its key is listed in controller_trust_anchors"
-						: asClient && rebindStatement != null && cm.rebindStatementRefusal(rebindStatement, region, agent, keyFp) == null
-						? "an operator-signed rebind statement" : null;
-				io.cresco.agent.controller.communication.PeerTrustRegistry.ControllerRefusal no = reg.claimController(named.getTenant(), region,
-						agent, certs, voucher, anchored ? cm::controllerAnchorListsKey : null, record);
-				if (no != null) {
-					DiscoveryNode at = JUDGING.get();
-					if (at != null) {
-						at.refusal = "region " + region + " already has a controller there (" + no.recordedName + "); what its operator can do is"
-								+ " in that node's log";
-					}
-					// counted every time; logged once per joiner, then at most every ten minutes
-					if (reg.controllerRefused(region, agent, keyFp)) {
-						logger.error("Discovery REFUSED controller " + region + "/" + agent + " (tenant " + named.getTenant() + ", key " + keyFp + ") at "
+				DiscoveryNode at = JUDGING.get();
+				io.cresco.agent.controller.communication.PeerTrustRegistry.Join j = new io.cresco.agent.controller.communication.PeerTrustRegistry.Join();
+				j.region = region;
+				j.agent = agent;
+				j.chain = certs;
+				j.role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
+						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
+				j.source = legacyExchange ? io.cresco.agent.controller.communication.PeerTrustRegistry.SOURCE_LEGACY : "discovery";
+				j.proved = at != null && at.proved;
+				j.window = controllerEngine.legacyNodesAdmitted();
+				j.client = asClient;
+				j.global = asClient && type == DiscoveryType.GLOBAL;
+				j.legacyUpgrade = legacyUpgrade(type, asClient, legacyExchange, region, agent);
+				if (asClient && rebindStatement != null) {
+					String statementWhy = cm.rebindStatementRefusal(rebindStatement, region, agent, keyFp);
+					if (statementWhy == null) j.statement = "an operator-signed rebind statement";
+					else if (record) logger.warn("Discovery: the rebind statement " + region + "/" + agent + " served was not accepted: " + statementWhy);
+				}
+				j.anchored = (asClient || controllerExchange) && cm.controllerAnchorVouches(certs);
+				j.recordedAnchored = cm::recordedControllerAnchored;
+				j.peerAddress = at == null ? null : at.remote;
+				j.exchange = type.name();
+				j.record = record;
+				io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult res = reg.join(j);
+				if (!res.ok) {
+					// the refused peer is always told what ITS operator can do, whatever this node's log has room for
+					if (at != null) at.refusal = res.toPeer;
+					if (res.limited == null || reg.refusalLogged(res.limited, region, agent, keyFp)) {
+						logger.error("Discovery REFUSED " + (j.role.equals(io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT) ? "agent " : "controller ")
+								+ region + "/" + agent + (named == null ? "" : " (tenant " + named.getTenant() + ", key " + keyFp + ")") + " at "
 								+ (at == null || at.remote == null ? "an unknown address" : at.remote)
-								+ (asClient ? ", which answered a " + type + " exchange as a controller of region " + region
-								: ", which claims region " + region + " in a " + type + " exchange") + ": this node has " + no.recorded
-								+ " recorded for that region, and a region has ONE controller here -- the first that joined. Nothing of "
-								+ region + "/" + agent + " was recorded. " + no.remedy + ". (refused " + reg.controllerRefusedTimes(region, agent, keyFp)
-								+ " time(s) so far; said again at most every 10 minutes)");
+								+ (asClient ? ", which answered a " + type + " exchange" : ", which joined in a " + type + " exchange") + ": " + res.reason
+								+ (res.limited == null ? "" : " (refused " + reg.refusedTimes(res.limited, region, agent, keyFp)
+								+ " time(s) so far; said again at most every 10 minutes)"));
 					}
 					return false;
 				}
 			}
 			if (!record) return true;
-			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
-				String role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
-						: io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_AGENT;
-				// a joiner PINS the controller it joined (strict, as a responder pins its joiners): a different key for that name
-				// later -- an agent-secret holder answering as the controller -- is refused unless the operator authorises one
-				// rebind of it on this node
-				String why = reg.pin(region, agent, certs[0], role, false,
-						legacyExchange ? io.cresco.agent.controller.communication.PeerTrustRegistry.SOURCE_LEGACY : "discovery");
-				if (why != null && legacyUpgrade(type, asClient, legacyExchange, region, agent)) {
-					io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult up = reg.upgradeLegacy(
-							named == null ? myTenant : named.getTenant(), region, agent, certs[0].getPublicKey());
-					if (up.ok) {
-						logger.warn("Discovery: " + region + "/" + agent + " UPGRADED: the binding its earlier build made over the legacy"
-								+ " exchange is replaced by the key it proved over the authenticated exchange (upgrade window); the old key"
-								+ " stays refused");
-						why = null;
-					} else {
-						why = why + "; and the upgrade of its legacy binding was refused: " + up.reason;
-					}
-				}
-				if (why != null && asClient && named != null && region.equals(named.getRegion()) && agent.equals(named.getAgent())) {
-					// the controller this node joined re-keyed (re-installed): accepted without an operator action at each joiner
-					// only when the new identity is VOUCHED for -- issued by the CA this node pinned for its region, or matching an
-					// operator-configured controller trust anchor (controller_trust_anchors) -- never for a revoked name or key
-					io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
-					String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(certs[0]);
-					String statementWhy = rebindStatement == null ? null : cm.rebindStatementRefusal(rebindStatement, region, agent, keyFp);
-					if (rebindStatement != null && statementWhy != null) {
-						logger.warn("Discovery: the rebind statement " + region + "/" + agent + " served was not accepted: " + statementWhy);
-					}
-					String voucher = reg.issuedByRecordedCa(certs) ? "vouched for by region " + region + "'s pinned CA"
-							: cm.controllerAnchorVouches(certs) ? "vouched for by controller_trust_anchors"
-							: rebindStatement != null && statementWhy == null ? "vouched for by an operator-signed rebind statement" : null;
-					if (voucher != null) {
-						io.cresco.agent.controller.communication.PeerTrustRegistry.BindResult r =
-								reg.rebindVouched(named.getTenant(), region, agent, certs[0].getPublicKey(), voucher);
-						if (r.ok) {
-							logger.warn("Discovery: the controller " + region + "/" + agent + " this node joined has a NEW key ("
-									+ voucher + "); bound to it, the old key stays refused");
-							why = null;
-						} else {
-							why = why + "; and the vouched re-key was refused: " + r.reason;
-						}
-					}
-				}
-				if (why != null) {
-					logger.error("Discovery REFUSED " + region + "/" + agent + ": " + why);
-					return false;
-				}
-			}
 			if (controllerExchange) {
 				reg.allowBridgePeer(region, agent);
 			}
@@ -749,7 +714,8 @@ public class DiscoveryProcessor {
 		DiscoveryAuth.Msg h = new DiscoveryAuth.Msg();
 		h.step = "hello";
 		h.type = type.name();
-		h.nc = DiscoveryAuth.nonce();
+		// the secret's exchange: this build proves possession of its key, and says so in its nonce (DiscoveryAuth.PROOF_NONCE)
+		h.nc = pki ? DiscoveryAuth.nonce() : DiscoveryAuth.proofNonce();
 		h.creg = plugin.getRegion();
 		h.cagt = plugin.getAgent();
 		h.ccert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
@@ -780,6 +746,13 @@ public class DiscoveryProcessor {
 		p.step = "proof";
 		p.type = hello.type;
 		p.mac = DiscoveryAuth.mac(key, "C", DiscoveryAuth.transcript(hello, ch, leafOf(hello.ccert), leafOf(ch.scert), true));
+		// proof of possession, next to the MAC: this exchange signed with the key of the leaf this node presented
+		java.security.PrivateKey own = ownKey();
+		if (own == null) {
+			logger.error("discovery v2: this node's identity key is not readable: it cannot prove its key to " + remote);
+			return null;
+		}
+		p.pop = DiscoveryAuth.sign(own, DiscoveryAuth.POP_CLIENT, DiscoveryAuth.possessionTranscript(hello, ch, leafOf(hello.ccert), sleaf));
 		return p;
 	}
 
@@ -837,11 +810,28 @@ public class DiscoveryProcessor {
 			logger.error("discovery v2: the result from " + remoteAddress + " failed authentication (altered or replayed)");
 			return null;
 		}
+		// proof of possession: a responder whose nonce says it is a build that proves its key signed this result with the key
+		// of the leaf it presented -- or it is refused, whatever its MACs say (no downgrade). One whose nonce does not say so
+		// is a build of before the proof (release 1.3.378), or says it is: the registry gives it only what such a build has.
+		boolean proved = false;
+		if (!pkiDiscovery()) {
+			java.security.cert.X509Certificate sleaf = leafOf(ch.scert);
+			proved = sleaf != null && DiscoveryAuth.verify(sleaf.getPublicKey(), r.pop, DiscoveryAuth.POP_RESULT,
+					DiscoveryAuth.possessionTranscript(hello, ch, leafOf(hello.ccert), sleaf), DiscoveryAuth.resultDigest(r));
+			if (!proved && DiscoveryAuth.claimsProof(ch.ns)) {
+				logger.error("discovery v2: " + remoteAddress + " answered as " + ch.sreg + "/" + ch.sagt + " and holds the " + hello.type
+						+ " discovery secret, but did NOT prove the key of the certificate it presented (no signature by that key, or one"
+						+ " made for another exchange): REFUSED, nothing recorded. It is not " + ch.sreg + "/" + ch.sagt
+						+ " -- a holder of the secret with a copy of that certificate -- or the exchange was altered");
+				return null;
+			}
+		}
 		if (!r.ok) {
 			logger.error("discovery v2: " + ch.sreg + "/" + ch.sagt + " at " + remoteAddress + " REFUSED this node: " + r.reason);
 			return null;
 		}
 		DiscoveryNode n = new DiscoveryNode(DiscoveryType.valueOf(hello.type));
+		n.proved = proved;
 		n.nodeType = DiscoveryNode.NodeType.CERTIFIED;
 		n.discovered_ip = remoteAddress;
 		n.discovered_port = discoveryPort;
@@ -902,7 +892,7 @@ public class DiscoveryProcessor {
 		controllerEngine.getCertificateManager().bindOwnIdentity();      // no joiner is ever bound to this node's own name
 		ch.type = h.type;
 		ch.nc = h.nc;
-		ch.ns = DiscoveryAuth.nonce();
+		ch.ns = pki ? DiscoveryAuth.nonce() : DiscoveryAuth.proofNonce();
 		ch.sreg = plugin.getRegion();
 		ch.sagt = plugin.getAgent();
 		ch.scert = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
@@ -936,18 +926,31 @@ public class DiscoveryProcessor {
 		boolean authentic = p != null && "proof".equals(p.step) && (pki
 				? DiscoveryAuth.AUTH_PKI.equals(p.auth) && cleaf != null && DiscoveryAuth.verify(cleaf.getPublicKey(), p.mac, "pki-C", t)
 				: DiscoveryAuth.macEquals(p.mac, DiscoveryAuth.mac(key, "C", t)));
+		// proof of possession (the secret's exchange): the client's signature over this exchange by the key of the leaf it sent
+		byte[] pt = pki || !authentic ? null : DiscoveryAuth.possessionTranscript(h, ch, cleaf, leafOf(ch.scert));
+		boolean proved = pt != null && cleaf != null && DiscoveryAuth.verify(cleaf.getPublicKey(), p.pop, DiscoveryAuth.POP_CLIENT, pt);
 		if (!authentic) {
 			logger.warn("discovery " + (pki ? "(PKI)" : "v2") + ": " + remote + " (claiming " + h.creg + "/" + h.cagt + ") failed"
 					+ " authentication: " + (pki ? "its signature does not verify under its certificate" : "wrong " + h.type + " secret")
 					+ ", a replay, or an altered exchange; nothing recorded");
 			r.ok = false;
 			r.reason = "authentication failed";
+		} else if (!pki && !proved && DiscoveryAuth.claimsProof(h.nc)) {
+			// its nonce says it is a build that proves its key, and it did not: never taken as an earlier build instead
+			logger.error("discovery v2: " + remote + " presented the certificate of " + h.creg + "/" + h.cagt + " and holds the " + h.type
+					+ " discovery secret, but did NOT prove that certificate's key (no signature by it, or one made for another exchange):"
+					+ " REFUSED, nothing recorded. It is not " + h.creg + "/" + h.cagt + " -- a holder of the secret with a copy of that"
+					+ " certificate -- or the exchange was altered");
+			r.ok = false;
+			r.reason = "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + ": no proof of the key of the certificate presented for "
+					+ h.creg + "/" + h.cagt;
 		} else {
 			DiscoveryNode n = new DiscoveryNode(DiscoveryType.valueOf(h.type));
 			n.discover_region = h.creg;
 			n.discover_agent = h.cagt;
 			n.discover_cert = h.ccert;
 			n.remote = remote;
+			n.proved = proved;
 			String local = configureCertTrust(n);
 			r.ok = local != null;
 			r.reason = r.ok ? null : "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + (n.refusal != null ? ": " + n.refusal
@@ -962,6 +965,14 @@ public class DiscoveryProcessor {
 			return r;
 		}
 		r.mac = DiscoveryAuth.mac(key, "S2", t, DiscoveryAuth.resultDigest(r));
+		if (authentic) {
+			// this node's own proof: the result (granted or refused) signed with the key of the leaf it presented. Only for a
+			// client whose MAC verified: a stranger cannot make this node sign.
+			java.security.PrivateKey own = ownKey();
+			if (own == null) logger.error("discovery v2: this node's identity key is not readable: it cannot prove its key to " + remote);
+			else r.pop = DiscoveryAuth.sign(own, DiscoveryAuth.POP_RESULT,
+					DiscoveryAuth.possessionTranscript(h, ch, cleaf, leafOf(ch.scert)), DiscoveryAuth.resultDigest(r));
+		}
 		return r;
 	}
 }

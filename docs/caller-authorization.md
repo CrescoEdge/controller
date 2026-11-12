@@ -618,8 +618,9 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
     io.cresco.agent.controller.communication.RebindStatement <operator-key.pem> <operator-pub.pem> <region>/<agent>
     <new key fingerprint> [days]` (PKCS#8 / SubjectPublicKeyInfo PEM, e.g. `openssl genpkey -algorithm EC -pkeyopt
     ec_paramgen_curve:P-384`); a node logs its key fingerprint at start ("This node's identity key: ...");
-  - by the CA it pinned for that region (a region controller re-installed with its `region-ca.p12` restored);
-  - by a certificate or key listed in `controller_trust_anchors`.
+  - by the CA it pinned for that region (a region controller re-installed with its `region-ca.p12` restored).
+  Not by `controller_trust_anchors` (it was, before 2026-11-12): an anchor admits a controller and never replaces a
+  recorded key -- an anchor names no region, so the holder of any anchored key could re-key any recorded controller.
   Under the regional CA, back up `region-ca.p12` (and its `.pass`): restoring it on a re-installed region controller is
   the one action (its agents verify the new controller leaf by that CA). Its private key is encrypted at rest under
   `region_ca_password_file` (an owner-only file the operator keeps elsewhere -- a mounted secret, another volume; its first
@@ -688,62 +689,100 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   controller caller bound there as a controller), and in the explicit insecure mode; a region serves its own list to its
   agents.
 
-### One controller per region (2026-11-12)
+### One controller per region, and the proof of its key (2026-11-12)
 
-A discovery secret proves membership, not a name: every region controller holds the global's secret, every agent its
-region's. A name was bound to the first key that presented it, and that alone let a holder of the secret join under a NEW
-agent name of a region whose controller was already joined (`rgB/zz` beside `rgB/rc`): first come again, as a controller.
-The global then gave it what it gives that region's controller -- its word in the registry (unregister the region and its
-agents), the stamps of the region's nodes over its bridge, a place in the trust bundle (what it attested was an agent of
-the region to every node), a revocation list that revoked the real controller -- and its bridge was given the inboxes of
-the region's nodes under ANY tenant's name, so a controller of another tenant read them.
+A discovery secret proves membership, not a name: every region controller holds the global's, every agent its region's.
+Three rules follow from that, enforced by the node that records, at the discovery exchange, before anything of the peer
+is recorded.
 
-- **The rule.** Where a controller is recorded for a region, that region has ONE controller there: the first identity
-  bound as its controller. Another identity that claims the region as a controller is refused before anything of it is
-  recorded (no binding, no bridge peer, nothing in the truststore), whatever tenant its certificate states. What identifies
-  the controller is its KEY: the same key (in the same tenant) under another agent name is the same controller -- a
-  controller with a generated agent name keeps its key across restarts -- and admits nobody, since every use of a
-  controller's identity needs the private key. The same name with another key is the re-key case, as before.
-- **Where it is enforced:** by the node that records, at the discovery exchange, in both directions -- a global for the
-  regions that join it; a region for the peer regions that bridge to it (`regional_peers`, inferred peers), and for
-  whoever answers ITS exchanges (it is not told that its global's region, or a peer's, has another controller); an agent
-  for the controller of its own region. The bridge handshake admits only a name discovery recorded, and the trust bundle
-  lists only a controller bound at the global, so a refused controller reaches neither -- nor can another node introduce
-  its key (a ping's certificate is listed only as its verified sender's).
-- **What the operator sees.** `Discovery REFUSED controller <region>/<agent> (tenant ..., key <fingerprint>) at <address>,
-  which claims region <region> ...: this node has <recorded controller> recorded for that region, and a region has ONE
-  controller here ...` -- once per joiner, then at most every ten minutes -- with the two things an operator may want, as
-  exact lines: replace the recorded controller by this one, or revoke the recorded one because it is not the region's.
-  The joiner is told `region <region> already has a controller there (<name>)`. Counted in `broker.controller.refused`.
-- **Replacing a region's controller** (`rgB/rc` by `rgB/rc2`, another host and key), on each node that recorded `rgB/rc`
-  (its global, its peer regions): add the line `rgB/rc2=<key fingerprint of rc2>` to that node's
-  `<data>/security/peer-trust.json.rebind` (no restart; or `peer_identity_rebind`) -- the line the refusal prints. `rc2`
-  then joins, the line is consumed, and `rgB/rc` is no longer recorded there (its key is not revoked by this: revoke it
-  too if it must be refused everywhere). Or list `rc2`'s key in `controller_trust_anchors` on that node: an anchored
-  controller replaces one that is not (two anchored controllers of one region are refused: take one out). Or revoke
-  `rgB/rc` there (`peer-trust.json.revoke`): the region then has no controller recorded, and the next one to join is
-  taken. The region's AGENTS follow a replaced controller as they follow a re-keyed one (above): an operator-signed rebind
-  statement for the new name and key served by the new controller, `controller_trust_anchors`, or a rebind line.
-- **A registry that already holds two** (written before the rule): nothing is chosen. Each keeps working as recorded, no
-  further controller is taken for that region, and it is said at every start and by the `identity` health check
-  (CRITICAL: whoever holds either key speaks for the region there) until the operator revokes the one that is not the
-  region's controller (its name in `peer-trust.json.revoke`). Names that share one key are one controller.
-- **Squatting.** Whoever claims a region's name BEFORE its real controller ever joined is its controller there: first
-  come. The real controller is then the one refused, and the line above says how to remove the squatter. Nothing better
-  is possible without an operator's pin: list the region controllers' keys in `controller_trust_anchors` at the global
-  (an anchored controller replaces a squatter when it joins), or use the production profile, where the operator's PKI
-  issues every controller.
-- **Other trust models.** Pre-provisioned (production): unchanged -- a controller is whoever the operator's PKI issued a
-  controller's certificate, a region is one tenant's, and a re-issued controller joins with no rebind (so does a second
-  controller name the PKI issued for the region's own tenant: the operator's word). `security_regional_ca`: unchanged --
-  a region has one CA where it is recorded, and a second controller under another CA was and is refused.
-- **Mixed versions.** The node that records enforces: a global of an earlier build protects no region, so upgrade the
-  global first, then the region controllers, then the agents. Nothing legitimate is refused by an upgraded node: the
-  same name and key re-joins, a re-keyed controller joins after the operator's rebind, a controller that kept its key
-  joins under a generated agent name. What IS refused now and was not: a controller that comes back with a NEW key AND a
-  new agent name (its `security` directory lost and its agent name generated) -- that is what an impostor looks like;
-  keep the directory, or replace the controller as above.
-- **Cost.** One lookup at a join; nothing per message. One index entry per region with a controller bound.
+- **Proof of possession.** In the secret's exchange each side also SIGNS the exchange with the key of the certificate it
+  presents, next to the secret's MAC: the joiner in its PROOF, the responder in its RESULT (granted or refused; it signs
+  only for a joiner whose MAC verified). The signature covers the type of exchange, both nonces, and for the joiner and
+  the responder each its role, region, agent, the tenant its certificate states, its key and its whole chain, plus the
+  responder's broker port and the rebind statement it served -- so a signature made for one exchange verifies in no
+  other, toward no other responder, in no other type of exchange. Without it the MAC only said "a member sent this
+  certificate", and a member could be recorded under any certificate it had a copy of (certificates are public).
+  A build that proves says so in its NONCE (it starts with `p1.`), which every MAC of the exchange covers on every
+  build: the mark cannot be removed or added on the way without the secret. A peer whose nonce carries the mark and
+  whose message carries no valid signature is refused -- it is never read as an earlier build.
+- **What is recorded only on proof:** anything NEW -- a name not recorded, another key for a recorded name (also with the
+  operator's rebind line or a voucher), a replacement, the same key under another name. Each node remembers which names
+  have proved their key to it (durably), and refuses that name and key WITHOUT proof afterwards.
+- **A node of release 1.3.378 or earlier sends no proof.** It keeps exactly what it has: a re-join of a name and key that
+  is recorded is accepted as before (a 1.3.378 agent at its upgraded controller, a 1.3.378 region at its upgraded
+  global, an upgraded joiner answered by its recorded 1.3.378 controller). It is NOT recorded anew: a first join, a
+  re-key (even with the operator's rebind line), a controller whose agent name is generated at each start (a new name
+  is a first join) are refused with `... sent no proof of its key ...: UPGRADE <name>, or ... upgrade window`. The
+  upgrade window (`discovery_auth=compat` with `discovery_compat_until`) on the RECORDING node admits a FIRST join
+  without proof -- nothing else -- and logs each one (`UPGRADE WINDOW: <name> ... recorded WITHOUT proof`). Such a record
+  can be anybody's doing (the secret and a copy of a certificate suffice), so it never stands against the key's holder:
+  when a node PROVES a key, whatever was recorded of that key without proof -- another name, region or tenant -- gives
+  way to it (`... PROVED the key ..., which was recorded here WITHOUT proof ...`). So a fabric
+  of 1.3.378 nodes that is to join a NEW global of this build either upgrades first or the global opens its window for
+  the time of the upgrade; a fabric whose registries are kept needs neither.
+  What "no proof" still allows, until the peer has proved its key once: whoever holds the secret and a copy of a
+  recorded node's certificate can re-join in its name (it gains nothing: every use of the name needs the key), and can
+  ANSWER a joiner in the name of its recorded controller from another address -- the joiner then fails at TLS, where the
+  key is needed, and tries again. Upgrade controllers first: after one exchange with the upgraded controller its joiners
+  take nothing less. A node put back on 1.3.378 after it proved its key is refused (`... PROVED its key to this node
+  before and sent no proof now`) unless the window is open on the recording node.
+- **One controller per region.** Where a controller is recorded for a region, the region has ONE controller there: the
+  first identity bound as it. Another one is refused, whatever tenant its certificate states: `Discovery REFUSED
+  controller <region>/<agent> (tenant ..., key ...) at <address> ...: this node has <recorded> recorded for region
+  <region>, and a region has ONE controller here ...`, once per joiner and then at most every ten minutes, with the
+  exact lines for the operator. The refused JOINER is always told its own remedy: `region <region> already has a
+  controller recorded there (<name>). If <joiner> is to replace it, that node's operator adds the line
+  '<joiner>=<key>' to <file> on it`. Counted in `broker.controller.refused`. The decision and the record are one step
+  under the registry's lock and one durable write: of two joins at the same instant one is recorded.
+- **The controller is its key.** The same key (same tenant) under ANOTHER agent name of the region is the same controller
+  -- a controller whose agent name is generated keeps its key -- and, having proved the key, the new name REPLACES the
+  former one (`Controller of region <r> is now recorded as <new> ... <old> is no longer recorded`). There are never two
+  names of one key. A key bound as a controller of one region is refused as a controller of another (`a key speaks for
+  ONE region`).
+- **Only the operator replaces a recorded controller.** On each node that recorded `rgB/rc` (its global, its peer
+  regions, its agents): the line `rgB/rc2=<key fingerprint of rc2>` in that node's `<data>/security/peer-trust.json.rebind`
+  (no restart; or `peer_identity_rebind`) -- the line the refusal prints. `rc2` then joins, the line is consumed with the
+  binding, `rgB/rc` is no longer recorded there (its certificates leave the truststore, what was verified on its word
+  ends; its key is NOT revoked by this). At a joiner also: an operator-signed rebind statement for the new name and key,
+  served by the new controller (`controller_rebind_signers`). Or revoke `rgB/rc` there (`peer-trust.json.revoke`): the
+  region then has no controller recorded and the next one is taken. A refusal never tells the operator to revoke, by
+  name, a key that is also recorded under other names (that would refuse the key everywhere): it gives the rebind line.
+- **`controller_trust_anchors` ADMIT a controller; they replace nothing that is recorded.** They close the first join
+  (only a listed controller is joined) and admit a controller of a superuser tenant. An anchored controller is refused
+  for a region that has another recorded, and an anchored key does not re-key a recorded name (it did, before: the
+  holder of ANY anchored key could take any recorded controller's name at a joiner that listed both). A recorded
+  controller is judged "anchored" as a joiner is: by its key or by the certificates recorded for it.
+- **One global.** A node has ONE global: the first identity it took in a GLOBAL exchange (`<name> ... is recorded as this
+  node's GLOBAL`). Any other responder of a GLOBAL exchange is refused -- a region name never seen, a recorded peer
+  region's controller: `this node's global is <name> ..., and a node has ONE global`. Moving a region to another global
+  is the operator's act ON THE REGION: the line `<new global region>/<agent>=<its key fingerprint>` in the region's
+  `peer-trust.json.rebind` (`This node's GLOBAL MOVED from ... to ... by the operator`; the former global stays recorded
+  as its own region's controller and is not revoked). Where `controller_trust_anchors` are set on the region and the
+  region can SEE that they no longer vouch for the recorded global (judged by the chain kept with its binding), an
+  anchored responder is taken in its place without the line; anchors that vouch for both, or a recorded global the
+  region holds no certificate of, change nothing (the refusal gives the line). A registry written by an earlier release does not say which recorded controller is the
+  global: until one of THEM has answered a GLOBAL exchange and proved its key (it is then marked), no other identity is
+  taken (`... written by an earlier release ...`, with the line that takes one).
+- **An agent's first discovery.** Under the standard profile an agent (and a region, for its global) takes the FIRST
+  controller that answers its first discovery, holds the secret and proves its key. If one answered before the real
+  controller did, the agent is recorded to it and refuses the real one -- the refusal says so -- until its operator adds
+  the rebind line for the real controller on the agent, or revokes the other there. Nothing better is possible without
+  a pin: fleets ship `controller_rebind_signers` or `controller_trust_anchors` to their agents, or use
+  `security_profile=production`, where the operator's PKI names every controller.
+- **Names that differ only by letter case.** Names are compared exactly, but the truststore names its entries in lower
+  case: `rgb/rc` replaced the certificates held for `rgB/rc`. A region or agent name that equals a recorded one except
+  for case is refused wherever a name is first recorded (a binding, a CA scope, a bridge peer); a registry that already
+  holds both keeps both.
+- **A registry that already holds two controllers of one region** (written before the rule): nothing is chosen. Each
+  keeps working as recorded, no further one is taken, and it is said at every start and by the `identity` health check
+  (CRITICAL) until the operator revokes the one that is not the region's controller. Never reported for a region whose
+  CA is recorded (`security_regional_ca`): the CA is the region's one authority and names its controller as it likes.
+- **Other trust models.** Pre-provisioned (production): unchanged -- discovery already signs with the provisioned keys,
+  and a controller is whoever the operator's PKI issued a controller's certificate. `security_regional_ca`: the proof is
+  sent and required in the exchange as above; what is recorded is the region's CA, one per region, as before.
+- **Cost.** Two signatures and two verifications per discovery exchange (none for a stranger: the responder signs only
+  after the joiner's MAC verified). One or two lookups for a peer that is recorded as it presents itself; one durable
+  write the first time a recorded peer proves its key. Nothing per message.
 
 ## 10. End-to-end message signatures (D4)
 

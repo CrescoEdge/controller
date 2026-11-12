@@ -180,7 +180,9 @@ class OneControllerPerRegionTest {
         assertNull(atGlobal.boundRole("rgB", "zz", leaf(f.second).getPublicKey()));
         assertNull(atGlobal.verifiedIdentity(new X509Certificate[]{leaf(f.second)}), "its certificate verifies at the global");
         assertFalse(atGlobal.isBridgePeer(CrescoIdentity.of("t1", "rgB", "zz", null)), "it is a bridge peer");
-        assertTrue(f.told != null && f.told.contains("region rgB already has a controller there (rgB/rc)"), "the joiner is not told why: " + f.told);
+        // the refused joiner is told why, and what ITS operator can do: the rebind line for its name and key, and where it goes
+        assertTrue(f.told != null && f.told.contains("region rgB already has a controller recorded there (rgB/rc)")
+                && f.told.contains("'rgB/zz=" + key(f.second) + "'") && f.told.contains("peer-trust.json.rebind"), "the joiner is not told why: " + f.told);
         // a second try, and a third under yet another name: refused each time; the region's controller is what it was
         assertNull(join(f.second, f.global));
         assertNull(join(controller("rgB", "yy", "t1"), f.global));
@@ -446,7 +448,15 @@ class OneControllerPerRegionTest {
         ControllerEngine renamed = controller("rgB", "agent-3f2a", "t1", dir);
         assertEquals(key(rc), key(renamed));
         assertNotNull(join(renamed, global), "a controller that kept its key was refused under its new agent name");
-        assertTrue(global.speaksForRegion(Caller.controller("t1", "rgB", "agent-3f2a")) && global.speaksForRegion(Caller.controller("t1", "rgB", "rc")));
+        // ... and the new name REPLACED the former one: one name per controller, never two names of one key
+        assertTrue(global.speaksForRegion(Caller.controller("t1", "rgB", "agent-3f2a")));
+        assertFalse(global.speaksForRegion(Caller.controller("t1", "rgB", "rc")), "the former name of the key still speaks for the region");
+        assertNull(atGlobal.pinnedKey(new PeerIdentity.Expected("rgB", "rc")), "the former name of the key stayed recorded");
+        assertFalse(atGlobal.isBridgePeer(CrescoIdentity.of("t1", "rgB", "rc", null)));
+        // (and back again: the same controller under its first name)
+        assertNotNull(join(restarted, global));
+        assertNull(atGlobal.pinnedKey(new PeerIdentity.Expected("rgB", "agent-3f2a")));
+        assertNotNull(join(renamed, global));
         assertEquals("OK", global.getCertificateManager().identityHealth()[0], global.getCertificateManager().identityHealth()[1]);
         // re-keyed under its name (its identity lost): refused until the operator's rebind, as before
         ControllerEngine reKeyed = controller("rgB", "rc", "t1");
@@ -481,7 +491,8 @@ class OneControllerPerRegionTest {
         assertNotNull(join(squatter, global), "(first come: nothing is recorded for the region yet)");
         String[] told = new String[1];
         assertNull(join(real, global, DiscoveryType.GLOBAL, told), "a second controller joined");
-        assertTrue(told[0] != null && told[0].contains("region rgB already has a controller there (rgB/zz)"), told[0]);
+        assertTrue(told[0] != null && told[0].contains("region rgB already has a controller recorded there (rgB/zz)")
+                && told[0].contains("'rgB/rc=" + key(real) + "'"), told[0]);
         assertEquals("OK", global.getCertificateManager().identityHealth()[0]);
         // the operator: the squatter's name in the global's revocation file (read every 10 s; here at once)
         assertNull(reg(global).revoke("rgB/zz", "operator file peer-trust.json.revoke"));
@@ -503,6 +514,9 @@ class OneControllerPerRegionTest {
         PeerTrustRegistry atGlobal = reg(global);
         ControllerEngine rc = controller("rgB", "rc", "t1"), rc2 = controller("rgB", "rc2", "t1"), other = controller("rgB", "rc2", "t1");
         assertNotNull(join(rc, global));
+        X509Certificate formerRoot = last(rc);
+        assertTrue(java.util.Arrays.asList(((BoundKeyTrustManager) global.getCertificateManager().currentPkixTrustManager()).trustedIssuers())
+                .contains(formerRoot), "(precondition: the global holds the former controller's certificates)");
         assertNull(join(rc2, global), "the new controller joined without the operator");
         // a line for ANOTHER key than the one that presents: not this controller
         Files.writeString(Path.of(gf + ".rebind"), "rgB/rc2=" + key(other) + "\n");
@@ -518,6 +532,9 @@ class OneControllerPerRegionTest {
         assertFalse(atGlobal.isBridgePeer(CrescoIdentity.of("t1", "rgB", "rc", null)));
         assertFalse(global.speaksForRegion(Caller.controller("t1", "rgB", "rc")));
         assertNull(atGlobal.verifiedIdentity(new X509Certificate[]{leaf(rc)}));
+        // ... and what the global held for it is gone with the binding: its certificates leave the truststore
+        assertFalse(java.util.Arrays.asList(((BoundKeyTrustManager) global.getCertificateManager().currentPkixTrustManager()).trustedIssuers())
+                .contains(formerRoot), "the replaced controller's certificates are still trust anchors of the global");
         assertNull(join(rc, global), "the replaced controller joined again");
         assertEquals("OK", global.getCertificateManager().identityHealth()[0], global.getCertificateManager().identityHealth()[1]);
         // the line is consumed: it admits nobody else, also after the registry is read again from its files
@@ -529,21 +546,28 @@ class OneControllerPerRegionTest {
     }
 
     /**
-     * The other way: the operator lists the new controller's key in controller_trust_anchors on the recording node. An
-     * anchored controller replaces one that is not (so listing the real controllers' keys at a global also removes a
-     * squatter when the real one joins); two anchored controllers of one region are the operator's to settle.
+     * {@code controller_trust_anchors} ADMIT a controller; they never replace a recorded one. A controller whose key the
+     * operator anchored at the global is still refused for a region that has another controller recorded there, whether the
+     * recorded one is anchored or not, by key or by certificate: only the rebind line (or revoking the recorded one) replaces.
      */
     @Test
-    void theOperatorReplacesARegionsControllerWithControllerTrustAnchors() throws Exception {
+    void controllerTrustAnchorsAdmitAControllerAndNeverReplaceARecordedOne() throws Exception {
         ControllerEngine rc = controller("rgB", "rc", "t1"), rc2 = controller("rgB", "rc2", "t1"), rc3 = controller("rgB", "rc3", "t1");
-        ControllerEngine global = controller("rgG", "gc", "t1", "is_global", "true", "controller_trust_anchors", key(rc2) + "," + key(rc3));
+        Path gf = Files.createTempDirectory("onectl-g").resolve("peer-trust.json");
+        ControllerEngine global = controller("rgG", "gc", "t1", "is_global", "true", "controller_trust_anchors", key(rc2) + "," + key(rc3),
+                "peer_trust_file", gf.toString());
         assertNotNull(join(rc, global), "(first come: the squatter, or the controller that is to be replaced)");
-        assertNotNull(join(rc2, global), "the controller the operator anchored did not replace the recorded one");
-        assertTrue(global.speaksForRegion(Caller.controller("t1", "rgB", "rc2")));
+        String[] told = new String[1];
+        assertNull(join(rc2, global, DiscoveryType.GLOBAL, told), "an anchored controller replaced the recorded one");
+        assertTrue(told[0] != null && told[0].contains("'rgB/rc2=" + key(rc2) + "'"), told[0]);
+        assertTrue(global.speaksForRegion(Caller.controller("t1", "rgB", "rc")));
+        assertFalse(global.speaksForRegion(Caller.controller("t1", "rgB", "rc2")));
+        assertEquals(key(rc), reg(global).pinnedKey(new PeerIdentity.Expected("rgB", "rc")));
+        // the operator's rebind line replaces it; then a second anchored controller does not replace the first
+        Files.writeString(Path.of(gf + ".rebind"), "rgB/rc2=" + key(rc2) + "\n");
+        assertNotNull(join(rc2, global), "the operator's rebind line did not admit the replacement");
         assertFalse(global.speaksForRegion(Caller.controller("t1", "rgB", "rc")));
-        assertNull(reg(global).pinnedKey(new PeerIdentity.Expected("rgB", "rc")));
         assertNull(join(rc, global), "the replaced controller joined again");
-        // a second ANCHORED controller of the region does not replace the first anchored one
         assertNull(join(rc3, global), "one anchored controller replaced another");
         assertTrue(global.speaksForRegion(Caller.controller("t1", "rgB", "rc2")));
         assertEquals("OK", global.getCertificateManager().identityHealth()[0]);

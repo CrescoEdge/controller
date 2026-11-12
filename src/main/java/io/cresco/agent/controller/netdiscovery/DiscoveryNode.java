@@ -13,6 +13,12 @@ public class DiscoveryNode {
 	public transient boolean legacy_exchange;
 	/** The peer's address as this node saw it (for the log), and -- set when it is refused -- what the peer is told. */
 	public transient String remote, refusal;
+	/**
+	 * The peer signed this exchange with the key of the leaf it presented (proof of possession, verified). False for a peer
+	 * of a build of before the proof (release 1.3.378) and for the legacy exchange: such a peer is given only what it
+	 * already has (PeerTrustRegistry.join).
+	 */
+	public transient boolean proved;
 	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
 	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
 	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port

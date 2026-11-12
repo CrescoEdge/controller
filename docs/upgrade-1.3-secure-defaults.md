@@ -102,14 +102,30 @@ Controllers first, from the top: a parent must understand everything its childre
 
 A node that cannot be upgraded before the window ends is cut off when it does: upgrade it, or take it out of the fabric.
 
-**One controller per region.** From the build with that rule (`caller-authorization.md`, "One controller per region") a node
-refuses a second controller identity for a region it already has a controller recorded for. It is the recording node
-that enforces it, so the order above is also the order of protection: an earlier-build global protects no region. At
-its first start on that build a node says (ERROR at start, CRITICAL in its `identity` health) when its registry already
-holds two controllers under one region; both keep working until the operator revokes the one that is not the region's.
-A controller that returns with a new key AND a new agent name (its `security` directory was lost and its `agentname` is
-not configured) is refused where its region's former identity is recorded: keep the directory, set `agentname`, or
-replace the controller as that section says.
+**One controller per region, and the proof of its key.** From the build with those rules (`caller-authorization.md`, "One
+controller per region, and the proof of its key") a node records a new name or key only when the peer proved the key of
+its certificate in the discovery exchange, and refuses a second controller for a region, and a second global. It is the
+recording node that enforces it, so upgrade the global first, then the region controllers, then the agents.
+
+- **Registries kept (the usual upgrade):** nothing to do. A node of release 1.3.378 sends no proof and is accepted where
+  its name and key are recorded, exactly as before; after it is upgraded it proves its key, and from then on that name
+  and key is not accepted without proof.
+- **A first join across releases needs the upgrade window on the recording node** (`discovery_auth=compat` with
+  `discovery_compat_until`): a 1.3.378 node joining a NEW (empty-registry) node of this build, a 1.3.378 node whose agent
+  name is generated at each start (a new name is a first join), a new joiner of this build at a 1.3.378 controller. Each
+  is logged (`UPGRADE WINDOW: ... recorded WITHOUT proof`); without the window it is refused with a line that says to
+  upgrade the joiner. The window admits a first join only: a re-key or a replacement needs the upgraded node.
+- **Rolling a node back to 1.3.378** after it proved its key: it is refused where it proved it, unless the window is open
+  there.
+- At its first start on this build a node says (ERROR at start, CRITICAL in its `identity` health) when its registry
+  already holds two controllers under one region; both keep working until the operator revokes the one that is not the
+  region's. A region's registry of an earlier release does not say which recorded controller is its global: the region
+  takes only one of them as its global until that one has proved its key.
+- A controller that returns with a new key AND a new agent name (its `security` directory was lost and its `agentname`
+  is not configured) is refused where its region's former identity is recorded: keep the directory, set `agentname`, or
+  replace the controller as that section says.
+- `controller_trust_anchors` no longer re-key or replace a recorded controller (they admit one): use the rebind line or
+  a signed rebind statement (`controller_rebind_signers`).
 
 ## 5. Checking a node
 
