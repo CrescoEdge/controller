@@ -16,7 +16,8 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     private CLogger logger;
     private Gson gson;
     private DiscoveryProcessor discoveryProcessor;
-    private DiscoveryAuth.Msg hello, challenge;             // this connection's v2 exchange
+    // this connection's v2 exchange (written by the worker that answered the hello, read by the I/O thread and the next worker)
+    private volatile DiscoveryAuth.Msg hello, challenge;
     /** Where requests are answered (off the I/O thread, in turn per address); null: on the calling thread (tests). */
     private final DiscoveryJobs jobs;
     /** A request of this connection is queued or being answered: the next frame is read only after its answer was written. */
@@ -55,15 +56,35 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
             return;
         }
         DiscoveryGuard.Admission.working(ctx, true);
-        long retryMs = jobs.submit(remote(ctx), msg instanceof String ? ((String) msg).length() : 0, () -> {
+        // a frame on a connection whose challenge this responder wrote continues that exchange (its proof): the work of
+        // the hello is done, so it is not sent away because the queue's wait has grown since -- only for count or bytes
+        boolean continuing = challenge != null;
+        long retryMs = jobs.submit(remote(ctx), msg instanceof String ? ((String) msg).length() : 0, continuing, () -> {
             Request rq = new Request();
             try {
                 // a peer that gave up while its request waited is not answered: no work for a connection that is gone
                 if (ctx.channel().isActive()) answer(ctx, msg, rq);
+            } catch (Throwable t) {
+                // an answer that failed leaves nothing to wait for: the connection is closed, not left open and silent
+                DiscoveryGuard.warnLimited(logger, "discovery-job", "Discovery: a request of " + remote(ctx) + " failed (" + t
+                        + "); its connection is closed");
+                ctx.close();
             } finally {
                 if (!rq.released) written(ctx);                  // nothing was written for it (refused, or nothing to answer)
             }
+        }, comeBackMs -> {
+            // its turn came later than the queue's bound (the service slowed after it was queued): told so, not answered late
+            written(ctx);
+            if (ctx.channel().isActive()) {
+                ctx.writeAndFlush(busyFrame(gson, plugin, comeBackMs, "the responder fell behind")).addListener(io.netty.channel.ChannelFutureListener.CLOSE);
+            }
         });
+        if (retryMs == DiscoveryJobs.CLOSED) {
+            // the responder is stopping: there is nothing to come back to, so no "busy" is said
+            written(ctx);
+            ctx.close();
+            return;
+        }
         if (retryMs > 0) {
             DiscoveryGuard.warnLimited(logger, "discovery-busy", "Discovery: busy: told " + remote(ctx) + " to come back in " + retryMs
                     + " ms (" + jobs.queued() + " request(s) of " + jobs.addressesWaiting() + " address(es) wait for " + jobs.workers()
@@ -74,7 +95,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
     }
 
     /** One queued request: whether the connection was already released for its next frame (by the thread answering it). */
-    private static final class Request { boolean released; }
+    static final class Request { boolean released; }
 
     /** This connection's request is answered (or given up): its next frame may be read, and it may be idle again. */
     private void written(ChannelHandlerContext ctx) {
@@ -105,7 +126,8 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
         return gson.toJson(me);
     }
 
-    private void answer(ChannelHandlerContext ctx, Object msg, Request rq) {
+    /** Answer one request (a worker's thread, or the caller's without a queue). Tests make it fail. */
+    void answer(ChannelHandlerContext ctx, Object msg, Request rq) {
 
         DiscoveryNode discoveryNode = null;
         try {

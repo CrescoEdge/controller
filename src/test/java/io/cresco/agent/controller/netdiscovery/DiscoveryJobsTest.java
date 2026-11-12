@@ -152,6 +152,84 @@ class DiscoveryJobsTest {
         }
     }
 
+    /**
+     * The proof of a challenge this responder wrote is not sent away because the queue's wait has grown since its hello:
+     * the hello's work (and the joiner's signature) would be thrown away. The count and the bytes still bound it.
+     * Fails before: a proof was admitted like a new hello.
+     */
+    @Test
+    void aRequestThatContinuesAnExchangeIsNotSentAwayForTheWait() throws Exception {
+        DiscoveryJobs jobs = new DiscoveryJobs(1, 40, 20, 4_000, 8_000, null);
+        try {
+            CountDownLatch gate = new CountDownLatch(1), started = new CountDownLatch(1);
+            jobs.submit("hold", () -> { started.countDown(); try { gate.await(); } catch (InterruptedException ignore) { } });
+            await(started, "the worker did not start");
+            int queued = 0;
+            while (jobs.submit("10.0.0.9", 100, false, () -> { }, null) == 0) queued++;       // until the wait bound sends one away
+            assertTrue(queued >= 1 && queued < 19, "queued " + queued);
+            assertTrue(jobs.submit("10.0.0.9", 100, false, () -> { }, null) > 0, "a new request is sent away: the wait is over its bound");
+            CountDownLatch proof = new CountDownLatch(1);
+            assertEquals(0, jobs.submit("10.0.0.9", 100, true, proof::countDown, ms -> fail("a continuing request was told it is too late")),
+                    "the proof of an exchange already answered was sent away for the wait");
+            // ... but not past the bytes of its address, nor past the count
+            assertTrue(jobs.submit("10.0.0.9", 4_000, true, () -> { }, null) > 0, "a continuing request passed its address's bound of bytes");
+            while (jobs.queued() < 20) assertEquals(0, jobs.submit("a" + jobs.queued(), 0, true, () -> { }, null));
+            assertTrue(jobs.submit("10.0.0.77", 0, true, () -> { }, null) > 0, "a continuing request passed the bound of requests held");
+            gate.countDown();
+            await(proof, "the continuing request was not answered");
+        } finally {
+            jobs.shutdown();
+        }
+    }
+
+    /**
+     * A wait is an estimate made when a request is queued. When the service slows afterwards, a request whose turn comes
+     * later than the bound is told so then, with a time to come back -- not answered late, not left to its connection's
+     * lifetime. Fails before: every queued request ran, however late.
+     */
+    @Test
+    void aRequestWhoseTurnComesLaterThanTheBoundIsToldSoThen() throws Exception {
+        DiscoveryJobs jobs = new DiscoveryJobs(1, 150, 1000, null);
+        try {
+            CountDownLatch gate = new CountDownLatch(1), started = new CountDownLatch(1), done = new CountDownLatch(4);
+            AtomicInteger ran = new AtomicInteger(), late = new AtomicInteger(), continued = new AtomicInteger();
+            java.util.concurrent.atomic.AtomicLong comeBack = new java.util.concurrent.atomic.AtomicLong();
+            jobs.submit("hold", () -> { started.countDown(); try { gate.await(); } catch (InterruptedException ignore) { } });
+            await(started, "the worker did not start");
+            for (int i = 0; i < 3; i++) {                     // queued on an estimate of a few ms each
+                assertEquals(0, jobs.submit("10.0.0." + i, 0, false, () -> { ran.incrementAndGet(); done.countDown(); },
+                        ms -> { late.incrementAndGet(); comeBack.set(ms); done.countDown(); }));
+            }
+            assertEquals(0, jobs.submit("10.0.0.3", 0, true, () -> { continued.incrementAndGet(); done.countDown(); }, ms -> fail("continuing")));
+            Thread.sleep(400);                                // the worker is held far past the 150 ms bound
+            gate.countDown();
+            await(done, "requests neither answered nor told to come back");
+            assertEquals(0, ran.get(), "a request was answered although its turn came later than the bound");
+            assertEquals(3, late.get());
+            assertEquals(3, jobs.late());
+            assertEquals(1, continued.get(), "the request that continues an exchange was not answered");
+            assertTrue(comeBack.get() >= DiscoveryJobs.MIN_RETRY_MS && comeBack.get() <= DiscoveryJobs.MAX_RETRY_MS, "come back in " + comeBack.get());
+            // a request whose turn comes in time is answered as before
+            CountDownLatch quick = new CountDownLatch(1);
+            assertEquals(0, jobs.submit("10.0.0.5", 0, false, quick::countDown, ms -> fail("told too late: " + ms)));
+            await(quick, "a request in time was not answered");
+        } finally {
+            jobs.shutdown();
+        }
+    }
+
+    /** What may wait is never more than a sixteenth of the heap in all, and one address never more than an eighth of that. */
+    @Test
+    void theBoundsOfBytesFollowTheHeap() {
+        long heap = Runtime.getRuntime().maxMemory();
+        assertEquals(Math.min(DiscoveryJobs.DEFAULT_MAX_BYTES, heap / 16), DiscoveryJobs.maxBytesFor(DiscoveryJobs.DEFAULT_MAX_BYTES));
+        assertEquals(heap / 16, DiscoveryJobs.maxBytesFor(Long.MAX_VALUE), "a configured bound above a sixteenth of the heap was taken");
+        assertEquals(1_000, DiscoveryJobs.maxBytesFor(1_000), "a smaller configured bound was not kept");
+        long all = DiscoveryJobs.maxBytesFor(DiscoveryJobs.DEFAULT_MAX_BYTES);
+        assertTrue(DiscoveryJobs.maxBytesPerAddressFor(DiscoveryJobs.DEFAULT_MAX_BYTES_PER_ADDRESS, all) <= all / 8);
+        assertEquals(125, DiscoveryJobs.maxBytesPerAddressFor(Long.MAX_VALUE, 1_000));
+    }
+
     @Test
     void afterShutdownNothingIsQueuedAndWhatWaitedIsAnswered() throws Exception {
         DiscoveryJobs jobs = new DiscoveryJobs(1, 600_000, 100, null);
@@ -161,7 +239,9 @@ class DiscoveryJobsTest {
         jobs.submit("a", done::countDown);
         jobs.submit("b", done::countDown);
         jobs.shutdown();
-        assertTrue(jobs.submit("c", () -> fail("queued after shutdown")) > 0);
+        // nothing to come back to: not "busy, come back in 30 s" (the listener may still accept for a moment)
+        assertEquals(DiscoveryJobs.CLOSED, jobs.submit("c", () -> fail("queued after shutdown")));
+        assertEquals(0, jobs.busy(), "a joiner that arrived after the stop was counted, and told, busy");
         gate.countDown();
         await(done, "what waited at shutdown was not answered");
     }

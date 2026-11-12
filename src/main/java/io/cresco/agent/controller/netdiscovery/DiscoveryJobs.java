@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * cannot take more than its turn of the workers while others wait. The queue is bounded by time: a request whose turn
  * would come later than {@code maxWaitMs} is not queued; its peer is told at once that the responder is busy and after
  * how long to ask again ({@link #submit} returns that time). Nothing is dropped without an answer, and a peer that is
- * told to come back later costs the responder one small write.
+ * told to come back later costs the responder one small write. The wait is an estimate made when a request is queued:
+ * a request whose turn in fact comes later than the bound (the service slowed meanwhile) is told so then, with a time to
+ * come back, instead of being answered late or left to its connection's lifetime. A request that CONTINUES an exchange
+ * this responder already answered (the proof of a challenge it wrote) is not sent away for the wait: the work of its
+ * first half is done and would be thrown away; it stays bound by the count and the bytes.
  *
  * <p>What waits is also bounded in bytes, per address and in all: a request is a frame of up to 256 KiB that nobody has
  * authenticated yet, and a queue bounded only by count would let a few addresses hold gigabytes of them. A real request
@@ -34,6 +38,18 @@ public final class DiscoveryJobs {
     public static final int DEFAULT_MAX_WAIT_MS = 5_000;       // discovery_max_wait_ms
     public static final long DEFAULT_MAX_BYTES_PER_ADDRESS = 32L << 20;   // discovery_max_queued_bytes_per_address
     public static final long DEFAULT_MAX_BYTES = 256L << 20;              // discovery_max_queued_bytes
+    /** {@link #submit} after {@link #shutdown}: nothing is queued and there is nothing to come back to. */
+    public static final long CLOSED = -1;
+
+    /** The bytes of requests that may wait in all on this JVM: the default, and never more than a sixteenth of its heap. */
+    public static long maxBytesFor(long configured) {
+        return Math.max(1, Math.min(configured, Runtime.getRuntime().maxMemory() / 16));
+    }
+
+    /** The bytes of requests one address may have waiting: the default, and never more than an eighth of the whole. */
+    public static long maxBytesPerAddressFor(long configured, long all) {
+        return Math.max(1, Math.min(configured, all / 8));
+    }
     /** A retry time handed to a peer is never shorter or longer than this. */
     static final long MIN_RETRY_MS = 250, MAX_RETRY_MS = 30_000;
 
@@ -48,8 +64,12 @@ public final class DiscoveryJobs {
 
     private static final class Job {
         final Runnable run;
-        final long weight;
-        Job(Runnable run, long weight) { this.run = run; this.weight = weight; }
+        final long weight, submitted = System.nanoTime();
+        final boolean continuing;
+        final java.util.function.LongConsumer tooLate;
+        Job(Runnable run, long weight, boolean continuing, java.util.function.LongConsumer tooLate) {
+            this.run = run; this.weight = weight; this.continuing = continuing; this.tooLate = tooLate;
+        }
     }
     private final ArrayDeque<String> turn = new ArrayDeque<>();                        // with lock: addresses with work, in order
     private int queued;                                                                // with lock
@@ -57,7 +77,8 @@ public final class DiscoveryJobs {
     /** What one request takes a worker, smoothed (ns). Starts at a guess; a request's own time replaces it gradually. */
     private volatile long serviceNanos = 5_000_000L;
     private final Thread[] threads;
-    private final AtomicLong accepted = new AtomicLong(), busy = new AtomicLong(), served = new AtomicLong(), failed = new AtomicLong();
+    private final AtomicLong accepted = new AtomicLong(), busy = new AtomicLong(), served = new AtomicLong(), failed = new AtomicLong(),
+            late = new AtomicLong();
     private volatile int maxQueuedSeen;
     private volatile long summarised;
 
@@ -98,13 +119,28 @@ public final class DiscoveryJobs {
 
     /** As above; {@code weight}: the bytes the request holds while it waits (its frame). */
     public long submit(String address, long weight, Runnable job) {
+        return submit(address, weight, false, job, null);
+    }
+
+    /**
+     * As above.
+     *
+     * @param continuing the request continues an exchange this responder already answered (a proof for its challenge): it
+     *                   is not sent away for the wait, only for the count or the bytes
+     * @param tooLate    called INSTEAD of the job, by a worker, when the request's turn came later than the wait bound
+     *                   (never for a continuing one), with the milliseconds after which its peer should ask again; null:
+     *                   the job runs however late
+     * @return 0 queued; {@link #CLOSED} after shutdown (nothing to come back to); else the milliseconds to come back after
+     */
+    public long submit(String address, long weight, boolean continuing, Runnable job, java.util.function.LongConsumer tooLate) {
         String a = address == null ? "?" : address;
         long w = Math.max(0, weight);
         synchronized (lock) {
-            if (stopped) return MAX_RETRY_MS;
+            if (stopped) return CLOSED;
             long wait = waitNanosLocked(a);
             long[] held = bytesOf.get(a);
-            if (queued >= maxQueued || wait > maxWaitNanos || bytes + w > maxBytes || (held == null ? 0 : held[0]) + w > maxBytesPerAddress) {
+            if (queued >= maxQueued || (!continuing && wait > maxWaitNanos) || bytes + w > maxBytes
+                    || (held == null ? 0 : held[0]) + w > maxBytesPerAddress) {
                 busy.incrementAndGet();
                 return Math.max(MIN_RETRY_MS, Math.min(MAX_RETRY_MS, wait / 1_000_000L));
             }
@@ -114,7 +150,7 @@ public final class DiscoveryJobs {
                 byAddress.put(a, q);
                 turn.addLast(a);
             }
-            q.addLast(new Job(job, w));
+            q.addLast(new Job(job, w, continuing, tooLate));
             if (w > 0) {
                 if (held == null) bytesOf.put(a, held = new long[1]);
                 held[0] += w;
@@ -143,7 +179,8 @@ public final class DiscoveryJobs {
 
     private void work() {
         while (true) {
-            Runnable job;
+            Job j;
+            long comeBackMs;
             synchronized (lock) {
                 while (queued == 0 && !stopped) {
                     try {
@@ -155,8 +192,7 @@ public final class DiscoveryJobs {
                 if (queued == 0) return;                      // stopped and drained
                 String a = turn.pollFirst();
                 ArrayDeque<Job> q = byAddress.get(a);
-                Job j = q.pollFirst();
-                job = j.run;
+                j = q.pollFirst();
                 if (q.isEmpty()) byAddress.remove(a); else turn.addLast(a);
                 if (j.weight > 0) {
                     long[] held = bytesOf.get(a);
@@ -164,10 +200,22 @@ public final class DiscoveryJobs {
                     bytes -= j.weight;
                 }
                 queued--;
+                comeBackMs = Math.max(MIN_RETRY_MS, Math.min(MAX_RETRY_MS, (long) queued * serviceNanos / workers / 1_000_000L));
             }
             long t0 = System.nanoTime();
+            if (!j.continuing && j.tooLate != null && t0 - j.submitted > maxWaitNanos) {
+                // its turn came later than the bound it was queued under (the service slowed): told so now, not answered late
+                late.incrementAndGet();
+                busy.incrementAndGet();
+                try {
+                    j.tooLate.accept(comeBackMs);
+                } catch (Throwable t) {
+                    failed.incrementAndGet();
+                }
+                continue;
+            }
             try {
-                job.run();
+                j.run.run();
             } catch (Throwable t) {
                 failed.incrementAndGet();
                 DiscoveryGuard.warnLimited(logger, "discovery-job", "Discovery: a request failed: " + t);
@@ -202,6 +250,12 @@ public final class DiscoveryJobs {
 
     /** Addresses with a request waiting now. */
     public int addressesWaiting() { synchronized (lock) { return byAddress.size(); } }
+
+    /** Requests told "busy" only when their turn came, later than the wait bound they were queued under (part of {@link #busy}). */
+    public long late() { return late.get(); }
+
+    /** Tests: what one request takes a worker, as if measured (the estimate a wait is computed from). */
+    void serviceNanosForTests(long nanos) { serviceNanos = nanos; }
 
     /** Requests queued so far, told "busy" so far, answered so far, and that failed with an exception. */
     public long accepted() { return accepted.get(); }

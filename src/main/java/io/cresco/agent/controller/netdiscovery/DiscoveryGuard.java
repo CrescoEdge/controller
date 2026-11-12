@@ -50,9 +50,9 @@ public final class DiscoveryGuard {
     // A connection waits in the responder's queue (DiscoveryJobs) for its turn, so what an address may hold open is what
     // it may have waiting: 16 per address closed, without a word, most of the requests of a host that starts hundreds of
     // agents at once. One address still cannot hold more than an eighth of the listener, and a connection over a limit is
-    // told to come back (its host's agents are served in waves, not refused). Not higher: every open connection may hold
-    // a partial frame of up to DiscoveryWire.MAX_OBJECT_BYTES that nobody has authenticated (64 MiB for one address at
-    // its limit, 512 MiB for the listener at its own).
+    // told to come back (its host's agents are served in waves, not refused). Every open connection may hold a partial
+    // frame that nobody has authenticated, of at most DiscoveryWire.MAX_REQUEST_BYTES (16 KiB, three times a real hello):
+    // 4 MiB for one address at its limit, 32 MiB for the listener at its own -- what it was (128 connections of 256 KiB).
     public static final int DEFAULT_MAX_CONNECTIONS = 2048;             // discovery_max_connections
     public static final int DEFAULT_MAX_CONNECTIONS_PER_ADDRESS = 256;  // discovery_max_connections_per_address
     public static final int DEFAULT_MAX_CONNECTION_SECONDS = 30;        // discovery_max_connection_seconds
