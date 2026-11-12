@@ -102,10 +102,11 @@ EOF
     done >> "$RD/pki.log" 2>&1 || { log "FATAL pki agents"; return 1; }
     bash "$PKI_TOOL" crl "$PKI" >> "$RD/pki.log" 2>&1
     # FIPS approved-only keystores are BCFKS, converted with the tool of the build that will read them, 16 at a time
+    # (GATE_PKI_PAR: 2,000 of them take 15 minutes at 16)
     local n c=0
     for n in "$PKI"/nodes/*/; do
       "$J" -jar "$JAR" --crypto convert-keystore "${n}node.p12" "${n}node.p12.pass" "${n}node.bcfks" >/dev/null 2>&1 &
-      c=$((c + 1)); [ $((c % 16)) = 0 ] && wait
+      c=$((c + 1)); [ $((c % ${GATE_PKI_PAR:-16})) = 0 ] && wait
     done; wait
     for n in "$PKI"/nodes/*/; do [ -f "${n}node.bcfks" ] || { log "FATAL keystore conversion: $n"; return 1; }; done
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -sha384 -days 3 -nodes -keyout "$RD/codesign.key" -out "$RD/codesign.pem" \

@@ -22,15 +22,16 @@ import java.util.List;
  */
 final class LivePkixTrustManager extends X509ExtendedTrustManager {
 
-    private final TrustAnchorIndex index;
+    private final java.util.function.Supplier<TrustAnchorIndex> index;
 
-    LivePkixTrustManager(TrustAnchorIndex index) {
+    /** @param index the truststore's index now (the truststore, and its index with it, may be replaced as a whole) */
+    LivePkixTrustManager(java.util.function.Supplier<TrustAnchorIndex> index) {
         this.index = index;
     }
 
     private X509ExtendedTrustManager pkixFor(X509Certificate[] chain) throws CertificateException {
         if (chain == null || chain.length == 0) throw new IllegalArgumentException("null or zero-length certificate chain");
-        List<X509Certificate> anchors = index.anchorsFor(chain);
+        List<X509Certificate> anchors = index.get().anchorsFor(chain);
         if (anchors.isEmpty()) {
             throw new CertificateException("no entry of this node's truststore is, or issued, a certificate of the presented chain ("
                     + (chain[0] == null ? "?" : chain[0].getSubjectX500Principal().getName()) + ")");
@@ -84,6 +85,6 @@ final class LivePkixTrustManager extends X509ExtendedTrustManager {
     /** Every certificate of the truststore (a walk; asked for a listing or a CA hint, never for a trust decision). */
     @Override
     public X509Certificate[] getAcceptedIssuers() {
-        return index.all();
+        return index.get().all();
     }
 }

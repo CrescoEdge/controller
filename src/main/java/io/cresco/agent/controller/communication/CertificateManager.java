@@ -47,10 +47,12 @@ public class CertificateManager {
      * The truststore's certificates, indexed (by subject, alias prefix and key): what every TLS trust decision of this node
      * reads ({@link LivePkixTrustManager}), so a certificate recorded a moment ago is trusted by the next handshake and no
      * TLS context is rebuilt because the truststore changed. Changed only with {@link #trustStoreLock}, together with the
-     * KeyStore above ({@link #tsPut}, {@link #tsDelete}).
+     * KeyStore above ({@link #tsPut}, {@link #tsDelete}). When the KeyStore itself is replaced (a store loaded from its
+     * file, a pre-provisioned identity put in force) the index of the new one is built aside and the two are swapped
+     * together ({@link #swapTrustStore}): no handshake is judged by an index that is empty or half filled.
      */
-    private final TrustAnchorIndex anchorIndex = new TrustAnchorIndex();
-    private final LivePkixTrustManager livePkix = new LivePkixTrustManager(anchorIndex);
+    private volatile TrustAnchorIndex anchorIndex = new TrustAnchorIndex();
+    private final LivePkixTrustManager livePkix = new LivePkixTrustManager(() -> anchorIndex);
     private char[] keyStorePassword;
     private String keyStoreFilePath;
     private char[] trustStorePassword;
@@ -413,7 +415,7 @@ public class CertificateManager {
             if (me != null) peerTrust.setOwnRegion(me.getTenant(), me.getRegion());
         }
         operatorRevocations = rev;
-        this.trustStore = trust;
+        swapTrustStore(trust);
         presented = new NodeIdentityKeyManager.Identity(p.chain.clone(), p.key, IDENTITY_GEN.incrementAndGet());
         storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, p.key, p.chain);
         this.chain = p.chain;
@@ -1620,6 +1622,19 @@ public class CertificateManager {
         return new TrustManager[]{ new BoundKeyTrustManager(livePkix, peerTrust, logger) };
     }
 
+    /**
+     * Replace the truststore by {@code store}: its index is built first, then the KeyStore and the index are swapped
+     * together, so that TLS is judged by the former store or by the new one, never by something in between.
+     */
+    private void swapTrustStore(KeyStore store) throws KeyStoreException {
+        TrustAnchorIndex index = new TrustAnchorIndex();
+        index.rebuild(store);
+        synchronized (trustStoreLock) {
+            this.trustStore = store;
+            this.anchorIndex = index;
+        }
+    }
+
     /** With {@link #trustStoreLock}: set a truststore entry, in the KeyStore and in the index TLS reads. */
     private void tsPut(String alias, Certificate cert) throws KeyStoreException {
         trustStore.setCertificateEntry(alias, cert);
@@ -2557,11 +2572,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.warn("Alias [{}] does not appear in key store, load failed", keyStoreAlias);
                 return false;
             }
-            logger.trace("Generating blank trust store object");
-            trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
             logger.trace("Loading existing trust store: {}", Paths.get(trustStoreFilePath).toAbsolutePath());
-            trustStore.load(trustStoreIn, trustStorePassword);
-            synchronized (trustStoreLock) { anchorIndex.rebuild(trustStore); }
+            KeyStore loaded = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+            loaded.load(trustStoreIn, trustStorePassword);
+            swapTrustStore(loaded);
             Certificate[] keyStoreCertChain = keyStore.getCertificateChain(keyStoreAlias);
             if (keyStoreCertChain == null) {
                 logger.warn("Certificate chain for alias [{}] does not appear in key store, load failed",
