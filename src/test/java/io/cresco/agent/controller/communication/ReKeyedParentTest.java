@@ -258,6 +258,74 @@ class ReKeyedParentTest {
      * that attests nor attests anew for a key the agent names: the trust bundle the re-keyed controller signs shows its key.
      */
     @Test
+    void anAgentStopsPresentingItsAttestationTheMomentAConnectionShowsItsControllersOtherKey() throws Exception {
+        // nightly matrix, production profile, rekey-region: in the ~100 ms between reconnecting to its re-keyed controller
+        // and that controller's first pong, the agent signed an answer for the global with the FORMER key's attestation;
+        // the global (which knew the new key) held it 5 s and refused it: "the attestation's signature does not verify"
+        ControllerEngine rcOld = node("rgA", "rc", true, false);
+        ControllerEngine far = node("rgB", "rc2", true, false);
+        ControllerEngine a1 = attested("a7", rcOld);
+        MsgSigning s = a1.msgSigning();
+        assertTrue(s.credential("rgB_rc2").startsWith("att:"));
+
+        // a connection that shows the key that attested it changes nothing; nor does another node's key
+        a1.getCertificateManager().peerKeySeen(new PeerIdentity.Expected("rgA", "rc"), leaf(rcOld));
+        s.controllerKeySeen("rgB", "rc2", leaf(far).getPublicKey());
+        assertTrue(s.hasAttestation());
+        assertFalse(s.attestationPending());
+
+        // the controller is back with another key; the agent's connection to its broker verifies (the TLS handshake)
+        ControllerEngine rcNew = node("rgA", "rc", true, false);
+        joined(a1, rcNew);
+        a1.getCertificateManager().peerKeySeen(new PeerIdentity.Expected("rgA", "rc"), leaf(rcNew));
+        assertFalse(s.hasAttestation(), "the agent still presents an attestation made by a key its controller no longer has");
+        assertEquals(1, s.attestationsDroppedCount());
+        assertTrue(s.credential("rgB_rc2").startsWith("cert:"));
+        // from this moment what would go beyond its controller waits for the new attestation; what goes to its controller
+        // (which verifies its certificate) does not
+        MsgEvent beyond = message(a1, far, null), toController = message(a1, rcNew, null);
+        for (MsgEvent m : new MsgEvent[]{beyond, toController}) {
+            CallerStamps.stamp(m, plugin(a1));
+            a1.markForSigning(m);
+        }
+        assertTrue(s.attestationPending());
+        assertTrue(s.awaitsAttestation(beyond), "it would leave with a credential the node beyond cannot verify");
+        assertFalse(s.awaitsAttestation(toController));
+        assertTrue(s.takeTrustWanted(System.currentTimeMillis()), "and the agent pings now, not at its next interval");
+
+        Round r = ping(a1, rcNew);
+        assertTrue(r.atParent.ok(), r.atParent.refusal);
+        assertTrue(s.hasAttestation(), "attested by the new key");
+        assertFalse(s.awaitsAttestation(beyond), "what waited goes now");
+        assertTrue(s.credential("rgB_rc2").startsWith("att:"));
+        // the present key, seen again on a later connection, keeps it
+        a1.getCertificateManager().peerKeySeen(new PeerIdentity.Expected("rgA", "rc"), leaf(rcNew));
+        assertTrue(s.hasAttestation());
+    }
+
+    @Test
+    void aHandshakeThatVerifiesAsAPeerSaysWhichKeyThatPeerHolds() throws Exception {
+        ControllerEngine rc = node("rgA", "rc", true, false);
+        ControllerEngine a1 = attested("a8", rc);
+        javax.net.ssl.X509TrustManager pkix = new javax.net.ssl.X509TrustManager() {
+            @Override public void checkClientTrusted(X509Certificate[] chain, String authType) { }
+            @Override public void checkServerTrusted(X509Certificate[] chain, String authType) { }
+            @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+        };
+        java.util.List<String> seen = new java.util.ArrayList<>();
+        PeerIdentityTrustManager tm = new PeerIdentityTrustManager(() -> pkix, new PeerIdentity.Expected("rgA", "rc"),
+                a1.getCertificateManager().getPeerTrust(), PeerIdentity.Mode.ENFORCE, null, "test", null,
+                (peer, cert) -> seen.add(peer.region + "/" + peer.agent + " " + PeerTrustRegistry.fingerprint(cert.getPublicKey().getEncoded())));
+        tm.checkServerTrusted(rc.getCertificateManager().getPublicCertificate(), "RSA");
+        assertEquals(java.util.List.of("rgA/rc " + PeerTrustRegistry.fingerprint(leaf(rc).getPublicKey().getEncoded())), seen);
+        // a chain that does not verify as that peer is refused, and says nothing
+        ControllerEngine other = node("rgA", "rc", true, false);
+        assertThrows(java.security.cert.CertificateException.class,
+                () -> tm.checkServerTrusted(other.getCertificateManager().getPublicCertificate(), "RSA"));
+        assertEquals(1, seen.size());
+    }
+
+    @Test
     void theTrustBundleOfAReKeyedControllerDropsAnAttestationItsFormerKeyMade() throws Exception {
         ControllerEngine rcOld = node("rgA", "rc", true, false);
         ControllerEngine a1 = agent("rgA", "a1", rcOld), a4 = agent("rgA", "a4", rcOld);

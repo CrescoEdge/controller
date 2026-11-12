@@ -605,6 +605,9 @@ public class CertificateManager {
 
     // ---------------------------------------------------------------- persistent identity material
 
+    /** Where this node keeps what it must find again after a restart (its identity, its peers, its replay floor). */
+    Path identityDirectory() { return identityDir(); }
+
     /** Directory for this node's identity material: node_identity_dir, else <agent data dir>/security. */
     private Path identityDir() {
         String d = plugin.getConfig().getStringParam("node_identity_dir");
@@ -1656,7 +1659,20 @@ public class CertificateManager {
         if (mode == PeerIdentity.Mode.OFF) {
             return getTrustManagers();
         }
-        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint, outboundConnections()) };
+        return new TrustManager[]{ new PeerIdentityTrustManager(this::currentPkixTrustManager, expected, peerTrust, mode, logger, endpoint,
+                outboundConnections(), this::peerKeySeen) };
+    }
+
+    /**
+     * A connection this node opened verified as {@code peer}, with the certificate {@code leaf}: that is the key the peer
+     * holds now. When the peer is the controller that attested this node, and it attested with another key (it came back
+     * re-keyed), the attestation is dropped at this moment -- not some 100 ms later, when its first pong brings the new
+     * one: until then the agent signed with the former key's attestation, which a node that already knew the new key
+     * held for 5 s and refused ("the attestation's signature does not verify").
+     */
+    void peerKeySeen(PeerIdentity.Expected peer, X509Certificate leaf) {
+        MsgSigning signing = controllerEngine == null ? null : controllerEngine.msgSigningIfCreated();
+        if (signing != null && peer != null && leaf != null) signing.controllerKeySeen(peer.region, peer.agent, leaf.getPublicKey());
     }
 
     /**

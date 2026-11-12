@@ -69,11 +69,20 @@ class DropsCountedByCauseTest {
     @Test
     void aSendWithoutAProducerIsCountedOnceThoughTheRouterReportsItToo() {
         ControllerEngine e = agent("d3", null);
-        // straight to the router: the engine would first wait for the parent link (counted in the next test)
-        new MsgRouter(e).route(msg("d3", "r1", "d8", null));
+        // straight to the router: the engine would first wait for the parent link (counted in the next test). A request:
+        // with no producer its caller is told at once (a one-way message waits for the producer: ReplyAtFirstInstantTest)
+        MsgEvent request = msg("d3", "r1", "d8", null);
+        request.setParam("is_rpc", "true");
+        request.setParam("callId-" + request.getSrcRegion() + "-" + request.getSrcAgent() + "-" + request.getSrcPlugin(), "c1");
+        new MsgRouter(e).route(request);
         assertEquals(1, only(e.msgCounts(), MsgCounts.Drop.NO_SENDER), "the router's 'route unavailable' counted the failed send again");
         assertEquals(1, e.msgCounts().droppedCount());
         assertEquals(0, e.msgCounts().relayedCount());
+        // a one-way message is held for the producer, and counted once when none comes (here: the node stops)
+        new MsgRouter(e).route(msg("d3", "r1", "d8", null));
+        assertEquals(1, e.msgCounts().droppedCount(), "held, not dropped");
+        e.getActiveClient().stopHolding();
+        assertEquals(2, only(e.msgCounts(), MsgCounts.Drop.NO_SENDER));
     }
 
     @Test

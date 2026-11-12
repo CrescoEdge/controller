@@ -23,7 +23,8 @@ import java.util.function.ToLongFunction;
  * refusal and the cause of a drop are the last part of the name, not a tag:
  * <ul>
  *   <li>group {@value #GROUP}: {@code msg.originated}, {@code msg.relayed}, {@code msg.delivered}, {@code msg.held},
- *       {@code msg.hold.full}; {@code msg.refused} (every message this node refused) and {@code msg.refused.<reason>}
+ *       {@code msg.hold.full}, {@code msg.send.held}; {@code msg.session.lost.told}, {@code msg.session.lost.heard},
+ *       {@code msg.session.lost.retried}, {@code msg.session.unanswered}; {@code msg.refused} (every message this node refused) and {@code msg.refused.<reason>}
  *       ({@link MsgSigning.Refusal}); {@code msg.dropped} (every message dropped here) and {@code msg.dropped.<cause>}
  *       ({@link MsgCounts.Drop}). Three counts are not messages this node received and are in neither total:
  *       {@code msg.sign.failed}, {@code msg.trust.refused}, {@code msg.filepart.dropped}. Beside them: {@code msg.route.held},
@@ -68,6 +69,24 @@ public final class MsgMetrics {
                                     : "Trust data (a trust bundle, the signing data on a ping or pong) this node did not take."),
                     ce, e -> e.msgSigning().refusedCount(r));
         }
+
+        // a lost session (MsgSigning.LOST): what this node told its peers, what it took from them, what it sent again
+        count(registry, names, GROUP, "msg.session.lost.told", "Times this node told a sender, on a signed message, that it does not hold"
+                        + " the session a message came under: in the 401 of a request, or in a notice of its own (one a second per peer).",
+                ce, e -> e.msgSigning().lostToldCount());
+        count(registry, names, GROUP, "msg.session.lost.heard", "Sessions this node dropped because the peer said, under its signature,"
+                        + " that it does not hold them: this node signs to that peer again at once.",
+                ce, e -> e.msgSigning().lostHeardCount());
+        count(registry, names, GROUP, "msg.session.lost.retried", "RPC requests this node sent again, signed, after the peer refused them"
+                        + " for a session it does not hold: their callers saw no refusal.",
+                ce, e -> e.msgSigning().lostRetriedCount());
+        count(registry, names, GROUP, "msg.session.unanswered", "Calls of this node that set a session aside because the peer did not"
+                        + " answer: the caller's wait ended, or a node on the way said there is no route. This node signs to that peer"
+                        + " until the peer confirms the session again.",
+                ce, e -> e.msgSigning().callsUnansweredCount());
+        count(registry, names, GROUP, "msg.send.held", "Messages held because this node had no producer yet (its first moments, or its link"
+                        + " being made anew): sent when it had one, else counted under msg.dropped.no_sender.",
+                ce, e -> e.getActiveClient() == null ? 0 : e.getActiveClient().sendsHeldCount());
 
         count(registry, names, GROUP, "msg.dropped", "Messages that ended on this node without reaching their recipient, whatever the cause.",
                 ce, e -> e.msgCounts().droppedCount());
