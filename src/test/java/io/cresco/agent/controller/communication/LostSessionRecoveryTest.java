@@ -1268,4 +1268,27 @@ class LostSessionRecoveryTest {
             c.routeGate().stop();
         }
     }
+
+    @Test
+    void theTimeASessionIsUsedWithoutItsPeersWordCanBeSetShorter() throws Exception {
+        // a peer that only receives one-way messages (a consensus stream, never answered) gives its sender no call to
+        // time out; one that comes back under another name and key cannot name the session in a notice. Its sender went
+        // on under the session for 30 s after the peer's last word, whatever the setting said
+        ControllerEngine a = agent("a79", Map.of("msg_signing_session_confirm_ms", "1000")), b = agent("b79", Map.of());
+        established(a, b);
+        String sid = sent(a, b).getParam(MsgSessions.SID);
+        Thread.sleep(1_100);                                     // b has said nothing for longer than a second
+        MsgEvent stored = sent(a, b);
+        assertTrue(signed(stored), "signed: its peer has been silent for longer than the time set");
+        assertEquals(sid, stored.getParam(MsgSessions.HELD), "the session is kept");
+        assertTrue(macd(sent(b, a)), "the other side keeps its own time (30 s)");
+        long refused = b.msgSigning().refusedCount();
+        ControllerEngine c = agent("a80", Map.of("msg_signing_session_confirm_ms", "999999")), d = agent("b80", Map.of());
+        established(c, d);
+        Thread.sleep(1_100);
+        assertTrue(macd(sent(c, d)), "never longer than 30 s, and 30 s when nothing is set");
+        b.msgSigning().restartSessions();
+        assertEquals(Arrival.HANDED, arrive(b, stored, plugin(a)), "what a sent a silent peer verifies when the peer is back restarted");
+        assertEquals(refused, b.msgSigning().refusedCount());
+    }
 }
