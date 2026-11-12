@@ -598,6 +598,19 @@ public class PerfControllerMonitor {
     // roles where the signal is empty (a region's brokered map is empty on a leaf agent -> reads 0).
     public void initRegionalMetrics() {
         try {
+            // the discovery responder (a controller answers joins): what waits, what was answered, what was sent away
+            gauge("discovery.requests.queued", "Discovery requests waiting for a responder worker now.",
+                    ce -> { var j = ce.getDiscoveryJobs(); return j == null ? 0 : j.queued(); });
+            gauge("discovery.requests.answered", "Discovery requests answered by the responder's workers since start.",
+                    ce -> { var j = ce.getDiscoveryJobs(); return j == null ? 0 : j.served(); });
+            gauge("discovery.requests.busy", "Discovery requests told to come back later (the queue was full) since start.",
+                    ce -> { var j = ce.getDiscoveryJobs(); return j == null ? 0 : j.busy(); });
+            gauge("discovery.request.micros", "What one discovery request takes a responder worker (smoothed, microseconds).",
+                    ce -> { var j = ce.getDiscoveryJobs(); return j == null ? 0 : j.serviceMicros(); });
+            gauge("discovery.connections.refused", "Discovery connections over the per-address or total limit since start.",
+                    ce -> { var a = ce.getDiscoveryAdmission(); return a == null ? 0 : a.refused(); });
+            gauge("broker.tls.context.rebuilds", "Times this broker's TLS contexts were rebuilt (identity changes only, never a join).",
+                    ce -> { var b = ce.getBroker(); return b == null ? 0 : b.tlsContextRebuilds(); });
             io.micrometer.core.instrument.Gauge
                     .builder("brokered.agent.count", controllerEngine,
                             ce -> { var m = ce.getBrokeredAgents(); return m == null ? 0 : m.size(); })
@@ -609,11 +622,17 @@ public class PerfControllerMonitor {
         }
     }
 
+    private void gauge(String name, String description, java.util.function.ToDoubleFunction<ControllerEngine> value) {
+        io.micrometer.core.instrument.Gauge.builder(name, controllerEngine, value).description(description)
+                .register(me.getCrescoMeterRegistry());
+        me.setExisting(name, "regional");
+    }
+
     public void initGlobalMetrics() {
         try {
             io.micrometer.core.instrument.Gauge
                     .builder("reachable.agent.count", controllerEngine,
-                            ce -> { var l = ce.reachableAgents(); return l == null ? 0 : l.size(); })
+                            ce -> ce.reachableAgentCount())
                     .description("Agents reachable from this controller's view of the mesh.")
                     .register(me.getCrescoMeterRegistry());
             me.setExisting("reachable.agent.count", "global");

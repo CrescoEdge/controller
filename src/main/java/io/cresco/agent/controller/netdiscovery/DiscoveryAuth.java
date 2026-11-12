@@ -81,7 +81,7 @@ public final class DiscoveryAuth {
     /** One message of the exchange (JSON in the MsgEvent parameter {@value #PARAM}). */
     public static final class Msg {
         public int v = 2;
-        public String step;              // hello | challenge | proof | result
+        public String step;              // hello | challenge | proof | result | busy
         public String type;              // AGENT | REGION | GLOBAL
         public String nc, ns;
         public String creg, cagt, ccert;
@@ -95,7 +95,12 @@ public final class DiscoveryAuth {
         public String rebind;
         /** {@link #AUTH_PKI}: the PKI exchange (security_profile=production), {@code mac} carries signatures; absent: the secret's MACs. */
         public String auth;
+        /** BUSY: after how many milliseconds the responder asks to be tried again (a hint; it is not authenticated). */
+        public long retry;
     }
+
+    /** The message parameter of a busy answer for a peer that sent a locator (it reads no {@link Msg}): the same milliseconds. */
+    public static final String BUSY_PARAM = "discovery_busy";
 
     /**
      * The PKI exchange (security_profile=production). The same four messages and the same transcript, but no discovery

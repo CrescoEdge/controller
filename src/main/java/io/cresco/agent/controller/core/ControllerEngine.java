@@ -587,6 +587,20 @@ public class ControllerEngine {
     public boolean isUDPDiscoveryActive() {
         return UDPDiscoveryActive;
     }
+    private volatile io.cresco.agent.controller.netdiscovery.DiscoveryJobs discoveryJobs;
+    private volatile io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission discoveryAdmission;
+
+    /** The discovery responder's queue and its connection limits, once its listener exists (for what they count). */
+    public void setDiscoveryJobs(io.cresco.agent.controller.netdiscovery.DiscoveryJobs jobs,
+                                 io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission admission) {
+        this.discoveryJobs = jobs;
+        this.discoveryAdmission = admission;
+    }
+
+    public io.cresco.agent.controller.netdiscovery.DiscoveryJobs getDiscoveryJobs() { return discoveryJobs; }
+
+    public io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission getDiscoveryAdmission() { return discoveryAdmission; }
+
     public void setTCPDiscoveryActive(boolean discoveryActive) {
         TCPDiscoveryActive = discoveryActive;
     }
