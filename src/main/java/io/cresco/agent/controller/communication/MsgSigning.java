@@ -714,6 +714,7 @@ public final class MsgSigning {
                 ? CacheBuilder.newBuilder().maximumWeight(LOST_RETRY_CHARS_MAX).weigher((String k, Retry r) -> r.weight)
                         .expireAfterWrite(Duration.ofMillis(LOST_RETRY_MS)).build()
                 : null;
+        if (sessions != null) sessions.confirmWithin(c.getLongParam("msg_signing_session_confirm_ms", MsgSessions.CONFIRM_MS));
         this.watchCalls = sessionsOn && c.getBooleanParam("msg_signing_unanswered_calls", true);
         if (watchCalls) sessions.onTimedOut = peer -> setAside(peer, "a call to it was not answered before its caller stopped waiting");
         String caps = batch ? "batch" : "";

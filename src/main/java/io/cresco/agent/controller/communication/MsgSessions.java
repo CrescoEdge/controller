@@ -225,13 +225,24 @@ final class MsgSessions {
         return s.ack;
     }
 
+    /**
+     * For how long after its peer's last word a session is sent under: {@value #CONFIRM_MS} ms unless set shorter
+     * ({@code msg_signing_session_confirm_ms}; never longer, never under a second). What a node sends a peer that has
+     * been silent for longer is signed -- so a peer that was away for longer than this, and comes back restarted (or
+     * under another name and key, where its notice cannot name the session), is sent nothing it must refuse. The
+     * price of a shorter time is a signature on what is sent to a peer that speaks less often than that.
+     */
+    private volatile long confirmMs = CONFIRM_MS;
+
+    void confirmWithin(long ms) { confirmMs = Math.max(1_000L, Math.min(CONFIRM_MS, ms)); }
+
     /** The session to send to {@code peerNode} under: the peer confirmed it lately and it is not about to end; or null. */
     Session usable(String peerNode, long now) {
         Peer p = peers.getIfPresent(peerNode);
         // a call to this peer whose caller has stopped waiting: the session it left under is not sent under (timedOut)
         if (p != null && p.callsOpen != 0 && System.nanoTime() - p.callsDue >= 0) timedOut(p);
         Session s = p == null ? null : p.current;
-        if (s == null || s.confirmedAt <= 0 || now - s.confirmedAt >= CONFIRM_MS || now >= s.expires - USABLE_MARGIN_MS || s.endedNanos != 0) {
+        if (s == null || s.confirmedAt <= 0 || now - s.confirmedAt >= confirmMs || now >= s.expires - USABLE_MARGIN_MS || s.endedNanos != 0) {
             return null;
         }
         // every session of this node ran over a link that went down after the peer last confirmed it (linkDown)

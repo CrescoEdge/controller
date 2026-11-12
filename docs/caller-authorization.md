@@ -874,7 +874,13 @@ receiver checks it before it dispatches the message locally or completes an RPC 
   sends a peer one-way messages, and calls it nothing, has no such signal; what it sends under the session while that
   peer is down (for up to 30 s after the peer's last word) is refused when the peer is back, and the notice then stops
   it within one round trip. And a stale word of the peer's former life, delivered late, confirms the session once more
-  (then the same notice ends it).
+  (then the same notice ends it). Where the peer comes back under ANOTHER name and key (a node moved to a region of its
+  own, reached at its former address), its notice cannot name the session either -- only the holder of the session's
+  key speaks for it -- and the sender goes on for what is left of the 30 s. For such a fabric the time itself can be
+  set shorter (`msg_signing_session_confirm_ms`). Measured in the storage system's regional check with every node on
+  this build (a site is away about 20 s and returns as a region of its own, with a new key; its cores get a one-way
+  consensus stream of some 9 messages a second): refused at a moved core 93 with the default, 1 with 5000; at its
+  stores, which are called, 1 either way (3 to 5 before the unanswered-call rule); 45/45 checks either way.
 - **A node answers from its first message on (2026-11-11).** A node could be asked before it could answer: its inbox
   consumer was made some 20 ms before its producer (at its start, and each time it joined a controller again), so a
   request waiting in its inbox was served and answered into nothing (`AgentProducer is null. Message not sent`, at
@@ -960,6 +966,7 @@ receiver checks it before it dispatches the message locally or completes an RPC 
 | `msg_signing_credentials_max` | 100000 | credentials held verified (an LRU) |
 | `msg_replay_memory_max` | 4000000 | signatures and MACs the replay memory holds (past it, the oldest signing times are refused as too old) |
 | `msg_signing_unanswered_calls` | true | a call to a peer that times out at its caller's node, or is answered `route unavailable`, ends the use of the session with that peer until it confirms it again (the node signs meanwhile) |
+| `msg_signing_session_confirm_ms` | 30000 | for how long after its peer's last word a node sends under their session (1000 to 30000); what it sends a peer silent for longer is signed. Shorter: nothing is refused at a peer that was away longer than this and came back restarted, at the price of a signature on what goes to a peer that speaks less often |
 | `msg_replay_floor` | true | the latest signing time accepted from each signer is kept on disk: after a restart, what that signer signed at or before it is refused |
 
 ### Final review (2026-11-09)
