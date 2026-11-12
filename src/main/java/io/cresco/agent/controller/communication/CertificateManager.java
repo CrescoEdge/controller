@@ -1650,7 +1650,14 @@ public class CertificateManager {
 
 
             //create Intermediate CA cert signed by Root CA
-            KeyPair intermedCAKeyPair = generateKeyPair();
+            // ONE key pair for the two CA certificates. A node made three RSA key pairs at its first start (root,
+            // intermediate, leaf) and dropped two of them when this method returned: the hierarchy dates from 2019, when the
+            // intermediate was meant to sign (the two lines that kept its key are commented out below), and nothing has
+            // signed with either CA key since. Both are still thrown away -- nobody can issue under this node's root, as
+            // before -- but making them was two thirds of the work of a first start (on the DGX, 74 s of the 126 s a node
+            // needed to join in a storm of 1,000). The leaf keeps a key of its own: it is the node's identity, and the
+            // one certificate of the chain that carries it.
+            KeyPair intermedCAKeyPair = rootCAKeyPair;
             builder = new JcaX509v3CertificateBuilder(
                     rootCA, // here rootCA is issuer authority
                     CertValidity.serial(), CertValidity.notBefore(),
