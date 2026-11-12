@@ -674,6 +674,11 @@ public class ActiveBroker {
 		return SecuritySettings.requireClientAuth(config);
 	}
 
+	/** How often this broker's TLS contexts were rebuilt ({@link #updateTrustManager}): identity changes only, never a join. */
+	private final java.util.concurrent.atomic.AtomicLong tlsContextRebuilds = new java.util.concurrent.atomic.AtomicLong();
+
+	public long tlsContextRebuilds() { return tlsContextRebuilds.get(); }
+
 	/** This broker's authorization plugin (null when broker security is off). */
 	private volatile CrescoAuthorizationBroker authorization;
 
@@ -748,7 +753,14 @@ public class ActiveBroker {
 		}
 	}
 
+	/**
+	 * This node's IDENTITY changed (a new key or chain to present): give the broker's TLS context, and each bridge's, the
+	 * current key managers. Not for a change of trust: every context's trust manager reads the truststore's index at each
+	 * handshake ({@link LivePkixTrustManager}), so a certificate recorded a moment ago is trusted without this -- and this
+	 * was called, rebuilding trust from the whole truststore, at every join.
+	 */
 	public void updateTrustManager() {
+		tlsContextRebuilds.incrementAndGet();
 		try {
 			broker.getSslContext().getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 
@@ -1169,7 +1181,7 @@ public class ActiveBroker {
 						bridge.start();
 					}
 				}
-				updateTrustManager();
+				// (each new bridge's TLS context is made with the current key managers and reads trust live: nothing to rebuild)
 			} catch (Exception ex) {
 				logger.error("NetworkConnector addBridgeConnectors: {}", ex.getMessage(), ex);
 			}

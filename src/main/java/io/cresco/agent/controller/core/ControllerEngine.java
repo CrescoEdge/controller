@@ -505,6 +505,23 @@ public class ControllerEngine {
         return rAgents;
     }
 
+    private final java.util.concurrent.atomic.AtomicLong reachableCountAt = new java.util.concurrent.atomic.AtomicLong();
+    private volatile int reachableCount;
+
+    /**
+     * How many agents this controller reaches, for the count a discovery answer carries (a joiner's hint of how loaded a
+     * region is): read from the broker at most once a second. {@link #reachableAgents} lists every destination of the
+     * broker, and it was called for every discovery answered: a join cost more the more had joined.
+     */
+    public int reachableAgentCount() {
+        long now = System.nanoTime() | 1L, at = reachableCountAt.get();
+        if ((at == 0 || now - at > 1_000_000_000L) && reachableCountAt.compareAndSet(at, now)) {
+            List<String> l = reachableAgents();
+            reachableCount = l == null ? 0 : l.size();
+        }
+        return reachableCount;
+    }
+
     //getters and setters
 
     //helper functions
