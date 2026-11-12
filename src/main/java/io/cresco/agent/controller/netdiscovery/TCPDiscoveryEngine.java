@@ -117,14 +117,18 @@ public class TCPDiscoveryEngine implements Runnable {
     /**
      * The responder's workers and its queue's bound, from config: {@code discovery_workers} (default a quarter of the
      * cpus, 2 to 16), {@code discovery_max_wait_ms} (default 5000: a request whose turn would come later is answered
-     * "busy"); it holds at most as many requests as the listener holds connections.
+     * "busy"); it holds at most as many requests as the listener holds connections, and at most
+     * {@code discovery_max_queued_bytes_per_address} (32 MiB) of one address and {@code discovery_max_queued_bytes}
+     * (256 MiB) in all.
      */
     static DiscoveryJobs jobs(PluginBuilder plugin, CLogger logger) {
         int cpus = Runtime.getRuntime().availableProcessors();
         int workers = plugin.getConfig().getIntegerParam("discovery_workers", Math.max(2, Math.min(16, cpus / 4)));
         int waitMs = plugin.getConfig().getIntegerParam("discovery_max_wait_ms", DiscoveryJobs.DEFAULT_MAX_WAIT_MS);
         int total = plugin.getConfig().getIntegerParam("discovery_max_connections", DiscoveryGuard.DEFAULT_MAX_CONNECTIONS);
-        return new DiscoveryJobs(workers, waitMs, total, logger);
+        long perAddress = plugin.getConfig().getLongParam("discovery_max_queued_bytes_per_address", DiscoveryJobs.DEFAULT_MAX_BYTES_PER_ADDRESS);
+        long bytes = plugin.getConfig().getLongParam("discovery_max_queued_bytes", DiscoveryJobs.DEFAULT_MAX_BYTES);
+        return new DiscoveryJobs(workers, waitMs, total, perAddress, bytes, logger);
     }
 
     static ChannelInitializer<SocketChannel> childInitializer(DiscoveryGuard.Admission admission, int idleSeconds,

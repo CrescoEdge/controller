@@ -34,8 +34,11 @@ run)
         export CRESCO_cresco_service_key="$(cat "$RD/secrets/sk")" CRESCO_discovery_secret_global="$(cat "$RD/secrets/dg")" \
                CRESCO_discovery_secret_region="$(cat "$RD/secrets/dr")" CRESCO_discovery_secret_agent="$(cat "$RD/secrets/da")"
       fi
+      # light agents (s<n>) at a lower priority when GATE_LIGHT_NICE says so: a controller on this host keeps its cpu
+      local pre=""
+      case "$1" in s[0-9]*) [ "${GATE_LIGHT_NICE:-0}" -gt 0 ] && pre="nice -n ${GATE_LIGHT_NICE}" ;; esac
       # shellcheck disable=SC2086
-      exec "$J" -Djava.net.preferIPv4Stack=true -Xmx"$3" -Denable_console=false -Denable_dashboard=false \
+      exec $pre "$J" -Djava.net.preferIPv4Stack=true -Xmx"$3" -Denable_console=false -Denable_dashboard=false \
         -Dregionname="$2" -Dagentname="$1" $f -jar "$JAR"
     ) > "$RD/logs/$1.log" 2>&1 < /dev/null &
     echo "$1 $!" >> "$RD/pids/$H"

@@ -55,7 +55,7 @@ public class TCPDiscoveryEngineHandler extends ChannelInboundHandlerAdapter {
             return;
         }
         DiscoveryGuard.Admission.working(ctx, true);
-        long retryMs = jobs.submit(remote(ctx), () -> {
+        long retryMs = jobs.submit(remote(ctx), msg instanceof String ? ((String) msg).length() : 0, () -> {
             Request rq = new Request();
             try {
                 // a peer that gave up while its request waited is not answered: no work for a connection that is gone

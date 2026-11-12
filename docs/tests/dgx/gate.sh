@@ -36,6 +36,12 @@
 #   of every agent from the logs into the result (join_stages) and $GATE_OUT/<build>-joinstages.txt. A light agent
 #   listens on nothing, so it is given a discovery port of its own only while P0+100+<its number> is below the range
 #   for outgoing connections (steps beyond that, e.g. 4000 with P0=30000, need no port).
+#   What the scale phase measures is mostly the agents' own start when a host starts hundreds of them: a light agent
+#   runs with the first-tier compiler only (LIGHT_JVM, default "-XX:+UseSerialGC -XX:TieredStopAtLevel=1"), in which
+#   making its identity (three RSA-3072 key pairs) takes several times as long, and the controllers share their host's
+#   cpus with the agents that start there. To measure the controllers' part instead: LIGHT_JVM="-XX:+UseSerialGC" (the
+#   JVM's normal compilers) and GATE_LIGHT_NICE=<n> (light agents run at that niceness, so a controller on the same
+#   host is not starved by them). Both builds of a run get the same.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -205,7 +211,7 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
 
   # ---- 3. scale: light agents in steps, all hosts, alternately on the global and the region
   local steps_run="$STEPS"; [[ "$PH" == *" scale "* ]] || steps_run=""
-  local LIGHT="${GATE_EXTRA_FLAGS:-} -Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
+  local LIGHT="${GATE_EXTRA_FLAGS:-} -Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN ${LIGHT_JVM:--XX:+UseSerialGC -XX:TieredStopAtLevel=1}"
   local prev=0 step sc="{" sfirst=1 i k
   local -a HS=("$H1" "$H2" "$H3" "$H4")
   for step in $steps_run; do

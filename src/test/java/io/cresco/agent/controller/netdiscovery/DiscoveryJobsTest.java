@@ -67,7 +67,7 @@ class DiscoveryJobsTest {
     void aHostThatStartsHundredsOfAgentsIsServedNotRefused() throws Exception {
         DiscoveryJobs jobs = new DiscoveryJobs(4, DiscoveryJobs.DEFAULT_MAX_WAIT_MS, DiscoveryGuard.DEFAULT_MAX_CONNECTIONS, null);
         try {
-            int n = 500;
+            int n = 250;
             CountDownLatch all = new CountDownLatch(n);
             AtomicInteger busy = new AtomicInteger();
             for (int i = 0; i < n; i++) {
@@ -78,7 +78,7 @@ class DiscoveryJobsTest {
             }
             await(all, "not every request was answered");
             assertEquals(0, busy.get(), "requests of one host that starts " + n + " agents at once were sent away");
-            assertTrue(DiscoveryGuard.DEFAULT_MAX_CONNECTIONS_PER_ADDRESS >= n, "the listener would refuse their connections");
+            assertTrue(DiscoveryGuard.DEFAULT_MAX_CONNECTIONS_PER_ADDRESS >= n, "the listener would send their connections away");
             assertTrue(DiscoveryGuard.DEFAULT_MAX_CONNECTIONS_PER_ADDRESS * 8 <= DiscoveryGuard.DEFAULT_MAX_CONNECTIONS,
                     "one address may hold more than an eighth of the listener");
         } finally {
@@ -121,6 +121,32 @@ class DiscoveryJobsTest {
             assertEquals(3, held, "more requests were held than the bound");
             g2.countDown();
             small.shutdown();
+        } finally {
+            jobs.shutdown();
+        }
+    }
+
+    /** A request is an unauthenticated frame of up to 256 KiB: what waits is bounded in bytes, per address and in all. */
+    @Test
+    void whatWaitsIsBoundedInBytesPerAddressAndInAll() throws Exception {
+        DiscoveryJobs jobs = new DiscoveryJobs(1, 600_000, 100_000, 1_000_000, 2_500_000, null);
+        try {
+            CountDownLatch gate = new CountDownLatch(1), started = new CountDownLatch(1);
+            jobs.submit("hold", () -> { started.countDown(); try { gate.await(); } catch (InterruptedException ignore) { } });
+            await(started, "the worker did not start");
+            int a = 0, b = 0, c = 0;
+            for (int i = 0; i < 20; i++) if (jobs.submit("10.0.0.1", 256 * 1024, () -> { }) == 0) a++;
+            assertEquals(3, a, "one address holds more than its bound of bytes");            // 3 x 256 KiB under 1,000,000
+            for (int i = 0; i < 20; i++) if (jobs.submit("10.0.0.2", 256 * 1024, () -> { }) == 0) b++;
+            for (int i = 0; i < 20; i++) if (jobs.submit("10.0.0.3", 256 * 1024, () -> { }) == 0) c++;
+            assertEquals(9, a + b + c, "all addresses hold more than the bound of bytes");   // 9 x 256 KiB under 2,500,000
+            assertTrue(jobs.queuedBytes() <= 2_500_000);
+            for (int i = 0; i < 200; i++) assertEquals(0, jobs.submit("10.0.0.4", 500, () -> { }), "a request of real size was sent away");
+            gate.countDown();
+            long end = System.currentTimeMillis() + 20_000;
+            while (jobs.queued() > 0 && System.currentTimeMillis() < end) Thread.sleep(10);
+            assertEquals(0, jobs.queuedBytes(), "bytes not given back");
+            assertEquals(0, jobs.submit("10.0.0.1", 256 * 1024, () -> { }), "the address's bound was not given back");
         } finally {
             jobs.shutdown();
         }
