@@ -135,16 +135,61 @@ public final class PeerTrustRegistry {
         public final long seq, t, exp;
         /** Made on this node (its operator): part of its own list, which goes up to its parent. */
         public final boolean own;
+        /**
+         * Null: the word of this node's operator or of its parent. Else the region on whose REPORT a global revoked the key
+         * (that region resolved a name the global revoked: {@link #acceptNameReport}): it is that region's word that the key
+         * was bound to one of its names, and no node applies it to a key it holds bound outside that region
+         * ({@link #mergeRevocations(List, String, String, boolean)}). Never set on a scoped entry.
+         */
+        public final String via;
         Revocation(String fp, String scope, String name, String source, long seq, long t, long exp, boolean own) {
+            this(fp, scope, name, source, seq, t, exp, own, null);
+        }
+        Revocation(String fp, String scope, String name, String source, long seq, long t, long exp, boolean own, String via) {
             this.fp = fp; this.scope = scope; this.name = name; this.source = source; this.seq = seq; this.t = t; this.exp = exp; this.own = own;
+            this.via = scope == null ? via : null;
         }
         String id() { return scope == null ? fp : fp + "@" + scope; }
     }
 
-    /** A tombstoned name: the key that was revoked for it, and why. */
+    /**
+     * A tombstoned name: the key that was revoked for it, and why. {@code id}: the request of the revocation BY NAME that
+     * reserved it (made here at a global, or applied here for this node's global), else null.
+     */
     static final class Tomb {
-        final String key, source; final long t;
-        Tomb(String key, String source, long t) { this.key = key; this.source = source; this.t = t; }
+        final String key, source, id; final long t;
+        Tomb(String key, String source, long t) { this(key, source, t, null); }
+        Tomb(String key, String source, long t, String id) { this.key = key; this.source = source; this.t = t; this.id = id; }
+    }
+
+    /**
+     * A revocation by NAME made at a global for a name it holds no key for (immutable; replaced as it advances): the name
+     * is reserved here at once, and the controller of the name's region -- where the key is bound -- is asked to revoke it.
+     */
+    public static final class NameRevocation {
+        /** Reserved here; the name's region has not answered. */
+        public static final String ASKED = "asked";
+        /** The region revoked the key bound to the name and reported it: {@link #key} is revoked here for every name. */
+        public static final String KEY = "key";
+        /** The region holds no key for the name: it is reserved there and here. */
+        public static final String NOKEY = "nokey";
+        /** The operator rebound the name here: no longer reserved here; the region is being told ({@link #allow}). */
+        public static final String LIFTING = "lifting";
+        public final String name, source, state;
+        /** Random, made with the request: an answer counts only for the request it names. */
+        public final String id;
+        /** The key the region reported, once it did. */
+        public final String key;
+        /** LIFTING: the key the operator's rebind allows for the name (null: the first one presented). */
+        public final String allow;
+        public final long t;
+        NameRevocation(String name, String id, String source, String state, String key, String allow, long t) {
+            this.name = name; this.id = id; this.source = source; this.state = state; this.key = key; this.allow = allow; this.t = t;
+        }
+        public String region() { return name.substring(0, name.indexOf('/')); }
+        /** Still to be settled with the name's region (what the bound {@link #NAME_REVOCATIONS_OPEN_MAX} counts). */
+        public boolean open() { return ASKED.equals(state) || LIFTING.equals(state); }
+        NameRevocation with(String state, String key, String allow) { return new NameRevocation(name, id, source, state, key, allow, t); }
     }
 
     public static final String ROLE_AGENT = "agent", ROLE_CONTROLLER = "controller", ROLE_SELF = "self";
@@ -162,12 +207,22 @@ public final class PeerTrustRegistry {
          * log, key and head anchor -- is then sealed instead of silently started empty.
          */
         public boolean expectExisting;
+        /**
+         * This node is a GLOBAL controller ({@code is_global}): a revocation by name of a name it holds no key for is taken
+         * (the name reserved, its region's controller asked) instead of refused as "no key is bound".
+         */
+        public boolean global;
     }
 
     /** One log record. */
     static final class Rec {
-        String op;             // init | bind | ca | bridge | unbridge | unbind | seen | consume | revoke | revokekey | tomb | expire | epoch | noop
+        String op;             // init | bind | ca | bridge | unbridge | unbind | seen | consume | revoke | revokekey | revokename | tomb | expire | epoch | noop
         String name, tenant, key, cert, source, role, token, kind, mode;   // mode: "follow" or absent (strict)
+        // No field is ever added for a new use (an earlier build would not cover it with the record's MAC and seal the
+        // registry): revokekey: kind = the region on whose report the key was revoked. tomb: token = the request of the
+        // revocation by name that reserved it. revokename (a global's revocation by name): token = its request, mode = its
+        // state ("done": settled, forget it), key = the key reported, kind = the key a rebind allows. consume: a token
+        // "~name:<request>[=<key>]" is a revocation by name this node applied for its global (and the key it revoked).
         long t;
         String scope;          // revokekey: the region whose names it applies to (absent: every name)
         Long seq, exp;         // revokekey: position in this node's revocation list; when it can no longer matter (absent: never)
@@ -230,6 +285,43 @@ public final class PeerTrustRegistry {
      * never bound again (first come) until the operator rebinds the name. Never pruned.
      */
     private final Map<String, Tomb> tombs = new ConcurrentHashMap<>();
+    /**
+     * At a global: the revocations by name it made for names it holds no key for, by name. One small record per such name,
+     * kept (like its tombstone) until the operator rebinds the name and its region confirmed that.
+     */
+    private final Map<String, NameRevocation> nameRevs = new ConcurrentHashMap<>();
+    /**
+     * The most revocations by name that may be OPEN at a global at once -- reserved here and not yet answered by the
+     * name's region, or rebound here and not yet confirmed by it. Only open ones travel (on the pongs to that region), so
+     * this bounds what a pong carries and what the reminders walk; a further revocation by name is refused until one is
+     * settled (a key fingerprint can always be revoked).
+     */
+    static final int NAME_REVOCATIONS_OPEN_MAX = 1024;
+    /** Guards the changes of {@link #nameRevs} (memory only: never held across a write or a call out). */
+    private final Object nameLock = new Object();
+    private volatile int nameOpen;
+    private volatile long nameVersion;
+    private volatile boolean global;
+    /** Name-revocation records to write, and names to reserve for this node's global, on the background writer. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Rec> nameRecs = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.ConcurrentLinkedQueue<String[]> nameTasks = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /**
+     * At a region controller: the revocations by name it applied for its global, request -> the key it revoked ("" when
+     * the name had none). Recorded, never pruned (one per revocation by name ever applied here): a request is applied
+     * ONCE, so one that is delivered again -- its answer was lost, or it is replayed -- never revokes the key the name was
+     * rebound to since.
+     */
+    private final Map<String, String> appliedNames = new ConcurrentHashMap<>();
+    /** At a region controller: the rebinds its global's operator allowed ({@code name#lift-<request>[=<key>]}); memory only. */
+    private final Set<String> rebindParent = ConcurrentHashMap.newKeySet();
+    /** At a global, by region with an open revocation by name: what its controller was sent and said (memory only). */
+    private final Map<String, NameRegion> nameRegions = new ConcurrentHashMap<>();
+    private final Map<String, Long> nameReminded = new ConcurrentHashMap<>();
+    private static final class NameRegion {
+        volatile String controller, refusal;
+        volatile long sent, lastSent;
+        volatile boolean knows = true;
+    }
     /** Key fingerprint -> the names bound to it (maintained with the write lock; read lock-free). */
     private final Map<String, Set<String>> namesByKey = new ConcurrentHashMap<>();
     /** Notified (outside the write lock) with the key fingerprint when a key is revoked. */
@@ -443,6 +535,7 @@ public final class PeerTrustRegistry {
         r.bridgePruneMs = o.bridgePruneDays <= 0 ? 0 : o.bridgePruneDays * DAY;
         r.bindingPruneMs = o.bindingPruneDays <= 0 ? 0 : o.bindingPruneDays * DAY;
         r.expectExisting = o.expectExisting;
+        r.global = o.global;
         synchronized (r.writeLock) {
             secureDirectory(file.getParent(), r.log);
             r.lock();
@@ -465,6 +558,7 @@ public final class PeerTrustRegistry {
                 if (why != null) r.log.accept("peer_identity_revoke '" + t + "' not applied: " + why);
             }
             r.reloadRevokeFileLocked();
+            r.liftNameRevocationsLocked();
             r.completeRevocationsLocked();
             if (!r.sealed && r.fenced == null) {
                 long now = System.currentTimeMillis();
@@ -475,10 +569,7 @@ public final class PeerTrustRegistry {
         }
         if (r.background != null) {
             // the operator revocation file is re-read every 10 s (no restart): a revocation takes effect at once
-            r.background.scheduleWithFixedDelay(() -> {
-                try { synchronized (r.writeLock) { r.reloadRevokeFileLocked(); } } catch (Exception ignore) { }
-                r.fireRevokedPending();                         // close the revoked keys' connections at once
-            }, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
+            r.background.scheduleWithFixedDelay(r::checkOperatorFiles, 10, 10, java.util.concurrent.TimeUnit.SECONDS);
             // revocations that can no longer matter (expired) are dropped hourly
             r.background.scheduleWithFixedDelay(() -> {
                 try { synchronized (r.writeLock) { if (!r.sealed && r.fenced == null) r.expireRevocations(System.currentTimeMillis()); } }
@@ -487,6 +578,18 @@ public final class PeerTrustRegistry {
         }
         r.fireRevokedPending();
         return r;
+    }
+
+    /**
+     * Every 10 s on the background writer (and from tests): the operator's revocation file, rebinds of names revoked by
+     * name here, and -- each at most every ten minutes -- the revocations by name a region has not confirmed.
+     */
+    void checkOperatorFiles() {
+        try {
+            synchronized (writeLock) { reloadRevokeFileLocked(); liftNameRevocationsLocked(); completeRevocationsLocked(); }
+        } catch (Exception ignore) { }
+        fireRevokedPending();                                   // close the revoked keys' connections at once
+        try { remindNameRevocations(System.currentTimeMillis()); } catch (Exception ignore) { }
     }
 
     /** With the write lock: drop the bridge peers the operator revoked (peer_bridge_revoke); fail-safe: memory first. */
@@ -506,6 +609,7 @@ public final class PeerTrustRegistry {
             revokedBridges.addAll(o.revoke);
             bridgePruneMs = o.bridgePruneDays <= 0 ? 0 : o.bridgePruneDays * DAY;
             bindingPruneMs = o.bindingPruneDays <= 0 ? 0 : o.bindingPruneDays * DAY;
+            if (o.global) global = true;
             if (!sealed && fenced == null) revokeConfiguredBridges();
         }
     }
@@ -696,7 +800,8 @@ public final class PeerTrustRegistry {
             }
             // the binding and the token it consumes are one durable write; memory changes only after it
             if (!(c == null ? append(r) : append(r, c))) return new BindResult(false, "could not record the binding durably");
-            if (token != null) consumed.add(token);
+            if (token != null) { consumed.add(token); rebindParent.remove(token); }
+            if (tomb != null) nameRebound(n, fp);
             replaced(n, b == null ? null : b.key, fp);
             if (b != null && !b.key.equals(fp)) replacedKey = b.key;
             putIdentity(n, new Binding(tenant, fp, null, source, newRole, newFollow,
@@ -728,6 +833,7 @@ public final class PeerTrustRegistry {
 
     /** With the write lock (or while loading): bind {@code n}, keeping the key -> names index. */
     private void putIdentity(String n, Binding b) {
+        if (ROLE_SELF.equals(b.role)) selfName = n;
         Binding old = identities.put(n, b);
         if (old != null && !old.key.equals(b.key)) unindex(old.key, n);
         namesByKey.computeIfAbsent(b.key, k -> ConcurrentHashMap.newKeySet()).add(n);
@@ -1530,6 +1636,8 @@ public final class PeerTrustRegistry {
 
     // ---------------------------------------------------------------- revocation
 
+    /** A name was reserved with no key to announce: the batch listener is called once with no key (it closes what is now refused). */
+    private volatile boolean sweepWanted;
     /** Fingerprints of newly revoked keys, to announce (outside the write lock) once their bindings are dropped. */
     private final java.util.concurrent.ConcurrentLinkedQueue<String> revokedToFire = new java.util.concurrent.ConcurrentLinkedQueue<>();
     /** Revocation records whose durable write failed, retried in order (with the write lock). */
@@ -1563,7 +1671,14 @@ public final class PeerTrustRegistry {
         return null;
     }
 
-    private static String tombText(String n, Tomb t) {
+    private String tombText(String n, Tomb t) {
+        if (t.id != null && !nameRevs.containsKey(n)) {
+            // reserved here for this node's global, whose operator revoked the name: it is rebound THERE (the global lifts
+            // its own reservation and tells this node); a rebind on this node alone would leave the name refused at the global
+            return "the name " + n + " was REVOKED (" + t.source + ", key " + PeerIdentity.shortFp(t.key) + ") and is reserved: no key is"
+                    + " accepted for it until the operator rebinds it at the GLOBAL, where it was revoked by name (add the line '" + n
+                    + "=<new key fingerprint>' to the global's peer-trust.json.rebind: the global lifts it there and here)";
+        }
         return "the name " + n + " was REVOKED (" + t.source + ", key " + PeerIdentity.shortFp(t.key) + ") and is reserved: no key is"
                 + " accepted for it until the operator rebinds it (add the line '" + n + "=<new key fingerprint>' to the node's"
                 + " peer-trust.json.rebind, or set peer_identity_rebind)";
@@ -1571,6 +1686,7 @@ public final class PeerTrustRegistry {
 
     /** Is {@code fp} this node's own key (an identity of role self) or its own region CA's key? */
     private boolean isOwnKey(String fp) {
+        if (fp.equals(ownKey)) return true;
         Set<String> names = namesByKey.get(fp);
         if (names != null) {
             for (String n : names) {
@@ -1632,11 +1748,16 @@ public final class PeerTrustRegistry {
             }
             n = target;
             Binding b = identities.get(n);
-            if (b == null && pki != null && !tombs.containsKey(n)) {
-                // pre-provisioned: names are not bound; the name is reserved (refused for every key), and its last verified key revoked
-                List<PkiSeen> seen = pkiSeenAll(n, false);
+            if (b == null && (pki != null || global) && !tombs.containsKey(n)) {
+                // pre-provisioned: names are not bound; the name is reserved (refused for every key), and its last verified key revoked.
+                // At a global, with no key known here for the name (per-node trust binds an agent at its region's controller, and
+                // a PKI node verifies only what connects to it): the name is reserved here all the same, and -- for a name of
+                // another region -- that region's controller is asked for the rest (revokeNameLocked)
+                List<PkiSeen> seen = pki == null ? List.of() : pkiSeenAll(n, false);
+                if (global && seen.isEmpty() && !n.startsWith(selfRegion() + "/")) return revokeNameLocked(n, source);
                 tombstoneLocked(n, seen.isEmpty() ? null : seen.get(0).key, source);
-                log.accept("Name " + n + " REVOKED (" + source + "): refused for every key until an operator rebind");
+                log.accept("Name " + n + " REVOKED (" + source + "): refused for every key until an operator rebind"
+                        + (pki == null ? " (no key is bound to it here, at its own region's controller)" : ""));
                 for (PkiSeen x : seen) if (!revoked.containsKey(x.key)) applyInMemory(x.key, null, n, source, 0, true);
                 return null;
             }
@@ -1647,8 +1768,11 @@ public final class PeerTrustRegistry {
             if (ROLE_SELF.equals(b.role)) return n + " is this node's own identity";
             fp = b.key;
         }
-        if (revoked.containsKey(fp)) return null;
-        if (applyInMemory(fp, null, n, source, expiryFor(n), true)) {
+        Revocation held = revoked.get(fp);
+        if (held != null && held.via == null) return null;
+        // held on a region's report (via): the operator now revokes that key itself -- it becomes this node's own word, at a
+        // new position of its list, so it reaches the nodes that were not sent the report or did not apply it
+        if (held != null ? restateOwn(held, source) : applyInMemory(fp, null, n, source, expiryFor(n), true)) {
             log.accept("Key " + PeerIdentity.shortFp(fp) + (n == null ? "" : " of " + n) + " REVOKED (" + source + "): refused for every"
                     + " name from now on" + (n == null ? "" : "; the name is reserved until an operator rebind"));
         }
@@ -1684,9 +1808,29 @@ public final class PeerTrustRegistry {
      * name tombstones and durable record follow in {@link #completeRevocationsLocked}. False when already in force.
      */
     private boolean applyInMemory(String fp, String scope, String name, String source, long exp, boolean own) {
+        return applyInMemory(fp, scope, name, source, exp, own, null);
+    }
+
+    /** As above; {@code via}: the region on whose report the key is revoked ({@link Revocation#via}), else null. */
+    private boolean applyInMemory(String fp, String scope, String name, String source, long exp, boolean own, String via) {
         synchronized (revMemLock) {
             if (revoked.containsKey(fp) || (scope != null && revoked.containsKey(fp + "@" + scope))) return false;
-            Revocation r = new Revocation(fp, scope, name, source == null ? "?" : source, ++revSeq, System.currentTimeMillis(), exp, own);
+            Revocation r = new Revocation(fp, scope, name, source == null ? "?" : source, ++revSeq, System.currentTimeMillis(), exp, own, via);
+            putRevocation(r);
+            revPending.addLast(r);
+            return true;
+        }
+    }
+
+    /**
+     * The entry {@code held} (every name, made on a region's report) becomes this node's own word: the same key at a NEW
+     * position of its list and without the region ({@link Revocation#via}), so its children fetch it again and apply it
+     * as they apply any entry of their parent. False when it is no longer that entry.
+     */
+    private boolean restateOwn(Revocation held, String source) {
+        synchronized (revMemLock) {
+            if (revoked.get(held.fp) != held) return false;
+            Revocation r = new Revocation(held.fp, null, held.name, source == null ? "?" : source, ++revSeq, System.currentTimeMillis(), 0, true, null);
             putRevocation(r);
             revPending.addLast(r);
             return true;
@@ -1723,7 +1867,7 @@ public final class PeerTrustRegistry {
     private void completeRevocationsLocked() {
         List<Revocation> batch;
         synchronized (revMemLock) {
-            if (revPending.isEmpty() && revUndurable.isEmpty()) return;
+            if (revPending.isEmpty() && revUndurable.isEmpty() && nameRecs.isEmpty() && nameTasks.isEmpty()) return;
             batch = new ArrayList<>(revPending);
             revPending.clear();
         }
@@ -1731,7 +1875,7 @@ public final class PeerTrustRegistry {
         for (Revocation r : batch) {
             Rec rr = rec("revokekey", r.name);
             rr.key = r.fp; rr.source = r.source; rr.t = r.t; rr.scope = r.scope; rr.seq = r.seq;
-            rr.exp = r.exp > 0 ? r.exp : null; rr.own = r.own ? Boolean.TRUE : null;
+            rr.exp = r.exp > 0 ? r.exp : null; rr.own = r.own ? Boolean.TRUE : null; rr.kind = r.via;
             recs.add(rr);
             Set<String> names = namesByKey.get(r.fp);
             if (names != null) {
@@ -1761,6 +1905,10 @@ public final class PeerTrustRegistry {
             }
             revokedToFire.add(r.fp);
         }
+        // names this node reserves for its global (after their keys' bindings were dropped above), then what a global records
+        // of its revocations by name: all in the same write
+        for (String[] k; (k = nameTasks.poll()) != null; ) reserveForGlobalLocked(k[0], k[1], k[2], k[3], recs);
+        for (Rec nr; (nr = nameRecs.poll()) != null; ) recs.add(nr);
         revUndurable.addAll(recs);
         writeUndurableLocked();
     }
@@ -1770,13 +1918,17 @@ public final class PeerTrustRegistry {
         String fp = r.key.toLowerCase(java.util.Locale.ROOT);
         String scope = r.scope != null && CrescoNames.isValid(r.scope) ? r.scope : null;
         String source = r.source == null ? "?" : r.source;
+        String via = scope == null && r.kind != null && CrescoNames.isValid(r.kind) ? r.kind : null;
         synchronized (revMemLock) {
-            if (revoked.containsKey(scope == null ? fp : fp + "@" + scope)) return;
+            Revocation held = revoked.get(scope == null ? fp : fp + "@" + scope);
+            // the first record of a key stands -- but one made on a region's report gives way to the later record in which the
+            // operator revoked that key itself (restateOwn)
+            if (held != null && !(held.via != null && via == null)) return;
             long seq = r.seq != null && r.seq > 0 ? r.seq : revSeq + 1;
             if (seq > revSeq) revSeq = seq;
             // a record from before revocation lists had positions: made here unless it came from a peer's list
             boolean own = r.seq == null ? !source.startsWith("revocation list") : Boolean.TRUE.equals(r.own);
-            putRevocation(new Revocation(fp, scope, r.name, source, seq, r.t, r.exp == null ? 0 : r.exp, own));
+            putRevocation(new Revocation(fp, scope, r.name, source, seq, r.t, r.exp == null ? 0 : r.exp, own, via));
             if (seq > durableRevSeq) durableRevSeq = seq;            // what is in the log is durable
         }
         Set<String> names = namesByKey.get(fp);
@@ -1855,7 +2007,10 @@ public final class PeerTrustRegistry {
     private void fireRevokedPending() {
         List<String> fire = new ArrayList<>();
         for (String f; (f = revokedToFire.poll()) != null; ) fire.add(f);
-        if (fire.isEmpty()) return;
+        // a name reserved without a key (a revocation by name): the batch listener still looks at what is connected
+        boolean sweep = sweepWanted;
+        if (sweep) sweepWanted = false;
+        if (fire.isEmpty() && !sweep) return;
         Consumer<String> l = revokedListener;
         if (l != null) {
             for (String fp : fire) {
@@ -1945,12 +2100,14 @@ public final class PeerTrustRegistry {
     public boolean isPki() { return pki != null; }
 
     /** With the write lock: reserve {@code n} (its key, when known, was revoked); recorded. */
-    private void tombstoneLocked(String n, String key, String source) {
+    private void tombstoneLocked(String n, String key, String source) { tombstoneLocked(n, key, source, null); }
+
+    private void tombstoneLocked(String n, String key, String source, String id) {
         if (tombs.containsKey(n)) return;
         long t = System.currentTimeMillis();
-        tombs.put(n, new Tomb(key, source, t));
+        tombs.put(n, new Tomb(key, source, t, id));
         Rec tr = rec("tomb", n);
-        tr.key = key; tr.source = source; tr.t = t;
+        tr.key = key; tr.source = source; tr.t = t; tr.token = id;
         if (!append(tr)) log.accept("peer trust registry: the tombstone of " + n + " is in force but could not be recorded");
         for (PkiSeen was : pkiSeenAll(n, true)) pkiNameByKey.remove(was.key, n);
     }
@@ -1970,7 +2127,9 @@ public final class PeerTrustRegistry {
             u.key = fp; u.t = c.t;
             if (!append(c, u)) return false;
             consumed.add(token);
+            rebindParent.remove(token);
             tombs.remove(n);
+            nameRebound(n, fp);
             log.accept("Name " + n + " (revoked) REBOUND by the operator ('" + token + "', now consumed): its new certificate (key "
                     + PeerIdentity.shortFp(fp) + ") is accepted");
             return true;
@@ -2224,13 +2383,22 @@ public final class PeerTrustRegistry {
 
     // ---- revocation lists (RevocationSync)
 
-    /** One entry of a signed revocation list: {@code fp|scope|name|exp} (empty fields allowed). */
+    /**
+     * One entry of a signed revocation list: {@code fp|scope|name|exp} (empty fields allowed), and -- only for a key a
+     * global revoked on a region's report -- a fifth field, that region ({@link Revocation#via}). A build from before the
+     * fifth field reads the first four and would apply the key as its parent's own word, so such an entry is sent only to
+     * a child that says it knows it (RevocationSync).
+     */
     public static final class ListEntry {
-        public final String fp, scope, name;
+        public final String fp, scope, name, via;
         public final long exp;
-        public ListEntry(String fp, String scope, String name, long exp) { this.fp = fp; this.scope = scope; this.name = name; this.exp = exp; }
+        public ListEntry(String fp, String scope, String name, long exp) { this(fp, scope, name, exp, null); }
+        public ListEntry(String fp, String scope, String name, long exp, String via) {
+            this.fp = fp; this.scope = scope; this.name = name; this.exp = exp; this.via = scope == null ? via : null;
+        }
         public String format() {
-            return fp + "|" + (scope == null ? "" : scope) + "|" + (name == null ? "" : name) + "|" + (exp > 0 ? Long.toString(exp) : "");
+            return fp + "|" + (scope == null ? "" : scope) + "|" + (name == null ? "" : name) + "|" + (exp > 0 ? Long.toString(exp) : "")
+                    + (via == null ? "" : "|" + via);
         }
         /** Null when malformed. */
         public static ListEntry parse(String s) {
@@ -2246,9 +2414,11 @@ public final class PeerTrustRegistry {
                 int sl = name.indexOf('/');
                 if (sl <= 0 || !CrescoNames.isValid(name.substring(0, sl)) || !CrescoNames.isValid(name.substring(sl + 1))) return null;
             }
-            return new ListEntry(p[0].toLowerCase(java.util.Locale.ROOT), scope, name, exp);
+            String via = p.length > 4 && !p[4].isEmpty() ? p[4] : null;
+            if (via != null && (!CrescoNames.isValid(via) || scope != null)) return null;
+            return new ListEntry(p[0].toLowerCase(java.util.Locale.ROOT), scope, name, exp, via);
         }
-        static ListEntry of(Revocation r) { return new ListEntry(r.fp, r.scope, r.name, r.exp); }
+        static ListEntry of(Revocation r) { return new ListEntry(r.fp, r.scope, r.name, r.exp, r.via); }
     }
 
     /** This registry's epoch (changes only when the registry is created anew or reset). */
@@ -2333,7 +2503,7 @@ public final class PeerTrustRegistry {
         for (ListEntry e : entries) {
             if (e == null || !isFingerprint(e.fp)) continue;
             String fp = e.fp.toLowerCase(java.util.Locale.ROOT);
-            String why = null, scope, name;
+            String why = null, scope, name, via = null;
             if (isOwnKey(fp)) {
                 why = "it lists THIS node's own key " + PeerIdentity.shortFp(fp);
                 scope = name = null;
@@ -2378,13 +2548,27 @@ public final class PeerTrustRegistry {
             } else {
                 scope = e.scope;
                 name = e.name;
+                via = scope == null ? e.via : null;
+                // the parent revoked this key on a region's report: that region's word that the key was bound to one of ITS
+                // names. Nothing bound here outside that region is dropped for it (see acceptNameReport); the parent's own
+                // word -- the same key without the region, once its operator revokes the fingerprint -- is applied as listed.
+                // Pre-provisioned, this node holds no bindings to tell by (what the PKI verified here is forgotten at a
+                // restart), and a certificate names its region: the region's word is applied to that region's names only
+                if (via != null && pki != null) { scope = via; via = null; }
+                String outside = via == null ? null : boundOutside(fp, via);
+                if (outside != null) {
+                    why = "the key " + PeerIdentity.shortFp(fp) + " was revoked on the report of region " + via + " (the key it held for a"
+                            + " name its global revoked), but is bound here to " + outside + ", outside that region: a region's word never"
+                            + " revokes another region's node -- if " + outside + " is that node, revoke it here or revoke the key"
+                            + " fingerprint at the global";
+                }
             }
             if (why != null) {
                 refused++;
                 if (firstRefusal == null) firstRefusal = why;
                 continue;
             }
-            if (applyInMemory(fp, scope, name, source, e.exp, false)) added++;
+            if (applyInMemory(fp, scope, name, source, e.exp, false, via)) added++;
         }
         if (refused > 0) {
             log.accept("The " + source + ": " + refused + " entr" + (refused == 1 ? "y" : "ies") + " REFUSED (e.g. "
@@ -2450,6 +2634,596 @@ public final class PeerTrustRegistry {
         } catch (IOException e) {
             log.accept("could not read " + p + ": " + e.getMessage());
         }
+    }
+
+    // ---------------------------------------------------------------- revocations by name (a global, and the name's region)
+    //
+    // Under per-node trust a node's key is bound to its name where it joined: an agent of region r3 at r3's controller, not
+    // at the global. A global whose operator revokes "r3/a32" therefore has no key to revoke. It reserves the name at once
+    // (a tombstone) and records a revocation by name; RevocationSync carries the open ones to the verified controller of the
+    // name's region on its pongs, signed as this node's lists are. That controller revokes the key it holds for the name,
+    // reserves the name, closes the node (applyNameRevocation) and answers with the key on its next ping, signed
+    // (acceptNameReport). The global then revokes that key for every name and its list carries it down.
+
+    /** A consumed-token marker: a revocation by name this node applied for its global, {@code ~name:<request>[=<key>]}. */
+    private static final String APPLIED_NAME = "~name:";
+    private static final java.util.regex.Pattern REQUEST_ID = java.util.regex.Pattern.compile("[0-9a-f]{32}");
+    /** A revocation by name its region has not confirmed is said again this often; first a minute after it was made. */
+    static final long NAME_REMIND_MS = 600_000L, NAME_REMIND_FIRST_MS = 60_000L;
+
+    /** The fingerprint of the key of this node's current certificate, as RevocationSync last saw it (it may be bound nowhere). */
+    private volatile String ownKey;
+
+    /**
+     * The key of this node's own certificate: never revoked here on anybody's word, also on a node that holds no binding
+     * of its own identity (a node under per-node trust binds its own name only when it enrolls with a region CA).
+     */
+    public void noteOwnKey(String fp) { if (fp != null && !fp.equals(ownKey)) ownKey = fp.toLowerCase(java.util.Locale.ROOT); }
+
+    /** This node is a global controller: see {@link Options#global}. */
+    public void setGlobal(boolean g) { this.global = g; }
+
+    public boolean isGlobal() { return global; }
+
+    private volatile String selfName, notedRegion;
+
+    /** This node's own region (as RevocationSync told it, else from its own identity), or null when unknown. */
+    private String selfRegion() {
+        String r = notedRegion;
+        if (r == null) r = ownRegion;
+        if (r != null) return r;
+        String n = selfName;
+        return n == null ? null : n.substring(0, n.indexOf('/'));
+    }
+
+    /**
+     * This node's own region, from RevocationSync (which has the node's state) while a revocation by name is open. A name
+     * of this node's OWN region is bound here or nowhere, so nobody is asked about it: a revocation by name made before the
+     * region was known here (a node that holds no binding of its own identity) is settled now.
+     */
+    public void noteSelfRegion(String region) {
+        if (region == null || region.equals(notedRegion)) return;
+        notedRegion = region;
+        boolean any = false;
+        for (NameRevocation x : new ArrayList<>(nameRevs.values())) {
+            if (!NameRevocation.ASKED.equals(x.state) || !x.name.startsWith(region + "/")) continue;
+            if (!advanceName(x, x.with(NameRevocation.NOKEY, null, null), false)) continue;
+            any = true;
+            log.accept("Name revocation of " + x.name + ": a name of this node's own region, whose names are bound here -- no key is bound"
+                    + " to it; the name is reserved (nothing is outstanding)");
+        }
+        if (any) scheduleRevocationWork(0);
+    }
+
+    private static String shortId(String id) { return id == null ? "?" : id.length() > 8 ? id.substring(0, 8) : id; }
+
+    private static Rec nameRec(NameRevocation x, boolean done) {
+        Rec r = rec("revokename", x.name);
+        r.token = x.id; r.source = x.source; r.t = x.t; r.mode = done ? "done" : x.state; r.key = x.key; r.kind = x.allow;
+        return r;
+    }
+
+    /** After a change of {@link #nameRevs} (with nameLock, or while loading). */
+    private void recountNames() {
+        int n = 0;
+        for (NameRevocation x : nameRevs.values()) if (x.open()) n++;
+        nameOpen = n;
+        nameVersion++;
+    }
+
+    /**
+     * With the write lock, at a global: revoke by name a name of ANOTHER region for which no key is known here. The name
+     * is reserved at once -- refused for every key, at TLS, at the broker and for message signatures, until an operator
+     * rebind -- and the revocation is recorded (in force first; the record is written with the revocations', and retried
+     * like theirs). What is still outstanding is said: the controller of the name's region has not revoked the key.
+     */
+    private String revokeNameLocked(String n, String source) {
+        String region = n.substring(0, n.indexOf('/'));
+        NameRevocation old = nameRevs.get(n);
+        if (nameOpen >= NAME_REVOCATIONS_OPEN_MAX && (old == null || !old.open())) {
+            return NAME_REVOCATIONS_OPEN_MAX + " revocations by name are still open here (not confirmed by their regions: see the"
+                    + " reminders in this log); revoke the key fingerprint of " + n + " instead";
+        }
+        byte[] b = new byte[16];
+        new SecureRandom().nextBytes(b);
+        String id = java.util.HexFormat.of().formatHex(b);
+        long now = System.currentTimeMillis();
+        NameRevocation nr = new NameRevocation(n, id, source == null ? "?" : source, NameRevocation.ASKED, null, null, now);
+        tombs.put(n, new Tomb(null, nr.source, now, id));
+        synchronized (nameLock) { nameRevs.put(n, nr); recountNames(); }
+        nameReminded.put(n, now - NAME_REMIND_MS + NAME_REMIND_FIRST_MS);
+        Rec tr = rec("tomb", n);
+        tr.source = nr.source; tr.t = now; tr.token = id;
+        nameRecs.add(tr);
+        nameRecs.add(nameRec(nr, false));
+        sweepWanted = true;
+        log.accept("Name " + n + " REVOKED by name (" + nr.source + "): RESERVED here, refused for every key until an operator rebind."
+                + " No key is bound to it on this node: region " + region + "'s controller holds its key and has NOT confirmed yet -- it is"
+                + " asked to revoke that key, reserve the name and close the node when it next pings (OUTSTANDING until it reports the"
+                + " key; request " + shortId(id) + ")");
+        return null;
+    }
+
+    /** How many revocations by name are open here (reserved and unanswered, or rebound and unconfirmed). One volatile read. */
+    public int nameRevocationsOpen() { return nameOpen; }
+
+    /** Bumped by every change of this node's revocations by name (what RevocationSync caches its signed requests by). */
+    public long nameRevocationsVersion() { return nameVersion; }
+
+    /** The open revocations by name for names of {@code region}, by name. O(records): called when the version changed. */
+    public List<NameRevocation> nameRevocationsFor(String region) {
+        if (nameOpen == 0 || region == null) return List.of();
+        List<NameRevocation> out = new ArrayList<>();
+        for (NameRevocation x : nameRevs.values()) if (x.open() && x.name.startsWith(region + "/")) out.add(x);
+        out.sort(java.util.Comparator.comparing(x -> x.name));
+        return out;
+    }
+
+    /** This node's record of the revocation by name of {@code region/agent}, or null. */
+    public NameRevocation nameRevocation(String region, String agent) { return nameRevs.get(name(region, agent)); }
+
+    /**
+     * At a global, from RevocationSync when a pong to {@code controller} of {@code region} had open revocations by name for
+     * it: whether they were sent ({@code knows}: the controller said on its ping that it knows them; an earlier build does
+     * not, and is sent nothing). Memory only; what the reminders say.
+     */
+    public void noteNameServed(String region, String controller, boolean knows) {
+        if (nameOpen == 0 || region == null) return;
+        if (nameRegions.size() > 2 * NAME_REVOCATIONS_OPEN_MAX && !nameRegions.containsKey(region)) return;
+        NameRegion r = nameRegions.computeIfAbsent(region, k -> new NameRegion());
+        r.controller = controller;
+        r.knows = knows;
+        r.sent++;
+        r.lastSent = System.currentTimeMillis();
+    }
+
+    private String nameRegionStatus(String region, long now) {
+        NameRegion r = nameRegions.get(region);
+        if (r == null || r.sent == 0) {
+            return "no controller of region " + region + " has pinged this node since (the request goes with the pong when one does)";
+        }
+        if (!r.knows) {
+            return r.controller + " is on an earlier build, which does not know a revocation by name (it is sent the request once"
+                    + " it is upgraded)";
+        }
+        if (r.refusal != null) return r.controller + " answered, and its answer was REFUSED here: " + r.refusal;
+        return r.controller + " was sent the request " + r.sent + " time(s), last " + Math.max(0, (now - r.lastSent) / 1000)
+                + " s ago, and has not answered";
+    }
+
+    private String outstandingText(NameRevocation x, long now) {
+        return "Name revocation of " + x.name + " (" + x.source + ", " + new java.util.Date(x.t) + ") is still OUTSTANDING: the name is"
+                + " reserved here, but region " + x.region() + "'s controller has not confirmed it -- " + nameRegionStatus(x.region(), now)
+                + ". Until it does the node can still be connected there: revoke its key fingerprint here (that reaches every node),"
+                + " or revoke the name at that controller";
+    }
+
+    /**
+     * Say again (each at most every {@link #NAME_REMIND_MS}) every revocation by name the name's region has not confirmed.
+     * From the registry's 10 s timer; O(1) while none is open.
+     */
+    void remindNameRevocations(long now) {
+        if (nameOpen == 0) {
+            if (!nameRegions.isEmpty()) nameRegions.clear();
+            if (!nameReminded.isEmpty()) nameReminded.clear();
+            return;
+        }
+        Set<String> regions = new HashSet<>();
+        for (NameRevocation x : nameRevs.values()) {
+            if (!x.open()) continue;
+            regions.add(x.region());
+            if (!NameRevocation.ASKED.equals(x.state)) continue;
+            Long last = nameReminded.get(x.name);
+            if (last == null) { nameReminded.put(x.name, now - NAME_REMIND_MS + NAME_REMIND_FIRST_MS); continue; }   // found at a start
+            if (now - last < NAME_REMIND_MS) continue;
+            nameReminded.put(x.name, now);
+            log.accept(outstandingText(x, now));
+        }
+        nameRegions.keySet().retainAll(regions);
+        nameReminded.keySet().retainAll(nameRevs.keySet());
+    }
+
+    /**
+     * What an operator must still know of this node's revocations by name, or null: those the name's region has not
+     * confirmed (the first three by name, and how many there are). Reported as a WARN of the identity health check.
+     */
+    public String nameRevocationsOutstanding() {
+        if (nameOpen == 0) return null;
+        List<NameRevocation> asked = new ArrayList<>();
+        for (NameRevocation x : nameRevs.values()) if (NameRevocation.ASKED.equals(x.state)) asked.add(x);
+        if (asked.isEmpty()) return null;
+        asked.sort(java.util.Comparator.comparing(x -> x.name));
+        long now = System.currentTimeMillis();
+        StringBuilder sb = new StringBuilder(asked.size() + " revocation(s) by name NOT confirmed by the name's region (reserved here only): ");
+        for (int i = 0; i < asked.size() && i < 3; i++) {
+            NameRevocation x = asked.get(i);
+            sb.append(i == 0 ? "" : "; ").append(x.name).append(" (").append(nameRegionStatus(x.region(), now)).append(")");
+        }
+        if (asked.size() > 3) sb.append("; ...");
+        return sb.toString();
+    }
+
+    /** A name bound here to {@code fp} (or last verified under it by the PKI) outside {@code region}, or null. Lock-free. */
+    private String boundOutside(String fp, String region) {
+        Set<String> bound = namesByKey.get(fp);
+        if (bound != null) for (String n : bound) if (!n.startsWith(region + "/")) return n;
+        String seen = pkiNameByKey.get(fp);
+        return seen != null && !seen.startsWith(region + "/") ? seen : null;
+    }
+
+    /** Why the key a region reported for one of its names is not revoked on its word here, or null. Lock-free. */
+    private String reportedKeyRefusal(String fp, String region) {
+        String s = PeerIdentity.shortFp(fp);
+        if (isOwnKey(fp)) return "it names THIS node's own key " + s;
+        if (isCaKey(fp)) return "the key " + s + " is a region CA's (a region's report revokes no CA)";
+        String outside = boundOutside(fp, region);
+        if (outside != null) {
+            return "the key " + s + " is bound here to " + outside + ", outside region " + region + " (a region's word revokes no other"
+                    + " region's node: if " + outside + " is that node, revoke it or the key fingerprint here)";
+        }
+        Set<String> bound = namesByKey.get(fp);
+        if (bound != null) {
+            for (String n : bound) {
+                Binding b = identities.get(n);
+                if (b != null && !ROLE_AGENT.equals(b.role)) return "the key " + s + " is bound here to the controller " + n + " (a report revokes no controller: revoke it here)";
+            }
+        }
+        String seen = pkiNameByKey.get(fp);
+        if (seen != null) {
+            for (PkiSeen x : pkiSeenAll(seen, false)) {
+                if (x.key.equals(fp) && !ROLE_AGENT.equals(x.role)) return "the key " + s + " is the controller " + seen + "'s (a report revokes no controller: revoke it here)";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * At a global: an answer of a region's controller to a revocation by name. The caller (RevocationSync) has verified WHO
+     * answers: {@code controller}, of {@code region}, signed the answer -- addressed to this node -- with the key bound here
+     * as a CONTROLLER to that name (a region that joined this node), exactly as a child's revocation list is verified.
+     *
+     * <p><b>What is taken, and why a region can have nobody else's node revoked with it.</b> An answer counts only
+     * <ol>
+     *   <li>for a name of the answering controller's OWN region: the name starts with the region its signing certificate
+     *       verified as, never one the message claims;</li>
+     *   <li>for a name THIS node's operator revoked by name and that is still unanswered ({@link #nameRevs}): an answer
+     *       starts nothing, it can only settle a request made here;</li>
+     *   <li>when it carries the id of that very request -- random, 128 bits, made here with the revocation and sent only to
+     *       that region's verified controller: an answer to an earlier request for the same name (a replay), or a made-up
+     *       one, names another id;</li>
+     *   <li>once: the request is then settled. So a region causes at most ONE key to be revoked per revocation by name the
+     *       operator made for one of its names, and none otherwise.</li>
+     * </ol>
+     * The key it names is then revoked here for EVERY name -- what the operator asked for: the node behind the name must not
+     * come back under another name, anywhere. This node cannot check which key the region had bound to the name (under
+     * per-node trust that binding exists at the region only), so the answer is the region's WORD, and it is treated as
+     * that at every node:
+     * <ul>
+     *   <li>here it is refused for this node's own key, a CA's key, a key bound here as a controller, and a key bound (or
+     *       verified by the PKI) here under a name outside that region ({@link #reportedKeyRefusal});</li>
+     *   <li>it travels marked with the region ({@link Revocation#via}), and every node below applies the same rule: a key it
+     *       holds bound outside that region is NOT revoked there, and it says so
+     *       ({@link #mergeRevocations(List, String, String, boolean)});</li>
+     *   <li>it is not sent to a node of an earlier build, which reads no mark and would apply it as this node's own word
+     *       (RevocationSync.signedDelta).</li>
+     * </ul>
+     * A pre-provisioned node holds no bindings to judge by (it verifies certificates, and forgets what it verified at a
+     * restart), and there a certificate names its region: such a node -- this one when it accepts, any node when it merges
+     * -- applies the key to the answering region's names ONLY ({@code fingerprint@region}, what a region's own list may do).
+     *
+     * <p>So the most a lying region achieves is the refusal of a key that NO node holds bound to another region's name when
+     * it reads the entry: the keys of its own nodes (which its own list revokes anyway) and keys bound nowhere. No node ever
+     * drops a binding of another region's name for it; that node keeps its name and its connections. The price when the
+     * region tells the truth and the same key is also bound elsewhere: that binding stays until the operator revokes the key
+     * fingerprint here, which makes it this node's own word ({@link #restateOwn}) -- the line logged at acceptance says so.
+     *
+     * <p>No disk and no write lock on the caller's thread (a ping): the key is in force in memory at once, the records follow
+     * on the background writer.
+     *
+     * @param status {@code K}: the region revoked {@code key}; {@code N}: it holds no key for the name; {@code B}, {@code F},
+     *               {@code X}: its answer to a rebind (the name is bound again there, free, or reserved by another revocation)
+     * @return null when taken (or the same answer again), else why it was ignored
+     */
+    public String acceptNameReport(String region, String controller, String id, String n, String status, String key) {
+        if (region == null || id == null || status == null || !validName(n) || !REQUEST_ID.matcher(id).matches()) return "malformed";
+        if (!n.startsWith(region + "/")) {
+            return "the name " + n + " is not of region " + region + ", whose controller answers (a region answers for its own names only)";
+        }
+        NameRevocation nr = nameRevs.get(n);
+        if (nr == null) return "this node asked nobody about " + n + " (no revocation by name of it is recorded here)";
+        if (!nr.id.equals(id)) {
+            return "it answers request " + shortId(id) + ", not the request this node made for " + n + " (" + shortId(nr.id)
+                    + "): replayed, or an answer to an earlier revocation";
+        }
+        String fp = key == null || key.isEmpty() ? null : key.toLowerCase(java.util.Locale.ROOT);
+        if (fp != null && !isFingerprint(fp)) return "malformed";
+        boolean lift = "B".equals(status) || "F".equals(status) || "X".equals(status);
+        if (!lift && !"K".equals(status) && !"N".equals(status)) return "malformed";
+        if ("K".equals(status) && fp == null) return "malformed";
+        NameRegion nreg = nameRegions.get(region);
+        if (!lift) {
+            if (NameRevocation.LIFTING.equals(nr.state)) return null;              // an answer to what was withdrawn since
+            if (!NameRevocation.ASKED.equals(nr.state)) {
+                boolean same = "K".equals(status) ? fp.equals(nr.key) : NameRevocation.NOKEY.equals(nr.state);
+                return same ? null : "the request for " + n + " is already answered (" + (nr.key == null ? "no key" : "key "
+                        + PeerIdentity.shortFp(nr.key)) + "): a request is answered once";
+            }
+            if ("N".equals(status)) {
+                if (!advanceName(nr, nr.with(NameRevocation.NOKEY, null, null), false)) return null;
+                scheduleRevocationWork(0);
+                if (nreg != null) nreg.refusal = null;
+                log.accept("Name revocation of " + n + " CONFIRMED by " + controller + ": no key was bound to that name there; the name is"
+                        + " reserved there and here (there is no key to revoke)");
+                return null;
+            }
+            String why = reportedKeyRefusal(fp, region);
+            if (why != null) {
+                if (nreg != null) nreg.refusal = why;
+                return why;
+            }
+            // the key first, then the request's state, as one step: a request settles with ONE key (two answers racing on two
+            // pings cannot each put theirs in force), and the record of the state is never written ahead of the key's
+            boolean added, byRegion = pki != null;
+            synchronized (nameLock) {
+                if (nameRevs.get(n) != nr) return null;
+                added = applyReported(fp, region, n, controller);
+                advanceName(nr, nr.with(NameRevocation.KEY, fp, null), false);
+            }
+            scheduleRevocationWork(0);                                            // the records: off this thread, one write
+            if (nreg != null) nreg.refusal = null;
+            log.accept("Name revocation of " + n + " CONFIRMED by " + controller + ": it revoked the key bound to that name, reserved the"
+                    + " name and closed the node. Key " + PeerIdentity.shortFp(fp) + " REVOKED here on its report"
+                    + (added ? "" : " (it was revoked here already)") + (byRegion
+                    ? ": refused for the names of region " + region + " from now on, here and at every node below (pre-provisioned: a"
+                    + " certificate names its region); revoke the key fingerprint here to refuse it under every name"
+                    : ": refused for every name from now on, here and at every node below -- except that a node which holds this key bound"
+                    + " outside region " + region + " keeps that binding (and logs it), and a node of an earlier build is not sent a key"
+                    + " revoked on a region's report: revoke the key fingerprint here to make it this node's own word for all"));
+            return null;
+        }
+        if (!NameRevocation.LIFTING.equals(nr.state)) return null;                 // an answer to a rebind that is not asked (any more)
+        // the region applied the revocation before the rebind reached it and never got to say which key: taken now, by the same rule
+        String applied = "";
+        String why = fp != null && nr.key == null ? reportedKeyRefusal(fp, region) : null;
+        synchronized (nameLock) {
+            if (nameRevs.get(n) != nr) return null;
+            if (fp != null && nr.key == null) {
+                if (why != null) {
+                    applied = "; the key it had revoked for the name is NOT revoked here (" + why + ")";
+                } else if (applyReported(fp, region, n, controller)) {
+                    applied = "; the key " + PeerIdentity.shortFp(fp) + " it had revoked for the name stays REVOKED, here and below";
+                }
+            }
+            advanceName(nr, null, true);
+        }
+        scheduleRevocationWork(0);
+        log.accept("Rebind of " + n + " CONFIRMED by " + controller + ": "
+                + ("B".equals(status) ? "the name is bound there again" : "F".equals(status) ? "nothing reserves the name there"
+                : "the name is reserved there by ANOTHER revocation, which this rebind does not lift (rebind it at that controller)")
+                + applied + "; this node's revocation by name is settled");
+        return null;
+    }
+
+    /**
+     * Put the key a region reported for its name {@code n} in force (memory only): for every name, marked as that region's
+     * word -- or, pre-provisioned, for that region's names only. False when it was in force already.
+     */
+    private boolean applyReported(String fp, String region, String n, String controller) {
+        String source = "name revocation of " + n + ": key reported by " + controller;
+        return pki != null ? applyInMemory(fp, region, null, source, 0, false, null) : applyInMemory(fp, null, null, source, 0, false, region);
+    }
+
+    /**
+     * Replace the record {@code from} by {@code to} ({@code done}: forget it) in memory and queue its durable record for
+     * the background writer (memory only on the caller's thread). False when another thread advanced it first.
+     */
+    private boolean advanceName(NameRevocation from, NameRevocation to, boolean done) {
+        synchronized (nameLock) {
+            if (done ? !nameRevs.remove(from.name, from) : !nameRevs.replace(from.name, from, to)) return false;
+            recountNames();
+            nameRecs.add(nameRec(done ? from : to, done));
+        }
+        if (done || !to.open()) nameReminded.remove(from.name);
+        return true;
+    }
+
+    /**
+     * With the write lock, at a global: operator rebind tokens ({@code peer-trust.json.rebind}, {@code peer_identity_rebind})
+     * for names revoked by name here. Such a name's node never presents its new key to this node (it joins its region's
+     * controller), so the token is taken when it is seen (every 10 s, and at open): consumed and recorded, this node's
+     * reservation lifted, and the rebind sent to the name's region on its pongs until that controller confirms -- there the
+     * token is what rebinds the name when the new key presents (the existing rebind). The key that was revoked stays revoked.
+     */
+    private void liftNameRevocationsLocked() {
+        if (nameRevs.isEmpty() || sealed || fenced != null) return;
+        reloadRebindFile();
+        if (rebindConfig.isEmpty() && rebindFile.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        for (NameRevocation nr : new ArrayList<>(nameRevs.values())) {
+            String token = null;
+            for (Set<String> src : List.of(rebindConfig, rebindFile)) {
+                for (String t : src) {
+                    String k = tokenKey(t);
+                    // a token whose key no node can present rebinds nothing, here as at a join
+                    if (tokenName(t).equals(nr.name) && !consumed.contains(t) && (k == null || isFingerprint(k))) { token = t; break; }
+                }
+                if (token != null) break;
+            }
+            if (token == null) continue;
+            String allow = tokenKey(token);
+            boolean unconfirmed = NameRevocation.ASKED.equals(nr.state);
+            NameRevocation next = nr.with(NameRevocation.LIFTING, nr.key, allow);
+            Rec c = rec("consume", nr.name);
+            c.token = token; c.t = now;
+            Rec u = rec("untomb", nr.name);
+            u.key = allow; u.t = now;
+            if (!append(c, u, nameRec(next, false))) continue;                    // tried again in 10 s
+            consumed.add(token);
+            tombs.remove(nr.name);
+            synchronized (nameLock) { nameRevs.put(nr.name, next); recountNames(); }
+            nameReminded.remove(nr.name);
+            log.accept("Name " + nr.name + " (revoked by name here) REBOUND by the operator ('" + token + "', now consumed): no longer"
+                    + " reserved here; region " + nr.region() + "'s controller is told to accept "
+                    + (allow == null ? "the FIRST key presented" : "key " + PeerIdentity.shortFp(allow)) + " for it, once, until it confirms."
+                    + (unconfirmed ? " NOTE: that controller never confirmed the revocation -- the key the name held is revoked nowhere"
+                    + " until it does (it is asked to revoke it before it takes the rebind)." : " The revoked key stays revoked.")
+                    + " Take the name out of peer-trust.json.revoke and peer_identity_revoke: a name listed there is revoked again when"
+                    + " they are next read");
+        }
+    }
+
+    /**
+     * With the write lock: the tombstone of {@code n} was lifted on THIS node by a rebind to key {@code fp} (a join, or a
+     * pre-provisioned certificate). At a global that revoked the name by name, its region is told as for a token seen by
+     * {@link #liftNameRevocationsLocked}.
+     */
+    private void nameRebound(String n, String fp) {
+        NameRevocation nr = nameRevs.get(n);
+        if (nr == null || NameRevocation.LIFTING.equals(nr.state)) return;
+        NameRevocation next = nr.with(NameRevocation.LIFTING, nr.key, fp);
+        synchronized (nameLock) {
+            if (!nameRevs.replace(n, nr, next)) return;
+            recountNames();
+        }
+        nameReminded.remove(n);
+        nameRecs.add(nameRec(next, false));
+        if (background != null) scheduleRevocationWork(0);
+        log.accept("Name " + n + " (revoked by name here) was rebound on this node: region " + nr.region() + "'s controller is told to"
+                + " accept key " + PeerIdentity.shortFp(fp) + " for it, once, until it confirms");
+    }
+
+    // ---- at the controller of the name's region
+
+    /**
+     * At a region controller: its global (verified by RevocationSync as the controller this node joined) revoked by name
+     * the name {@code n} of THIS node's region. As if the operator had revoked the name here: the key bound to it is
+     * revoked for every name (in force when this returns: no disk, no write lock on the pong's thread), its binding
+     * dropped, the name reserved and its connections closed on the background writer, like a merged list. A request is
+     * applied ONCE ({@link #appliedNames}).
+     *
+     * @return null when applied (or applied before), else why not
+     */
+    public String applyNameRevocation(String id, String n, String parent) {
+        if (id == null || !REQUEST_ID.matcher(id).matches() || !validName(n)) return "malformed";
+        if (appliedNames.containsKey(id)) return null;
+        Binding b = identities.get(n);
+        if (b != null && ROLE_SELF.equals(b.role)) return n + " is this node's own identity";
+        String source = "revoked by name at " + parent + ", request " + shortId(id);
+        String key = null;
+        // no name on the entry: it would reserve the name at every node this node's list reaches (its agents), where no
+        // rebind could lift it; the name is reserved HERE, by the binding that is dropped (and reserveForGlobalLocked)
+        if (b != null) {
+            key = b.key;
+            applyInMemory(b.key, null, null, source, 0, false);
+        } else if (pki != null) {
+            for (PkiSeen x : pkiSeenAll(n, false)) {
+                if (key == null) key = x.key;
+                if (!revoked.containsKey(x.key)) applyInMemory(x.key, null, null, source, 0, false);
+            }
+        }
+        namesPending.add(id);
+        nameTasks.add(new String[]{n, id, source, key});
+        scheduleRevocationWork(0);
+        return null;
+    }
+
+    /** Requests put in force by {@link #applyNameRevocation} whose name is still to be reserved by the background writer. */
+    private final Set<String> namesPending = ConcurrentHashMap.newKeySet();
+
+    /**
+     * With the write lock (from {@link #completeRevocationsLocked}, after the bindings of the revoked keys were dropped):
+     * reserve {@code n} for the request {@code id} of this node's global, and remember the request with the key that was
+     * revoked for it (a consumed-token marker: recorded, kept through compaction, read as nothing by an earlier build).
+     */
+    private void reserveForGlobalLocked(String n, String id, String source, String key, List<Rec> recs) {
+        namesPending.remove(id);
+        if (appliedNames.containsKey(id)) return;
+        long now = System.currentTimeMillis();
+        Binding b = identities.get(n);
+        if (b != null) {
+            if (ROLE_SELF.equals(b.role)) return;
+            // still bound: only to the key this request revoked (its entry was already in force when the request came)
+            if (!b.key.equals(key) || !revoked.containsKey(b.key)) return;
+            removeIdentity(n, b);
+            if (bridges.remove(n) != null) { recs.add(rec("unbridge", n)); bridgesVersion++; }
+        }
+        Tomb t = tombs.get(n);
+        if (t != null && t.key != null) key = t.key;                              // the key the name was reserved for
+        if (t == null || !id.equals(t.id)) {
+            tombs.put(n, new Tomb(key, source, t == null ? now : t.t, id));
+            Rec tr = rec("tomb", n);
+            tr.key = key; tr.source = source; tr.t = t == null ? now : t.t; tr.token = id;
+            recs.add(tr);
+        }
+        for (PkiSeen was : pkiSeenAll(n, true)) pkiNameByKey.remove(was.key, n);
+        String marker = APPLIED_NAME + id + (key == null ? "" : "=" + key);
+        Rec c = rec("consume", n);
+        c.token = marker; c.t = now;
+        recs.add(c);
+        consumed.add(marker);
+        appliedNames.put(id, key == null ? "" : key);
+        if (key == null) sweepWanted = true;
+        log.accept("Name " + n + " REVOKED (" + source + "): " + (key == null ? "no key is bound to it here; the name is reserved"
+                : "its key " + PeerIdentity.shortFp(key) + " is REVOKED here for every name, the name is reserved and its connections are"
+                + " closed") + "; the global is told with this node's next ping");
+    }
+
+    private void noteAppliedName(String marker) {
+        String x = marker.substring(APPLIED_NAME.length());
+        int eq = x.indexOf('=');
+        appliedNames.put(eq < 0 ? x : x.substring(0, eq), eq < 0 ? "" : x.substring(eq + 1));
+    }
+
+    /**
+     * At a region controller: what it answers its global for the request {@code id} -- the key it revoked ("" when the name
+     * had none) -- or null while the request is not applied and recorded here.
+     */
+    public String nameAnswer(String id) {
+        if (id == null || revDurability != null) return null;
+        return appliedNames.get(id);
+    }
+
+    /**
+     * At a region controller: its global's operator rebound a name the global had revoked by name. Held (memory only; the
+     * global sends it until this node confirms) as a rebind token that allows {@code fp} (null: the first key presented)
+     * for {@code n}, consumed and recorded by the existing rebind when that key presents. It lifts only the reservation the
+     * SAME request made here: one replayed after a later revocation of the name lifts nothing.
+     */
+    public void allowRebindFromParent(String id, String n, String fp, String parent) {
+        if (id == null || !REQUEST_ID.matcher(id).matches() || !validName(n) || (fp != null && !isFingerprint(fp))) return;
+        if (fp != null) fp = fp.toLowerCase(java.util.Locale.ROOT);
+        if (!appliedNames.containsKey(id)) {
+            // the revocation this rebind follows never reached this node (it was away, or of an earlier build, while it was
+            // asked): it is applied first -- the key the name holds is revoked -- unless the name already holds the very key
+            // the rebind allows. The rebind is taken with a later pong, once the name is reserved for the request.
+            Binding b = identities.get(n);
+            boolean holdsAllowed = b != null && b.key.equals(fp);
+            boolean holdsAKey = b != null && !ROLE_SELF.equals(b.role);
+            if (pki != null) {
+                for (PkiSeen x : pkiSeenAll(n, false)) { if (x.key.equals(fp)) holdsAllowed = true; else holdsAKey = true; }
+            }
+            if (!holdsAllowed && holdsAKey) applyNameRevocation(id, n, parent);
+            return;
+        }
+        Tomb t = tombs.get(n);
+        if (t == null || !id.equals(t.id)) return;
+        String token = n + "#lift-" + id + (fp == null ? "" : "=" + fp);
+        if (consumed.contains(token) || !rebindParent.add(token)) return;
+        rebindParent.removeIf(x -> !x.equals(token) && tokenName(x).equals(n));    // one per name: the last its global allowed
+        log.accept("Name " + n + " (revoked by name at " + parent + ", request " + shortId(id) + ") was REBOUND by the global's operator: "
+                + (fp == null ? "the FIRST key presented" : "key " + PeerIdentity.shortFp(fp)) + " is accepted for it here, once");
+    }
+
+    /**
+     * At a region controller: its answer to the rebind of request {@code id} -- null while the name is still reserved here
+     * for that request (the new key has not presented), else {@code B} (bound again), {@code F} (nothing reserves it) or
+     * {@code X} (reserved by another revocation, which the rebind does not lift).
+     */
+    public String nameLiftAnswer(String id, String n) {
+        if (id == null || namesPending.contains(id)) return null;                  // its revocation is being applied right now
+        Tomb t = tombs.get(n);
+        if (t != null) return id.equals(t.id) ? null : "X";
+        return identities.containsKey(n) ? "B" : "F";
     }
 
     /** {@code region_agent} paths of the controllers this node joined (bound by following, as a client). */
@@ -2562,9 +3336,12 @@ public final class PeerTrustRegistry {
      */
     private String rebindToken(String n, String fp) {
         reloadRebindFile();
-        for (Set<String> src : List.of(rebindConfig, rebindFile)) {
+        Tomb tomb = tombs.get(n);
+        for (Set<String> src : List.of(rebindConfig, rebindFile, rebindParent)) {
             for (String t : src) {
                 if (!tokenName(t).equals(n) || consumed.contains(t)) continue;
+                // what this node's global allowed lifts only the reservation that same request made here
+                if (src == rebindParent && (tomb == null || tomb.id == null || !t.startsWith(n + "#lift-" + tomb.id))) continue;
                 String want = tokenKey(t);
                 if (want != null && (fp == null || !want.equals(fp.toLowerCase(java.util.Locale.ROOT)))) continue;
                 if (want == null) {
@@ -2708,6 +3485,9 @@ public final class PeerTrustRegistry {
     private void clearState() {
         identities.clear(); cas.clear(); bridges.clear(); bridgesVersion++; consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
         namesByKey.clear(); tombs.clear();
+        nameRevs.clear(); nameRecs.clear(); nameTasks.clear(); appliedNames.clear(); rebindParent.clear(); nameRegions.clear();
+        namesPending.clear();
+        nameReminded.clear(); nameOpen = 0; nameVersion++; selfName = null;
         synchronized (revMemLock) {
             revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revokedByScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
         }
@@ -2758,7 +3538,17 @@ public final class PeerTrustRegistry {
             case "tomb": {
                 Binding old = identities.get(r.name);
                 if (old != null && old.key.equals(r.key)) removeIdentity(r.name, old);
-                tombs.put(r.name, new Tomb(r.key, r.source == null ? "?" : r.source, r.t));
+                tombs.put(r.name, new Tomb(r.key, r.source == null ? "?" : r.source, r.t, r.token));
+                break;
+            }
+            case "revokename": {
+                if (r.name == null || r.token == null || "done".equals(r.mode)) {
+                    if (r.name != null && nameRevs.remove(r.name) != null) recountNames();
+                    break;
+                }
+                nameRevs.put(r.name, new NameRevocation(r.name, r.token, r.source == null ? "?" : r.source,
+                        r.mode == null ? NameRevocation.ASKED : r.mode, r.key, r.kind, r.t));
+                recountNames();
                 break;
             }
             case "expire": {
@@ -2766,7 +3556,12 @@ public final class PeerTrustRegistry {
                 if (x != null) synchronized (revMemLock) { removeRevocation(x); }
                 break;
             }
-            case "consume": if (r.token != null) consumed.add(r.token); break;
+            case "consume":
+                if (r.token != null) {
+                    consumed.add(r.token);
+                    if (r.token.startsWith(APPLIED_NAME)) noteAppliedName(r.token);
+                }
+                break;
             case "revoke": if (r.key != null) revokedKeys.computeIfAbsent(r.name, k -> ConcurrentHashMap.newKeySet()).add(r.key); break;
             case "revokekey": if (r.key != null) loadRevocation(r); break;
             case "seen": {
@@ -3069,7 +3864,7 @@ public final class PeerTrustRegistry {
     private int live() {
         int rk = 0;
         for (Set<String> v : revokedKeys.values()) rk += v.size();
-        return identities.size() + cas.size() + bridges.size() + consumed.size() + rk + revoked.size() + tombs.size();
+        return identities.size() + cas.size() + bridges.size() + consumed.size() + rk + revoked.size() + tombs.size() + nameRevs.size();
     }
 
     /**
@@ -3110,14 +3905,15 @@ public final class PeerTrustRegistry {
         for (Revocation x : revokedBySeq.values()) {
             Rec r = rec("revokekey", x.name);
             r.key = x.fp; r.source = x.source; r.t = x.t; r.scope = x.scope; r.seq = x.seq;
-            r.exp = x.exp > 0 ? x.exp : null; r.own = x.own ? Boolean.TRUE : null;
+            r.exp = x.exp > 0 ? x.exp : null; r.own = x.own ? Boolean.TRUE : null; r.kind = x.via;
             recs.add(r);
         }
         for (Map.Entry<String, Tomb> e : tombs.entrySet()) {
             Rec r = rec("tomb", e.getKey());
-            r.key = e.getValue().key; r.source = e.getValue().source; r.t = e.getValue().t;
+            r.key = e.getValue().key; r.source = e.getValue().source; r.t = e.getValue().t; r.token = e.getValue().id;
             recs.add(r);
         }
+        for (NameRevocation x : nameRevs.values()) recs.add(nameRec(x, false));
         for (Map.Entry<String, Binding> e : cas.entrySet()) {
             Rec r = rec("ca", e.getKey());
             Binding b = e.getValue();

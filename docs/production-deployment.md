@@ -141,7 +141,10 @@ because its chain verifies to `trust_anchors` -- never because it answered first
 
 - Put revoked keys or certificates in `revocation_file` (the operator's CRL or deny list) on the controllers above them;
   a controller's revocations also travel down its pings as signed lists (`caller-authorization.md` section 9), and
-  `peer_identity_revoke` revokes a key or a name at once on a running node.
+  `peer_identity_revoke` revokes a key or a name at once on a running node. A name revoked at the global whose
+  certificate the global never verified (an agent of a region) is reserved there and revoked by that region's controller,
+  which reports the key (`caller-authorization.md` section 9, "By name at a global"); the global's log and its `identity`
+  health check say so while that controller has not confirmed.
 - A revoked key is refused at TLS, at the broker (live connections holding it are closed at once), for message
   signatures, and as a signer of trust lists. Message authentication applies `revocation_file` itself, on every message:
   the signer's certificate and the ones above it (an agent's attestation and a trust-bundle entry carry them by

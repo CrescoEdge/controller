@@ -633,6 +633,7 @@ public class CertificateManager {
             mem.setKeyReplacedListener(this::onKeyReplaced);
             mem.setRevokedBatchListener(this::onKeysRevoked);
             mem.setSuperuserTenants(superuserTenants());
+            mem.setGlobal(plugin.getConfig().getBooleanParam("is_global", false));
             return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
@@ -643,6 +644,8 @@ public class CertificateManager {
         o.revokeIdentities = csv(plugin.getConfig().getStringParam("peer_identity_revoke", ""));
         o.bridgePruneDays = plugin.getConfig().getIntegerParam("peer_bridge_prune_days", 30);
         o.bindingPruneDays = plugin.getConfig().getIntegerParam("peer_binding_prune_days", 90);
+        // a global takes a revocation by name of a name it holds no key for (its region's controller is asked)
+        o.global = plugin.getConfig().getBooleanParam("is_global", false);
         // the registry is created on this node's first start, before its persistent identity: when that identity exists, a
         // registry that is missing entirely was deleted, and is sealed rather than silently started empty
         o.expectExisting = plugin.getConfig().getBooleanParam("node_identity_persist", true)
@@ -1284,6 +1287,9 @@ public class CertificateManager {
             if (r.lockFailure() != null) crit.add("peer trust registry FENCED: " + r.lockFailure() + " (nothing new is bound)");
             if (r.isSealed()) crit.add("peer trust registry SEALED: " + r.sealReason());
             if (r.revocationDurability() != null) crit.add(r.revocationDurability());
+            // a revocation by name that has not reached the controller holding the key is not done
+            String names = r.nameRevocationsOutstanding();
+            if (names != null) warn.add(names);
         }
         String ia = identityAlarm;
         if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
