@@ -664,6 +664,7 @@ public class ActiveClient {
             this.agentProducer = new AgentProducer(controllerEngine, URI, this);
             isInit = true; // Assume success if constructor doesn't throw
             logger.info("Agent Producer initialized successfully for URI [{}]", URI);
+            if (nearWaiting.get() > 0 || farWaiting.get() > 0) onHoldTimer(this::drain);   // what waited for a producer goes now
         } catch (Exception ex) {
             logger.error("initActiveAgentProducer Exception for URI [{}]: {}", URI, ex.getMessage(), ex);
             this.agentProducer = null;
@@ -693,13 +694,312 @@ public class ActiveClient {
     }
 
     public boolean sendAPMessage(MsgEvent msg) {
+        return send(msg, "sendAPMessage called but");
+    }
+
+    // ---- sends this node cannot make yet (SendHold): no producer, or no credential their recipient can verify
+
+    /**
+     * Two queues, each first in, first out: what an agent would sign for a node beyond its controller (it waits for the
+     * attestation too: {@link MsgSigning#needsAttestation}), and everything else. Two, because what waits for the
+     * attestation must not hold up the ping to the controller that brings it; within each, whatever goes to one
+     * destination is in one queue, so its order is kept. {@code *Waiting}: the messages of that kind held, or being sent
+     * by the timer thread at this moment -- while it is not 0, a later message of that kind goes behind them.
+     */
+    private final SendHold nearHold = new SendHold(), farHold = new SendHold();
+    private final java.util.concurrent.atomic.AtomicInteger nearWaiting = new java.util.concurrent.atomic.AtomicInteger(),
+            farWaiting = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicLong sendsHeld = new java.util.concurrent.atomic.AtomicLong(),
+            heldSent = new java.util.concurrent.atomic.AtomicLong(), heldNotSent = new java.util.concurrent.atomic.AtomicLong();
+    private final Object holdTimerLock = new Object();
+    private java.util.concurrent.ScheduledThreadPoolExecutor holdTimer;
+    /** When the timer next looks at what is held ({@link System#nanoTime}; 0: nothing is scheduled); guarded by {@link #holdTimerLock}. */
+    private long holdWakeAt;
+
+    /** Messages held so far; of those, sent when the node could, and not sent (counted as dropped under their cause). */
+    public long sendsHeldCount() { return sendsHeld.get(); }
+    public long heldSentCount() { return heldSent.get(); }
+    public long heldNotSentCount() { return heldNotSent.get(); }
+    /** Messages waiting now (tests). */
+    int sendsHeldNow() { return nearHold.size() + farHold.size(); }
+
+    /** How long a stretch without a producer lasts at most: as long as a message waits for the parent link anywhere else ({@code msgin_fault_wait_ms}). */
+    private long sendHoldMs() {
+        return Math.max(0L, plugin.getConfig().getLongParam("msgin_fault_wait_ms", 20000L));
+    }
+
+    /**
+     * How long a stretch without the attestation lasts at most: as long as the inbox holds what it cannot judge yet
+     * ({@code msg_signing_hold_ms}, 5 s; 0: not at all).
+     */
+    private long attestationHoldMs() {
+        return Math.max(0L, Math.min(60_000L, plugin.getConfig().getLongParam("msg_signing_hold_ms", 5_000L)));
+    }
+
+    /**
+     * Send {@code m}, or hold it until this node can. Nearly always it can: a producer, nothing held, and a node that is
+     * not waiting for its attestation -- three field reads, then the producer. Otherwise:
+     * <ul>
+     * <li><b>No producer</b> (the link to a controller is being made anew; the producer goes when the controller is lost
+     *     and comes back with the next one). An RPC request is not held: false, and the router answers its caller with an
+     *     error at once ({@code route unavailable}), which is better than a request that leaves after its caller stopped
+     *     waiting. Anything else -- the reply to a request this node took, a one-way message -- is held and sent when the
+     *     producer exists.</li>
+     * <li><b>No attestation yet</b> ({@link MsgSigning#attestationPending}): what an agent would sign for a node beyond
+     *     its controller, which cannot verify its certificate, is held for the attestation (the controller's first pong,
+     *     some tens of milliseconds later) -- an RPC request too: it leaves in time to be answered, where it would have
+     *     been refused. What goes to its controller is not.</li>
+     * <li><b>Something of its kind is held, or is being sent by the timer.</b> It goes behind it: first in, first out. A
+     *     stretch has ONE end, set when its first message is held ({@code msgin_fault_wait_ms} without a producer,
+     *     {@code msg_signing_hold_ms} without the attestation): then everything held is sent as it stands when there is a
+     *     producer, and counted as dropped ({@code no_sender}) when there is none.</li>
+     * <li><b>No room</b> (each queue: {@value SendHold#MAX_MESSAGES} messages, {@value SendHold#MAX_CHARS} characters).
+     *     Nothing of its kind held: it is sent now, as before there was a hold (or, with no producer, not sent). Behind
+     *     held messages: not sent ({@code hold_full}) -- sending it would overtake them.</li>
+     * </ul>
+     * No thread waits here: the sender returns at once, and one timer thread (made at the first held message, gone when
+     * idle) sends or drops what is held, in order.
+     */
+    private boolean send(MsgEvent m, String where) {
         AgentProducer p = agentProducer;
-        if (p != null) {
-            return p.sendMessage(msg);
-        } else {
-            logger.error("sendAPMessage called but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(msg));
-            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, msg);
+        if (p != null && nearWaiting.get() == 0 && farWaiting.get() == 0) {
+            MsgSigning signing = controllerEngine.msgSigning();
+            if (!signing.attestationPending() || !signing.needsAttestation(m)) return p.sendMessage(m);
+            if (!hold(farHold, farWaiting, m, attestationHoldMs(), "it is not attested yet")) return p.sendMessage(m);
+            // attested between the look and the hold: nothing waits for a pong that has come
+            if (!signing.attestationPending()) onHoldTimer(this::drain);
+            return true;
+        }
+        if (m == null || m.getParams() == null) return p != null ? p.sendMessage(m) : notSent(m, where);
+        MsgSigning signing = controllerEngine.msgSigning();
+        boolean far = signing.needsAttestation(m);
+        SendHold queue = far ? farHold : nearHold;
+        java.util.concurrent.atomic.AtomicInteger waiting = far ? farWaiting : nearWaiting;
+        if (p == null) {
+            if (MsgRouter.isRpcRequest(m)) return notSent(m, where);
+            if (hold(queue, waiting, m, sendHoldMs(), "it has no producer")) {
+                // a producer came between the look at the field and the hold: nothing waits for the next one
+                if (agentProducer != null) onHoldTimer(this::drain);
+                return true;
+            }
+            return notSent(m, where);
+        }
+        if (waiting.get() == 0) {
+            // nothing of its kind is held or on its way out: it does not wait for the other kind
+            if (!far || !signing.attestationPending()) return p.sendMessage(m);
+            if (!hold(queue, waiting, m, attestationHoldMs(), "it is not attested yet")) return p.sendMessage(m);
+            if (!signing.attestationPending()) onHoldTimer(this::drain);
+            return true;
+        }
+        if (hold(queue, waiting, m, far ? attestationHoldMs() : sendHoldMs(), "it goes behind what is held")) {
+            onHoldTimer(this::drain);
+            return true;
+        }
+        // behind held messages, and no room: sent now it would overtake them
+        logger.error("Message not sent: no room behind the messages this node holds to be sent first: {}",
+                io.cresco.agent.controller.communication.ParamLog.describe(m));
+        controllerEngine.msgCounts().dropped(MsgCounts.Drop.HOLD_FULL, m);
+        return false;
+    }
+
+    private boolean notSent(MsgEvent m, String where) {
+        logger.error(where + " AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(m));
+        controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, m);
+        return false;
+    }
+
+    /** The controller above this node now ({@code region_agent}: an agent's region controller, a region's global), or null. */
+    private String uplink() {
+        io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        return st == null || st.parentRegion == null || st.parentAgent == null ? null : st.parentRegion + "_" + st.parentAgent;
+    }
+
+    /** Put {@code m} behind what {@code queue} holds; false: no room (or the node is stopping). */
+    private boolean hold(SendHold queue, java.util.concurrent.atomic.AtomicInteger waiting, MsgEvent m, long holdMs, String why) {
+        waiting.incrementAndGet();                           // first: from here on a later message of its kind goes behind it
+        if (!queue.offer(m, uplink(), holdMs)) {
+            waiting.decrementAndGet();
             return false;
+        }
+        sendsHeld.incrementAndGet();
+        if (queue.size() == 1) {
+            logger.info("Holding what this node cannot send yet ({}; first: {}): at most {} messages, {} ms for all of them; then"
+                    + " they are sent, or counted as dropped", why, io.cresco.agent.controller.communication.ParamLog.describe(m),
+                    SendHold.MAX_MESSAGES, queue.remainingMs());
+        }
+        wakeIn(queue.remainingMs());
+        return true;
+    }
+
+    private java.util.concurrent.ScheduledThreadPoolExecutor holdTimer() {
+        synchronized (holdTimerLock) {
+            if (holdTimer == null) {
+                java.util.concurrent.ScheduledThreadPoolExecutor t = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+                    Thread th = new Thread(r, "cresco-send-hold");
+                    th.setDaemon(true);
+                    return th;
+                });
+                t.setKeepAliveTime(30, java.util.concurrent.TimeUnit.SECONDS);
+                t.allowCoreThreadTimeOut(true);
+                t.setRemoveOnCancelPolicy(true);
+                holdTimer = t;
+            }
+            return holdTimer;
+        }
+    }
+
+    private void onHoldTimer(Runnable r) {
+        try {
+            holdTimer().execute(r);
+        } catch (java.util.concurrent.RejectedExecutionException stopping) {
+            // the node is stopping: stopHolding counts what is held
+        }
+    }
+
+    /** The timer looks at what is held in {@code ms} at the latest (one wake is scheduled at a time: the earliest asked for). */
+    private void wakeIn(long ms) {
+        if (ms < 0) return;
+        long at = System.nanoTime() + ms * 1_000_000L;
+        synchronized (holdTimerLock) {
+            if (holdWakeAt != 0 && holdWakeAt - at <= 0) return;
+            holdWakeAt = at == 0 ? 1 : at;
+        }
+        try {
+            holdTimer().schedule(() -> {
+                synchronized (holdTimerLock) { holdWakeAt = 0; }
+                drain();
+            }, ms + 1, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException stopping) {
+            // the node is stopping: stopHolding counts what is held
+        }
+    }
+
+    /** This node took an attestation (MsgSigning): what waited for it goes now. */
+    void attested() {
+        if (farWaiting.get() > 0) onHoldTimer(this::drain);
+    }
+
+    /**
+     * The timer thread, and only it: send what is held and can go, oldest first, each queue by itself; then come back when
+     * the stretch of what is left ends. It runs when a message is held, when the producer or the attestation comes, and
+     * when a stretch ends -- so nothing held waits for an event that has already happened.
+     */
+    private void drain() {
+        try {
+            drain(nearHold, nearWaiting, false);
+            drain(farHold, farWaiting, true);
+        } finally {
+            long a = nearHold.remainingMs(), b = farHold.remainingMs();
+            if (a >= 0 || b >= 0) wakeIn(a < 0 ? b : b < 0 ? a : Math.min(a, b));
+        }
+    }
+
+    private void drain(SendHold queue, java.util.concurrent.atomic.AtomicInteger waiting, boolean far) {
+        int sent = 0, lost = 0;
+        MsgEvent firstLost = null;
+        boolean asTheyStand = false;
+        for (;;) {
+            SendHold.Held head = queue.peek();
+            if (head == null) break;
+            AgentProducer p = agentProducer;
+            boolean timeUp = queue.timeUp();
+            if (p == null) {
+                if (!timeUp) break;                              // it, and all behind it, wait for a producer
+                if (!queue.take(head)) continue;
+                // the stretch ended and no producer came: not sent
+                dropHeld(head.msg, MsgCounts.Drop.NO_SENDER, "no producer came in time");
+                waiting.decrementAndGet();
+                lost++;
+                if (firstLost == null) firstLost = head.msg;
+                continue;
+            }
+            if (far && !timeUp && controllerEngine.msgSigning().attestationPending()) {
+                // a producer, no attestation: it, and all behind it, wait for the attestation -- from now on for the time
+                // an attestation is waited for, whatever the stretch was begun for
+                queue.endWithin(attestationHoldMs());
+                break;
+            }
+            if (!queue.take(head)) continue;
+            try {
+                String up = uplink();
+                if (head.uplink != null && up != null && !head.uplink.equals(up) && head.uplink.equals(head.msg.getForwardDst())) {
+                    // held for the controller this node had; it has another now. Its destination was chosen for the former
+                    // one (a registration, a report, a function of "the controller above"): it is not sent to it from here
+                    dropHeld(head.msg, MsgCounts.Drop.PARENT_CHANGED, "this node joined another controller meanwhile");
+                    lost++;
+                    if (firstLost == null) firstLost = head.msg;
+                } else if (p.sendMessage(head.msg)) {
+                    sent++;
+                    asTheyStand |= timeUp && far;
+                } else {
+                    // counted by the producer (send_failed); it was told "held" when it was taken, so what a failed send
+                    // owes its sender is settled here
+                    settle(head.msg, "the broker did not take it");
+                }
+            } catch (RuntimeException e) {
+                controllerEngine.msgCounts().dropped(MsgCounts.Drop.SEND_FAILED, head.msg);
+                logger.error("A held message was not sent ({}): {}", e.toString(), io.cresco.agent.controller.communication.ParamLog.describe(head.msg));
+            } finally {
+                waiting.decrementAndGet();                       // after its send returned: nothing of its kind overtook it
+            }
+        }
+        if (sent > 0) {
+            heldSent.addAndGet(sent);
+            logger.info("Sent {} message(s) that were held until this node could send them{}", sent,
+                    asTheyStand ? " (the attestation did not come in time: sent as they stood)" : "");
+        }
+        if (lost > 0) {
+            heldNotSent.addAndGet(lost);
+            logger.error("NOT SENT: {} held message(s) (first: {})", lost, io.cresco.agent.controller.communication.ParamLog.describe(firstLost));
+        }
+    }
+
+    /** A held message ends here, not sent: counted once, under {@code cause}; then what its sender is owed. */
+    private void dropHeld(MsgEvent m, MsgCounts.Drop cause, String why) {
+        controllerEngine.msgCounts().dropped(cause, m);
+        settle(m, why);
+    }
+
+    /**
+     * A held message was not sent after its sender was told "held". A message this node only carried on was counted as
+     * relayed then: that is taken back, so that it ends in one count. An RPC request's caller is answered with the
+     * router's error, so that it is not left to time out (a liveness ping is not: any answer reads as a pong).
+     */
+    private void settle(MsgEvent m, String why) {
+        try {
+            if (m.getParam(MsgSigning.PENDING) == null && !ownSource(m)) controllerEngine.msgCounts().notRelayed();
+            if (MsgRouter.isRpcRequest(m) && !"ping".equals(m.getParam("action"))) {
+                MsgRouter.answerWithError(plugin, m, MsgRouter.ROUTE_UNAVAILABLE, "HOLD", "route unavailable at " + plugin.getRegion()
+                        + "_" + plugin.getAgent() + ": " + why);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("could not settle a held message that was not sent: {}", e.toString());
+        }
+    }
+
+    /** Does {@code m} name this node as its source (with security off nothing else says this node originated it)? */
+    private boolean ownSource(MsgEvent m) {
+        io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
+        SpeakerPosition.Standing st = cs == null ? null : cs.standing();
+        return st != null && st.region != null && st.region.equals(m.getSrcRegion()) && st.agent != null && st.agent.equals(m.getSrcAgent());
+    }
+
+    /** The node stops: nothing more is held, and what is held is counted as dropped. */
+    public void stopHolding() {
+        int left = 0;
+        for (SendHold queue : new SendHold[]{nearHold, farHold}) {
+            for (SendHold.Held h : queue.close()) {
+                left++;
+                controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, h.msg);
+                if (h.msg.getParam(MsgSigning.PENDING) == null && !ownSource(h.msg)) controllerEngine.msgCounts().notRelayed();
+            }
+        }
+        nearWaiting.set(0);
+        farWaiting.set(0);
+        if (left > 0) heldNotSent.addAndGet(left);
+        synchronized (holdTimerLock) {
+            if (holdTimer != null) holdTimer.shutdownNow();
         }
     }
 
@@ -765,13 +1065,6 @@ public class ActiveClient {
 
     /** As {@link #sendAPMessage}: false when {@code sm} was not sent, which is then counted as dropped (once). */
     public boolean sendMessage(MsgEvent sm) {
-        AgentProducer p = agentProducer;
-        if (p != null) {
-            return p.sendMessage(sm);
-        } else {
-            logger.error("sendMessage called directly on ActiveClient, but AgentProducer is null. Message not sent: {}", io.cresco.agent.controller.communication.ParamLog.describe(sm));
-            controllerEngine.msgCounts().dropped(MsgCounts.Drop.NO_SENDER, sm);
-            return false;
-        }
+        return send(sm, "sendMessage called directly on ActiveClient, but");
     }
 }

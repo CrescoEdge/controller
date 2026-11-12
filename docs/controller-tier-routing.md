@@ -155,6 +155,15 @@ Agent and plugin messages are not controller messages and are routed by address 
     to be of the caller's own tenant, gets one answer and one timing whatever this node knows of that node: held for one
     grace from the request's arrival, then `route unavailable at <node>: <hop>: no route to <region>_<agent>` and nothing
     more -- whether the node left long ago, a moment ago, or was never there.
+  - *Together with the send hold.* A node also holds what it cannot send yet: no producer, or an agent's attestation
+    not in (`msg.send.held`, caller-authorization.md section 10). The gate comes first and judges only while there is
+    a producer to hand to (with none, the send itself answers the caller). A request the gate lets go is handed to the
+    producer as any send is: behind whatever the node holds to be sent first, never ahead of it; and if the producer
+    went meanwhile it is not held a second time (an RPC request never waits for a producer). Its caller gets one
+    answer and it is counted once, under what stopped it last: `no_route` from the gate, `no_sender` or `hold_full`
+    from the send. The gate judges nothing on an agent and a controller never waits for an attestation, so the two
+    holds meet only on a controller whose own producer is being made anew. A request the signing layer sends again
+    after a lost session (caller-authorization.md) passes the gate like a first send.
 - **How long a request lives.** An RPC request that states its caller's timeout (`rpc_timeout_ms`, milliseconds; the
   controller states it on its own timed calls) is sent with a JMS time to live of that timeout plus
   `rpc_expiry_margin_ms`, never more than the 300 s every message has. The margin is the clock difference the signing

@@ -35,6 +35,7 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
     private final CLogger logger;
     private final String endpoint;
     private final OutboundTlsConnections outbound;
+    private final java.util.function.BiConsumer<PeerIdentity.Expected, X509Certificate> verified;
 
     /**
      * @param pkix     the node's current PKIX trust manager (called per handshake)
@@ -53,6 +54,17 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
      */
     public PeerIdentityTrustManager(Supplier<X509TrustManager> pkix, PeerIdentity.Expected expected, PeerTrustRegistry registry,
                                     PeerIdentity.Mode mode, CLogger logger, String endpoint, OutboundTlsConnections outbound) {
+        this(pkix, expected, registry, mode, logger, endpoint, outbound, null);
+    }
+
+    /**
+     * As above; {@code verified} is told the peer and the certificate it presented each time a handshake verifies as that
+     * peer: the key that node holds NOW, seen first hand (MsgSigning drops an attestation another key of it made).
+     */
+    public PeerIdentityTrustManager(Supplier<X509TrustManager> pkix, PeerIdentity.Expected expected, PeerTrustRegistry registry,
+                                    PeerIdentity.Mode mode, CLogger logger, String endpoint, OutboundTlsConnections outbound,
+                                    java.util.function.BiConsumer<PeerIdentity.Expected, X509Certificate> verified) {
+        this.verified = verified;
         this.outbound = outbound;
         this.pkix = pkix;
         this.expected = expected;
@@ -129,6 +141,13 @@ public final class PeerIdentityTrustManager extends X509ExtendedTrustManager {
         String want = (expected == null) ? "an unrecorded peer" : expected.toString();
         if (v.ok) {
             if (logger != null) logger.info("Peer identity verified: " + endpoint + " is " + want + " (" + v.reason + ")");
+            if (verified != null && expected != null && chain != null && chain.length > 0) {
+                try {
+                    verified.accept(expected, chain[0]);
+                } catch (RuntimeException ignore) {
+                    // what is done with the key that was seen never fails a handshake that verified
+                }
+            }
             return;
         }
         String msg = "PEER IDENTITY MISMATCH on " + endpoint + ": the connection was opened to " + want

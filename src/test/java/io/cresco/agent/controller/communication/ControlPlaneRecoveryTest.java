@@ -284,6 +284,15 @@ class ControlPlaneRecoveryTest {
             ac.shutdown();
         }
         assertNull(ac.agentProducer(), "shutdown clears the producer");
-        assertFalse(ac.sendMessage(watchdog()), "after shutdown a send reports no producer");
+        // with no producer (the link is being made anew) an RPC request reports it at once; a one-way message waits for
+        // the next producer, bounded (ReplyAtFirstInstantTest), where it was dropped with a line in the log
+        MsgEvent request = watchdog();
+        request.setParam("is_rpc", "true");
+        request.setParam("callId-r1-a1-null", "c1");
+        assertFalse(ac.sendMessage(request), "after shutdown a request reports no producer");
+        assertTrue(ac.sendMessage(watchdog()), "a one-way send waits for the next producer");
+        assertEquals(1, ac.sendsHeldNow());
+        ac.stopHolding();
+        assertEquals(2, engine.msgCounts().droppedCount(MsgCounts.Drop.NO_SENDER), "both are accounted for");
     }
 }
