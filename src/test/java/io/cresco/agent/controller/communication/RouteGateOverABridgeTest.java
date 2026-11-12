@@ -73,15 +73,23 @@ class RouteGateOverABridgeTest {
     }
 
     @Test
-    void aTenantsPatternConsumerStopsTheGateForItsOwnTenantsInboxesOnlyAndIsSaid() throws Exception {
-        // a tenant's node may consume `T.<its tenant>.>` today (that it may is another defect); the gate cannot count what
-        // such a consumer takes, so it does not judge the queues the pattern can match -- those only -- and says so
+    void aPatternConsumerStopsTheGateForTheInboxesItCanMatchOnlyAndIsSaid() throws Exception {
+        // a consumer that reads queues by a pattern (the broker's own JVM can: a tenant's node no longer can, it reads its
+        // own inbox only) cannot be counted per inbox, so the gate does not judge the queues the pattern can match -- those
+        // only -- and says so
         f.start("rgG", null);
         f.startUnder("rgA", "rgG", null);
         f.bridge("rgA", "rgG");
         assertFalse(route("rgA", "T.t1.rgZ_n9"));
         Session a = f.node("rgA");
-        a.createConsumer(a.createQueue("T.t1.>"));
+        assertThrows(jakarta.jms.JMSException.class, () -> a.createConsumer(a.createQueue("T.t1.>")),
+                "a tenant's node reads no queue of its tenant's namespace but its own inbox");
+        assertEquals(0, f.gates.get("rgA").unreadPatterns(), "a refused subscription is no pattern consumer");
+        Connection own = new ActiveMQConnectionFactory("vm://rgA_rc?create=false").createConnection();
+        f.connections.add(own);
+        own.start();
+        Session vm = own.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        vm.createConsumer(vm.createQueue("T.t1.>"));
         BridgedFabric.await(() -> f.gates.get("rgA").unreadPatterns() == 1 && f.gates.get("rgG").unreadPatterns() == 1, 8000,
                 "the pattern consumer (and its demand at the global) is not in the gauge: region " + f.gates.get("rgA").unreadPatterns()
                         + ", global " + f.gates.get("rgG").unreadPatterns());

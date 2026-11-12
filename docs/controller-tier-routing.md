@@ -146,10 +146,11 @@ Agent and plugin messages are not controller messages and are routed by address 
   - *The broker has the last word.* Before a request is held or answered, the broker itself is asked for a consumer of
     the queue (one lookup; a queue that does not exist yet is created, as sending to it would). A consumer the gate did
     not count sends the request: `msg.route.mismatch`, one WARN every 10 s at most.
-  - *Patterns.* A consumer that reads queues by a pattern other than a controller's `T.*.<region>_<agent>` (a tenant's
-    node may consume `T.<tenant>.>` today) cannot be counted per inbox: requests for the queues that pattern can match
-    are not judged (sent as before). The gauge `msg.route.unread.patterns` and one WARN say so while such a consumer is
-    there.
+  - *Patterns.* A consumer that reads queues by a pattern other than a controller's `T.*.<region>_<agent>` cannot be
+    counted per inbox: requests for the queues that pattern can match are not judged (sent as before). Only a connection
+    inside the broker's own JVM, or a superuser tenant's node, can hold such a consumer: a tenant's node reads no queue
+    but its own inbox (docs/tenant-isolation-design.md, section 12a). The gauge `msg.route.unread.patterns` and one WARN
+    say so while such a consumer is there.
   - *Another tenant's caller.* A caller of a tenant that is not a superuser's, asking for a node this node does not know
     to be of the caller's own tenant, gets one answer and one timing whatever this node knows of that node: held for one
     grace from the request's arrival, then `route unavailable at <node>: <hop>: no route to <region>_<agent>` and nothing
