@@ -182,9 +182,70 @@ public final class PeerTrustRegistry {
     private static final FileAttribute<?> OWNER_DIR = attr("rwx------");
     private static final long DAY = 24L * 3600 * 1000;
 
-    private final Map<String, Binding> identities = new ConcurrentHashMap<>();
-    private final Map<String, Binding> cas = new ConcurrentHashMap<>();
-    private final Map<String, Binding> bridges = new ConcurrentHashMap<>();
+    /**
+     * How every recorded region and name is spelled, by its lower case ("r:" + region, "n:" + region/agent), counted over
+     * the identity bindings, the CA scopes, the bridge peers and the tombstones: what a name that differs from a recorded
+     * one by letter case only is refused by ({@link #caseClash}). Names are compared exactly everywhere, but the truststore
+     * names its entries in lower case: there "rgb/rc" replaces the certificates of "rgB/rc".
+     */
+    private final Map<String, Map<String, Integer>> spelled = new ConcurrentHashMap<>();
+
+    /** A name-keyed map of this registry that keeps {@link #spelled} as names come and go. */
+    private final class Names<V> extends ConcurrentHashMap<String, V> {
+        private static final long serialVersionUID = 1L;
+        private final boolean regions;                 // the keys are regions (the CA scopes), not region/agent
+        Names(boolean regions) { this.regions = regions; }
+        @Override public V put(String k, V v) { V old = super.put(k, v); if (old == null) spellKey(k, regions, 1); return old; }
+        @Override public V putIfAbsent(String k, V v) { V old = super.putIfAbsent(k, v); if (old == null) spellKey(k, regions, 1); return old; }
+        @Override public V remove(Object k) { V old = super.remove(k); if (old != null) spellKey((String) k, regions, -1); return old; }
+        @Override public boolean remove(Object k, Object v) { boolean r = super.remove(k, v); if (r) spellKey((String) k, regions, -1); return r; }
+        @Override public void clear() { for (String k : new ArrayList<>(keySet())) remove(k); }
+    }
+
+    private void spellKey(String key, boolean regionKey, int d) {
+        if (key == null) return;
+        int slash = key.indexOf('/');
+        if (regionKey || slash <= 0) { spell("r:", key, d); return; }
+        spell("r:", key.substring(0, slash), d);
+        spell("n:", key, d);
+    }
+
+    private void spell(String kind, String exact, int d) {
+        spelled.compute(kind + exact.toLowerCase(java.util.Locale.ROOT), (k, v) -> {
+            Map<String, Integer> m = v == null ? new java.util.HashMap<>() : new java.util.HashMap<>(v);
+            int c = m.getOrDefault(exact, 0) + d;
+            if (c <= 0) m.remove(exact); else m.put(exact, c);
+            return m.isEmpty() ? null : Map.copyOf(m);
+        });
+    }
+
+    private String otherSpelling(String kind, String exact) {
+        Map<String, Integer> m = spelled.get(kind + exact.toLowerCase(java.util.Locale.ROOT));
+        if (m == null || m.containsKey(exact)) return null;        // (a spelling that is recorded keeps working)
+        for (String x : m.keySet()) return x;
+        return null;
+    }
+
+    /**
+     * The recorded spelling that {@code region} -- or, with an agent, {@code region/agent} -- differs from by letter case
+     * only; null when there is none (two lookups). Asked wherever a name is first recorded: a binding, a CA scope, a
+     * bridge peer.
+     */
+    private String caseClash(String region, String agent) {
+        String other = otherSpelling("r:", region);
+        if (other == null && agent != null) other = otherSpelling("n:", name(region, agent));
+        return other;
+    }
+
+    private static String caseText(String n, String recorded) {
+        return "the name " + n + " differs only by letter case from " + recorded + ", which is recorded here: refused. Names are compared"
+                + " exactly, but certificates are stored under names that ignore case, so " + n + " would replace what this node holds for "
+                + recorded + "; give the node another name";
+    }
+
+    private final Map<String, Binding> identities = new Names<>(false);
+    private final Map<String, Binding> cas = new Names<>(true);
+    private final Map<String, Binding> bridges = new Names<>(false);
     private final Set<String> consumed = ConcurrentHashMap.newKeySet();
     private final Set<String> rebindConfig = ConcurrentHashMap.newKeySet();
     private final Set<String> rebindFile = ConcurrentHashMap.newKeySet();
@@ -229,7 +290,38 @@ public final class PeerTrustRegistry {
      * Names whose bound key was revoked: TOMBSTONED -- refused for every key, at TLS, at the broker and on the CA path, and
      * never bound again (first come) until the operator rebinds the name. Never pruned.
      */
-    private final Map<String, Tomb> tombs = new ConcurrentHashMap<>();
+    private final Map<String, Tomb> tombs = new Names<>(false);
+    /**
+     * Region -> the names bound here as CONTROLLERS under it (maintained with {@link #identities}; read lock-free): what
+     * {@link #join} asks. One entry per region a controller of which is bound here.
+     */
+    private final Map<String, Set<String>> controllersByRegion = new ConcurrentHashMap<>();
+    /**
+     * The names bound as controllers that carry neither {@link #MARK_GLOBAL} nor {@link #MARK_PEER}: recorded by a release
+     * of before the rule (or through {@link #bind}), so this node cannot tell whether one of them was its global -- each is a
+     * CANDIDATE for it. A controller this build records outside a GLOBAL exchange is marked a peer at once; one that only
+     * PROVES its key (in whatever exchange) stays what it was. Maintained with {@link #identities}.
+     */
+    private final Set<String> unmarkedControllers = ConcurrentHashMap.newKeySet();
+    /**
+     * Regions whose CA scope carries the source of an EARLIER release ("federated", no mark): the regional-CA counterpart of
+     * {@link #unmarkedControllers} -- that release recorded the CA of its global and of its peers alike. A superset kept
+     * where a CA scope is recorded; read through {@link #earlierCaRegions}.
+     */
+    private final Set<String> earlierFederated = ConcurrentHashMap.newKeySet();
+    /** Records made by {@link #join}, counted (in each record, and in the high-water file): see {@link #checkHighWater}. */
+    private long joinSeq;
+    /** Set at open when the registry is behind its high-water file (restored from an older copy): what to tell the operator. */
+    private volatile String behind;
+    /** The name bound as this node's one GLOBAL ({@link #MARK_GLOBAL}), or null. Maintained with {@link #identities}. */
+    private volatile String globalName;
+    /** Controllers refused by the one-controller / one-global / one-region-per-key rules ({@link #join}), so far. */
+    private final java.util.concurrent.atomic.AtomicLong controllersRefused = new java.util.concurrent.atomic.AtomicLong();
+    /** Rule, peer name and key -> {times refused, when last logged}: one line per peer, then one every ten minutes. Bounded. */
+    private final Map<String, long[]> refused = new ConcurrentHashMap<>();
+    private volatile long refusedOverflowLogged;
+    public static final int REFUSED_MAX = 1024;
+    static final long REFUSED_LOG_MS = 600_000L;
     /** Key fingerprint -> the names bound to it (maintained with the write lock; read lock-free). */
     private final Map<String, Set<String>> namesByKey = new ConcurrentHashMap<>();
     /** Notified (outside the write lock) with the key fingerprint when a key is revoked. */
@@ -331,7 +423,7 @@ public final class PeerTrustRegistry {
         Path p = highWaterPath();
         if (p == null || revEpoch == null) return;
         try {
-            writeAtomically(p, (revEpoch + " " + durableRevSeq + "\n").getBytes(StandardCharsets.UTF_8));
+            writeAtomically(p, (revEpoch + " " + durableRevSeq + " " + joinSeq + "\n").getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             log.accept("peer trust registry: could not record its revocation high-water mark " + p + " (" + e.getMessage()
                     + "); a registry restored from a backup may not be recognised");
@@ -347,8 +439,19 @@ public final class PeerTrustRegistry {
             String[] hw = Files.readString(p, StandardCharsets.UTF_8).trim().split("\\s+");
             String epoch = hw.length > 0 ? hw[0] : "";
             long seq = hw.length > 1 ? Long.parseLong(hw[1]) : 0;
+            // (the third field is absent from a file written by an earlier release)
+            long joins = hw.length > 2 ? Long.parseLong(hw[2]) : 0;
+            if (joins > joinSeq) {
+                behind = "PEER TRUST REGISTRY IS BEHIND ITS OWN RECORD: it holds what discovery recorded up to #" + joinSeq + ", but #" + joins
+                        + " was recorded on this node (" + p + ") -- the registry was restored from an older copy, or its files were replaced."
+                        + " What it recorded since is GONE: which peers PROVED their key (each is taken without proof again until it proves"
+                        + " once more), which controller is this node's GLOBAL, controllers that were replaced or took another agent name, and"
+                        + " rebind lines that were spent (they are honoured AGAIN: remove them from " + rebindFileHint() + "). Check the"
+                        + " controllers recorded here against the fabric, and revoke what should not be there";
+                log.accept(behind);
+            }
             if (epoch.equals(revEpoch) && seq <= durableRevSeq) {
-                if (seq < durableRevSeq) writeHighWater();
+                if (seq < durableRevSeq || joins != joinSeq) writeHighWater();
                 return;
             }
             newEpoch(epoch.equals(revEpoch)
@@ -466,6 +569,8 @@ public final class PeerTrustRegistry {
             }
             r.reloadRevokeFileLocked();
             r.completeRevocationsLocked();
+            // a registry of before the rule "a region has one controller here" may hold several: said at every start
+            for (String c : r.controllerConflicts()) r.log.accept("PEER TRUST REGISTRY: " + c);
             if (!r.sealed && r.fenced == null) {
                 long now = System.currentTimeMillis();
                 r.revokeConfiguredBridges();
@@ -616,7 +721,184 @@ public final class PeerTrustRegistry {
     public static final class BindResult {
         public final boolean ok;
         public final String reason;
-        BindResult(boolean ok, String reason) { this.ok = ok; this.reason = reason; }
+        /** Refused by a rule of {@link #join}: what the refused PEER is told -- what its own operator can do. Else null. */
+        public final String toPeer;
+        /**
+         * Refused by a rule of {@link #join} whose log line is said once per peer and then at most every ten minutes
+         * ({@link #refusalLogged}): the rule ({@link #KIND_CONTROLLER}, {@link #KIND_PROOF}). Else null.
+         */
+        public final String limited;
+        /**
+         * Accepted WITHOUT proof although this name and key proved itself here before (the grace after its first proof, or the
+         * upgrade window): nothing recorded may change by this exchange -- no certificate, no bridge record, no mark, no
+         * last-seen time. {@link #warn}: what is said about it (once per pair per ten minutes), else null.
+         */
+        public final boolean unchanged;
+        public final String warn;
+        BindResult(boolean ok, String reason) { this(ok, reason, null, null); }
+        BindResult(boolean ok, String reason, String toPeer, String limited) { this(ok, reason, toPeer, limited, false, null); }
+        private BindResult(boolean ok, String reason, String toPeer, String limited, boolean unchanged, String warn) {
+            this.ok = ok; this.reason = reason; this.toPeer = toPeer; this.limited = limited; this.unchanged = unchanged; this.warn = warn;
+        }
+        BindResult unchanged(String warn) { return new BindResult(ok, reason, toPeer, limited, true, warn); }
+    }
+
+    /** {@link BindResult#limited}: one controller per region, one global per node, one region per key. Counted. */
+    public static final String KIND_CONTROLLER = "controller";
+    /** {@link BindResult#limited}: no proof of possession where one is needed. */
+    public static final String KIND_PROOF = "proof";
+
+    // ---- marks: what this build knows of a binding, kept in its source ("discovery+pop+global") so that an earlier build
+    // reads the record as it always did (it never interprets a binding's source beyond "legacy").
+    /** The peer proved possession of this key to this node (it signed a discovery exchange with it). */
+    static final String MARK_POP = "pop";
+    /** Recorded WITHOUT proof, in the upgrade window: a first join of a node of release 1.3.378 or earlier. */
+    static final String MARK_COMPAT = "compat";
+    /** The one global above this node: the only identity it takes in a GLOBAL exchange. */
+    static final String MARK_GLOBAL = "global";
+    /** A controller recorded by an earlier release that was not this node's global when the global was recorded. */
+    static final String MARK_PEER = "peer";
+
+    /**
+     * With {@link #MARK_GLOBAL}: recorded as this node's global WITHOUT proof (a first join in the upgrade window) and not yet
+     * confirmed. The slot is taken -- no other identity is this node's global -- until THAT identity proves its key in a
+     * GLOBAL exchange (confirmed) or the operator moves or revokes it.
+     */
+    static final String MARK_UNCONFIRMED = "unconfirmed";
+    /** Prefix of the mark that says WHEN the peer first proved its key to this node: {@code pt<epoch milliseconds>}. */
+    static final String MARK_PROVED_AT = "pt";
+
+    static boolean hasMarks(String source) { return source != null && source.indexOf('+') >= 0; }
+
+    /** A source without its marks ("enrolled+pop" -> "enrolled"). */
+    static String base(String source) {
+        int p = source == null ? -1 : source.indexOf('+');
+        return p < 0 ? source : source.substring(0, p);
+    }
+
+    /** When {@code b}'s peer first proved its key to this node ({@link #MARK_PROVED_AT}); 0 when it did not, or it is not known. */
+    static long provedAt(Binding b) {
+        if (b == null || !hasMarks(b.source)) return 0;
+        for (String m : b.source.split("\\+")) {
+            if (!m.startsWith(MARK_PROVED_AT) || m.length() == MARK_PROVED_AT.length()) continue;
+            try { return Long.parseLong(m.substring(MARK_PROVED_AT.length())); } catch (NumberFormatException e) { /* another mark */ }
+        }
+        return 0;
+    }
+
+    /** Is the global recorded here still unconfirmed ({@link #MARK_UNCONFIRMED})? Lock-free. */
+    public boolean globalUnconfirmed() {
+        String g = globalName;
+        return g != null && marked(identities.get(g), MARK_UNCONFIRMED);
+    }
+
+    static boolean marked(Binding b, String m) { return b != null && marked(b.source, m); }
+
+    static boolean marked(String source, String m) {
+        int p = source == null ? -1 : source.indexOf('+');
+        return p >= 0 && (source.substring(p) + "+").contains("+" + m + "+");
+    }
+
+    static String mark(String source, String m) {
+        String s = source == null ? "discovery" : source;
+        return marked(s, m) ? s : s + "+" + m;
+    }
+
+    static String unmark(String source, String m) {
+        if (!marked(source, m)) return source;
+        String[] parts = source.split("\\+");
+        StringBuilder sb = new StringBuilder(parts[0]);
+        for (int i = 1; i < parts.length; i++) if (!parts[i].equals(m)) sb.append('+').append(parts[i]);
+        return sb.toString();
+    }
+
+    /** Has {@code region/agent} proved possession of its bound key to this node ({@link #MARK_POP})? Lock-free. */
+    public boolean provedKey(String region, String agent) { return marked(identities.get(name(region, agent)), MARK_POP); }
+
+    /** The name recorded as this node's one global ({@link #MARK_GLOBAL}), or null. Lock-free. */
+    public String globalRecorded() { return globalName; }
+
+    /**
+     * What an authenticated discovery exchange presents for recording under per-node trust ({@link #join}). The caller has
+     * verified the exchange (the discovery secret's MACs) and every field it sets here.
+     */
+    public static final class Join {
+        public String region, agent;
+        /** The chain the peer presented; its leaf names the tenant, region and agent. */
+        public X509Certificate[] chain;
+        /** {@link #ROLE_AGENT} (an agent that joined this controller) or {@link #ROLE_CONTROLLER}. */
+        public String role = ROLE_AGENT;
+        public String source = "discovery";
+        /** The peer signed this exchange with the key of the leaf it presented (proof of possession). */
+        public boolean proved;
+        /** The upgrade window is open on this node: a FIRST join without proof is admitted, and logged. */
+        public boolean window;
+        /** This node joined the peer (the peer answered); else the peer joined this node. */
+        public boolean client;
+        /** This node joined the peer in a GLOBAL exchange: the peer is (to be) the one global above this node. */
+        public boolean global;
+        /** Non-null: the peer served an operator-signed rebind statement for exactly this name and key (what it is, for the log). */
+        public String statement;
+        /** {@code controller_trust_anchors} vouch for the chain presented. An anchor ADMITS; it replaces nothing recorded. */
+        public boolean anchored;
+        /** (name, bound key) -> do the anchors vouch for the controller RECORDED under that name, judged as a joiner's chain is? */
+        public java.util.function.BiPredicate<String, String> recordedAnchored;
+        /** The upgrade window lets this authenticated exchange replace the name's binding of the legacy exchange. */
+        public boolean legacyUpgrade;
+        /**
+         * Non-null: {@code controller_trust_anchors} holds an entry scoped to exactly this name that vouches for this chain
+         * ({@code <region>/<agent>=<fingerprint>}: the operator's standing statement that this key is that controller) -- what
+         * it is, for the log. It may replace that name's recorded key (never a revoked one, never another name).
+         */
+        public String scopedAnchor;
+        /**
+         * How long after a name and key first proved itself here a re-join of exactly that name and key WITHOUT proof is still
+         * accepted, unchanged ({@code discovery_proof_grace_days}: a node rolled back to an earlier release); 0: not at all.
+         */
+        public long graceMs;
+        /** For the log: the peer's address, the type of exchange (AGENT, REGION, GLOBAL). */
+        public String peerAddress, exchange;
+        /** false: only the checks run; nothing is recorded. */
+        public boolean record = true;
+    }
+
+    /**
+     * Record what an authenticated discovery exchange taught about the peer -- every check and every record of it under the
+     * write lock, as ONE durable append: two exchanges at the same instant are decided one after the other, and a crash
+     * leaves either all of it or nothing (never a spent rebind line without its binding).
+     *
+     * <p>The name's own rules are those of {@link #bind}: first come; another key for a recorded name only with the
+     * operator's rebind line or, for a controller this node joined, a voucher (the region's pinned CA, an operator-signed
+     * rebind statement -- never {@code controller_trust_anchors}: an anchor admits a controller and replaces none). Then:
+     * <ul>
+     *   <li><b>Proof.</b> Anything NEW -- a name not recorded, another key for a name, a replacement, the same key under
+     *       another name -- is recorded only when the peer proved possession ({@link Join#proved}). Without proof only
+     *       an exactly recorded name and key is accepted, as before (a node of release 1.3.378: it gains nothing it does
+     *       not have); a FIRST join without proof only while the upgrade window is open, logged. A name and key that has
+     *       proved itself here once is refused without proof afterwards, outside the window.</li>
+     *   <li><b>One controller per region.</b> A controller of a region for which another is recorded is refused, unless
+     *       the operator replaces the recorded one: a rebind line for the new name on this node (or, at a joiner, a signed
+     *       statement). The same key under another agent name of the region is the same controller: with proof the new
+     *       name REPLACES the former one (never a second name of one key).</li>
+     *   <li><b>One region per key.</b> A key bound here as a controller of one region is refused as a controller of another.</li>
+     *   <li><b>One global.</b> ({@link Join#global}) The first identity this node took in a GLOBAL exchange is its global;
+     *       any other is refused until the operator moves it: the rebind line for the new global on this node, or -- where
+     *       anchors are set and no longer vouch for the recorded global -- an anchored one.</li>
+     *   <li><b>Letter case.</b> A name that differs from a recorded one only by letter case is refused.</li>
+     * </ul>
+     * Not under a pre-provisioned PKI (the operator's certificates decide there). One or two map lookups for a peer that
+     * is already recorded as it presents itself; nothing on a message's path.
+     */
+    public BindResult join(Join j) {
+        if (j == null || j.chain == null || j.chain.length == 0 || j.chain[0] == null) return new BindResult(false, "it presented no certificate");
+        if (!CrescoNames.isValid(j.region) || !CrescoNames.isValid(j.agent)) return new BindResult(false, "invalid identity name " + j.region + "/" + j.agent);
+        CrescoIdentity id = CrescoNames.identityOf(j.chain[0]);
+        if (id == null || !j.region.equals(id.getRegion()) || !j.agent.equals(id.getAgent())) {
+            return new BindResult(false, "the certificate names " + (id == null ? "no valid Cresco identity" : ("region=" + id.getRegion() + ", agent=" + id.getAgent()))
+                    + ", not region=" + j.region + ", agent=" + j.agent);
+        }
+        if (!CrescoNames.isValidTenant(id.getTenant())) return new BindResult(false, "invalid identity " + id.getTenant() + "/" + j.region + "/" + j.agent);
+        return bind(id.getTenant(), j.region, j.agent, j.chain[0].getPublicKey(), j.source, j.role == null ? ROLE_AGENT : j.role, false, null, j);
     }
 
     /** Bind a joiner's name first come (strict; role agent). See {@link #bind(String, String, String, java.security.PublicKey, String, String, boolean)}. */
@@ -636,12 +918,32 @@ public final class PeerTrustRegistry {
         if (!CrescoNames.isValidTenant(tenant) || !CrescoNames.isValid(region) || !CrescoNames.isValid(agent) || leafKey == null) {
             return new BindResult(false, "invalid identity " + tenant + "/" + region + "/" + agent);
         }
-        return bind(tenant, region, agent, leafKey, source, role, follow, null);
+        return bind(tenant, region, agent, leafKey, source, role, follow, null, null);
     }
 
-    /** As above; {@code vouched} non-null: the caller verified the new key is vouched for (see {@link #rebindVouched}). */
+    private static boolean knownPair(Binding b, String fp, String tenant, String role) {
+        return b != null && b.key.equals(fp) && b.tenant.equals(tenant) && (ROLE_AGENT.equals(role) || role.equals(b.role));
+    }
+
+    /** A discovery exchange of a recorded name and key that changes nothing: it proves (or not) as before, its global is marked. */
+    private static boolean settled(Join j, Binding b) {
+        if (marked(b, MARK_POP) != j.proved) return false;
+        if (j.global && (!marked(b, MARK_GLOBAL) || (j.proved && marked(b, MARK_UNCONFIRMED)))) return false;
+        // a proved exchange that presents another chain for the recorded key (a renewed leaf): the kept chain follows it
+        return !(j.proved && ROLE_CONTROLLER.equals(b.role) && !java.util.Objects.equals(b.cert, encodeChain(j.chain)));
+    }
+
+    private static String regionOf(String n) {
+        int slash = n.indexOf('/');
+        return slash <= 0 ? n : n.substring(0, slash);
+    }
+
+    /**
+     * As above; {@code vouched} non-null: the caller verified the new key is vouched for (see {@link #rebindVouched});
+     * {@code j} non-null: a discovery exchange ({@link #join}).
+     */
     private BindResult bind(String tenant, String region, String agent, java.security.PublicKey leafKey, String source, String role, boolean follow,
-                            String vouched) {
+                            String vouched, Join j) {
         String fp = fingerprint(leafKey.getEncoded());
         String n = name(region, agent);
         long now = System.currentTimeMillis();
@@ -653,31 +955,122 @@ public final class PeerTrustRegistry {
                     + " needs a new key");
         }
         Binding b = identities.get(n);
-        if (b != null && b.key.equals(fp) && b.tenant.equals(tenant) && (ROLE_AGENT.equals(role) || role.equals(b.role))) {
+        if (knownPair(b, fp, tenant, role) && (j == null || settled(j, b))) {
             touch(identities, n, b, now, "id");                // a refresh: no I/O on this path
             return new BindResult(true, "known key");
         }
         BindResult result;
-        String replacedKey = null;
+        List<String[]> fired = new ArrayList<>();              // {name, its former key}: for the key-replaced listener, after the lock
         synchronized (writeLock) {
             if (sealed && !tryRecover()) return new BindResult(false, sealedText());
             if (fenced != null) return new BindResult(false, fencedText());
             b = identities.get(n);
-            if (b != null && b.key.equals(fp) && b.tenant.equals(tenant) && (ROLE_AGENT.equals(role) || role.equals(b.role))) {
-                return new BindResult(true, "known key");
+            if (knownPair(b, fp, tenant, role)) {
+                if (j == null || settled(j, b)) return new BindResult(true, "known key");
+                return rejoinLocked(j, n, fp, b, now);
             }
             Tomb tomb = tombs.get(n);
             boolean replacesFollowed = tomb == null && b != null && follow && b.follow && !ROLE_SELF.equals(b.role);
             boolean selfOverSelf = tomb == null && b != null && ROLE_SELF.equals(role) && ROLE_SELF.equals(b.role);
             Set<String> revoked = revokedKeys.get(n);
             boolean wasRevoked = revoked != null && revoked.contains(fp);
+            if (b == null && tomb == null && !ROLE_SELF.equals(role)) {
+                String clash = caseClash(region, agent);
+                if (clash != null) {
+                    return new BindResult(false, caseText(n, clash), "the name " + n + " differs only by letter case from a name recorded there ("
+                            + clash + "): give this node another name", null);
+                }
+            }
+            // ---- what a discovery exchange adds to the name's own rules
+            java.util.TreeSet<String> same = new java.util.TreeSet<>(), rest = new java.util.TreeSet<>(), yielded = new java.util.TreeSet<>();
+            boolean operator = false;                          // another controller is recorded for the region: only the operator replaces it
+            // What was recorded WITHOUT proof (a first join in the upgrade window: anyone with the secret and a copy of a
+            // certificate could send it) never stands against the PROVEN holder of that key: such a record of this key -- under
+            // another name, another region, another tenant or role -- gives way to what its holder proves now.
+            boolean unprovenSelf = j != null && j.proved && b != null && tomb == null && b.key.equals(fp) && marked(b, MARK_COMPAT);
+            GlobalPlan gp = null;
+            String v = vouched;
+            if (j != null) {
+                // another name of this region under which this very key is recorded (same tenant, same kind of node): what a node
+                // whose agent name is generated at each start looks like when it comes back
+                String former = null;
+                Set<String> names = namesByKey.get(fp);
+                if (names != null) {
+                    for (String o : names) {
+                        Binding ob = identities.get(o);
+                        if (ob == null || o.equals(n) || !regionOf(o).equals(region) || !ob.tenant.equals(tenant)) continue;
+                        if (ROLE_CONTROLLER.equals(role) == ROLE_CONTROLLER.equals(ob.role)) former = o;
+                    }
+                }
+                // nothing new without proof -- except a first join in the upgrade window, or of a leaf issued by the CA this node
+                // already holds for that region (the regional CA: what it recorded there is the CA, and the CA names this leaf)
+                if (!j.proved && !j.window && !issuedByRecordedCa(j.chain)) return noProof(n, fp, null, former, false);
+                if (ROLE_CONTROLLER.equals(role)) {
+                    Set<String> held = namesByKey.get(fp);
+                    if (held != null) {
+                        for (String o : held) {
+                            Binding ob = identities.get(o);
+                            if (ob == null || ROLE_AGENT.equals(ob.role) || regionOf(o).equals(region)) continue;
+                            if (j.proved && marked(ob, MARK_COMPAT)) { yielded.add(o); continue; }
+                            return new BindResult(false, "its key " + PeerIdentity.shortFp(fp) + " is recorded here as "
+                                    + (ROLE_SELF.equals(ob.role) ? "this node's own (" + o + ")" : "the controller " + o + " of region " + regionOf(o))
+                                    + ", and it now claims region " + region + ": a key speaks for ONE region. Nothing of " + n + " was recorded. A"
+                                    + " controller of another region needs a key of its own",
+                                    "the key presented for " + n + " is recorded there as a controller of another region: a key speaks for one region",
+                                    KIND_CONTROLLER);
+                        }
+                    }
+                    for (String o : otherControllers(region, n)) {
+                        Binding ob = identities.get(o);
+                        if (ob == null) continue;
+                        if (ob.key.equals(fp) && (ob.tenant.equals(tenant) || (j.proved && marked(ob, MARK_COMPAT)))) same.add(o);
+                        else if (b == null && tomb == null) rest.add(o);       // (a recorded or revoked name: its own rules decide, as before)
+                    }
+                    // (per-node trust beside a CA this node pinned for the region: a leaf of that CA is that CA's to admit, as before)
+                    if (!rest.isEmpty() && issuedByRecordedCa(j.chain)) rest.clear();
+                    operator = !rest.isEmpty();
+                }
+                // what vouches for another key of a recorded name -- never an anchor: it admits a controller and replaces none
+                if (v == null && b != null && tomb == null && !b.key.equals(fp)) {
+                    if (j.legacyUpgrade && SOURCE_LEGACY.equals(b.source) && ROLE_AGENT.equals(b.role) && b.tenant.equals(tenant)) {
+                        v = "upgraded from the legacy exchange";
+                    } else if (ROLE_CONTROLLER.equals(b.role) && ROLE_CONTROLLER.equals(role)) {
+                        // (a scoped anchor is the operator's standing statement on THIS node that this key is that controller: it
+                        // replaces that name's recorded key at a joiner and at a responder alike)
+                        v = j.client && issuedByRecordedCa(j.chain) ? "vouched for by region " + region + "'s pinned CA"
+                                : j.client && j.statement != null ? "vouched for by " + j.statement
+                                : j.scopedAnchor != null ? "vouched for by " + j.scopedAnchor : null;
+                    }
+                }
+                Set<String> gone = new HashSet<>(same);
+                gone.addAll(rest);
+                gone.addAll(yielded);
+                if (j.global) gp = globalLocked(j, n, b, false, same, gone);
+                if (!j.proved) {
+                    // the upgrade window admits a FIRST join without proof -- and the same controller under another agent name (a
+                    // node of release 1.3.378 whose agent name is generated at each start): the new name replaces the former one,
+                    // as long as that key never PROVED itself here. Nothing else.
+                    boolean provedBefore = false;
+                    for (String o : same) if (marked(identities.get(o), MARK_POP)) provedBefore = true;
+                    String what = b != null ? "the name is recorded here with another key, tenant or role"
+                            : tomb != null ? "the name is revoked here" : wasRevoked ? "this key was replaced for the name"
+                            : provedBefore ? "its key PROVED itself here as " + same.first() + ", and the name of a proved key changes only on proof"
+                            : operator ? "region " + region + " has a controller recorded here (" + rest.first() + ")"
+                            : gp != null && (gp.needOperator || gp.former != null) ? "this node has a global recorded, or cannot tell which"
+                            + " recorded controller it is" : null;
+                    if (what != null) return noProof(n, fp, what, former, j.window);
+                }
+            }
             String token = null;
-            if (tomb != null || (b != null && !replacesFollowed && !selfOverSelf) || (b == null && wasRevoked && !follow)) {
-                token = vouched != null && tomb == null && !wasRevoked ? null : rebindToken(n, fp);
-                if (token == null && (vouched == null || tomb != null || wasRevoked)) {
+            if (tomb != null || (b != null && !replacesFollowed && !selfOverSelf && !unprovenSelf) || (b == null && wasRevoked && !follow)) {
+                token = v != null && tomb == null && !wasRevoked ? null : rebindToken(n, fp);
+                if (token == null && (v == null || tomb != null || wasRevoked)) {
                     if (tomb != null) return new BindResult(false, tombText(n, tomb));
                     String why = b == null ? "this key was replaced (rebound away) for " + n + " and stays refused for it"
-                            : b.key.equals(fp) ? "tenant " + tenant + " differs from the bound tenant " + b.tenant
+                            : b.key.equals(fp) && !b.tenant.equals(tenant) ? "tenant " + tenant + " differs from the bound tenant " + b.tenant
+                            : b.key.equals(fp) ? "the name is bound here as " + (ROLE_AGENT.equals(b.role) ? "an AGENT" : "role " + b.role)
+                                    + " (this key, since " + new java.util.Date(b.firstSeen) + ") and now presents itself as a " + role
+                                    + ": a name keeps the role it was first bound with"
                             : (follow && !b.follow ? "the name was learned strictly (" + (ROLE_SELF.equals(b.role) ? "this node's own" : "as a joiner or issuer")
                                     + ") and is bound to another key (" + PeerIdentity.shortFp(b.key) + "); a client exchange never replaces it"
                             : "the name is bound to another key (" + PeerIdentity.shortFp(b.key) + ", since " + new java.util.Date(b.firstSeen) + ")");
@@ -685,21 +1078,74 @@ public final class PeerTrustRegistry {
                             + "=" + fp + "' (its new key) to " + rebindFileHint() + " (no restart), or set peer_identity_rebind=" + n + "=" + fp);
                 }
             }
-            String newRole = (b != null && !ROLE_AGENT.equals(b.role) && ROLE_AGENT.equals(role)) ? b.role : role;
-            boolean newFollow = token == null && vouched == null && (b == null ? follow : (replacesFollowed || (selfOverSelf && b.follow)));
-            Rec r = rec("bind", n);
-            r.tenant = tenant; r.key = fp; r.source = source; r.role = newRole; r.t = now; r.mode = newFollow ? "follow" : null;
-            Rec c = null;
-            if (token != null) {
-                c = rec("consume", n);
-                c.token = token; c.t = now;
+            if (j != null && (operator || (gp != null && gp.needOperator)) && token == null && j.statement == null) {
+                token = rebindToken(n, fp);
+                if (token == null) return operator ? oneControllerRefusal(j, n, region, fp, rest) : gp.refusal;
             }
-            // the binding and the token it consumes are one durable write; memory changes only after it
-            if (!(c == null ? append(r) : append(r, c))) return new BindResult(false, "could not record the binding durably");
+            if (j != null && !j.record) return new BindResult(true, "may be recorded");
+            String newRole = (b != null && !unprovenSelf && !ROLE_AGENT.equals(b.role) && ROLE_AGENT.equals(role)) ? b.role : role;
+            boolean newFollow = token == null && v == null && (b == null ? follow : (replacesFollowed || (selfOverSelf && b.follow)));
+            String src = source;
+            // the global mark goes with the identity: a re-key, another agent name, the operator's replacement
+            boolean carried = marked(b, MARK_GLOBAL), unconfirmed = marked(b, MARK_UNCONFIRMED);
+            List<String> removed = new ArrayList<>(same);
+            removed.addAll(rest);
+            removed.addAll(yielded);
+            for (String o : removed) {
+                if (!o.equals(globalName)) continue;
+                carried = true;
+                if (marked(identities.get(o), MARK_UNCONFIRMED)) unconfirmed = true;
+            }
+            if (j != null && !SOURCE_LEGACY.equals(source)) {
+                src = mark(src, j.proved ? MARK_POP : MARK_COMPAT);
+                if (j.proved) src = src + "+" + MARK_PROVED_AT + now;
+                if (carried || (gp != null && gp.mark)) {
+                    src = mark(src, MARK_GLOBAL);
+                    // taken as the global WITHOUT proof: the slot is occupied but unconfirmed, until it proves its key in a GLOBAL exchange
+                    if (!(j.proved && j.global) && (unconfirmed || !carried)) src = mark(src, MARK_UNCONFIRMED);
+                } else if (ROLE_CONTROLLER.equals(newRole)) {
+                    // a controller this build records outside a GLOBAL exchange is a peer, known not to be this node's global --
+                    // unless it stands in for what an earlier release recorded (another key of its name, another name of its
+                    // key): it is then what that record was, a candidate or a peer
+                    boolean peer = b != null ? marked(b, MARK_PEER) : !j.global;
+                    if (b == null) for (String o : same) if (!marked(identities.get(o), MARK_PEER)) peer = false;
+                    if (peer) src = mark(src, MARK_PEER);
+                }
+            }
+            List<Rec> recs = new ArrayList<>();
+            String wasRest = describeControllers(rest);
+            for (String o : removed) {
+                if (identities.containsKey(o)) recs.add(rec("unbind", o));
+                if (bridges.containsKey(o)) recs.add(rec("unbridge", o));
+            }
+            Map<String, Binding> remarked = new java.util.LinkedHashMap<>();
+            if (marked(src, MARK_GLOBAL)) remarkForGlobal(n, removed, remarked, recs);
+            // a controller's chain as it presented it stays with its binding: what "do the anchors vouch for the RECORDED one" is
+            // judged by later, also after a restart (the truststore is not always kept)
+            String chainText = j != null && ROLE_CONTROLLER.equals(newRole) ? encodeChain(j.chain) : null;
+            Rec r = rec("bind", n);
+            r.tenant = tenant; r.key = fp; r.cert = chainText; r.source = src; r.role = newRole; r.t = now; r.mode = newFollow ? "follow" : null;
+            if (j != null) r.seq = ++joinSeq;
+            recs.add(r);
+            if (token != null) {
+                Rec c = rec("consume", n);
+                c.token = token; c.t = now;
+                recs.add(c);
+            }
+            // the binding, what it replaces and the token it consumes are ONE durable write; memory changes only after it
+            if (!append(recs.toArray(new Rec[0]))) return new BindResult(false, "could not record the binding durably");
+            if (j != null) writeHighWater();
             if (token != null) consumed.add(token);
+            for (String o : removed) {
+                Binding ob = identities.get(o);
+                if (ob != null) { removeIdentity(o, ob); fired.add(new String[]{o, ob.key}); }
+                if (bridges.remove(o) != null) bridgesVersion++;
+            }
+            String formerGlobal = gp == null ? null : gp.former;
+            applyRemarked(remarked);
             replaced(n, b == null ? null : b.key, fp);
-            if (b != null && !b.key.equals(fp)) replacedKey = b.key;
-            putIdentity(n, new Binding(tenant, fp, null, source, newRole, newFollow,
+            if (b != null && !b.key.equals(fp)) fired.add(new String[]{n, b.key});
+            putIdentity(n, new Binding(tenant, fp, chainText, src, newRole, newFollow,
                     b == null || token != null || !b.key.equals(fp) ? now : b.firstSeen, now));
             if (tomb != null) {
                 tombs.remove(n);
@@ -708,15 +1154,405 @@ public final class PeerTrustRegistry {
             } else if (b != null && !b.key.equals(fp)) {
                 log.accept("Identity " + n + " REBOUND from key " + PeerIdentity.shortFp(b.key) + " to " + PeerIdentity.shortFp(fp)
                         + (token != null ? " (operator rebind '" + token + "', now consumed)"
-                        : vouched != null ? " (" + vouched + ")" : ROLE_SELF.equals(role) ? " (this node's own identity was replaced)"
+                        : v != null ? " (" + v + ")" : ROLE_SELF.equals(role) ? " (this node's own identity was replaced)"
                         : " (followed: the controller this node joined re-keyed)")
                         + "; the old key stays refused for " + n);
+            }
+            if (!same.isEmpty() && j != null && !j.proved) {
+                log.accept("UPGRADE WINDOW: the controller of region " + region + " is now recorded as " + n + " in place of " + String.join(", ", same)
+                        + " -- the same key " + PeerIdentity.shortFp(fp) + " under another agent name, WITHOUT proof (a node of release 1.3.378"
+                        + " whose agent name is generated at each start; give it a fixed agentname). It stays unproved: when the key's"
+                        + " holder proves it, what is recorded without proof gives way");
+            } else if (!same.isEmpty()) {
+                log.accept("Controller of region " + region + " is now recorded as " + n + ": it PROVED the key " + PeerIdentity.shortFp(fp)
+                        + " that " + String.join(", ", same) + " was recorded with -- the same controller under another agent name. "
+                        + String.join(", ", same) + " is no longer recorded (one name per controller, never two)");
+            }
+            if (!yielded.isEmpty() || unprovenSelf) {
+                log.accept(n + " (tenant " + tenant + ") PROVED the key " + PeerIdentity.shortFp(fp) + ", which was recorded here WITHOUT proof (a"
+                        + " first join in the upgrade window) as " + (unprovenSelf ? n + " (tenant " + b.tenant + ", role " + b.role + ")" : "")
+                        + (unprovenSelf && !yielded.isEmpty() ? " and " : "") + String.join(", ", yielded) + ": what was recorded without proof"
+                        + " gives way to what the key's holder proves" + (yielded.isEmpty() ? "" : "; " + String.join(", ", yielded)
+                        + " is no longer recorded"));
+            }
+            if (!rest.isEmpty()) {
+                log.accept("Controller of region " + region + " REPLACED by the operator (" + (token != null ? "rebind line '" + token
+                        + "', now consumed" : j.statement) + "): " + wasRest + " is no longer recorded here; " + n
+                        + " (tenant " + tenant + ", key " + PeerIdentity.shortFp(fp) + ") is taken as that region's controller. The former"
+                        + " controller's key is NOT revoked by this: revoke it too if it must be refused everywhere");
+            }
+            if (j != null && !j.proved && same.isEmpty()) {
+                log.accept((j.window ? "UPGRADE WINDOW: " : "REGION CA: ") + n + " (tenant " + tenant + ", key " + PeerIdentity.shortFp(fp) + (j.peerAddress == null ? "" : ", at "
+                        + j.peerAddress) + ") is recorded WITHOUT proof of its key -- a first join of a node of release 1.3.378 or earlier,"
+                        + " admitted because " + (j.window ? "the upgrade window is open on this node (discovery_auth=compat)"
+                        : "its certificate was issued by the CA this node holds for region " + region) + ". Whoever holds the discovery"
+                        + " secret and a copy of that node's certificate could have sent it: upgrade " + n
+                        + (j.window ? " before the window closes" : ""));
+            }
+            if (marked(src, MARK_GLOBAL) && !carried) {
+                log.accept(formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL"
+                        + (marked(src, MARK_UNCONFIRMED) ? " -- WITHOUT proof, UNCONFIRMED until it proves its key in a GLOBAL exchange" : "")
+                        + ": no other identity"
+                        + " is taken as its global until the operator moves this node (a rebind line for the new global) or revokes " + n
+                        : "This node's GLOBAL MOVED from " + formerGlobal + " to " + n + " (key " + PeerIdentity.shortFp(fp) + ") "
+                        + (gp.byAnchor && token == null && j.statement == null ? "because controller_trust_anchors vouch for " + n + " and no longer for "
+                        + formerGlobal : "by the operator (" + (token != null ? "rebind line '" + token + "', now consumed" : j.statement) + ")")
+                        + ". " + formerGlobal + " stays recorded as the controller of its region and is NOT revoked by this: revoke it if it"
+                        + " must be refused");
             }
             compactIfDue();
             result = new BindResult(true, b == null ? "new binding" : "rebound");
         }
-        if (replacedKey != null) fireReplaced(n, replacedKey);
+        for (String[] f : fired) fireReplaced(f[0], f[1]);
         return result;
+    }
+
+    /** A copy of {@code b}'s record with another source (its marks), as it is appended and held. */
+    private static Rec bindRec(String n, Binding b, String source) {
+        Rec r = rec("bind", n);
+        r.tenant = b.tenant; r.key = b.key; r.cert = b.cert; r.source = source; r.role = b.role; r.t = b.lastSeen; r.mode = b.follow ? "follow" : null;
+        return r;
+    }
+
+    /** A chain as a binding keeps it: each certificate's DER in base64, comma separated, the leaf first; null when there is none. */
+    private static String encodeChain(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0) return null;
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (X509Certificate c : chain) {
+                if (c == null) continue;
+                sb.append(sb.length() == 0 ? "" : ",").append(Base64.getEncoder().encodeToString(c.getEncoded()));
+            }
+            return sb.length() == 0 ? null : sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * The chain the controller recorded as {@code name} presented when this build recorded it (or when it last proved its
+     * key), the leaf first; null when the binding holds none (recorded by an earlier release, or not a controller).
+     */
+    public X509Certificate[] recordedChain(String name) {
+        Binding b = name == null ? null : identities.get(name);
+        if (b == null || b.cert == null) return null;
+        List<X509Certificate> out = new ArrayList<>();
+        for (String one : b.cert.split(",")) {
+            X509Certificate c = decode(one);
+            if (c == null) return null;
+            out.add(c);
+        }
+        return out.isEmpty() ? null : out.toArray(new X509Certificate[0]);
+    }
+
+    private static Binding withSource(Binding b, String source) {
+        return new Binding(b.tenant, b.key, b.cert, source, b.role, b.follow, b.firstSeen, b.lastSeen, b.savedSeen);
+    }
+
+    /**
+     * With the write lock: {@code n} is about to carry {@link #MARK_GLOBAL}. The identity that carried it (when it is another
+     * and stays recorded) loses it, and every candidate -- a controller recorded by an earlier release, of which this node
+     * could not tell whether it was its global -- becomes a known peer ({@link #MARK_PEER}): from here on this registry says
+     * which controller is its global. Bounded by the controllers recorded here; once.
+     */
+    private void remarkForGlobal(String n, Collection<String> removed, Map<String, Binding> remarked, List<Rec> recs) {
+        // (the regional CA: the CA scopes an earlier release recorded are then the global's region's, or a peer's; held under
+        // the key "ca:<region>" until the append succeeded)
+        for (String region : earlierCaRegions()) {
+            Binding cb = cas.get(region);
+            Binding nb = withSource(cb, region.equals(regionOf(n)) ? "federated+" + MARK_GLOBAL : "federated+" + MARK_PEER);
+            remarked.put("ca:" + region, nb);
+            Rec r = rec("ca", region);
+            r.tenant = cb.tenant; r.key = cb.key; r.cert = cb.cert; r.source = nb.source; r.t = cb.lastSeen; r.mode = cb.follow ? "follow" : null;
+            recs.add(r);
+        }
+        String g = globalName;
+        if (g != null && !g.equals(n) && !removed.contains(g)) {
+            Binding gb = identities.get(g);
+            if (gb != null) {
+                Binding nb = withSource(gb, mark(unmark(unmark(gb.source, MARK_GLOBAL), MARK_UNCONFIRMED), MARK_PEER));
+                remarked.put(g, nb);
+                recs.add(bindRec(g, gb, nb.source));
+            }
+        }
+        for (String u : new java.util.TreeSet<>(unmarkedControllers)) {
+            if (u.equals(n) || removed.contains(u) || remarked.containsKey(u)) continue;
+            Binding ub = identities.get(u);
+            if (ub == null) continue;
+            Binding nb = withSource(ub, mark(ub.source, MARK_PEER));
+            remarked.put(u, nb);
+            recs.add(bindRec(u, ub, nb.source));
+        }
+    }
+
+    /** With the write lock, after the append: what {@link #remarkForGlobal} prepared (identity bindings, and CA scopes under "ca:<region>"). */
+    private void applyRemarked(Map<String, Binding> remarked) {
+        for (Map.Entry<String, Binding> e : remarked.entrySet()) {
+            if (e.getKey().startsWith("ca:")) {
+                String region = e.getKey().substring(3);
+                cas.put(region, e.getValue());
+                earlierFederated.remove(region);
+            } else {
+                putIdentity(e.getKey(), e.getValue());
+            }
+        }
+    }
+
+    /** The regions whose CA scope an earlier release recorded and this build has not settled yet (see {@link #earlierFederated}). */
+    private java.util.TreeSet<String> earlierCaRegions() {
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        for (String region : earlierFederated) {
+            Binding cb = cas.get(region);
+            if (cb != null && "federated".equals(cb.source)) out.add(region);
+        }
+        return out;
+    }
+
+    /** With the write lock: what a GLOBAL exchange this node made means for the one global it has. */
+    private static final class GlobalPlan {
+        boolean mark;            // the identity is (to be) marked as this node's global
+        boolean needOperator;    // only with the operator's rebind line or signed statement
+        boolean byAnchor;        // the anchors vouch for it and not for the recorded global
+        String former;           // the recorded global that loses the mark
+        BindResult refusal;      // what is said when the operator did not act
+    }
+
+    /**
+     * @param same    names of this very key that this exchange replaces (the same controller under another agent name)
+     * @param removed every name this exchange removes
+     */
+    private GlobalPlan globalLocked(Join j, String n, Binding b, boolean known, Collection<String> same, Collection<String> removed) {
+        GlobalPlan p = new GlobalPlan();
+        String keyFp = fingerprint(j.chain[0].getPublicKey().getEncoded());
+        String line = "'" + n + "=" + keyFp + "'";
+        String g = globalName;
+        Binding gb = g == null ? null : identities.get(g);
+        if (gb != null) {
+            if (g.equals(n) || removed.contains(g)) { p.mark = true; return p; }      // the same global: re-keyed, renamed or replaced under its own rules
+            p.mark = true;
+            p.former = g;
+            p.byAnchor = j.anchored && j.recordedAnchored != null && !j.recordedAnchored.test(g, gb.key);
+            p.needOperator = !p.byAnchor;
+            Set<String> alsoAs = new java.util.TreeSet<>(namesByKey.getOrDefault(gb.key, Set.of()));
+            alsoAs.remove(g);
+            p.refusal = new BindResult(false, "this node's global is " + describeControllers(List.of(g))
+                    + (marked(gb, MARK_UNCONFIRMED) ? " -- recorded WITHOUT proof in the upgrade window and not confirmed yet: it is confirmed when "
+                    + g + " proves its key in a GLOBAL exchange --" : "") + ", and a node has ONE global -- the first"
+                    + " it joined. Nothing of " + n + " was recorded as it. To MOVE this node to " + n + ": add the line " + line + " to "
+                    + rebindFileHint() + " on this node (no restart)" + (j.anchored ? "; controller_trust_anchors vouch for " + n + ", but an anchor moves a node only"
+                    + " when this node can see that the anchors no longer vouch for " + g + " -- they still do, or it holds no certificate of "
+                    + g + " to judge by" : ", or -- where controller_trust_anchors are set on this node -- list " + n + "'s key there and take "
+                    + g + "'s out") + ". "
+                    + (alsoAs.isEmpty() ? "If " + g + " is NOT this fabric's global (it answered this node's first GLOBAL exchange before the real"
+                    + " one did), revoke it here: add the line '" + g + "' to " + (revokePath() == null ? "peer_identity_revoke" : revokePath().toString())
+                    + "; " + n + " is then taken" : "The key of " + g + " is also recorded here as " + String.join(", ", alsoAs) + ": do NOT revoke "
+                    + g + " by name (that refuses its key under every name) -- the rebind line is the way"),
+                    "a node has one global and another is recorded there", KIND_CONTROLLER);
+            return p;
+        }
+        // No global is marked: a fresh registry, or one written by a release of before the rule. The CANDIDATES are the
+        // controllers that release recorded (neither global nor peer here) -- and, under the regional CA, a controller whose
+        // region's CA that release recorded: one of them was this node's global, and only one of them is taken as it without
+        // the operator. A candidate stays one when it proves its key in another kind of exchange, re-keys, or comes back under
+        // another agent name of its key.
+        java.util.TreeSet<String> open = new java.util.TreeSet<>(unmarkedControllers);
+        open.remove(n);
+        open.removeAll(removed);
+        java.util.TreeSet<String> openCas = earlierCaRegions();
+        boolean held = known ? unmarkedControllers.contains(n) : (b != null && unmarkedControllers.contains(n));
+        for (String o : same) if (unmarkedControllers.contains(o)) held = true;
+        if (!held && issuedByEarlierCa(j.chain)) held = true;
+        if (held || (open.isEmpty() && openCas.isEmpty())) {
+            // (what this registry already held is marked only when it proves its key; a first global is first come)
+            p.mark = j.proved || (!known && !held);
+            return p;
+        }
+        p.mark = true;
+        p.needOperator = true;
+        p.refusal = new BindResult(false, "this node's registry was written by an earlier release and does not say which of the controllers it"
+                + " holds (" + String.join(", ", open) + (open.isEmpty() || openCas.isEmpty() ? "" : "; ") + (openCas.isEmpty() ? ""
+                : "the controllers of the regions whose CA it holds: " + String.join(", ", openCas))
+                + ") is its global: until one of THEM has answered a GLOBAL exchange and proved its key, no"
+                + " other identity is taken as this node's global. Nothing of " + n + " was recorded as it. To take " + n + " as this node's"
+                + " global: add the line " + line + " to " + rebindFileHint() + " on this node (no restart)",
+                "that node cannot tell yet which controller is its global", KIND_CONTROLLER);
+        return p;
+    }
+
+    /**
+     * Was the leaf of {@code chain} issued by a CA that an EARLIER release recorded for its region (a CA scope without a mark
+     * of this build: this build marks the CA of a region it federates with as a peer's)? Then its controller is one this
+     * registry held before the rule, as an identity binding is under per-node trust.
+     */
+    private boolean issuedByEarlierCa(X509Certificate[] chain) {
+        if (chain == null || chain.length == 0 || chain[0] == null) return false;
+        CrescoIdentity id = CrescoNames.identityOf(chain[0]);
+        Binding ca = id == null ? null : cas.get(id.getRegion());
+        return ca != null && "federated".equals(ca.source) && issuedByRecordedCa(chain);
+    }
+
+    /** {@link BindResult#limited}-style key of the line said when a proved name and key is taken without proof. */
+    static final String KIND_UNPROVED_REJOIN = "unproved";
+
+    /** With the write lock: a discovery exchange of a recorded name and key that is not {@link #settled}. */
+    private BindResult rejoinLocked(Join j, String n, String fp, Binding b, long now) {
+        boolean pop = marked(b, MARK_POP);
+        String warn = null;
+        boolean unchanged = false;
+        if (!j.proved && pop) {
+            // It proved its key here before and sends no proof now. For a while after its FIRST proof that is still what a node
+            // put back on an earlier release looks like, and it is taken as that release would take it -- with nothing recorded
+            // changed by it. After the grace (and outside the upgrade window) it is what a holder of the secret with a copy of
+            // its certificate sends: refused.
+            long since = provedAt(b);
+            boolean grace = j.graceMs > 0 && since > 0 && now - since < j.graceMs;
+            if (!j.window && !grace) {
+                return new BindResult(false, n + " PROVED its key to this node before" + (since > 0 ? " (first on " + new java.util.Date(since) + ")" : "")
+                        + " and sent no proof now: refused. A node does not go back to a release of before the proof unnoticed, and whoever"
+                        + " holds the discovery secret and a copy of its certificate can send exactly this. If " + n + " was put back on an"
+                        + " earlier release on purpose, open the upgrade window on this node for as long as that lasts (discovery_auth=compat"
+                        + " with discovery_compat_until; read at start)",
+                        n + " proved its key there before and sent no proof now (an earlier release?): upgrade it again, or have that node's"
+                                + " operator open its upgrade window (discovery_auth=compat with discovery_compat_until)", KIND_PROOF);
+            }
+            unchanged = true;
+            String region = regionOf(n), agent = n.substring(n.indexOf('/') + 1);
+            if (refusalLogged(KIND_UNPROVED_REJOIN, region, agent, fp)) {
+                warn = n + " proved its key before and sent no proof now: rolled back to an earlier release, or a holder of the secret answers"
+                        + " in its name" + (j.peerAddress == null ? "" : " (from " + j.peerAddress + ")") + ". Taken as it is recorded -- nothing"
+                        + " recorded changes by it -- " + (grace ? "until " + new java.util.Date(since + j.graceMs) + " (discovery_proof_grace_days"
+                        + " after its first proof); after that it is refused unless the upgrade window is open on this node"
+                        : "because the upgrade window is open on this node (discovery_auth=compat)");
+            }
+        }
+        String src = b.source;
+        if (j.proved && !pop) src = unmark(mark(src, MARK_POP), MARK_COMPAT) + "+" + MARK_PROVED_AT + now;
+        String token = null;
+        GlobalPlan gp = null;
+        if (j.global && !marked(b, MARK_GLOBAL)) {
+            gp = globalLocked(j, n, b, true, Set.of(), Set.of());
+            if (gp.needOperator || gp.former != null) {
+                // moving this node to another global is something new: only for a peer that proved its key, and only by the operator
+                // (or an anchor that no longer vouches for the recorded one)
+                if (!j.proved) return noProof(n, fp, "this node has a global recorded, or cannot tell which recorded controller it is", null, j.window);
+                if (gp.needOperator && j.statement == null) {
+                    token = rebindToken(n, fp);
+                    if (token == null) return gp.refusal;
+                }
+            }
+            if (gp.mark) src = mark(src, MARK_GLOBAL);
+        }
+        // the global recorded without proof is confirmed by its proof in a GLOBAL exchange, and by nothing else
+        boolean confirmed = j.proved && j.global && marked(src, MARK_UNCONFIRMED);
+        if (confirmed) src = unmark(src, MARK_UNCONFIRMED);
+        // the chain kept with a controller follows what it presents when it proves its key (a renewed leaf)
+        String chainText = b.cert;
+        if (j.proved && ROLE_CONTROLLER.equals(b.role)) {
+            String presented = encodeChain(j.chain);
+            if (presented != null) chainText = presented;
+        }
+        if (java.util.Objects.equals(src, b.source) && java.util.Objects.equals(chainText, b.cert) && token == null) {
+            if (unchanged) return new BindResult(true, "known key").unchanged(warn);
+            touch(identities, n, b, now, "id");
+            return new BindResult(true, "known key");
+        }
+        if (!j.record) return new BindResult(true, "known key");
+        List<Rec> recs = new ArrayList<>();
+        Map<String, Binding> remarked = new java.util.LinkedHashMap<>();
+        String formerGlobal = gp == null ? null : gp.former;
+        boolean newGlobal = marked(src, MARK_GLOBAL) && !marked(b, MARK_GLOBAL);
+        if (newGlobal) remarkForGlobal(n, Set.of(), remarked, recs);
+        Binding nb = new Binding(b.tenant, b.key, chainText, src, b.role, b.follow, b.firstSeen, now);
+        Rec r = bindRec(n, nb, src);
+        r.seq = ++joinSeq;
+        recs.add(r);
+        if (token != null) {
+            Rec c = rec("consume", n);
+            c.token = token; c.t = now;
+            recs.add(c);
+        }
+        if (!append(recs.toArray(new Rec[0]))) return new BindResult(false, "could not record the binding durably");
+        writeHighWater();
+        if (token != null) consumed.add(token);
+        applyRemarked(remarked);
+        putIdentity(n, nb);
+        if (newGlobal) {
+            log.accept(formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL: no other identity is"
+                    + " taken as its global until the operator moves this node (a rebind line for the new global) or revokes " + n
+                    : "This node's GLOBAL MOVED from " + formerGlobal + " to " + n + " (key " + PeerIdentity.shortFp(fp) + ") "
+                    + (token == null && j.statement == null ? "because controller_trust_anchors vouch for " + n + " and no longer for " + formerGlobal
+                    : "by the operator (" + (token != null ? "rebind line '" + token + "', now consumed" : j.statement) + ")")
+                    + ". " + formerGlobal + " stays recorded as the controller of its region and is NOT revoked by this: revoke it if it must"
+                    + " be refused");
+        } else if (confirmed) {
+            log.accept(n + " (key " + PeerIdentity.shortFp(fp) + "), recorded as this node's GLOBAL without proof in the upgrade window, PROVED its"
+                    + " key in a GLOBAL exchange: confirmed");
+        }
+        compactIfDue();
+        return new BindResult(true, "known key");
+    }
+
+    private static String agentOf(String n) { return n.substring(n.indexOf('/') + 1); }
+
+    /**
+     * No proof of possession where one is needed. {@code what} non-null: this is more than a first join, which is all that is
+     * admitted without proof. {@code former} non-null: the key is recorded here under that other name of the region -- the
+     * same node, its agent name generated anew -- and the refusal says exactly what to do about that.
+     */
+    private BindResult noProof(String n, String fp, String what, String former, boolean window) {
+        String who = n + " sent no proof of the key of the certificate it presents -- it runs a release of before the proof (1.3.378 or"
+                + " earlier), or it is someone who holds the discovery secret and a copy of that certificate";
+        if (former != null && (what == null || !window)) {
+            // the same key under another agent name, without proof, outside the upgrade window (or its key proved itself before)
+            return new BindResult(false, who + " -- and this node has that key (" + PeerIdentity.shortFp(fp) + ") recorded as " + former
+                    + ": the same node under another agent name (its agent name is generated at each start), and a new name is recorded"
+                    + " only on proof. Nothing was recorded. Do ONE of: set agentname=" + agentOf(former) + " on that node (it then"
+                    + " re-joins as it is recorded); upgrade it; or open the upgrade window on this node (discovery_auth=compat with"
+                    + " discovery_compat_until=<date>; read at start), in which the new name replaces " + former
+                    + (what == null ? "" : " -- unless, as here, " + what),
+                    "this node is recorded there as " + former + " and sent no proof of its key under its new name " + n + ": set agentname="
+                            + agentOf(former) + " on this node, or upgrade it, or have that node's operator open its upgrade window"
+                            + " (discovery_auth=compat with discovery_compat_until)", KIND_PROOF);
+        }
+        if (what != null) {
+            return new BindResult(false, who + " -- and " + what + ": without proof only a FIRST join is admitted (and, in the upgrade window,"
+                    + " another agent name of an unproved key). Nothing was recorded. Upgrade " + n
+                    + (former == null ? "" : ", or set agentname=" + agentOf(former) + " on it (it is recorded here as " + former + ")"),
+                    n + " sent no proof of its key (release 1.3.378 or earlier?) and what it asks for is more than a first join: upgrade it"
+                            + (former == null ? "" : ", or set agentname=" + agentOf(former) + " on it"), KIND_PROOF);
+        }
+        return new BindResult(false, who + " -- and this node has no record of that name with that key (" + PeerIdentity.shortFp(fp)
+                + "). A new name, another key, a replacement or a second name of a key is recorded only on proof. Nothing was recorded. Upgrade "
+                + n + "; or, while the fleet is being upgraded, open the upgrade window on this node (discovery_auth=compat with"
+                + " discovery_compat_until=<date>; read at start): it admits a FIRST join without proof and logs each one",
+                n + " sent no proof of its key (it runs release 1.3.378 or earlier) and is not recorded there with this key: UPGRADE " + n
+                        + ", or have that node's operator open its upgrade window (discovery_auth=compat with discovery_compat_until)", KIND_PROOF);
+    }
+
+    /** One controller per region: {@code n} claims a region for which {@code rest} is recorded, and the operator did not replace it. */
+    private BindResult oneControllerRefusal(Join j, String n, String region, String fp, java.util.TreeSet<String> rest) {
+        String recorded = rest.first();
+        Binding rb = identities.get(recorded);
+        Set<String> alsoAs = new java.util.TreeSet<>(rb == null ? Set.<String>of() : namesByKey.getOrDefault(rb.key, Set.of()));
+        alsoAs.remove(recorded);
+        String line = "'" + n + "=" + fp + "'";
+        boolean ownController = j.client && "AGENT".equals(j.exchange);
+        String reason = "this node has " + describeControllers(rest) + " recorded for region " + region + ", and a region has ONE controller"
+                + " here -- the first that " + (j.client ? "answered" : "joined") + ". Nothing of " + n + " was recorded. If " + n + " is to REPLACE it as"
+                + " region " + region + "'s controller, authorise that on this node: add the line " + line + " to " + rebindFileHint() + " (no restart)"
+                + (j.client ? ", or have " + n + " serve a rebind statement signed by a key in controller_rebind_signers" : "")
+                + (j.anchored ? " (controller_trust_anchors vouch for " + n + ": an anchor admits a controller, it never replaces a recorded one)" : "")
+                + ". " + (alsoAs.isEmpty() ? "If " + recorded + " is NOT that region's controller (it took the region before the real one "
+                + (j.client ? "answered" : "joined") + "), revoke it here: add the line '" + recorded + "' to "
+                + (revokePath() == null ? "peer_identity_revoke" : revokePath().toString()) + "; " + n + " is then taken"
+                : "The key of " + recorded + " is also recorded here as " + String.join(", ", alsoAs) + ": do NOT revoke " + recorded
+                + " by name (that refuses its key under every name) -- the rebind line is the way")
+                + (ownController ? ". (Under the standard profile an agent takes the FIRST controller that answers its first discovery and holds"
+                + " the agent discovery secret: if one answered before the real controller did, this agent is recorded to it until its"
+                + " operator does one of the above. Fleets ship controller_rebind_signers or controller_trust_anchors to their agents, or"
+                + " use security_profile=production)" : "");
+        return new BindResult(false, reason, "region " + region + " already has a controller recorded there (" + recorded + "). If " + n
+                + " is to replace it, that node's operator adds the line " + line + " to " + rebindFileHint() + " on it (no restart)", KIND_CONTROLLER);
     }
 
     /** In memory, with the write lock: {@code oldKey} (when any) is now refused for {@code n}; {@code newKey} is not. */
@@ -728,6 +1564,14 @@ public final class PeerTrustRegistry {
 
     /** With the write lock (or while loading): bind {@code n}, keeping the key -> names index. */
     private void putIdentity(String n, Binding b) {
+        indexController(n, ROLE_CONTROLLER.equals(b.role));
+        if (ROLE_CONTROLLER.equals(b.role) && !marked(b, MARK_GLOBAL) && !marked(b, MARK_PEER) && !SOURCE_LEGACY.equals(base(b.source))) {
+            unmarkedControllers.add(n);
+        } else {
+            unmarkedControllers.remove(n);
+        }
+        if (marked(b, MARK_GLOBAL)) globalName = n;
+        else if (n.equals(globalName)) globalName = null;
         Binding old = identities.put(n, b);
         if (old != null && !old.key.equals(b.key)) unindex(old.key, n);
         namesByKey.computeIfAbsent(b.key, k -> ConcurrentHashMap.newKeySet()).add(n);
@@ -735,7 +1579,25 @@ public final class PeerTrustRegistry {
 
     /** With the write lock (or while loading): unbind {@code n} if it is still {@code b}. */
     private void removeIdentity(String n, Binding b) {
-        if (identities.remove(n, b)) unindex(b.key, n);
+        if (identities.remove(n, b)) {
+            unindex(b.key, n);
+            indexController(n, false);
+            unmarkedControllers.remove(n);
+            if (n.equals(globalName)) globalName = null;
+        }
+    }
+
+    /** With the write lock (or while loading): {@code n} is (not) bound here as a controller. */
+    private void indexController(String n, boolean is) {
+        int slash = n.indexOf('/');
+        if (slash <= 0) return;
+        String region = n.substring(0, slash);
+        if (is) {
+            controllersByRegion.computeIfAbsent(region, k -> ConcurrentHashMap.newKeySet()).add(n);
+        } else {
+            Set<String> s = controllersByRegion.get(region);
+            if (s != null) { s.remove(n); if (s.isEmpty()) controllersByRegion.remove(region, s); }
+        }
     }
 
     private void unindex(String key, String n) {
@@ -755,7 +1617,7 @@ public final class PeerTrustRegistry {
         }
         Binding b = identities.get(name(region, agent));
         if (b != null && !ROLE_CONTROLLER.equals(b.role)) return new BindResult(false, name(region, agent) + " is not a controller this node pinned");
-        return bind(tenant, region, agent, key, "vouched", ROLE_CONTROLLER, false, voucher == null ? "vouched" : voucher);
+        return bind(tenant, region, agent, key, "vouched", ROLE_CONTROLLER, false, voucher == null ? "vouched" : voucher, null);
     }
 
     /** Why this instance records nothing, for a refusal. */
@@ -861,7 +1723,7 @@ public final class PeerTrustRegistry {
             return new BindResult(false, name(region, agent) + " was not bound by the legacy exchange");
         }
         if (!b.tenant.equals(tenant)) return new BindResult(false, "tenant " + tenant + " differs from the bound tenant " + b.tenant);
-        return bind(tenant, region, agent, key, "discovery", ROLE_AGENT, false, "upgraded from the legacy exchange");
+        return bind(tenant, region, agent, key, "discovery", ROLE_AGENT, false, "upgraded from the legacy exchange", null);
     }
 
     /** The role {@code region/agent} is bound with when its bound key is {@code key}; else null. Lock-free. */
@@ -969,6 +1831,10 @@ public final class PeerTrustRegistry {
             if (fenced != null) return fencedText();
             b = cas.get(region);
             if (b != null && b.key.equals(fp) && b.tenant.equals(tenant)) return null;
+            if (b == null) {
+                String clash = caseClash(region, null);
+                if (clash != null) return caseText("region " + region, clash);
+            }
             String token = null;
             // a region whose CA key was revoked keeps that (revoked) CA recorded: no other CA is taken for it, not even by a
             // client following its region, until the operator rebinds the region
@@ -992,6 +1858,7 @@ public final class PeerTrustRegistry {
             if (!(c == null ? append(r) : append(r, c))) return "could not record the CA durably";
             if (token != null) consumed.add(token);
             cas.put(region, new Binding(tenant, fp, cert, source, null, newFollow, now, now));
+            if ("federated".equals(source)) earlierFederated.add(region); else earlierFederated.remove(region);
             if (b != null) log.accept("CA for region " + region + " REBOUND from " + PeerIdentity.shortFp(b.key) + " to " + PeerIdentity.shortFp(fp)
                     + (token != null ? " (operator rebind '" + token + "', now consumed)" : " (followed: the region this node joined re-keyed)"));
             compactIfDue();
@@ -1182,6 +2049,156 @@ public final class PeerTrustRegistry {
         return id;
     }
 
+    // ---------------------------------------------------------------- one controller per region
+    //
+    // A discovery secret proves membership, not a name: every region controller holds the global's, every agent its
+    // region's. A name is bound to the first key that presents it -- and that alone let a holder of the secret join under a
+    // NEW agent name of a region whose controller was already bound ("rgB/zz" beside "rgB/rc"), first come again, as a
+    // controller: it then spoke for the region in the registry, its bridge carried the stamps of the region's nodes and was
+    // given their inboxes, its key was listed in the trust bundle, its revocation list revoked the region's real controller.
+    //
+    // The rules ({@link #join} applies them, under the write lock, with the binding itself):
+    //   - where a controller is recorded for a region, the region has ONE controller here: the first identity bound as it.
+    //     Another one is refused before anything of it is recorded, whatever tenant its certificate states;
+    //   - the controller is its KEY, and the exchange proves the key (a signature by it, next to the secret's MAC). The same
+    //     key under another agent name of the region is the same controller, and the new name REPLACES the former one;
+    //     without proof nothing new is recorded at all;
+    //   - a key speaks for ONE region: bound as a controller of one, it is refused as a controller of another;
+    //   - only the OPERATOR replaces a region's controller: a rebind line for the new name on this node (at a joiner also an
+    //     operator-signed rebind statement), or by revoking the recorded one. controller_trust_anchors ADMIT a controller
+    //     (a superuser tenant's, a responder's) and never replace a recorded one;
+    //   - a node has ONE global: the first identity it took in a GLOBAL exchange.
+
+    /**
+     * The names BOUND here as controllers of {@code region}, leaving {@code n} out. Lock-free; one lookup. (A bridge-peer
+     * record without a binding is not counted: it gives nobody an identity. Under per-node trust discovery binds a
+     * controller before it records its bridge, so the bound names are all of them; a node of a regional-CA fabric records
+     * the controllers it joined as bridge peers only, and there one CA per region is the rule.)
+     */
+    private java.util.TreeSet<String> otherControllers(String region, String n) {
+        java.util.TreeSet<String> names = new java.util.TreeSet<>();
+        Set<String> bound = controllersByRegion.get(region);
+        if (bound != null) names.addAll(bound);
+        names.remove(n);
+        return names;
+    }
+
+    private String describeControllers(Collection<String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (String o : names) {
+            Binding b = identities.get(o);
+            sb.append(sb.length() == 0 ? "" : ", ").append(o).append(b == null ? ""
+                    : " (tenant " + b.tenant + ", key " + PeerIdentity.shortFp(b.key) + ", since " + new java.util.Date(b.firstSeen) + ")");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * A rule of {@link #join} refused {@code region/agent} with that key ({@code kind}: {@link BindResult#limited}): true when
+     * it is to be logged now -- the first time for this peer (rule, name and key), then at most every ten minutes. The state
+     * is bounded: when it is full, whatever was last said more than ten minutes ago goes (it holds nothing back any more);
+     * of more peers than that within ten minutes, one line a minute. What the refused PEER is told never depends on this.
+     */
+    public boolean refusalLogged(String kind, String region, String agent, String keyFp) {
+        if (KIND_CONTROLLER.equals(kind)) controllersRefused.incrementAndGet();
+        long now = System.currentTimeMillis();
+        String k = kind + "|" + region + "/" + agent + "|" + keyFp;
+        long[] seen = refused.get(k);
+        if (seen == null) {
+            if (refused.size() >= REFUSED_MAX) refused.values().removeIf(v -> now - v[1] >= REFUSED_LOG_MS);
+            if (refused.size() >= REFUSED_MAX) {
+                if (now - refusedOverflowLogged < 60_000L) return false;
+                refusedOverflowLogged = now;
+                return true;
+            }
+            refused.put(k, new long[]{1, now, now});
+            return true;
+        }
+        seen[0]++;
+        seen[2] = now;
+        if (now - seen[1] < REFUSED_LOG_MS) return false;
+        seen[1] = now;
+        return true;
+    }
+
+    /**
+     * The recorded peers that proved their key and were taken WITHOUT proof in the last ten minutes (the grace after a first
+     * proof, the upgrade window): a node put back on an earlier release, or a holder of the secret answering in its name.
+     * For the identity health check (WARN while it lasts). Bounded by {@link #REFUSED_MAX}.
+     */
+    public List<String> unprovedRejoins() {
+        long now = System.currentTimeMillis();
+        List<String> out = new ArrayList<>();
+        String prefix = KIND_UNPROVED_REJOIN + "|";
+        for (Map.Entry<String, long[]> e : refused.entrySet()) {
+            if (!e.getKey().startsWith(prefix) || now - e.getValue()[2] >= REFUSED_LOG_MS) continue;
+            String rest = e.getKey().substring(prefix.length());
+            out.add(rest.substring(0, rest.lastIndexOf('|')));
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /** Set at open when this registry was behind its high-water file (restored from an older copy): what the operator is told. */
+    public String behindItsRecord() { return behind; }
+
+    /** How often that rule refused {@code region/agent} with that key so far (for the log line). */
+    public long refusedTimes(String kind, String region, String agent, String keyFp) {
+        long[] seen = refused.get(kind + "|" + region + "/" + agent + "|" + keyFp);
+        return seen == null ? 1 : seen[0];
+    }
+
+    /** Tests: the refusal log state as it will be {@code ms} from now (every entry that much older). */
+    void ageRefusals(long ms) {
+        for (long[] v : refused.values()) { v[1] -= ms; v[2] -= ms; }
+        refusedOverflowLogged -= ms;
+    }
+
+    int refusalsRemembered() { return refused.size(); }
+
+    /** Controllers refused by the one-controller, one-global and one-region-per-key rules, so far (a counter of the metric inventory). */
+    public long controllersRefusedCount() { return controllersRefused.get(); }
+
+    /**
+     * The regions for which MORE than one controller is recorded here -- distinct keys (or tenants) bound as controllers
+     * under one region -- one line each; empty when there is none. Never under a pre-provisioned PKI, and never for a region
+     * whose CA this node recorded: there the CA is the region's one authority, and it may issue its controller under any
+     * name. A registry of before the rule can hold several, and this node does not choose: every one keeps working as
+     * recorded, no further one is taken, and it is said at every start and by the identity health check until the operator
+     * has revoked the ones that are not the region's controller.
+     */
+    public List<String> controllerConflicts() {
+        if (pki != null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String region : new java.util.TreeSet<>(controllersByRegion.keySet())) {
+            Set<String> bound = controllersByRegion.get(region);
+            if (bound == null || bound.size() < 2) continue;                      // (the usual case: one name)
+            if (cas.containsKey(region)) continue;                                // (one CA: its controllers are its own)
+            java.util.TreeSet<String> names = new java.util.TreeSet<>(bound);
+            Map<String, List<String>> byKey = new java.util.TreeMap<>();
+            for (String o : names) {
+                Binding b = identities.get(o);
+                if (b != null) byKey.computeIfAbsent(b.tenant + "|" + b.key, k -> new ArrayList<>()).add(o);
+            }
+            if (byKey.size() < 2) continue;
+            boolean shared = false;
+            for (String o : names) {
+                Binding b = identities.get(o);
+                Set<String> as = b == null ? null : namesByKey.get(b.key);
+                if (as != null && as.size() > 1) shared = true;
+            }
+            out.add(byKey.size() + " CONTROLLERS are recorded here for region " + region + ": " + describeControllers(names) + ". A region"
+                    + " has ONE controller; this registry was written before that was enforced. Each keeps working as it is recorded,"
+                    + " and no further controller is taken for the region -- but one of them may not be that region's controller, and"
+                    + " whoever holds its key speaks for the region here. " + (shared ? "One of these keys is recorded under more than one"
+                    + " name: revoke the wrong one by its KEY fingerprint only if every name of that key is to go; otherwise replace it with"
+                    + " a rebind line for the right controller ('<region>/<agent>=<key fingerprint>' in " + rebindFileHint() + ")"
+                    : "Revoke the one that is not: add its name (or key fingerprint) to "
+                    + (revokePath() == null ? "peer_identity_revoke" : revokePath().toString())));
+        }
+        return out;
+    }
+
     // ---------------------------------------------------------------- bridge peers
 
     /** Record a controller that may bridge into this node's broker (or refresh it). */
@@ -1196,6 +2213,8 @@ public final class PeerTrustRegistry {
             if (sealed && !tryRecover()) return;
             if (fenced != null) return;
             if (bridges.containsKey(n)) return;
+            String clash = caseClash(region, agent);
+            if (clash != null) { log.accept("Bridge peer not recorded: " + caseText(n, clash)); return; }
             Rec r = rec("bridge", n);
             r.t = now;
             if (append(r)) bridges.put(n, new Binding(null, null, null, "discovery", null, false, now, now));
@@ -1228,6 +2247,10 @@ public final class PeerTrustRegistry {
             if (fenced != null) return "the peer trust registry records nothing (" + fenced + ")";
             foreign = regionRefusal(tenant, region);
             if (foreign != null) return foreign;
+            if (!bridges.containsKey(n)) {
+                String clash = caseClash(region, agent);
+                if (clash != null) return caseText(n, clash);
+            }
             Rec r = rec("bridge", n);
             r.t = now;
             r.tenant = tenant;
@@ -1672,7 +2695,7 @@ public final class PeerTrustRegistry {
     private long expiryFor(String n) {
         if (issuedLeafLifetimeMs <= 0 || n == null) return 0;
         Binding b = identities.get(n);
-        if (b == null || !"enrolled".equals(b.source)) return 0;
+        if (b == null || !"enrolled".equals(base(b.source))) return 0;
         return System.currentTimeMillis() + Math.max(issuedLeafLifetimeMs, LONGEST_LEAF_MS) + 2 * CertValidity.backdateMs() + DAY;
     }
 
@@ -2707,7 +3730,9 @@ public final class PeerTrustRegistry {
 
     private void clearState() {
         identities.clear(); cas.clear(); bridges.clear(); bridgesVersion++; consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
-        namesByKey.clear(); tombs.clear();
+        namesByKey.clear(); tombs.clear(); controllersByRegion.clear(); unmarkedControllers.clear(); globalName = null; spelled.clear();
+        joinSeq = 0;
+        earlierFederated.clear();
         synchronized (revMemLock) {
             revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revokedByScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
         }
@@ -2740,17 +3765,24 @@ public final class PeerTrustRegistry {
     private void apply(Rec r) {
         if (r == null || r.op == null) return;
         switch (r.op) {
-            case "init": case "epoch": if (r.token != null) revEpoch = r.token; break;
+            case "init": case "epoch":
+                if (r.token != null) revEpoch = r.token;
+                if (r.seq != null && r.seq > joinSeq) joinSeq = r.seq;
+                break;
             case "bind": {
+                if (r.seq != null && r.seq > joinSeq) joinSeq = r.seq;
                 Binding old = identities.get(r.name);
                 replaced(r.name, old == null ? null : old.key, r.key);
-                putIdentity(r.name, new Binding(r.tenant, r.key, null, r.source, r.role == null ? ROLE_AGENT : r.role, "follow".equals(r.mode),
+                putIdentity(r.name, new Binding(r.tenant, r.key, r.cert, r.source, r.role == null ? ROLE_AGENT : r.role, "follow".equals(r.mode),
                         old != null && old.key.equals(r.key) ? old.firstSeen : r.t, r.t));
                 tombs.remove(r.name);                     // a binding recorded after a tombstone was an operator rebind
                 break;
             }
-            case "ca": cas.put(r.name, new Binding(r.tenant, r.key, r.cert, r.source, null, "follow".equals(r.mode), r.t, r.t)); break;
-            case "unca": cas.remove(r.name); break;
+            case "ca":
+                cas.put(r.name, new Binding(r.tenant, r.key, r.cert, r.source, null, "follow".equals(r.mode), r.t, r.t));
+                if ("federated".equals(r.source)) earlierFederated.add(r.name); else earlierFederated.remove(r.name);
+                break;
+            case "unca": cas.remove(r.name); earlierFederated.remove(r.name); break;
             case "bridge": bridges.put(r.name, new Binding(r.tenant, null, null, "discovery", null, false, r.t, r.t)); bridgesVersion++; break;
             case "unbridge": bridges.remove(r.name); bridgesVersion++; break;
             case "unbind": { Binding old = identities.get(r.name); if (old != null) removeIdentity(r.name, old); break; }
@@ -3096,11 +4128,12 @@ public final class PeerTrustRegistry {
         init.prevLines = lines;
         init.prevTail = new ArrayList<>(recentMacs);
         init.token = revEpoch;
+        init.seq = joinSeq == 0 ? null : joinSeq;
         recs.add(init);
         for (Map.Entry<String, Binding> e : identities.entrySet()) {
             Rec r = rec("bind", e.getKey());
             Binding b = e.getValue();
-            r.tenant = b.tenant; r.key = b.key; r.source = b.source; r.role = b.role; r.t = b.firstSeen; r.mode = b.follow ? "follow" : null;
+            r.tenant = b.tenant; r.key = b.key; r.cert = b.cert; r.source = b.source; r.role = b.role; r.t = b.firstSeen; r.mode = b.follow ? "follow" : null;
             recs.add(r);
             if (b.lastSeen > b.firstSeen) { Rec s = rec("seen", e.getKey()); s.kind = "id"; s.t = b.lastSeen; recs.add(s); }
         }

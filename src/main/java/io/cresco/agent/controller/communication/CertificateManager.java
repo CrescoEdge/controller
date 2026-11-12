@@ -751,8 +751,8 @@ public class CertificateManager {
      * responder that copied the anchored controller's (public) chain cannot hand out identities under a CA of its own.
      */
     public String controllerAnchorRefusal(X509Certificate[] chain, X509Certificate[] issued) {
-        java.util.Set<String> anchors = controllerAnchors();
-        if (anchors.isEmpty()) return null;
+        if (!anyControllerAnchors()) return null;
+        java.util.Set<String> anchors = anchorsFor(nameOf(chain));
         java.util.Date now = new java.util.Date();
         java.util.List<X509Certificate> path = AnchorPath.path(chain, anchors, now);
         if (path == null) {
@@ -786,11 +786,59 @@ public class CertificateManager {
         return null;
     }
 
-    /** {@code controller_trust_anchors}, normalised (lowercase hex, no colons). */
+    /**
+     * {@code controller_trust_anchors}, its UNSCOPED entries, normalised (lowercase hex, no colons): each admits a controller
+     * whose chain has a validated path to it, under any name, and replaces nothing that is recorded.
+     */
     private java.util.Set<String> controllerAnchors() {
         java.util.Set<String> want = new java.util.HashSet<>();
-        for (String a : csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""))) want.add(a.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        for (String a : csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""))) {
+            if (a.indexOf('=') < 0) want.add(a.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        }
         return want;
+    }
+
+    /**
+     * {@code controller_trust_anchors}, its entries SCOPED to {@code name}: {@code <region>/<agent>=<key or certificate
+     * fingerprint>} -- the operator's standing statement, on this node, that this key is that controller. Such an entry admits
+     * exactly that name with a chain that reaches the fingerprint, and may replace that name's recorded key (a re-key without
+     * a rebind line on every node). The name is compared exactly.
+     */
+    private java.util.Set<String> scopedAnchors(String name) {
+        java.util.Set<String> want = new java.util.HashSet<>();
+        if (name == null) return want;
+        for (String a : csv(plugin.getConfig().getStringParam("controller_trust_anchors", ""))) {
+            int eq = a.indexOf('=');
+            if (eq > 0 && a.substring(0, eq).trim().equals(name)) want.add(a.substring(eq + 1).trim().replace(":", "").toLowerCase(java.util.Locale.ROOT));
+        }
+        return want;
+    }
+
+    private boolean anyControllerAnchors() {
+        return !csv(plugin.getConfig().getStringParam("controller_trust_anchors", "")).isEmpty();
+    }
+
+    /** What vouches for a chain that presents itself as {@code name}: every unscoped entry, and the entries scoped to that name. */
+    private java.util.Set<String> anchorsFor(String name) {
+        java.util.Set<String> want = controllerAnchors();
+        want.addAll(scopedAnchors(name));
+        return want;
+    }
+
+    private static String nameOf(X509Certificate[] chain) {
+        CrescoIdentity id = chain == null || chain.length == 0 || chain[0] == null ? null : CrescoNames.identityOf(chain[0]);
+        return id == null ? null : id.getRegion() + "/" + id.getAgent();
+    }
+
+    /**
+     * Non-null when an entry of {@code controller_trust_anchors} SCOPED to the name this chain presents vouches for it (a
+     * validated path from its leaf to the listed fingerprint): what that is, for the log.
+     */
+    public String controllerAnchorScoped(X509Certificate[] chain) {
+        String name = nameOf(chain);
+        java.util.Set<String> scoped = scopedAnchors(name);
+        if (scoped.isEmpty() || AnchorPath.path(chain, scoped, new java.util.Date()) == null) return null;
+        return "controller_trust_anchors (the operator's entry '" + name + "=...' on this node)";
     }
 
     /**
@@ -798,7 +846,57 @@ public class CertificateManager {
      * the operator vouched for it: a joined controller that re-keyed under such an anchor is followed without a rebind.
      */
     public boolean controllerAnchorVouches(X509Certificate[] chain) {
-        return !controllerAnchors().isEmpty() && controllerAnchorRefusal(chain, null) == null;
+        return anyControllerAnchors() && controllerAnchorRefusal(chain, null) == null;
+    }
+
+    /**
+     * Do {@code controller_trust_anchors} vouch for the controller RECORDED here as {@code name} (its bound key {@code keyFp}),
+     * judged as a joiner's chain is ({@link #controllerAnchorVouches}): its key is listed, or the certificates this node holds
+     * for it (the chain kept with its binding, {@link PeerTrustRegistry#recordedChain}, else its truststore entries) have a
+     * validated path from its leaf to a listed certificate or key. A listing by certificate counts exactly as one by key. When this node holds no certificate
+     * for the name (it cannot judge), the answer is YES: nothing recorded is given up on an anchor's word unless this node can
+     * see that the anchors do not vouch for it.
+     */
+    public boolean recordedControllerAnchored(String name, String keyFp) {
+        if (!anyControllerAnchors() || name == null || keyFp == null) return false;
+        // (the operator's anchors state a key for that very name: the NAME is vouched for -- its stated key replaces the recorded
+        // one when its holder proves it -- so no other anchored controller takes its place meanwhile)
+        if (!scopedAnchors(name).isEmpty()) return true;
+        java.util.Set<String> anchors = anchorsFor(name);
+        if (anchors.contains(keyFp.replace(":", "").toLowerCase(java.util.Locale.ROOT))) return true;
+        try {
+            // The chain kept with its binding (it follows what the controller presents when it proves its key). Judged WITHOUT
+            // validity dates: what the operator's anchors say of a recorded controller does not change because a leaf on record
+            // has since expired -- else, with time alone, any other anchored controller could take a recorded global's place.
+            X509Certificate[] kept = peerTrust == null ? null : peerTrust.recordedChain(name);
+            if (kept != null && kept.length > 0 && keyFp.equals(PeerTrustRegistry.fingerprint(kept[0].getPublicKey().getEncoded()))) {
+                return AnchorPath.path(kept, anchors, null) != null;
+            }
+            if (trustStore == null) return true;
+            String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
+            java.util.List<X509Certificate> held = new java.util.ArrayList<>();
+            synchronized (trustStoreLock) {
+                for (String alias : java.util.Collections.list(trustStore.aliases())) {
+                    if (!alias.toLowerCase(java.util.Locale.ROOT).startsWith(prefix)) continue;
+                    Certificate c = trustStore.getCertificate(alias);
+                    if (!(c instanceof X509Certificate)) continue;
+                    // the leaf first: the certificate that carries the recorded key
+                    if (keyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) held.add(0, (X509Certificate) c);
+                    else held.add((X509Certificate) c);
+                }
+            }
+            // (no certificate of it at hand: it cannot be judged, and nothing recorded is given up on an anchor's word then)
+            if (held.isEmpty() || !keyFp.equals(PeerTrustRegistry.fingerprint(held.get(0).getPublicKey().getEncoded()))) return true;
+            return AnchorPath.path(held.toArray(new X509Certificate[0]), anchors, null) != null;
+        } catch (Exception ex) {
+            logger.error("recordedControllerAnchored(" + name + "): " + ex.getMessage());
+            return true;
+        }
+    }
+
+    /** Is the key with this fingerprint (SHA-256 of its SubjectPublicKeyInfo, hex) itself listed in {@code controller_trust_anchors}? */
+    public boolean controllerAnchorListsKey(String keyFp) {
+        return keyFp != null && controllerAnchors().contains(keyFp.replace(":", "").toLowerCase(java.util.Locale.ROOT));
     }
 
     private volatile String rebindStatementCache;
@@ -883,7 +981,9 @@ public class CertificateManager {
             if (s <= 0 || controllerEngine == null) return;
             String region = name.substring(0, s), agent = name.substring(s + 1);
             String present = peerTrust == null ? null : peerTrust.pinnedKey(new PeerIdentity.Expected(region, agent));
-            if (present != null) controllerEngine.msgSigning().keyChanged(region, agent, present);
+            // (no key at all: the name is no longer recorded -- its controller was replaced, or took another agent name: what was
+            // verified or agreed on its word under that name ends as it does for a replaced key)
+            controllerEngine.msgSigning().keyChanged(region, agent, present != null ? present : MsgSigning.NO_KEY);
         } catch (Exception ex) {
             logger.error("onKeyReplaced(" + name + "): " + ex.getMessage());
         }
@@ -1284,6 +1384,23 @@ public class CertificateManager {
             if (r.lockFailure() != null) crit.add("peer trust registry FENCED: " + r.lockFailure() + " (nothing new is bound)");
             if (r.isSealed()) crit.add("peer trust registry SEALED: " + r.sealReason());
             if (r.revocationDurability() != null) crit.add(r.revocationDurability());
+            // more than one controller recorded for a region (a registry of before "a region has one controller here"): whoever
+            // holds either key speaks for that region on this node, until the operator revokes the one that is not its controller
+            crit.addAll(r.controllerConflicts());
+            if (r.behindItsRecord() != null) warn.add(r.behindItsRecord());
+            java.util.List<String> unproved = r.unprovedRejoins();
+            if (!unproved.isEmpty()) {
+                warn.add(unproved.size() + " recorded peer(s) that PROVED their key were taken WITHOUT proof in the last ten minutes ("
+                        + String.join(", ", unproved.size() > 8 ? unproved.subList(0, 8) : unproved) + (unproved.size() > 8 ? ", ..." : "")
+                        + "): rolled back to an earlier release, or a holder of the discovery secret answers in their name. Taken as"
+                        + " recorded, nothing recorded changed (discovery_proof_grace_days after a first proof, or the upgrade window);"
+                        + " after the grace they are refused");
+            }
+            if (r.globalUnconfirmed()) {
+                warn.add("this node's global " + r.globalRecorded() + " was recorded WITHOUT proof in the upgrade window and is not confirmed:"
+                        + " it is confirmed when it proves its key in a GLOBAL exchange (upgrade it); no other identity is taken as the"
+                        + " global meanwhile");
+            }
         }
         String ia = identityAlarm;
         if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
@@ -2289,12 +2406,13 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             return null;
         }
         Object caBefore = peerTrust.caState(region);
-        String why = peerTrust.trustCa(joinerCa, region, tenant, "federated");
+        String why = peerTrust.trustCa(joinerCa, region, tenant, "federated+peer");
         if (why != null) {
             logger.error("Enrollment REFUSED: joining controller " + region + "/" + agent + ": " + why);
             return null;
         }
-        PeerTrustRegistry.BindResult bound = peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated",
+        // (a controller that JOINED this node is never this node's global: recorded as a peer)
+        PeerTrustRegistry.BindResult bound = peerTrust.bind(tenant, region, agent, joinerCerts[0].getPublicKey(), "federated+peer",
                 PeerTrustRegistry.ROLE_CONTROLLER, false);
         if (!bound.ok) {
             // the controller's identity is refused (revoked, tombstoned, bound to another key): nothing of this exchange stays
@@ -2369,7 +2487,8 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     return false;
                 }
                 String[] scope = PeerTrustRegistry.caScopeOf(peerCa);
-                String why = peerTrust.trustCa(peerCa, scope[0], scope[1], "federated", false);
+                String why = peerTrust.trustCa(peerCa, scope[0], scope[1],
+                        type == io.cresco.agent.controller.netdiscovery.DiscoveryType.GLOBAL ? "federated+global" : "federated+peer", false);
                 if (why != null) {
                     logger.error("installEnrollment REFUSED: " + why);
                     return false;

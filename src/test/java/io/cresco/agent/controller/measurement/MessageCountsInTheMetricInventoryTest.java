@@ -61,7 +61,8 @@ class MessageCountsInTheMetricInventoryTest {
                 "msg.session.lost.told", "msg.session.lost.heard", "msg.session.lost.retried", "msg.session.unanswered", "msg.send.held",
                 "msg.route.held", "msg.route.mismatch", "msg.route.unread.patterns", "msg.expired", "msg.expired.on_arrival",
                 "msg.expired.by_consumer", "broker.dlq.depth",
-                "broker.caller.stripped", "broker.bridge.withheld", "broker.bridge.transit.withheld", "broker.bridge.discarded", "broker.anonymous.discarded",
+                "broker.caller.stripped", "broker.bridge.withheld", "broker.controller.refused", "broker.bridge.transit.withheld", "broker.bridge.discarded",
+                "broker.anonymous.discarded",
                 "broker.recipient.withheld", "broker.quarantine.connections"));
         for (String reason : List.of("unsigned", "not_for_this_node", "no_recipient", "too_old", "ahead_of_clock", "replay",
                 "replay_memory_full", "credential", "revoked", "session_key", "bad_signature", "caller_mismatch", "other")) {

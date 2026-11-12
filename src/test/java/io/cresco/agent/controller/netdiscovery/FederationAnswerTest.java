@@ -42,6 +42,13 @@ class FederationAnswerTest {
         X509Certificate sl = victim.getCertificateManager().getCertsfromJson(ch.scert)[0];
         byte[] k = DiscoveryAuth.key("global-secret", "handshake|" + hello.type);
         r.mac = DiscoveryAuth.mac(k, "S2", DiscoveryAuth.transcript(hello, ch, cl, sl), DiscoveryAuth.resultDigest(r));
+        // (the responder is the one answering here: it signs its result with its own key, as every responder of this build does)
+        try {
+            r.pop = DiscoveryAuth.proofSign(responder.getCertificateManager().identityPrivateKey(), DiscoveryAuth.POP_RESULT,
+                    DiscoveryAuth.possessionTranscript(hello, ch, cl, sl), DiscoveryAuth.resultDigest(r));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
         return c.clientResult(hello, copy(ch), copy(r), "10.6.6.6", 32005);
     }
 

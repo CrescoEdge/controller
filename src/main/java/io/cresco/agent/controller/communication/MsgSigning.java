@@ -642,6 +642,9 @@ public final class MsgSigning {
      * memory needs nothing (it only ever refuses), nor do the verified batch roots (reached only through a credential that
      * resolved). What is verified from here on meets the trust data as it stands.
      */
+    /** {@link #keyChanged}: the name has NO key here any more (its binding was removed); matches no fingerprint. */
+    static final String NO_KEY = "no longer recorded";
+
     void keyChanged(String region, String agent, String presentFp) {
         if (!required || region == null || agent == null || presentFp == null) return;
         String name = region + "/" + agent;
@@ -681,7 +684,8 @@ public final class MsgSigning {
         formerKeySessions.addAndGet(sess);
         if (served) bundleChanged();
         if (served || creds > 0 || sess > 0) {
-            info("ANOTHER KEY for " + name + " (" + PeerIdentity.shortFp(presentFp) + "): what its former key could still do here ends -- "
+            info((NO_KEY.equals(presentFp) ? name + " is NO LONGER RECORDED here" : "ANOTHER KEY for " + name + " (" + PeerIdentity.shortFp(presentFp) + ")")
+                    + ": what its former key could still do here ends -- "
                     + creds + " cached credential(s) no longer served, " + sess + " session(s) dropped"
                     + (served ? ", its trust-bundle entry under the former key removed" : ""));
         }
