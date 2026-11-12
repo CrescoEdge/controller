@@ -48,7 +48,10 @@ class TrustStoreWhileJoiningTest {
                 while (!stop.get()) {
                     TrustManager[] tm = cm.getTrustManagers();
                     if (tm == null || tm.length == 0) failed.incrementAndGet(); else built.incrementAndGet();
-                    Thread.yield();                                                            // let the joins in
+                    // a connection now and then, not four threads that do nothing else: the truststore's lock is not
+                    // fair, and builders in a tight loop starve the joins (on a two-core machine 259 joins in 120 s beside
+                    // 745,594 builds). That a handshake does not walk the store under a lock at all is another change.
+                    java.util.concurrent.locks.LockSupport.parkNanos(500_000L);
                 }
             }, "builder-" + b);
         }
