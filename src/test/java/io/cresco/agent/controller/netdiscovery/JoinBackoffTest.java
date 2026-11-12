@@ -38,9 +38,30 @@ class JoinBackoffTest {
         assertEquals(8, hi.attempts());
         hi.succeeded();
         assertEquals(0, hi.attempts());
-        assertEquals(1000, hi.failed(INCOMPLETE, -1), 2, "after a success the wait starts over");
+        assertEquals(1000, hi.failed(NO_ANSWER, -1), 2, "after a success the wait starts over");
         // the first attempt that fails is retried sooner than the 3 s it was
         assertTrue(new JoinBackoff(3000, 1000, 30_000).failed(NO_ANSWER, -1) <= 1000);
+    }
+
+    /**
+     * A join that fails although the responder is not behind -- it answered and refused, or discovery was answered and the
+     * broker connection or the registration failed -- is tried again after the wait there always was, however often it
+     * fails. Fails before: these waits doubled up to 30 s.
+     */
+    @Test
+    void aFailureThatIsNotTheResponderBeingBehindWaitsAsLongAsItAlwaysDid() {
+        JoinBackoff b = new JoinBackoff(3000, 1000, 30_000);
+        for (int i = 0; i < 40; i++) {
+            long refused = b.failed(INCOMPLETE, -1), after = b.failedAfterDiscovery();
+            assertTrue(refused >= 2250 && refused <= 3750, "after a refused exchange, attempt " + i + ": " + refused + " ms");
+            assertTrue(after >= 2250 && after <= 3750, "after a failed broker connection, attempt " + i + ": " + after + " ms");
+        }
+        // and they do not count towards the next wait for a responder that IS behind
+        JoinBackoff lo = new JoinBackoff(3000, 1000, 30_000, () -> 0.0);
+        lo.failed(NO_ANSWER, -1);
+        lo.failed(NO_ANSWER, -1);
+        lo.failedAfterDiscovery();
+        assertEquals(500, lo.failed(BUSY, 0), "the wait for a busy responder did not start over after another kind of failure");
     }
 
     @Test

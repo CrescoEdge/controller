@@ -1035,7 +1035,7 @@ public class ControllerSMHandler {
      * After an attempt to join as an agent. Joined: the pause there always was (retrywait). A discovery exchange that was
      * not answered ({@code failed}): ONE line saying who was asked, what happened, how long it took and when the next
      * attempt is -- at WARN, the node is still trying -- then that wait ({@link JoinBackoff}). Anything else (the broker
-     * connection or the registration failed, logged where it happened): the backoff's wait.
+     * connection or the registration failed, logged where it happened): the wait there always was (retrywait, spread).
      */
     private void waitAfterJoinAttempt(JoinBackoff backoff, TCPDiscoveryStatic.Attempt failed, long retryWait, String what) throws InterruptedException {
         if (cstate.getControllerState() == ControllerMode.AGENT) {
@@ -1045,7 +1045,7 @@ public class ControllerSMHandler {
         }
         if (forceShutdown.get()) return;
         if (failed == null) {
-            long next = backoff.failed(TCPDiscoveryStatic.Outcome.INCOMPLETE, -1);
+            long next = backoff.failedAfterDiscovery();     // (the wait it always was: the responder is not what is behind)
             logger.warn("Discovery: " + what + ": discovery was answered but the join did not complete (see the lines before); attempt "
                     + backoff.attempts() + ", trying again in " + (next + 50) / 100 / 10.0 + " s");
             Thread.sleep(next);

@@ -9,13 +9,17 @@ import java.util.function.DoubleSupplier;
  * together came back together, every 3 s, for as long as their controller was behind. Here the wait depends on what
  * happened:
  * <ul>
- * <li>nothing listens there ({@link TCPDiscoveryStatic.Outcome#UNREACHABLE}: the controller is not up yet): as often as
- *     before -- {@code steadyMs} (retrywait, 3 s), spread over 75 % to 125 % of it so that nodes do not arrive in step.
- *     Nobody is being overloaded, and a fabric forms as fast as before once its controller is up;</li>
- * <li>the responder is there and did not complete the exchange (busy, no answer, refused): a bounded exponential
- *     backoff with jitter -- {@code minMs}, doubled at each failure in a row up to {@code maxMs}, each time a random 50 %
- *     to 100 % of that; a responder that says it is busy and for how long is not asked again before that time (plus up
- *     to half as much again, so the nodes it sent away do not return together).</li>
+ * <li>the responder is not what is behind -- nothing listens there ({@link TCPDiscoveryStatic.Outcome#UNREACHABLE}: the
+ *     controller is not up yet), it answered and the exchange did not complete
+ *     ({@link TCPDiscoveryStatic.Outcome#INCOMPLETE}: refused, not authentic), or discovery was answered and what follows
+ *     failed (the broker connection, the registration: {@link #failedAfterDiscovery}): as often as before --
+ *     {@code steadyMs} (retrywait, 3 s), spread over 75 % to 125 % of it so that nodes do not arrive in step. Nobody is
+ *     being overloaded by this node's discovery, and a fabric forms as fast as before once its controller is up;</li>
+ * <li>the responder is there and behind ({@link TCPDiscoveryStatic.Outcome#BUSY}: it said so;
+ *     {@link TCPDiscoveryStatic.Outcome#NO_ANSWER}: the connection opened and nothing came back): a bounded exponential
+ *     backoff with jitter -- {@code minMs}, doubled at each such failure in a row up to {@code maxMs}, each time a random
+ *     50 % to 100 % of that; a responder that says it is busy and for how long is not asked again before that time (plus
+ *     up to half as much again, so the nodes it sent away do not return together).</li>
  * </ul>
  * A success starts over. Not thread safe: one joining thread owns it.
  */
@@ -57,7 +61,7 @@ public final class JoinBackoff {
     public long failed(TCPDiscoveryStatic.Outcome outcome, long busyRetryMs) {
         attempts++;
         double r = Math.min(0.999999, Math.max(0.0, random.getAsDouble()));
-        if (outcome == TCPDiscoveryStatic.Outcome.UNREACHABLE) {
+        if (outcome != TCPDiscoveryStatic.Outcome.BUSY && outcome != TCPDiscoveryStatic.Outcome.NO_ANSWER) {
             failuresInARow = 0;
             return Math.max(1, Math.round(steadyMs * (0.75 + 0.5 * r)));
         }
@@ -67,6 +71,14 @@ public final class JoinBackoff {
         long wait = Math.round(step * (0.5 + 0.5 * r));
         if (busyRetryMs > 0) wait = Math.max(wait, Math.round(Math.min(busyRetryMs, maxMs) * (1.0 + 0.5 * r)));
         return Math.max(1, Math.min(maxMs, wait));
+    }
+
+    /**
+     * Discovery was answered and what follows it failed (the broker connection, the registration): the wait there always
+     * was, spread. The responder is not behind, so nothing grows.
+     */
+    public long failedAfterDiscovery() {
+        return failed(TCPDiscoveryStatic.Outcome.INCOMPLETE, -1);
     }
 
     /**
