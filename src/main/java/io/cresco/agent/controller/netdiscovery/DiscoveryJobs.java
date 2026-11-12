@@ -59,6 +59,7 @@ public final class DiscoveryJobs {
     private final Thread[] threads;
     private final AtomicLong accepted = new AtomicLong(), busy = new AtomicLong(), served = new AtomicLong(), failed = new AtomicLong();
     private volatile int maxQueuedSeen;
+    private volatile long summarised;
 
     /**
      * @param workers   threads that answer requests (at least 1)
@@ -173,7 +174,15 @@ public final class DiscoveryJobs {
             }
             long took = System.nanoTime() - t0;
             serviceNanos = Math.max(50_000L, (serviceNanos * 7 + took) / 8);
-            served.incrementAndGet();
+            long n = served.incrementAndGet();
+            // while requests arrive: one line every 10 s that says how the responder is doing
+            if (logger != null && DiscoveryGuard.logAllowed("discovery-jobs-summary")) {
+                long since = n - summarised;
+                summarised = n;
+                logger.info("Discovery: " + since + " request(s) answered since the last such line (" + n + " since start); "
+                        + queued() + " waiting now, " + maxQueuedSeen + " at most so far; " + busy.get() + " told to come back; a request takes "
+                        + serviceNanos / 1_000L + " us; " + workers + " worker(s)");
+            }
         }
     }
 
