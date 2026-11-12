@@ -426,8 +426,8 @@ carries is judged per message by `bridgeRefusal`; a bridge's local side and brok
 | the ActiveMQ client itself | temporary-destination advisories | topic | `ActiveMQ.Advisory.TempQueue,ActiveMQ.Advisory.TempTopic` |
 
 Nothing else creates a consumer, a browser or a durable subscriber (`createConsumer|createBrowser|
-createDurableSubscriber` over the controller; the library and the wsapi, filerepo, stunnel, executor, sysinfo, repo and
-gfs plugins create none). A plugin reaches the broker only through `DataPlaneService`, where it chooses a topic TYPE
+createDurableSubscriber` over the controller; the library and the wsapi, filerepo, stunnel, executor, sysinfo and repo
+plugins create none). A plugin reaches the broker only through `DataPlaneService`, where it chooses a topic TYPE
 (`AGENT`, `REGION`, `GLOBAL`), a selector and a shard -- never a destination name, never a queue.
 
 So **there is no shared queue**: no work queue, no queue two nodes read. Every queue a network client legitimately

@@ -121,6 +121,12 @@ public final class MsgMetrics {
                 ce, CrescoAuthorizationBroker::forgedStampCount);
         broker(registry, names, "broker.bridge.withheld", "Messages a bridge demanded and this node's broker did not give it.",
                 ce, CrescoAuthorizationBroker::bridgeWithheldCount);
+        // (kept by the peer trust registry, which decides it at a join: not a broker's count, and so not lost with a broker)
+        count(registry, names, BROKER_GROUP, "broker.controller.refused", "Controllers this node refused at a discovery exchange because"
+                        + " another controller is recorded here for the region they claim (a region has one controller): they were not"
+                        + " recorded, so they bridge nothing and speak for no region.",
+                ce, e -> e.getCertificateManager() == null || e.getCertificateManager().getPeerTrust() == null ? 0
+                        : e.getCertificateManager().getPeerTrust().controllersRefusedCount());
         broker(registry, names, "broker.bridge.transit.withheld", "Topic messages that reached this node's broker over a bridge and were"
                         + " not handed on to a bridge that asked for them (a region of a fabric with a global relays none; each message once).",
                 ce, CrescoAuthorizationBroker::transitWithheldCount);

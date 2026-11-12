@@ -26,12 +26,19 @@ import java.util.Map;
  *                                                          &lt;-  CHALLENGE  Ns, responder region/agent, responder
  *                                                                          chain, broker port, MAC_K("S1", T)
  *   (client checks MAC "S1": the responder knows the secret, and it is fresh -- it covers Nc)
- *   PROOF     MAC_K("C", T)                                  -&gt;
+ *   PROOF     MAC_K("C", T), SIG_client("pop-C", P)          -&gt;
  *                                    (responder checks MAC "C": the client knows the secret, and it is fresh -- it
- *                                     covers Ns; only now does it record anything or issue a certificate)
- *                                                          &lt;-  RESULT     ok, reason, result chain, MAC_K("S2", T, H(result))
- *   (client checks MAC "S2", then records/installs)
+ *                                     covers Ns; and the signature: the client holds the key of the leaf it sent;
+ *                                     only now does it record anything or issue a certificate)
+ *                                                          &lt;-  RESULT     ok, reason, result chain, MAC_K("S2", T, H(result)),
+ *                                                                          SIG_responder("pop-S2", P, H(result))
+ *   (client checks MAC "S2" and the signature: the responder holds the key of the leaf it sent; then records/installs)
  * </pre>
+ *
+ * The secret proves membership only (every member of a kind holds it), so the MACs alone never said that the sender of a
+ * certificate holds its key. The signatures do: see "proof of possession" below ({@link #possessionTranscript}, P) for
+ * what they cover, how a build says that it proves ({@link #PROOF_NONCE}), and what a peer of a release before the
+ * proof (1.3.378: MACs only) is still given.
  *
  * T is the transcript: protocol label, discovery type, both nonces, both identities (region, agent), the SHA-384
  * fingerprints of both leaf certificates' keys, the responder's broker port, and the SHA-384 over the responder's WHOLE
@@ -95,8 +102,107 @@ public final class DiscoveryAuth {
         public String rebind;
         /** {@link #AUTH_PKI}: the PKI exchange (security_profile=production), {@code mac} carries signatures; absent: the secret's MACs. */
         public String auth;
-        /** BUSY: after how many milliseconds the responder asks to be tried again (a hint; it is not authenticated). */
-        public long retry;
+        /**
+         * The secret's exchange, PROOF and RESULT: the sender's signature by the key of the leaf it presented, next to the MAC
+         * (proof of possession: {@link #possessionTranscript}). Absent from a build of before the proof (release 1.3.378).
+         */
+        public String pop;
+        /**
+         * BUSY: after how many milliseconds the responder asks to be tried again (a hint; it is not authenticated). Absent
+         * from every other message (null is not written): a message of an exchange is as it was.
+         */
+        public Long retry;
+    }
+
+    // ---------------------------------------------------------------- proof of possession (the secret's exchange)
+    //
+    // The discovery secret proves membership: every region controller holds the global's, every agent its region's. The MACs
+    // therefore say "a member sent this certificate", never "the sender holds this certificate's key" -- and a member that
+    // presented another node's certificate (public) was recorded under it. So each side also SIGNS the exchange with the key
+    // of the leaf it presents: the client in its PROOF (label pop-C), the responder in its RESULT (label pop-S2, which also
+    // covers the result; it signs only for a client whose MAC verified, so a stranger cannot make it sign). What is signed:
+    // a label of its own, the exchange type, both nonces, and for the joiner and the responder each its role in this type
+    // of exchange, region, agent, the tenant its leaf states, its leaf key and its whole chain, the responder's broker port
+    // and the rebind statement it served -- so a signature made for one exchange, one responder or one type of exchange
+    // verifies in no other.
+    //
+    // How a build says what it is: a build that proves possession starts its NONCE with PROOF_NONCE. An earlier build's nonce
+    // is plain base64 (no '.'), and both nonces are transcript fields that every MAC of the exchange covers on every build:
+    // the mark cannot be removed or added on the way without the secret. A peer whose nonce carries the mark and whose
+    // message carries no valid signature is refused (no downgrade); a peer without the mark is a build of before the proof
+    // (or a holder of the secret that says so) and is given only what such a build may have (PeerTrustRegistry.join).
+
+    static final String PROOF_NONCE = "p1.";
+    static final String POP_CLIENT = "pop-C", POP_RESULT = "pop-S2";
+    static final String POP_LABEL = "cresco-discovery-pop-v1";
+
+    /** A nonce of this build: {@link #PROOF_NONCE} and 32 random bytes. */
+    public static String proofNonce() { return PROOF_NONCE + nonce(); }
+
+    /** Does the sender of {@code nonce} say it proves possession of its key? */
+    public static boolean claimsProof(String nonce) { return nonce != null && nonce.startsWith(PROOF_NONCE); }
+
+    static String joinerRole(String type) { return "AGENT".equals(type) ? "agent" : "controller"; }
+
+    static String responderRole(String type) { return "GLOBAL".equals(type) ? "global" : "controller"; }
+
+    private static String tenantOf(X509Certificate leaf) {
+        CrescoIdentity id = leaf == null ? null : CrescoNames.claimOf(leaf);
+        return id == null || id.getTenant() == null ? "" : id.getTenant();
+    }
+
+    /**
+     * The signature algorithm of a proof of possession: FIXED per key type, like the key derivation -- never the node's crypto
+     * policy ({@code crypto_allow_sig}), which a joiner does not hold yet and two nodes need not share: both sides must sign
+     * and verify alike before anything else is agreed. RSA: SHA384withRSA; EC: SHA384withECDSA (FIPS 186, CNSA 1.0). Another
+     * key type has none (null): its holder cannot prove it in this exchange, and is told so by name.
+     */
+    public static String proofAlgorithm(String keyType) {
+        if ("RSA".equalsIgnoreCase(keyType)) return "SHA384withRSA";
+        if ("EC".equalsIgnoreCase(keyType) || "ECDSA".equalsIgnoreCase(keyType)) return "SHA384withECDSA";
+        return null;
+    }
+
+    /** A proof of possession: {@code key}'s signature over {@link #authBytes} with {@link #proofAlgorithm}, base64; null for a key type that has none. */
+    static String proofSign(java.security.PrivateKey key, String label, byte[] transcript, String... extra) {
+        String alg = key == null ? null : proofAlgorithm(key.getAlgorithm());
+        if (alg == null) return null;
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(alg);
+            s.initSign(key);
+            s.update(authBytes(label, transcript, extra));
+            return Base64.getEncoder().encodeToString(s.sign());
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot sign the discovery exchange: " + e.getMessage(), e);
+        }
+    }
+
+    /** Does {@code sigB64} verify under {@code key} as a proof of possession ({@link #proofAlgorithm})? */
+    static boolean proofVerify(java.security.PublicKey key, String sigB64, String label, byte[] transcript, String... extra) {
+        String alg = key == null || sigB64 == null ? null : proofAlgorithm(key.getAlgorithm());
+        if (alg == null) return false;
+        try {
+            java.security.Signature s = java.security.Signature.getInstance(alg);
+            s.initVerify(key);
+            s.update(authBytes(label, transcript, extra));
+            return s.verify(Base64.getDecoder().decode(sigB64));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** What a proof of possession signs (see above); each field length-prefixed. */
+    static byte[] possessionTranscript(Msg hello, Msg challenge, X509Certificate cleaf, X509Certificate sleaf) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        for (String f : new String[]{POP_LABEL, hello.type, hello.nc, challenge.ns,
+                "joiner", joinerRole(hello.type), hello.creg, hello.cagt, tenantOf(cleaf), fp(cleaf), chainFp(hello.ccert),
+                "responder", responderRole(hello.type), challenge.sreg, challenge.sagt, tenantOf(sleaf), fp(sleaf), chainFp(challenge.scert),
+                Integer.toString(challenge.sport), "rebind", chainFp(challenge.rebind)}) {
+            byte[] b = (f == null ? "" : f).getBytes(StandardCharsets.UTF_8);
+            out.writeBytes(ByteBuffer.allocate(4).putInt(b.length).array());
+            out.writeBytes(b);
+        }
+        return out.toByteArray();
     }
 
     /** The message parameter of a busy answer for a peer that sent a locator (it reads no {@link Msg}): the same milliseconds. */

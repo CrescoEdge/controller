@@ -13,13 +13,16 @@
 #   NIGHTLY_JAR=<agent jar>  test that jar instead of building main (the matrix script is then the one beside this file)
 #   NIGHTLY_CELLS            default: "tree tree:production tenants alias mesh"  (topology[:profile])
 #   NIGHTLY_FLAGS            extra matrix arguments for every cell, e.g. "--flag=-Dauthority_direction=enforce"
-#   NIGHTLY_PY               python with pycrescolib's dependencies (websockets); NIGHTLY_MVN, JAVA_HOME; NIGHTLY_PORT (24000)
+#   NIGHTLY_PY               python with pycrescolib's dependencies (websockets); NIGHTLY_MVN, JAVA_HOME: set them in
+#                            NIGHTLY_HOME/site.env (sourced when present) or in the environment; NIGHTLY_PORT (24000)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HOME_N="${NIGHTLY_HOME:?set NIGHTLY_HOME (results directory)}"
-export JAVA_HOME="${JAVA_HOME:-$HOME/cresco/jdk}"; export PATH="$JAVA_HOME/bin:$PATH"
-MVN="${NIGHTLY_MVN:-/project/ibi-staff/LLM_TEXT/gfs-ci/tools/apache-maven-3.9.9/bin/mvn}"
-PY="${NIGHTLY_PY:-/project/ibi-staff/LLM_TEXT/gfs-ci/venv/bin/python}"
+# where this site keeps Maven, Python and the JDK: NIGHTLY_HOME/site.env (sourced when present), else the environment
+[ -f "$HOME_N/site.env" ] && . "$HOME_N/site.env"
+MVN="${NIGHTLY_MVN:-mvn}"
+PY="${NIGHTLY_PY:-python3}"
+[ -n "${JAVA_HOME:-}" ] && export PATH="$JAVA_HOME/bin:$PATH"
 PORT="${NIGHTLY_PORT:-24000}"     # below the kernel's range for outgoing connections (32768 up)
 CELLS="${*:-${NIGHTLY_CELLS:-tree tree:production tenants alias mesh}}"
 DAY="$(date +%Y-%m-%d)"; OUT="$HOME_N/$DAY"; [ -e "$OUT" ] && OUT="$OUT-$(date +%H%M)"

@@ -41,7 +41,7 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     /** The responder said it is busy: remember after how long it asked to be tried again. */
     private boolean busy(MsgEvent me, DiscoveryAuth.Msg m) {
         long retry = -1;
-        if (m != null && "busy".equals(m.step)) retry = Math.max(0, m.retry);
+        if (m != null && "busy".equals(m.step)) retry = m.retry == null ? 0 : Math.max(0, m.retry);
         else if (me != null && me.getParam(DiscoveryAuth.BUSY_PARAM) != null) {
             try { retry = Math.max(0, Long.parseLong(me.getParam(DiscoveryAuth.BUSY_PARAM))); } catch (NumberFormatException e) { retry = 0; }
         }
