@@ -567,13 +567,10 @@ public class ControllerSMHandler {
                         } else {
                             // nobody answered the search: no controller is up yet, as far as this node can tell (it asks again
                             // as often as before, not in step with the others)
-                            failed = new TCPDiscoveryStatic.Attempt();
-                            failed.outcome = TCPDiscoveryStatic.Outcome.NO_ANSWER;
-                            failed.host = "the search for a controller on this network";
-                            failed.elapsedMs = System.currentTimeMillis() - searched;
                             long next = backoff2.failed(TCPDiscoveryStatic.Outcome.UNREACHABLE, -1);
-                            logger.warn("Discovery: joining a region: no controller answered this node's search in " + failed.elapsedMs
-                                    + " ms; attempt " + backoff2.attempts() + ", trying again in " + (next + 50) / 100 / 10.0 + " s");
+                            logger.warn("Discovery: joining a region: no controller answered this node's search in "
+                                    + (System.currentTimeMillis() - searched) + " ms; attempt " + backoff2.attempts() + ", trying again in "
+                                    + (next + 50) / 100 / 10.0 + " s");
                             Thread.sleep(next);
                             continue;
                         }
