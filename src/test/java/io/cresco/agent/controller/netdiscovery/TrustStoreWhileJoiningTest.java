@@ -30,10 +30,13 @@ class TrustStoreWhileJoiningTest {
 
         AtomicBoolean stop = new AtomicBoolean();
         AtomicInteger added = new AtomicInteger(), built = new AtomicInteger(), failed = new AtomicInteger();
-        final int joinsWanted = 400;
+        final int joinsWanted = 400, buildsWanted = 40;
         long t0 = System.nanoTime();
         Thread joins = new Thread(() -> {
-            for (int i = 0; i < joinsWanted; i++) {
+            // joins go on until the builders have had their turn too: the two must overlap, however fast a join is (on a
+            // fast machine 400 joins took 15 ms and ended before a builder thread had started; the test then showed nothing)
+            long deadline = System.nanoTime() + 120_000_000_000L;
+            for (int i = 0; (i < joinsWanted || built.get() < buildsWanted) && failed.get() == 0 && System.nanoTime() < deadline; i++) {
                 cm.addCertificatesToTrustStore("join" + i, chain);                             // a new alias each time
                 added.incrementAndGet();
             }
@@ -56,8 +59,8 @@ class TrustStoreWhileJoiningTest {
         for (Thread t : builders) t.join(30_000);
         System.out.println("TrustStoreWhileJoiningTest: " + added.get() + " joins added in " + (System.nanoTime() - t0) / 1_000_000
                 + " ms while " + built.get() + " trust managers were built, " + failed.get() + " failed");
-        assertEquals(joinsWanted, added.get(), "every join added its certificates");
-        assertTrue(built.get() > 0, "trust managers were built meanwhile");
+        assertTrue(added.get() >= joinsWanted, "the joins added their certificates: " + added.get());
+        assertTrue(built.get() >= buildsWanted || failed.get() > 0, "trust managers were built while the joins ran: " + built.get());
         assertEquals(0, failed.get(), "a connection was left without trust managers (" + built.get() + " built)");
     }
 }
