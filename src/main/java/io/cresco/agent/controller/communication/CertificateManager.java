@@ -144,8 +144,9 @@ public class CertificateManager {
                     keyStore.load(null, null);
 
 
-                    trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
-                    trustStore.load(null, null);
+                    KeyStore blank = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+                    blank.load(null, null);
+                    swapTrustStore(blank);            // (and its index: nothing of a store that failed to load stays trusted)
 
                     generateCertChain();
 
@@ -160,8 +161,9 @@ public class CertificateManager {
                 keyStore.load(null, null);
 
 
-                trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
-                trustStore.load(null, null);
+                KeyStore blank = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+                blank.load(null, null);
+                swapTrustStore(blank);
 
                 // the node's key survives restarts (identity bindings at peers and CAs follow the key)
                 if (!loadNodeIdentity()) {
