@@ -230,6 +230,18 @@ public final class PeerTrustRegistry {
      * never bound again (first come) until the operator rebinds the name. Never pruned.
      */
     private final Map<String, Tomb> tombs = new ConcurrentHashMap<>();
+    /**
+     * Region -> the names bound here as CONTROLLERS under it (maintained with {@link #identities}; read lock-free): what
+     * {@link #claimController} asks at a join. One entry per region a controller of which is bound here.
+     */
+    private final Map<String, Set<String>> controllersByRegion = new ConcurrentHashMap<>();
+    /** Controllers refused because their region has another controller recorded here ({@link #claimController}), so far. */
+    private final java.util.concurrent.atomic.AtomicLong controllersRefused = new java.util.concurrent.atomic.AtomicLong();
+    /** Joiner (name and key) -> {times refused, when last logged}: one line per joiner, then one every ten minutes. Bounded. */
+    private final Map<String, long[]> refusedControllers = new ConcurrentHashMap<>();
+    private volatile long refusedControllersOverflowLogged;
+    static final int REFUSED_CONTROLLERS_MAX = 1024;
+    static final long REFUSED_CONTROLLER_LOG_MS = 600_000L;
     /** Key fingerprint -> the names bound to it (maintained with the write lock; read lock-free). */
     private final Map<String, Set<String>> namesByKey = new ConcurrentHashMap<>();
     /** Notified (outside the write lock) with the key fingerprint when a key is revoked. */
@@ -466,6 +478,8 @@ public final class PeerTrustRegistry {
             }
             r.reloadRevokeFileLocked();
             r.completeRevocationsLocked();
+            // a registry of before the rule "a region has one controller here" may hold several: said at every start
+            for (String c : r.controllerConflicts()) r.log.accept("PEER TRUST REGISTRY: " + c);
             if (!r.sealed && r.fenced == null) {
                 long now = System.currentTimeMillis();
                 r.revokeConfiguredBridges();
@@ -728,6 +742,7 @@ public final class PeerTrustRegistry {
 
     /** With the write lock (or while loading): bind {@code n}, keeping the key -> names index. */
     private void putIdentity(String n, Binding b) {
+        indexController(n, ROLE_CONTROLLER.equals(b.role));
         Binding old = identities.put(n, b);
         if (old != null && !old.key.equals(b.key)) unindex(old.key, n);
         namesByKey.computeIfAbsent(b.key, k -> ConcurrentHashMap.newKeySet()).add(n);
@@ -735,7 +750,20 @@ public final class PeerTrustRegistry {
 
     /** With the write lock (or while loading): unbind {@code n} if it is still {@code b}. */
     private void removeIdentity(String n, Binding b) {
-        if (identities.remove(n, b)) unindex(b.key, n);
+        if (identities.remove(n, b)) { unindex(b.key, n); indexController(n, false); }
+    }
+
+    /** With the write lock (or while loading): {@code n} is (not) bound here as a controller. */
+    private void indexController(String n, boolean is) {
+        int slash = n.indexOf('/');
+        if (slash <= 0) return;
+        String region = n.substring(0, slash);
+        if (is) {
+            controllersByRegion.computeIfAbsent(region, k -> ConcurrentHashMap.newKeySet()).add(n);
+        } else {
+            Set<String> s = controllersByRegion.get(region);
+            if (s != null) { s.remove(n); if (s.isEmpty()) controllersByRegion.remove(region, s); }
+        }
     }
 
     private void unindex(String key, String n) {
@@ -1180,6 +1208,236 @@ public final class PeerTrustRegistry {
         Binding ca = cas.get(id.getRegion());
         if (ca != null && ca.tenant.equals(id.getTenant()) && (revoked.containsKey(ca.key) || !signedBy(leaf, ca.caCert()))) return null;
         return id;
+    }
+
+    // ---------------------------------------------------------------- one controller per region
+    //
+    // A discovery secret proves membership, not a name: every region controller holds the global's secret, every agent its
+    // region's. A name is therefore bound to the first key that presents it -- and that alone let a holder of the secret
+    // join under a NEW agent name of a region whose controller was already bound ("rgB/zz" beside "rgB/rc"): first come
+    // again, as a controller. Everything this node grants a region's controller then went to it as well: it spoke for the
+    // region in the registry, its bridge carried the stamps of the region's nodes and was given their inboxes (under any
+    // tenant's name), its key was listed in the trust bundle, its revocation list revoked the region's real controller.
+    //
+    // The rule: where a controller is recorded for a region, that region has ONE controller here -- the first identity bound
+    // as its controller. Another identity that claims the region as a controller is refused before anything of it is
+    // recorded, whatever tenant its certificate states. What identifies the controller is its KEY: the same key under
+    // another agent name of the region is the same controller (a controller whose agent name is generated anew at each
+    // start keeps its key); such a name admits nobody, because every use of a controller's identity -- its bridge, its
+    // lists, its place in the trust bundle -- needs the private key. The same name with another key is the re-key case, as
+    // before. Only the operator replaces a region's controller: a rebind token for the new name on this node, or its key
+    // in controller_trust_anchors (or, at a joiner, an operator-signed rebind statement).
+
+    /** Why a controller was not recorded for its region ({@link #claimController}), with what the log line needs. */
+    public static final class ControllerRefusal {
+        public final String region;
+        /** The controller(s) recorded here for the region: {@code rgB/rc (tenant t1, key 0123.., since <date>)}; several when there are. */
+        public final String recorded;
+        /** One of them by name (what the operator revokes when it is not the region's controller). */
+        public final String recordedName;
+        /** What the operator does on this node, for either case. */
+        public final String remedy;
+        ControllerRefusal(String region, String recorded, String recordedName, String remedy) {
+            this.region = region; this.recorded = recorded; this.recordedName = recordedName; this.remedy = remedy;
+        }
+    }
+
+    /**
+     * The names BOUND here as controllers of {@code region}, leaving {@code n} out. Lock-free; one lookup. (A bridge-peer
+     * record without a binding is not counted: it gives nobody an identity. Under per-node trust discovery binds a
+     * controller before it records its bridge, so the bound names are all of them; a node of a regional-CA fabric records
+     * the controllers it joined as bridge peers only, and there one CA per region is the rule.)
+     */
+    private java.util.TreeSet<String> otherControllers(String region, String n) {
+        java.util.TreeSet<String> names = new java.util.TreeSet<>();
+        Set<String> bound = controllersByRegion.get(region);
+        if (bound != null) names.addAll(bound);
+        names.remove(n);
+        return names;
+    }
+
+    /** Is the key {@code fp} bound here, in {@code tenant}, as a controller of {@code region} under some name? Lock-free. */
+    private boolean isControllerKey(String region, String tenant, String fp) {
+        Set<String> bound = controllersByRegion.get(region);
+        if (bound == null) return false;
+        for (String o : bound) {
+            Binding b = identities.get(o);
+            if (b != null && b.key.equals(fp) && b.tenant.equals(tenant)) return true;
+        }
+        return false;
+    }
+
+    private String describeControllers(Collection<String> names) {
+        StringBuilder sb = new StringBuilder();
+        for (String o : names) {
+            Binding b = identities.get(o);
+            sb.append(sb.length() == 0 ? "" : ", ").append(o).append(b == null ? ""
+                    : " (tenant " + b.tenant + ", key " + PeerIdentity.shortFp(b.key) + ", since " + new java.util.Date(b.firstSeen) + ")");
+        }
+        return sb.toString();
+    }
+
+    /** An unconsumed operator rebind token for {@code n} that allows {@code fp}, or null; says nothing (see {@link #rebindToken}). */
+    private String rebindTokenQuiet(String n, String fp) {
+        reloadRebindFile();
+        for (Set<String> src : List.of(rebindConfig, rebindFile)) {
+            for (String t : src) {
+                if (!tokenName(t).equals(n) || consumed.contains(t)) continue;
+                String want = tokenKey(t);
+                if (want == null || want.equals(fp)) return t;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A discovery exchange is about to record {@code region/agent} of {@code tenant}, with the leaf of {@code chain}, as a
+     * CONTROLLER (it joined this node in a REGION/GLOBAL exchange, or this node joined it): may it be? See the rule above.
+     * <ul>
+     *   <li>Nothing is recorded for the region, or only this same controller (its key, its tenant): yes, as before.</li>
+     *   <li>The name itself is bound here, tombstoned, or its key revoked: that name's own rules decide (a re-join, the
+     *       re-key case, a revoked name), as before -- so what a registry already holds keeps working.</li>
+     *   <li>Another controller is recorded for the region: NO -- unless the operator replaces it. {@code vouched} non-null:
+     *       the caller verified that the operator vouches for this one ({@code controller_trust_anchors}, a signed rebind
+     *       statement); or a rebind token for this name is on this node ({@code <region>/<agent>=<key fingerprint>} in
+     *       {@code peer-trust.json.rebind}, or {@code peer_identity_rebind}). Then, with {@code record}, the others are
+     *       unbound and their bridge records removed (one durable write, with the token it consumes), and the caller binds
+     *       this one. A controller whose own key the operator anchored ({@code anchored}) is not replaced on the strength
+     *       of another anchor: two anchored controllers of one region is the operator's to settle.</li>
+     * </ul>
+     * Not under a pre-provisioned PKI (the operator's certificates decide there) and not asked under the regional CA (one
+     * CA per region is that rule: {@link #trustCa}). One lookup at a join; nothing on a message's path.
+     *
+     * @return null when it may be recorded, else why not
+     */
+    public ControllerRefusal claimController(String tenant, String region, String agent, X509Certificate[] chain, String vouched,
+                                             java.util.function.Predicate<String> anchored, boolean record) {
+        if (pki != null || chain == null || chain.length == 0 || chain[0] == null || tenant == null) return null;
+        if (!CrescoNames.isValid(region) || !CrescoNames.isValid(agent)) return null;
+        String n = name(region, agent), fp = fingerprint(chain[0].getPublicKey().getEncoded());
+        if (identities.containsKey(n) || tombs.containsKey(n) || isRevokedFor(fp, region)) return null;
+        java.util.TreeSet<String> others = otherControllers(region, n);
+        // nothing recorded for the region; or this very controller (its key, its tenant) under another agent name -- also
+        // where a registry of before the rule holds several: what is recorded keeps working
+        if (others.isEmpty() || isControllerKey(region, tenant, fp) || issuedByRecordedCa(chain)) return null;
+        String token = rebindTokenQuiet(n, fp);
+        String rebindLine = "'" + n + "=" + fp + "'";
+        String remedy = "If " + n + " is to REPLACE it as region " + region + "'s controller, authorise that on this node: add the line "
+                + rebindLine + " to " + rebindFileHint() + " (no restart), or list its key in controller_trust_anchors. If "
+                + others.first() + " is NOT that region's controller (it took the region before the real one joined), revoke it here: add the"
+                + " line '" + others.first() + "' to " + (revokePath() == null ? "peer_identity_revoke" : revokePath().toString())
+                + "; " + n + " then joins";
+        if (vouched == null && token == null) return new ControllerRefusal(region, describeControllers(others), others.first(), remedy);
+        if (token == null && anchored != null) {
+            for (String o : others) {
+                Binding b = identities.get(o);
+                if (b != null && anchored.test(b.key)) {
+                    return new ControllerRefusal(region, describeControllers(others), o, "Both " + o + " and " + n + " are listed in"
+                            + " controller_trust_anchors on this node: a region has one controller -- take the key that is not region "
+                            + region + "'s controller out of that list (or add the line " + rebindLine + " to " + rebindFileHint() + ")");
+                }
+            }
+        }
+        if (!record) return null;
+        synchronized (writeLock) {
+            if (sealed && !tryRecover()) return new ControllerRefusal(region, describeControllers(others), others.first(), sealedText());
+            if (fenced != null) return new ControllerRefusal(region, describeControllers(others), others.first(), fencedText());
+            others = otherControllers(region, n);
+            String was = describeControllers(others);
+            List<Rec> recs = new ArrayList<>();
+            for (String o : others) {
+                if (identities.containsKey(o)) recs.add(rec("unbind", o));
+                if (bridges.containsKey(o)) recs.add(rec("unbridge", o));
+            }
+            if (token != null) {
+                if (tokenKey(token) == null) {
+                    log.accept("Rebind token '" + token + "' names no key: it makes the FIRST key presented as " + n + " ("
+                            + PeerIdentity.shortFp(fp) + ") region " + region + "'s controller; bind tokens to the expected key: " + rebindLine);
+                }
+                Rec c = rec("consume", n);
+                c.token = token; c.t = System.currentTimeMillis();
+                recs.add(c);
+            }
+            // the removal and the token it consumes are one durable write; memory changes only after it
+            if (!recs.isEmpty() && !append(recs.toArray(new Rec[0]))) {
+                return new ControllerRefusal(region, was, others.isEmpty() ? n : others.first(), "the replacement could not be recorded durably");
+            }
+            for (String o : others) {
+                Binding b = identities.get(o);
+                if (b != null) removeIdentity(o, b);
+                if (bridges.remove(o) != null) bridgesVersion++;
+            }
+            if (token != null) consumed.add(token);
+            if (!others.isEmpty()) {
+                log.accept("Controller of region " + region + " REPLACED by the operator (" + (token != null ? "rebind token '" + token
+                        + "', now consumed" : vouched) + "): " + was + " is no longer recorded here; " + n + " (tenant " + tenant + ", key "
+                        + PeerIdentity.shortFp(fp) + ") is taken as that region's controller. The former controller's key is NOT revoked by"
+                        + " this: revoke it too if it must be refused everywhere");
+            }
+            compactIfDue();
+        }
+        return null;
+    }
+
+    /**
+     * A controller was refused by {@link #claimController}: counted; true when it is to be logged now -- the first time for
+     * this joiner (its name and key), then at most every ten minutes; of more joiners than are remembered, one a minute.
+     */
+    public boolean controllerRefused(String region, String agent, String keyFp) {
+        controllersRefused.incrementAndGet();
+        long now = System.currentTimeMillis();
+        String k = region + "/" + agent + "|" + keyFp;
+        long[] seen = refusedControllers.get(k);
+        if (seen == null) {
+            if (refusedControllers.size() >= REFUSED_CONTROLLERS_MAX) {
+                if (now - refusedControllersOverflowLogged < 60_000L) return false;
+                refusedControllersOverflowLogged = now;
+                return true;
+            }
+            refusedControllers.put(k, new long[]{1, now});
+            return true;
+        }
+        seen[0]++;
+        if (now - seen[1] < REFUSED_CONTROLLER_LOG_MS) return false;
+        seen[1] = now;
+        return true;
+    }
+
+    /** How often {@code region/agent} with that key was refused so far (for the log line). */
+    public long controllerRefusedTimes(String region, String agent, String keyFp) {
+        long[] seen = refusedControllers.get(region + "/" + agent + "|" + keyFp);
+        return seen == null ? 1 : seen[0];
+    }
+
+    /** Controllers refused because their region has another controller recorded here, so far (a counter of the metric inventory). */
+    public long controllersRefusedCount() { return controllersRefused.get(); }
+
+    /**
+     * The regions for which MORE than one controller is recorded here -- distinct keys (or tenants) bound as controllers
+     * under one region -- one line each; empty when there is none (and always under a pre-provisioned PKI). A registry of before the rule can hold them, and this node does not choose:
+     * every one keeps working as recorded, no further one is taken, and it is said at every start and by the identity
+     * health check until the operator has revoked the ones that are not the region's controller.
+     */
+    public List<String> controllerConflicts() {
+        if (pki != null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String region : new java.util.TreeSet<>(controllersByRegion.keySet())) {
+            Set<String> bound = controllersByRegion.get(region);
+            if (bound == null || bound.size() < 2) continue;                      // (the usual case: one name)
+            java.util.TreeSet<String> names = new java.util.TreeSet<>(bound);
+            Set<String> distinct = new HashSet<>();
+            for (String o : names) {
+                Binding b = identities.get(o);
+                if (b != null) distinct.add(b.tenant + "|" + b.key);
+            }
+            if (distinct.size() < 2) continue;
+            out.add(distinct.size() + " CONTROLLERS are recorded here for region " + region + ": " + describeControllers(names) + ". A region"
+                    + " has ONE controller; this registry was written before that was enforced (or the operator anchored two). Each"
+                    + " keeps working as it is recorded, and no further controller is taken for the region -- but one of them may not be"
+                    + " that region's controller, and whoever holds its key speaks for the region here. Revoke the one that is not: add"
+                    + " its name (or key fingerprint) to " + (revokePath() == null ? "peer_identity_revoke" : revokePath().toString()));
+        }
+        return out;
     }
 
     // ---------------------------------------------------------------- bridge peers
@@ -2707,7 +2965,7 @@ public final class PeerTrustRegistry {
 
     private void clearState() {
         identities.clear(); cas.clear(); bridges.clear(); bridgesVersion++; consumed.clear(); revokedKeys.clear(); pendingSeen.clear();
-        namesByKey.clear(); tombs.clear();
+        namesByKey.clear(); tombs.clear(); controllersByRegion.clear();
         synchronized (revMemLock) {
             revoked.clear(); revokedBySeq.clear(); revokedAnyScope.clear(); revokedByScope.clear(); revPending.clear(); revSeq = 0; revVersion++;
         }

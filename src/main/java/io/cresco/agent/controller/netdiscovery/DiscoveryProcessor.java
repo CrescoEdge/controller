@@ -149,6 +149,7 @@ public class DiscoveryProcessor {
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY) {
 
 									discoveryNode.legacy_exchange = true;
+									discoveryNode.remote = remoteAddress;
 									String discovered_cert = configureCertTrust(discoveryNode);
 									if (discovered_cert == null) return null;     // refused (logged): no answer, nothing recorded
 									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encryptLegacy(validateMessage,discoverySecret), discovered_cert);
@@ -286,6 +287,19 @@ public class DiscoveryProcessor {
 	 * key is pinned to the region/agent it reported; a REGION/GLOBAL responder is a controller allowed to bridge to us.
 	 */
 	public boolean setCertTrust(DiscoveryNode discoveryNode) {
+		if (discoveryNode.remote == null) discoveryNode.remote = discoveryNode.discovered_ip;
+		JUDGING.set(discoveryNode);
+		try {
+			return setCertTrustOf(discoveryNode);
+		} finally {
+			JUDGING.remove();
+		}
+	}
+
+	/** The exchange this thread is judging: {@link #learnPeer} reads the peer's address from it and leaves why it refused it. */
+	private static final ThreadLocal<DiscoveryNode> JUDGING = new ThreadLocal<>();
+
+	private boolean setCertTrustOf(DiscoveryNode discoveryNode) {
 		boolean regionalCa = plugin.getConfig().getBooleanParam("security_regional_ca", false);
 		DiscoveryType type = discoveryNode.discovery_type;
 		String region = discoveryNode.discovered_region, agent = discoveryNode.discovered_agent;
@@ -316,7 +330,7 @@ public class DiscoveryProcessor {
 			return false;
 		}
 		// every check on the peer runs BEFORE anything it sent is recorded or trusted
-		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, !regionalCa, true, false)) return false;
+		if (!learnPeer(type, region, agent, discoveryNode.discovered_cert, !regionalCa, true, false, discoveryNode.discovered_rebind)) return false;
 		if (regionalCa) {
 			io.cresco.agent.controller.communication.PeerTrustRegistry reg = controllerEngine.getCertificateManager().getPeerTrust();
 			Object before = reg.caState(region);
@@ -420,6 +434,38 @@ public class DiscoveryProcessor {
 					return false;
 				}
 			}
+			if (pinLeaf && (asClient || controllerExchange) && named != null && certs[0] != null) {
+				// ONE controller per region (PeerTrustRegistry.claimController): where this node has a controller recorded for the
+				// region this peer claims, another identity is refused before anything of it is recorded -- a joining controller, a
+				// controller that answers this node's exchange, the controller an agent finds for its own region -- unless the
+				// operator vouches for it. With `record`, a vouched one replaces what was recorded, and is then bound below.
+				io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
+				String keyFp = io.cresco.agent.controller.communication.PeerIdentity.spkiFingerprint(certs[0]);
+				boolean anchored = cm.controllerAnchorVouches(certs);
+				String voucher = anchored ? "its key is listed in controller_trust_anchors"
+						: asClient && rebindStatement != null && cm.rebindStatementRefusal(rebindStatement, region, agent, keyFp) == null
+						? "an operator-signed rebind statement" : null;
+				io.cresco.agent.controller.communication.PeerTrustRegistry.ControllerRefusal no = reg.claimController(named.getTenant(), region,
+						agent, certs, voucher, anchored ? cm::controllerAnchorListsKey : null, record);
+				if (no != null) {
+					DiscoveryNode at = JUDGING.get();
+					if (at != null) {
+						at.refusal = "region " + region + " already has a controller there (" + no.recordedName + "); what its operator can do is"
+								+ " in that node's log";
+					}
+					// counted every time; logged once per joiner, then at most every ten minutes
+					if (reg.controllerRefused(region, agent, keyFp)) {
+						logger.error("Discovery REFUSED controller " + region + "/" + agent + " (tenant " + named.getTenant() + ", key " + keyFp + ") at "
+								+ (at == null || at.remote == null ? "an unknown address" : at.remote)
+								+ (asClient ? ", which answered a " + type + " exchange as a controller of region " + region
+								: ", which claims region " + region + " in a " + type + " exchange") + ": this node has " + no.recorded
+								+ " recorded for that region, and a region has ONE controller here -- the first that joined. Nothing of "
+								+ region + "/" + agent + " was recorded. " + no.remedy + ". (refused " + reg.controllerRefusedTimes(region, agent, keyFp)
+								+ " time(s) so far; said again at most every 10 minutes)");
+					}
+					return false;
+				}
+			}
 			if (!record) return true;
 			if (pinLeaf && certs != null && certs.length > 0 && certs[0] != null) {
 				String role = (asClient || controllerExchange) ? io.cresco.agent.controller.communication.PeerTrustRegistry.ROLE_CONTROLLER
@@ -501,6 +547,15 @@ public class DiscoveryProcessor {
 
 	/** Responder side of a certified discovery exchange (see {@link #setCertTrust(DiscoveryNode)}). */
 	private String configureCertTrust(DiscoveryNode discoveryNode) {
+		JUDGING.set(discoveryNode);
+		try {
+			return configureCertTrustOf(discoveryNode);
+		} finally {
+			JUDGING.remove();
+		}
+	}
+
+	private String configureCertTrustOf(DiscoveryNode discoveryNode) {
 		io.cresco.agent.controller.communication.CertificateManager cm = controllerEngine.getCertificateManager();
 		if (cm.isProvisioned()) {
 			// pre-provisioned: the joiner's identity is its certificate from the operator's PKI -- nothing is bound or issued
@@ -892,9 +947,11 @@ public class DiscoveryProcessor {
 			n.discover_region = h.creg;
 			n.discover_agent = h.cagt;
 			n.discover_cert = h.ccert;
+			n.remote = remote;
 			String local = configureCertTrust(n);
 			r.ok = local != null;
-			r.reason = r.ok ? null : "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + " (identity taken, invalid, or outside this CA's scope; see its log)";
+			r.reason = r.ok ? null : "refused by " + plugin.getRegion() + "/" + plugin.getAgent() + (n.refusal != null ? ": " + n.refusal
+					: " (identity taken, invalid, or outside this CA's scope; see its log)");
 			r.rcert = local;
 			if (r.ok) logger.info("discovery " + (pki ? "(PKI)" : "v2") + ": authenticated " + h.type + " exchange with " + h.creg + "/" + h.cagt + " at " + remote);
 		}

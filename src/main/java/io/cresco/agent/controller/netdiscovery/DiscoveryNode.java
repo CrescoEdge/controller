@@ -11,6 +11,8 @@ public class DiscoveryNode {
 	public transient String discovered_server_cert;
 	/** Responder side: this exchange is the legacy single-message one (the upgrade window; its binding is marked legacy). */
 	public transient boolean legacy_exchange;
+	/** The peer's address as this node saw it (for the log), and -- set when it is refused -- what the peer is told. */
+	public transient String remote, refusal;
 	// W-GFS-5: the port the discovered controller's BROKER is actually bound to (-1 = unknown/older
 	// peer). Bridges and agent IO channels prefer it over the fixed discovery_port(_remote) config, so
 	// several brokers on one host (distinct ports) are reachable; multi-host peers on the default port

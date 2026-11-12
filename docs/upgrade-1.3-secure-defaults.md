@@ -102,6 +102,15 @@ Controllers first, from the top: a parent must understand everything its childre
 
 A node that cannot be upgraded before the window ends is cut off when it does: upgrade it, or take it out of the fabric.
 
+**One controller per region.** From the build with that rule (`caller-authorization.md`, "One controller per region") a node
+refuses a second controller identity for a region it already has a controller recorded for. It is the recording node
+that enforces it, so the order above is also the order of protection: an earlier-build global protects no region. At
+its first start on that build a node says (ERROR at start, CRITICAL in its `identity` health) when its registry already
+holds two controllers under one region; both keep working until the operator revokes the one that is not the region's.
+A controller that returns with a new key AND a new agent name (its `security` directory was lost and its `agentname` is
+not configured) is refused where its region's former identity is recorded: keep the directory, set `agentname`, or
+replace the controller as that section says.
+
 ## 5. Checking a node
 
 - `REFUSING TO START: ...` lines name every configuration problem; the process exits 78.

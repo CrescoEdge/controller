@@ -801,6 +801,11 @@ public class CertificateManager {
         return !controllerAnchors().isEmpty() && controllerAnchorRefusal(chain, null) == null;
     }
 
+    /** Is the key with this fingerprint (SHA-256 of its SubjectPublicKeyInfo, hex) itself listed in {@code controller_trust_anchors}? */
+    public boolean controllerAnchorListsKey(String keyFp) {
+        return keyFp != null && controllerAnchors().contains(keyFp.replace(":", "").toLowerCase(java.util.Locale.ROOT));
+    }
+
     private volatile String rebindStatementCache;
     private volatile long rebindStatementMtime = -1;
 
@@ -1284,6 +1289,9 @@ public class CertificateManager {
             if (r.lockFailure() != null) crit.add("peer trust registry FENCED: " + r.lockFailure() + " (nothing new is bound)");
             if (r.isSealed()) crit.add("peer trust registry SEALED: " + r.sealReason());
             if (r.revocationDurability() != null) crit.add(r.revocationDurability());
+            // more than one controller recorded for a region (a registry of before "a region has one controller here"): whoever
+            // holds either key speaks for that region on this node, until the operator revokes the one that is not its controller
+            crit.addAll(r.controllerConflicts());
         }
         String ia = identityAlarm;
         if (ia != null) (identityAlarmCritical ? crit : warn).add(ia);
