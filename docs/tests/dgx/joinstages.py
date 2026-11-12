@@ -85,6 +85,7 @@ def rejoin(d, since, controller):
                       "first_answer_after_s": None if up is None else round(up - since, 1),
                       "back_after_stop_s": span(ok, since), "back_after_first_answer_s": span(ok, up),
                       "authenticated_after_first_answer_s": span(auth, up),
+                      "connected_after_first_answer_s": span(sorted(first.get("tls", {}).values()), up),
                       "agents_unanswered": agents_unanswered, "unanswered_lines": unanswered, "agent_error_lines": errors}))
 
 
@@ -97,7 +98,7 @@ def main():
     for f in os.listdir(d):
         if not re.fullmatch(r"s\d+\.log", f):
             continue
-        st = {"fails": 0, "errors": 0}
+        st = {"fails": 0, "errors": 0, "fail_at": [], "error_at": []}
         for l in open(os.path.join(d, f), errors="replace"):
             if "jvm" not in st:
                 m = JUL.match(l)
@@ -111,11 +112,13 @@ def main():
                 st["svc"] = t4j(m)
             if m.group(3) == "ERROR":
                 st["errors"] += 1
+                st["error_at"].append(t4j(m))
             for key, rx in OWN:
                 if key not in st and rx.search(l):
                     st[key] = t4j(m)
             if UNANSWERED.search(l):
                 st["fails"] += 1
+                st["fail_at"].append(t4j(m))
                 st.setdefault("first_fail", t4j(m))
                 st["last_fail"] = t4j(m)
         a[f[:-4]] = st
@@ -142,10 +145,14 @@ def main():
                 refused[c] = refused.get(c, 0) + 1
     prev, out = 0, []
     released = {}
+    after = float("inf")       # when what follows the steps began (a controller restart): its lines are not a step's
     if "--steps-file" in sys.argv:
         try:
             for l in open(sys.argv[sys.argv.index("--steps-file") + 1]):
-                released[int(l.split()[0])] = float(l.split()[1])
+                if l.split()[0] == "restart":
+                    after = float(l.split()[1])
+                else:
+                    released[int(l.split()[0])] = float(l.split()[1])
         except (OSError, ValueError, IndexError):
             pass
     starts = []
@@ -163,13 +170,17 @@ def main():
             return {"p50": pct(xs, 0.5), "p90": pct(xs, 0.9), "max": pct(xs, 1.0), "n": len(xs)}
         r = {"agents": s, "new": len(names), "jvm": col("jvm"), "svc": col("svc"), "auth": col("auth"), "tls": col("tls"),
              "ok": col("ok"), "svc_to_auth": col("auth", "svc"), "auth_to_tls": col("tls", "auth"), "tls_to_ok": col("ok", "tls"),
-             "agents_unanswered": sum(1 for n in names if a[n]["fails"]), "unanswered_lines": sum(a[n]["fails"] for n in names),
-             "agent_error_lines": sum(a[n]["errors"] for n in names), "t0": t0,
+             "t0": t0, "names": names,
              "traced": {k: col(k) for k, _ in OWN}, "traced_ident_to_disc": col("disc", "ident"),
              "traced_disc_to_conn": col("conn", "disc"), "traced_conn_to_reg": col("reg", "conn")}
         out.append(r)
     for i, r in enumerate(out):
-        end = starts[i + 1] if i + 1 < len(starts) else float("inf")
+        # a step's lines: those of its own agents and of the controllers, stamped before the next step (or a restart)
+        end = starts[i + 1] if i + 1 < len(starts) else after
+        names = r.pop("names")
+        r["agents_unanswered"] = sum(1 for n in names if any(r["t0"] <= t < end for t in a[n]["fail_at"]))
+        r["unanswered_lines"] = sum(sum(1 for t in a[n]["fail_at"] if r["t0"] <= t < end) for n in names)
+        r["agent_error_lines"] = sum(sum(1 for t in a[n]["error_at"] if r["t0"] <= t < end) for n in names)
         r["controller_error_lines"] = sum(1 for t in ctl_errors if r["t0"] <= t < end)
         r["error_lines"] = r["agent_error_lines"] + r["controller_error_lines"]
     print(json.dumps(out))
