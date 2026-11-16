@@ -553,9 +553,30 @@ public class AgentConsumer {
 		if (d == null || caller == null) return null;
 		boolean vm = uri != null && uri.startsWith("vm:");
 		if (vm) return d;
+		String[] parent = linkParent();
+		return parent == null ? null : trustedFirstHand(d, false, parent[0], parent[1]);
+	}
+
+	/**
+	 * The parent whose broker this (network) consumer reads from: the controller its link was made to -- the peer the
+	 * discovery that chose this broker certified, to which every TLS connection to {@link #uri} is bound
+	 * ({@link ActiveClient#expectPeer}) -- and, for a link made without one, the region controller the node's state names.
+	 * Null when neither is known.
+	 *
+	 * <p>Not the state alone: an agent's state names its parent only between the end of its join (after its inbox is up)
+	 * and the moment it declares that parent lost (before its inbox is closed). What its parent's broker delivered outside
+	 * that span -- typically the answer to a ping of the agent's previous link, still on its inbox queue when the agent
+	 * joined again a moment later -- was refused as "not delivered first hand", although the broker attested it as the
+	 * parent's own. The link's peer is the identity the state names once the join completes, and it is known from the
+	 * moment the link exists until the link is gone; the broker's word counts for that peer's own messages only, as before.
+	 */
+	private String[] linkParent() {
+		ActiveClient client = controllerEngine.getActiveClient();
+		PeerIdentity.Expected link = client == null ? null : client.expectedPeer(uri);
+		if (link != null && link.region != null && link.agent != null) return new String[]{link.region, link.agent};
 		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
-		if (cs == null) return null;
-		return trustedFirstHand(d, false, cs.getRegionalRegion(), cs.getRegionalAgent());
+		if (cs == null || cs.getRegionalRegion() == null || cs.getRegionalAgent() == null) return null;
+		return new String[]{cs.getRegionalRegion(), cs.getRegionalAgent()};
 	}
 
 	/** {@code d} as a consumer may trust it: on its own broker ({@code vm}) as attested; on its parent's, only the parent. */
@@ -749,7 +770,9 @@ public class AgentConsumer {
 		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
 		if (cs == null) return false;
 		boolean region = cs.isRegionalController();
-		String pr = region ? cs.getGlobalRegion() : cs.getRegionalRegion(), pa = region ? cs.getGlobalAgent() : cs.getRegionalAgent();
+		String[] agentsParent = region ? null : linkParent();
+		String pr = region ? cs.getGlobalRegion() : agentsParent == null ? null : agentsParent[0];
+		String pa = region ? cs.getGlobalAgent() : agentsParent == null ? null : agentsParent[1];
 		return pr != null && pa != null && pr.equals(c.getRegion()) && pa.equals(c.getAgent());
 	}
 
