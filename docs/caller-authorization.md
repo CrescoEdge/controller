@@ -721,7 +721,8 @@ is recorded.
   admits, without proof and logged each time: a FIRST join (`UPGRADE WINDOW: <name> ... recorded WITHOUT proof`), and --
   for a controller -- another agent name of a key that is recorded for that region, in that tenant, and never proved
   itself: the new name REPLACES the former one, one name at a time (`UPGRADE WINDOW: the controller of region <r> is now
-  recorded as <new> in place of <old> ...`). Nothing else. Such records can be anybody's doing (the secret and a copy of
+  recorded as <new> in place of <old> ...`); both are WARN lines -- what the window is open for, not an error. Nothing
+  else. Such records can be anybody's doing (the secret and a copy of
   a certificate suffice), so they never stand against the key's holder: when a node PROVES a key, whatever was recorded
   of that key without proof -- another name, region or tenant -- gives way to it. So a fabric of 1.3.378 nodes that is
   to join a NEW global of this build either upgrades first or the global opens its window for the time of the upgrade; a
@@ -779,7 +780,7 @@ is recorded.
   name -- not for that key under another name, not for another controller of the region. While an entry scoped to the
   recorded global's name is listed, no other anchored responder takes the global's place.
 - **One global.** A node has ONE global: the first identity it took in a GLOBAL exchange (`<name> ... is recorded as this
-  node's GLOBAL`). Any other responder of a GLOBAL exchange is refused -- a region name never seen, a recorded peer
+  node's GLOBAL`, an INFO line; a WARN when it is recorded without proof, unconfirmed). Any other responder of a GLOBAL exchange is refused -- a region name never seen, a recorded peer
   region's controller: `this node's global is <name> ..., and a node has ONE global`. Moving a region to another global
   is the operator's act ON THE REGION: the line `<new global region>/<agent>=<its key fingerprint>` in the region's
   `peer-trust.json.rebind` (`This node's GLOBAL MOVED from ... to ... by the operator`; the former global stays recorded

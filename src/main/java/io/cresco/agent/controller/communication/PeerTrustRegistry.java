@@ -357,6 +357,11 @@ public final class PeerTrustRegistry {
     private volatile String sealReason;
     private long bridgePruneMs = 30L * DAY, bindingPruneMs = 90L * DAY;
     private Consumer<String> log = s -> { };
+    /**
+     * Where the lines that are not errors go ({@link #setNoticeLogs}): what this node now holds (INFO), and what an operator
+     * should know of but is expected -- an event of the upgrade window (WARN). Unset: {@link #log}, as before.
+     */
+    private volatile Consumer<String> infoLog, warnLog;
     private byte[] macKey;
     private String lastMac = "";
     private long lines;
@@ -701,6 +706,27 @@ public final class PeerTrustRegistry {
         java.util.function.BiConsumer<String, String> l = keyReplacedListener;
         if (l == null || n == null || oldKey == null) return;
         try { l.accept(n, oldKey); } catch (Exception e) { log.accept("peer trust registry: key-replaced listener failed: " + e.getMessage()); }
+    }
+
+    /**
+     * The levels below an error: {@code info} for what this node now holds (e.g. the global it recorded, with proof), {@code
+     * warn} for what an operator should know of but is expected (a first join without proof while the upgrade window is open,
+     * an earlier build's binding replaced by its upgraded node). What is refused, replaced by the operator or no longer
+     * recorded stays on the registry's log (an error).
+     */
+    public void setNoticeLogs(Consumer<String> info, Consumer<String> warn) {
+        this.infoLog = info;
+        this.warnLog = warn;
+    }
+
+    private void info(String s) {
+        Consumer<String> c = infoLog;
+        (c != null ? c : log).accept(s);
+    }
+
+    private void warn(String s) {
+        Consumer<String> c = warnLog;
+        (c != null ? c : log).accept(s);
     }
 
     /** Operator settings for an in-memory registry (tests). */
@@ -1159,7 +1185,7 @@ public final class PeerTrustRegistry {
                         + "; the old key stays refused for " + n);
             }
             if (!same.isEmpty() && j != null && !j.proved) {
-                log.accept("UPGRADE WINDOW: the controller of region " + region + " is now recorded as " + n + " in place of " + String.join(", ", same)
+                warn("UPGRADE WINDOW: the controller of region " + region + " is now recorded as " + n + " in place of " + String.join(", ", same)
                         + " -- the same key " + PeerIdentity.shortFp(fp) + " under another agent name, WITHOUT proof (a node of release 1.3.378"
                         + " whose agent name is generated at each start; give it a fixed agentname). It stays unproved: when the key's"
                         + " holder proves it, what is recorded without proof gives way");
@@ -1182,7 +1208,8 @@ public final class PeerTrustRegistry {
                         + " controller's key is NOT revoked by this: revoke it too if it must be refused everywhere");
             }
             if (j != null && !j.proved && same.isEmpty()) {
-                log.accept((j.window ? "UPGRADE WINDOW: " : "REGION CA: ") + n + " (tenant " + tenant + ", key " + PeerIdentity.shortFp(fp) + (j.peerAddress == null ? "" : ", at "
+                // what the upgrade window (or the CA this node holds) is there to admit: expected, said as a WARN
+                warn((j.window ? "UPGRADE WINDOW: " : "REGION CA: ") + n + " (tenant " + tenant + ", key " + PeerIdentity.shortFp(fp) + (j.peerAddress == null ? "" : ", at "
                         + j.peerAddress) + ") is recorded WITHOUT proof of its key -- a first join of a node of release 1.3.378 or earlier,"
                         + " admitted because " + (j.window ? "the upgrade window is open on this node (discovery_auth=compat)"
                         : "its certificate was issued by the CA this node holds for region " + region) + ". Whoever holds the discovery"
@@ -1190,7 +1217,10 @@ public final class PeerTrustRegistry {
                         + (j.window ? " before the window closes" : ""));
             }
             if (marked(src, MARK_GLOBAL) && !carried) {
-                log.accept(formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL"
+                // the first global this node records is what it now holds (INFO; WARN while it is unconfirmed, recorded without
+                // proof in the upgrade window); a global MOVED is the operator's act or an anchor's, and stays an error
+                (formerGlobal != null ? log : marked(src, MARK_UNCONFIRMED) ? (Consumer<String>) this::warn : (Consumer<String>) this::info).accept(
+                        formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL"
                         + (marked(src, MARK_UNCONFIRMED) ? " -- WITHOUT proof, UNCONFIRMED until it proves its key in a GLOBAL exchange" : "")
                         + ": no other identity"
                         + " is taken as its global until the operator moves this node (a rebind line for the new global) or revokes " + n
@@ -1477,7 +1507,8 @@ public final class PeerTrustRegistry {
         applyRemarked(remarked);
         putIdentity(n, nb);
         if (newGlobal) {
-            log.accept(formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL: no other identity is"
+            (formerGlobal != null ? log : j.proved ? (Consumer<String>) this::info : (Consumer<String>) this::warn).accept(
+                    formerGlobal == null ? n + " (key " + PeerIdentity.shortFp(fp) + ") is recorded as this node's GLOBAL: no other identity is"
                     + " taken as its global until the operator moves this node (a rebind line for the new global) or revokes " + n
                     : "This node's GLOBAL MOVED from " + formerGlobal + " to " + n + " (key " + PeerIdentity.shortFp(fp) + ") "
                     + (token == null && j.statement == null ? "because controller_trust_anchors vouch for " + n + " and no longer for " + formerGlobal
@@ -1485,7 +1516,7 @@ public final class PeerTrustRegistry {
                     + ". " + formerGlobal + " stays recorded as the controller of its region and is NOT revoked by this: revoke it if it must"
                     + " be refused");
         } else if (confirmed) {
-            log.accept(n + " (key " + PeerIdentity.shortFp(fp) + "), recorded as this node's GLOBAL without proof in the upgrade window, PROVED its"
+            info(n + " (key " + PeerIdentity.shortFp(fp) + "), recorded as this node's GLOBAL without proof in the upgrade window, PROVED its"
                     + " key in a GLOBAL exchange: confirmed");
         }
         compactIfDue();
