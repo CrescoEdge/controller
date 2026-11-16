@@ -31,7 +31,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	private CEPEngine cepEngine;
 
-    private ActiveMQSession activeMQSession;
+    private volatile ActiveMQSession activeMQSession;
 
     private Destination agentTopic;
     private Destination regionTopic;
@@ -300,37 +300,59 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 Thread.sleep(1000);
             }
 
-	        // A failover connection whose transport has failed still reads as open/started, but
-	        // every synchronous call on it (createConsumer/createProducer) blocks. Drop it so the
-	        // pooled connection is rebuilt - the dataplane no longer shares the control plane's
-	        // socket, so nothing else would notice it had gone bad.
-	        if (activeMQSession != null) {
-	            try {
-	                org.apache.activemq.ActiveMQConnection c =
-	                        (org.apache.activemq.ActiveMQConnection) activeMQSession.getConnection();
-	                if (c != null && (c.isTransportFailed() || c.isClosed())) {
-	                    logger.warn("getSession: dataplane connection transport failed/closed - dropping for rebuild");
-	                    controllerEngine.getActiveClient().handleConnectionFailure(URI);
-	                    activeMQSession = null;
-	                }
-	            } catch (Exception ignore) { }
+	        ActiveMQSession s = activeMQSession;
+	        if (s != null && !s.isClosed() && connectionUsable(s)) {
+	            return s;
 	        }
-
-	        if(activeMQSession == null) {
-                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+	        // ONE caller makes the session (F-11); a caller that waited here takes the one the first made. Before, every
+	        // caller that found none made its own and the last to finish was kept. On an agent's recovery the listeners
+	        // being restored (updateConnections) and the state export's timer (createMapMessage) each made one, and with it
+	        // the broker connection: the timer's replaced the restore's and closed it, and the restored listener with it.
+	        // A session that was not kept stayed open with its consumers, which a reconnect did not close.
+	        synchronized (sessionLock) {
+	            s = activeMQSession;
+	            // A failover connection whose transport has failed still reads as open/started, but
+	            // every synchronous call on it (createConsumer/createProducer) blocks. Drop it so the
+	            // pooled connection is rebuilt - the dataplane no longer shares the control plane's
+	            // socket, so nothing else would notice it had gone bad.
+	            if (s != null && !connectionUsable(s)) {
+	                logger.warn("getSession: dataplane connection transport failed/closed - dropping for rebuild");
+	                try {
+	                    // that connection only: one made anew meanwhile (by a producer worker) is not torn down
+	                    controllerEngine.getActiveClient().handleConnectionFailure(URI,
+	                            (org.apache.activemq.ActiveMQConnection) s.getConnection());
+	                } catch (Exception ignore) { }
+	                s = null;
+	            }
+	            if (s != null && s.isClosed()) {
+	                logger.error("getsession: activeMQSession.isClosed()");
+	                s = null;
+	            }
+	            if (s == null) {
+	                s = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+	                activeMQSession = s;
+	            }
+	            return s;
 	        }
-
-                
-            if(activeMQSession.isClosed()) {
-                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-                logger.error("getsession: activeMQSession.isClosed()");
-            }
 
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.getSession error", ex);
         }
 
 	    return activeMQSession;
+    }
+
+    /** Guards making and dropping the pooled session ({@link #activeMQSession}); never held by a send that has one. */
+    private final Object sessionLock = new Object();
+
+    /** Whether the connection of session {@code s} is open and its transport has not failed. */
+    private static boolean connectionUsable(ActiveMQSession s) {
+        try {
+            org.apache.activemq.ActiveMQConnection c = (org.apache.activemq.ActiveMQConnection) s.getConnection();
+            return c == null || !(c.isTransportFailed() || c.isClosed());
+        } catch (Exception ex) {
+            return true;                                        // as before: a check that throws drops nothing
+        }
     }
     private MessageConsumer getConsumer(Destination destination) {
 	    return getConsumer(destination,null);
@@ -938,15 +960,20 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         //set new URI
         logger.error("Restoring DataPlane");
-        this.URI = URI;
+        // the URI and the session change together: a session made meanwhile on the former URI is not kept
+        ActiveMQSession formerSession;
+        synchronized (sessionLock) {
+            this.URI = URI;
+            formerSession = activeMQSession;
+            activeMQSession = null;
+        }
 
         //reset activeMQSession
         try {
-            if(activeMQSession != null){
-                if(!activeMQSession.isClosed()) {
-                    activeMQSession.close();
+            if(formerSession != null){
+                if(!formerSession.isClosed()) {
+                    formerSession.close();
                 }
-                activeMQSession = null;
             }
 
             if(agentProducer != null){
