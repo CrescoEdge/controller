@@ -102,9 +102,14 @@ class ParentLinkFirstHandTest {
 
     /** The agent a1 joining rgA/rc: its link to the broker is up (bound to rgA/rc), its state names no parent yet. */
     private ControllerEngine joiningAgent() throws Exception {
+        return joiningAgent(0);
+    }
+
+    /** As above; {@code holdMs}: msg_signing_hold_ms (0: the inbox holds nothing back). */
+    private ControllerEngine joiningAgent(long holdMs) throws Exception {
         Map<String, Object> cfg = new HashMap<>();
         cfg.put("broker_security_enabled", "true");
-        cfg.put("msg_signing_hold_ms", "0");
+        cfg.put("msg_signing_hold_ms", String.valueOf(holdMs));
         ControllerEngine a1 = TlsTestSupport.engine("rgA", "a1", cfg);
         TlsTestSupport.enroll(a1, ca, "t1");
         agents.add(a1);
@@ -120,6 +125,13 @@ class ParentLinkFirstHandTest {
      */
     private static void deliverUnsigned(Session from, ControllerEngine a1, Caller who, String origin) throws Exception {
         long before = judged(a1);
+        send(from, a1, who, origin);
+        for (int i = 0; i < 200 && judged(a1) == before; i++) Thread.sleep(25);
+        assertEquals(before + 1, judged(a1), "a1 did not judge the message");
+    }
+
+    /** As {@link #deliverUnsigned}, without waiting: the message is on a1's inbox queue. */
+    private static void send(Session from, ControllerEngine a1, Caller who, String origin) throws Exception {
         MsgEvent m = new MsgEvent(MsgEvent.Type.EXEC, who.getRegion(), who.getAgent(), null, "rgA", "a1", null, false, false);
         m.setParam("action", "ping");
         PluginBuilder pb = a1.getPluginBuilder();
@@ -131,8 +143,6 @@ class ParentLinkFirstHandTest {
         t.setStringProperty(CallerStamps.P_ORIGIN, origin);
         p.send(t);
         p.close();
-        for (int i = 0; i < 200 && judged(a1) == before; i++) Thread.sleep(25);
-        assertEquals(before + 1, judged(a1), "a1 did not judge the message");
     }
 
     private static long judged(ControllerEngine a1) {
@@ -187,5 +197,56 @@ class ParentLinkFirstHandTest {
         deliverUnsigned(sibling(), a1, Caller.controller("t1", "rgA", "a2"), "rgA_a2");
         assertEquals(1, refusedUnsigned(a1), "a node the link was not made to was taken for the parent");
         assertEquals(0, a1.msgSigning().directAcceptedCount());
+    }
+
+    /**
+     * The parent is the controller this connection is BOUND to, not the peer recorded for its URI now: a later attempt to
+     * join recorded another node (a2) for the same address while the old connection, bound to rgA/rc, is still up (it goes
+     * only when a new consumer is made). a2 is a client of rc's broker, which attests its message as a2's: refused.
+     * (Review rv-scale2, finding 1: ef703b9 read the URI's present entry, and took it for the parent's.)
+     */
+    @Test
+    void aLaterExpectPeerForTheSameUriDoesNotMakeAnotherNodeTheParentOfTheLink() throws Exception {
+        ControllerEngine a1 = joiningAgent();
+        String uri = TlsTestSupport.agentUri(TlsTestSupport.port(b));
+        a1.getActiveClient().expectPeer(uri, "rgA", "a2");
+        assertNull(((TlsTestSupport.State) a1.cstate).getRegionalAgent());
+        deliverUnsigned(sibling(), a1, Caller.controller("t1", "rgA", "a2"), "rgA_a2");
+        assertEquals(1, refusedUnsigned(a1), "a sibling's unsigned message was taken for the parent's on a link bound to rgA/rc");
+        assertEquals(0, a1.msgSigning().directAcceptedCount());
+        // and the parent the link IS bound to is still taken
+        deliverUnsigned(controller(), a1, Caller.controller("t1", "rgA", "rc"), "rgA_rc");
+        assertEquals(1, a1.msgSigning().directAcceptedCount());
+    }
+
+    /**
+     * While the node waits for its parent's trust data (its state names a parent it has not heard yet), the inbox holds
+     * back what it cannot judge -- except the messages of that parent, the one the state names, whose pong brings the trust
+     * data. The controller a connection is bound to is not exempt for that reason: here the state names rgA/rc2 (a new
+     * parent) while the old connection to rgA/rc is still up; rc's message is held, and judged when the hold ends. (Review
+     * rv-scale2, finding 2: ef703b9 also exempted the link's controller, which nothing tested.)
+     */
+    @Test
+    void whileTrustIsAwaitedTheHoldExemptsTheParentTheStateNamesOnly() throws Exception {
+        ControllerEngine a1 = joiningAgent(1_000);
+        TlsTestSupport.State state = (TlsTestSupport.State) a1.cstate;
+        state.parentRegion = "rgA";
+        state.parentAgent = "rc2";
+        assertFalse(a1.trustReady(), "precondition: a1 waits for its parent's trust data");
+        AgentConsumer inbox = a1.getActiveClient().agentConsumer();
+        long before = judged(a1);
+        send(controller(), a1, Caller.controller("t1", "rgA", "rc"), "rgA_rc");
+        for (int i = 0; i < 100 && inbox.heldForTrust() == 0; i++) Thread.sleep(10);
+        assertEquals(1, inbox.heldForTrust(), "the link's controller, which the state does not name, was not held back");
+        assertEquals(before, judged(a1), "judged before the hold ended");
+        for (int i = 0; i < 400 && judged(a1) == before; i++) Thread.sleep(25);
+        assertEquals(1, a1.msgSigning().directAcceptedCount(), "judged when the hold ended: the link's controller's own message");
+
+        // the state names rc: its messages are never held back
+        state.parentAgent = "rc";
+        assertFalse(a1.trustReady());
+        deliverUnsigned(controller(), a1, Caller.controller("t1", "rgA", "rc"), "rgA_rc");
+        assertEquals(1, inbox.heldForTrust(), "the parent the state names was held back");
+        assertEquals(2, a1.msgSigning().directAcceptedCount());
     }
 }

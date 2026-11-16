@@ -173,6 +173,9 @@ public class ActiveClient {
         }
     }
 
+    /** The inbox consumer (tests). */
+    AgentConsumer agentConsumer() { return agentConsumer; }
+
     /** The peer recorded for {@code uri} by {@link #expectPeer}, or null. */
     public PeerIdentity.Expected expectedPeer(String uri) {
         return uri == null ? null : expectedPeers.get(uri);
@@ -1071,6 +1074,8 @@ public class ActiveClient {
         int factoryCount = connectionFactoryMap.size();
         connectionFactoryMap.clear();
         logger.info("Cleared connection factory map ({} entries).", factoryCount);
+        // the peers the links were made to go with them: the next link records the peer its discovery certifies
+        expectedPeers.clear();
 
         logger.info("ActiveClient shutdown complete.");
     }
