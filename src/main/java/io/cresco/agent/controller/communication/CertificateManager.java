@@ -633,6 +633,7 @@ public class CertificateManager {
             mem.setKeyReplacedListener(this::onKeyReplaced);
             mem.setRevokedBatchListener(this::onKeysRevoked);
             mem.setSuperuserTenants(superuserTenants());
+            mem.setNoticeLogs(m -> logger.info(m), m -> logger.warn(m));
             return mem;
         }
         String f = plugin.getConfig().getStringParam("peer_trust_file");
@@ -655,6 +656,7 @@ public class CertificateManager {
         reg.setKeyReplacedListener(this::onKeyReplaced);
         reg.setRevokedBatchListener(this::onKeysRevoked);
         reg.setSuperuserTenants(superuserTenants());
+        reg.setNoticeLogs(m -> logger.info(m), m -> logger.warn(m));
         return reg;
     }
 

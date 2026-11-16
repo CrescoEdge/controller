@@ -234,8 +234,10 @@ KNOWN: list[Known] = [
           "a message reaches a node whose plugin is still loading (on the owner's list of known lines, not seen in these runs)"),
     Known("error-agent-lost", "error", r"Agent NodeID: \S+ (is STALE\. Setting to LOST|lost\. Setting Plugin NodeID: \S+ to LOST)",
           ("global-outage", "revoke"), 7, "a controller reports an agent the event killed or revoked as lost (one line, and one per plugin)"),
-    Known("error-upgrade-window", "error", r"UPGRADE WINDOW OPEN until", ("*",), 3,
-          "a controller with the upgrade window open says so at ERROR at every start, and hourly (upgrade profile)"),
+    Known("error-upgrade-window", "error", r"UPGRADE WINDOW OPEN until", ("*",), 4,
+          "a controller with the upgrade window open says so at ERROR at every start, and hourly (upgrade profile): two lines at a"
+          " start (the boot warning and the first hourly reminder), and move-agent starts the agent it makes twice (bound 3 until"
+          " 2026-11-16, when the rolling cells, the window open on every node, had 4 at that agent)"),
     # ---- revoke: the report of the revocation
     Known("error-revoked", "error", r"Key [0-9a-f]+ (of \S+ )?REVOKED \(operator file|Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED",
           ("revoke",), 2, "every node reports the key the operator revoked (at the global) or that reached it in a list"),
@@ -243,7 +245,10 @@ KNOWN: list[Known] = [
           r"Discovery REFUSED \S+: the key [0-9a-f]+ is REVOKED|REFUSED the hello of \S+ from \S+ the certificate is REVOKED", ("revoke",), 15,
           "a controller refuses the revoked node each time it tries to join (every ~3 s)", per_minute=True),
     # ---- rekey-region: the report of the re-key and of the operator's rebind
-    Known("error-rekey", "error", r"Discovery REFUSED \S+: the name is bound to another key|Identity \S+ REBOUND from key"
+    # (from controller 3de595a on, a refusal of the discovery exchange names the peer's tenant, key and address and the kind of
+    # exchange before its reason: "Discovery REFUSED controller r3/rc3 (tenant t, key k) at a, which answered a AGENT exchange:")
+    Known("error-rekey", "error", r"Discovery REFUSED (controller )?\S+( \(tenant \S+, key [0-9a-f]+\))?( at (an unknown address|\S+))?"
+          r"(, which (answered|joined in) a \w+ exchange)?: the name is bound to another key|Identity \S+ REBOUND from key"
           r"|discovery v2: could not record|REFUSED this node: refused by|certDiscovery\.size\(\) == 0|CERT DISCOVERY != 1",
           ("rekey-region",), 12, "a re-keyed controller is refused until the operator's rebind, and the rebind is reported"),
     Known("error-rekey-connect", "error", r"Failed to connect to \[nio\+ssl://[^\]]+\] after: \d+ attempt\(s\)|createDedicatedSession error for URI",

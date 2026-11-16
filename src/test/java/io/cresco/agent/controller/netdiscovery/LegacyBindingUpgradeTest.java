@@ -61,8 +61,12 @@ class LegacyBindingUpgradeTest {
         assertTrue(reg(me).isLegacyBinding("rgG", "a7"), "the legacy exchange's binding is not marked legacy");
 
         ControllerEngine upgraded = TlsTestSupport.engine("rgG", "a7", cfg(false));      // a new key, the same name
+        java.util.List<String> warns = new java.util.concurrent.CopyOnWriteArrayList<>();
+        reg(me).setNoticeLogs(l -> { }, warns::add);
         assertNotNull(DiscoveryTestHooks.join(upgraded, me), "the upgraded node was refused its own name");
         assertFalse(reg(me).isLegacyBinding("rgG", "a7"), "the authenticated binding is still marked legacy");
+        // said as the upgrade guide says it (docs/upgrade-1.3-secure-defaults.md; upgrade_window_live_test.sh looks for it)
+        assertTrue(warns.stream().anyMatch(l -> l.contains("rgG/a7 UPGRADED")), "the upgrade was not said: " + warns);
         java.security.PublicKey oldKey = earlier.getCertificateManager().getPublicCertificate()[0].getPublicKey();
         java.security.PublicKey newKey = upgraded.getCertificateManager().getPublicCertificate()[0].getPublicKey();
         assertTrue(reg(me).canBind("t1", "rgG", "a7", newKey).ok);
