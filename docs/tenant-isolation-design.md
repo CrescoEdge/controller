@@ -478,9 +478,46 @@ joined it or bridges to it (`formerAddressOfAController`, asked when the consume
 removed, never per message): `DENY READ '<queue>' for <identity> : the inbox of a controller this broker knows is no
 node's former address`. A controller that is there reads that inbox; it is nobody's former address.
 
-What remains is the inbox of a LEAF of the same agent name in another region (or of a controller this broker has
-never met): the broker a node is attached to cannot know every name of the fabric. Closing it is refusing, at
-enrolment or registration, an agent name another region of the tenant already holds (section 15).
+What remained (F-17, found by the review of this rule) was the inbox of a LEAF of the same agent name in another
+region, or of a controller this broker has never met: the broker a node is attached to cannot know every name of the
+fabric, and the region in the alias form was the node's own word.
+
+**The alias form is bound to a move the fabric recorded (2026-11-16).** What the fabric records of a node is its name
+bound to a KEY: the controller it joined bound `<region>/<agent>` to the key it presented, first come and strictly (a
+second key is refused unless the operator rebinds the name). A node that moves keeps its identity key (CertificateManager
+re-issues its leaf for the new name with the same key; `security/node-identity.p12` goes with its data directory). So
+the broker gives a node the inbox `T.<tenant>.<R>_<agent>` of another region `R` only when the key the connection
+presented is the one bound to `R/<agent>` where that name was recorded (`CrescoAuthorizationBroker.formerAddressRefusal`,
+`RecordedMoves`, `PeerTrustRegistry.agentKeyRecorded`): the node that moved, and no other. A node of the same agent name
+holds another key and is refused: `DENY READ '<queue>' for <identity> : no move of this node from R is recorded: its key
+is not the one the fabric bound to R/<agent>`.
+
+- *Where the record is.* The documented move is out of the global's region (every agent on the global's broker first,
+  then one region per site), and the global binds the agents of its own region. A global answers from its own registry.
+  A region's controller asks its global: the questions (`tenant|region|agent|key`) ride its ping (`alias_ask`); the
+  answers come on the pong signed with the global's identity key, addressed to that controller and repeating the fresh
+  value of one of its last pings (`alias_moves`, taken as revocations by name are). It keeps a no for 30 s, and a yes until the
+  global says no (asked again every hour, kept meanwhile and while the global is away: only the operator's rebind or
+  revocation of the former name changes it). The record is in memory: a restarted region controller asks again.
+  While the answer is not known the subscription is refused ("not known here yet ... try again"); the region's watcher
+  pings at once. A former address in any other region is not recorded at a global and is refused, as is any where no
+  global can be asked (a region without one) and any on a global of an earlier build (it does not answer: upgrade the
+  global first, as the roll order says).
+- *The moved node.* `AgentConsumer` no longer fails its inbox when the alias consumer is refused: it asks for it again
+  after 2 s, doubling to 15 s, until the broker gives it (one WARN line every 20 refusals). When its failover transport
+  reconnects (its region controller restarted, say), it asks for that consumer anew: the transport re-adds consumers by
+  itself and is not told when the broker refuses one. The consumer has a session of its own, closed whole on a refusal and
+  on a reconnect: the transport records every consumer added, refused or not, and removing one the broker never
+  registered fails the whole connection ("Cannot remove a consumer that had not been registered"); removing its session
+  does not. After a move the former
+  address is answered a ping after the node's first try (seconds); what was sent to it meanwhile waits in the queue.
+- *Asked when* a consumer or browser is added, a queue removed, and for an advisory's copy of a message of such a queue;
+  never for an ordinary message. One open question per key (a node naming many former regions asks one at a time), 16 per
+  ping, 4,096 kept. A yes is a use of the former name at the global: it keeps that binding from being pruned.
+- *The production profile* (pre-provisioned identities, `security_profile=production`) is judged as before: there every
+  name is the operator's issuance, which gives an agent name once, and a moved node is issued a new certificate with a
+  new key, which no binding could show. The operator must not issue one agent name in two regions, and revokes the former
+  certificate of a moved node.
 
 ### Per message as well
 
@@ -576,8 +613,11 @@ Run all four after any change to the auth or namespacing path; each must stay gr
 - **L4 — payload envelope encryption** (opt-in; protects against a compromised transit broker).
 - **Advisory scoping** — close the destination-existence leak (§12), and inside a tenant give a node the advisories
   about its own inbox only (§12a).
-- **Agent names unique across the fabric** — `region_alias` requires it and the alias inbox rule rests on it (§12a);
-  nothing refuses, at enrolment, a name that another region of the tenant already holds.
+- **Agent names unique across the fabric** — `region_alias` required it; since F-17 the alias inbox is given only to the
+  key bound to the former name (§12a), so a duplicate name no longer reads another node's inbox. Still nothing refuses,
+  at enrolment, a name that another region of the tenant already holds; the broker's alias stamp (`cresco_alias`, the
+  former region a node's own registration recorded) is still the node's word (it only lets a node of another tenant
+  be answered at that address).
 - **Infra cross-tenant dataplane aggregation** — with topics qualified by local tenant, a global "god
   view" of all tenants' dataplane streams needs a `T.*.` wildcard *consumer* on infra (produce stays
   tenant-scoped). Built for the one stream the fabric itself needs — the regions' state exports at a global of a

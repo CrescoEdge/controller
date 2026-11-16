@@ -300,6 +300,9 @@ class InboxReadBrokerTest {
         String raw = "rgA_a1";
         assertEquals("T.t1.rgA_a1", own);
         assertEquals("T.t1.old_a1", alias);
+        // F-17: the inbox of its former address is given once the fabric recorded its move (its key, bound to old/a1)
+        String key = PeerIdentity.spkiFingerprint(a1.chain[0]);
+        authz.setMoveRecord((t, r, a, fp) -> "t1".equals(t) && "old".equals(r) && "a1".equals(a) && key.equals(fp));
         Session leaf = client(a1);
         MessageConsumer inbox = leaf.createConsumer(leaf.createQueue(own));
         MessageConsumer aliasInbox = leaf.createConsumer(leaf.createQueue(alias));
@@ -330,6 +333,7 @@ class InboxReadBrokerTest {
         // joined it (rgB/rc2) -- or a node that holds the same agent name in another region took that controller's messages
         authz.setParent(() -> new PeerIdentity.Expected("rgG", "gc"));
         assertNull(peers.allowBridgePeer("t1", "rgB", "rc2"));
+        authz.setMoveRecord((t, r, a, fp) -> Boolean.TRUE);           // F-17: even with every move recorded (judged on its own)
         ActiveMQConnection likeTheParent = connect(TlsTestSupport.issued(ca, "t1", "rgA", "gc"));
         Session s = likeTheParent.createSession(false, Session.AUTO_ACKNOWLEDGE);
         assertThrows(JMSException.class, () -> s.createConsumer(s.createQueue("T.t1.rgG_gc")), "rgA/gc reads the inbox of the global rgG/gc");

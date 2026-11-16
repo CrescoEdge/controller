@@ -388,6 +388,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         if (d.allowed && access == TenantPolicy.Access.READ && formerAddressOfAController(id, dest)) {
             d = TenantPolicy.Decision.deny("the inbox of a controller this broker knows is no node's former address");
         }
+        if (d.allowed && access == TenantPolicy.Access.READ) {
+            String why = formerAddressRefusal(q, id, dest);
+            if (why != null) d = TenantPolicy.Decision.deny(why);
+        }
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
             logger.warn("DENY " + access + " '" + name + "' for " + who + " : " + d.reason);
@@ -469,6 +473,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             TenantPolicy.Decision t = TenantPolicy.check(who, subject.getDestination().getPhysicalName(), TenantPolicy.Access.READ,
                     sharedPrefixes, roleOf(who), crossTenantSinks, null, subject.getDestination().isQueue() && sc != null && !sc.inJvm);
             if (!t.allowed) return withheld(message, who, "an advisory about another tenant's destination (" + t.reason + ")");
+            // (a copy of a message of a former address's inbox: only for the node whose move is recorded, F-17)
+            String moved = sc != null && !sc.inJvm ? formerAddressRefusal(sc, who, subject.getDestination()) : null;
+            if (moved != null) return withheld(message, who, "an advisory's copy of a message of another node's inbox (" + moved + ")");
         }
         if (to == null) return true;
         TenantPolicy.Decision d = StreamRecipientPolicy.mayReceive(who, to, toTenant);
@@ -565,8 +572,61 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             TenantPolicy.Decision w = TenantPolicy.check(id, name, TenantPolicy.Access.WRITE, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
             if (!r.allowed || !w.allowed) return "'" + name + "' is not this identity's to administer (" + (r.allowed ? w.reason : r.reason) + ")";
             if (formerAddressOfAController(id, d)) return "'" + name + "' is the inbox of a controller this broker knows";
+            String moved = formerAddressRefusal(sc, id, d);
+            if (moved != null) return "'" + name + "': " + moved;
         }
         return null;
+    }
+
+    // ---- F-17: the inbox of a node's former address (region_alias) is given where the fabric recorded the move ----
+
+    /**
+     * Whether the fabric recorded a move: (tenant, former region, agent name, the SHA-256 fingerprint of the key the node
+     * presents) -> TRUE, FALSE, or null when not known yet (asked; the node asks again later). {@link RecordedMoves#moved}.
+     */
+    @FunctionalInterface
+    public interface MoveRecord {
+        Boolean moved(String tenant, String formerRegion, String agent, String fp);
+    }
+
+    private volatile MoveRecord moves;
+
+    /** Set by the controller that owns this broker (ActiveBroker); unset, no node is given the inbox of a former address. */
+    public void setMoveRecord(MoveRecord record) {
+        this.moves = record;
+    }
+
+    /**
+     * Why the node {@code id} on this connection may not read {@code dest} as the inbox of its former address, or null:
+     * {@code dest} is not that form ({@code T.<its tenant>.<another region>_<its agent name>}, the one form of an inbox
+     * whose region is the node's own statement), or the fabric recorded the move -- the key this connection presented is the
+     * one bound to {@code <that region>/<its agent name>} where that name was recorded ({@link RecordedMoves}). Before, the
+     * agent name alone bound it, so a node given the agent name of a node of another region read that node's inbox (F-17).
+     * Pre-provisioned identities (the production profile) are judged as before: there every name is the operator's issuance,
+     * which gives an agent name once (and a moved node a new certificate, with a new key). Asked when a consumer is added or
+     * a queue removed, and for an advisory's copy of a message: never for an ordinary message.
+     */
+    private String formerAddressRefusal(CrescoSecurityContext sc, CrescoIdentity id, ActiveMQDestination dest) {
+        if (id == null || dest == null || !dest.isQueue() || roleOf(id) != TenantPolicy.Role.TENANT) return null;
+        String name = dest.getPhysicalName();
+        if (!TenantPolicy.inOwnNamespace(id, name)) return null;
+        String[] node = CrescoNames.splitPath(inboxNode(dest));
+        if (node == null || !node[1].equals(id.getAgent()) || node[0].equals(id.getRegion())) return null;   // not the alias form
+        if (peers.isPki()) return null;
+        X509Certificate leaf = sc == null ? null : sc.leaf;
+        if (leaf == null) return "the inbox of a former address is given to a node that presents its key, and this connection presented none";
+        MoveRecord m = moves;
+        Boolean yes;
+        try {
+            yes = m == null ? Boolean.FALSE : m.moved(id.getTenant(), node[0], id.getAgent(), PeerIdentity.spkiFingerprint(leaf));
+        } catch (RuntimeException e) {
+            yes = Boolean.FALSE;
+        }
+        if (Boolean.TRUE.equals(yes)) return null;
+        return yes == null
+                ? "whether " + node[0] + "/" + id.getAgent() + " is this node's former name is not known here yet (asked of the global: try again)"
+                : "no move of this node from " + node[0] + " is recorded: its key is not the one the fabric bound to " + node[0] + "/" + id.getAgent()
+                + " (a node reads the inbox of its former address only with the key it had there)";
     }
 
     private void refuseAdmin(ConnectionContext ctx, String op, ActiveMQDestination dest, String why) {

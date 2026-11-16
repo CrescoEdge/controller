@@ -1954,6 +1954,27 @@ public final class PeerTrustRegistry {
         return b == null || (tenant != null && !tenant.equals(b.tenant)) ? null : b.role;
     }
 
+    /**
+     * F-17: is {@code fp} the key this node recorded for the AGENT {@code region/agent} of {@code tenant} -- the name bound to
+     * that very key (first come and strictly: as the controller it joined, or its issuing CA; never a binding learned by
+     * following), or, pre-provisioned, the key of the agent certificate verified here for it -- and not revoked or
+     * tombstoned? A node that moved away from this region with its key (region_alias) is what holds it
+     * ({@link RecordedMoves}). A yes is a use of the former name: it keeps the binding from being pruned. Lock-free.
+     */
+    public boolean agentKeyRecorded(String tenant, String region, String agent, String fp) {
+        if (tenant == null || region == null || agent == null || fp == null) return false;
+        String n = name(region, agent);
+        if (tombs.containsKey(n) || isRevokedFor(fp, region)) return false;
+        if (pki != null) {
+            PkiSeen s = pkiSeenOf(tenant, region, agent);
+            return s != null && ROLE_AGENT.equals(s.role) && fp.equals(s.key);
+        }
+        Binding b = identities.get(n);
+        if (b == null || b.follow || !ROLE_AGENT.equals(b.role) || !tenant.equals(b.tenant) || !fp.equals(b.key)) return false;
+        touch(identities, n, b, System.currentTimeMillis(), "id");
+        return true;
+    }
+
     /** The tenant bound to {@code region/agent}, or null. Lock-free. */
     public String boundTenant(String region, String agent) {
         if (pki != null) {

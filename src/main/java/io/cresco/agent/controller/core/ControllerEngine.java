@@ -935,6 +935,14 @@ public class ControllerEngine {
         return msgSigning;
     }
 
+    private final io.cresco.agent.controller.communication.RecordedMoves recordedMoves =
+            new io.cresco.agent.controller.communication.RecordedMoves(this);
+
+    /** F-17: whether the fabric recorded the move a node's former address (region_alias) claims; what this broker gives it. */
+    public io.cresco.agent.controller.communication.RecordedMoves recordedMoves() {
+        return recordedMoves;
+    }
+
     /**
      * D4: before {@code msg} is dispatched on this node (to its controller, its agent executor or a plugin), a message off the
      * wire this node did not verify on arrival -- it was not addressed here, or was only to be carried on -- is verified now

@@ -34,6 +34,8 @@ public class AgentConsumer {
     private MessageConsumer consumer;
 	/** gfs#26: the consumer of the former address's inbox (region_alias, {@link RegionAlias}); null without one. */
 	private MessageConsumer aliasConsumer;
+	/** F-17: the session of {@link #aliasConsumer}, its own (see {@link #openAlias}). */
+	private ActiveMQSession aliasSess;
 	private String aliasRegion, aliasQueueName;
 	/** The upgrade window: the consumer of this controller's raw inbox, where nodes not yet upgraded write ({@link LegacyNodes}). */
 	private MessageConsumer legacyConsumer;
@@ -154,7 +156,10 @@ public class AgentConsumer {
 			connection.addTransportListener(new org.apache.activemq.transport.TransportListener() {
 				@Override public void onCommand(Object command) { }
 				@Override public void onException(java.io.IOException error) { }
-				@Override public void transportResumed() { }
+				// F-17: the failover transport re-adds every consumer on the broker it reconnected to, and does not say when
+				// one is refused there -- the inbox of the former address is (a restarted region controller has to ask its
+				// global again), so it is asked for anew
+				@Override public void transportResumed() { aliasAfterResume(); }
 				@Override public void transportInterupted() {
 					try { controllerEngine.msgSigning().parentLinkDown(); } catch (RuntimeException ignore) { }
 				}
@@ -177,11 +182,7 @@ public class AgentConsumer {
 		try {
 			RXqueue = sess.createQueue(RXQueueName);
 			consumer = sess.createConsumer(RXqueue);
-			if (aliasQueueName != null) {
-				aliasConsumer = sess.createConsumer(sess.createQueue(aliasQueueName));
-				logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias)",
-						aliasQueueName, aliasRegion);
-			}
+			openAlias();
 			String legacyQueue = legacyInbox(uri);
 			if (legacyQueue != null) {
 				legacyConsumer = sess.createConsumer(sess.createQueue(legacyQueue));
@@ -669,12 +670,90 @@ public class AgentConsumer {
 		t.start();
 	}
 
+	/** F-17: the first wait before a refused consumer of the former address's inbox is asked for again (doubling, at most the max). */
+	static long ALIAS_RETRY_MS = 2_000L, ALIAS_RETRY_MAX_MS = 15_000L;
+	private java.util.Timer aliasTimer;
+	private int aliasRefused;
+	private long aliasDelay;
+	private boolean aliasRetryPending;
+
+	/**
+	 * F-17: open the consumer of the former address's inbox (region_alias), on a session of its own on the inbox's connection.
+	 * The broker gives it only where the fabric recorded the move -- this node's key is the one bound to its former name
+	 * ({@link RecordedMoves}) -- which the region's controller may first have to ask its global. A refusal is therefore not
+	 * the inbox's failure: the node asks for it again (after {@link #ALIAS_RETRY_MS}, doubling up to
+	 * {@link #ALIAS_RETRY_MAX_MS}) until it is given.
+	 *
+	 * <p>Its own session, closed whole on a refusal and after a reconnect: the failover transport records every consumer
+	 * this client adds, refused or not, and adds them again on each reconnect; removing a consumer the broker never
+	 * registered fails the connection ("Cannot remove a consumer that had not been registered"), removing its session does
+	 * not, and takes it out of that record. Called with this object's lock held.
+	 */
+	private void openAlias() {
+		if (aliasQueueName == null || aliasConsumer != null || closed || connection == null) return;
+		ActiveMQSession s = null;
+		try {
+			s = (ActiveMQSession) connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+			MessageConsumer c = s.createConsumer(s.createQueue(aliasQueueName));
+			MessageListener l = inboxListener;
+			if (l != null) c.setMessageListener(l);
+			aliasSess = s;
+			aliasConsumer = c;
+			logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias){}",
+					aliasQueueName, aliasRegion, aliasRefused > 0 ? ", given after " + aliasRefused + " refusal(s)" : "");
+			aliasRefused = 0;
+			aliasDelay = 0;
+		} catch (JMSException | RuntimeException refused) {
+			if (s != null) try { s.close(); } catch (Exception ignore) { }
+			if (aliasRefused++ % 20 == 0) {
+				logger.warn("AgentConsumer: the broker does not give this node the inbox of its former address [{}] yet ({}): asked for"
+						+ " again until it does ({} refusal(s) so far)", aliasQueueName, refused.getMessage(), aliasRefused);
+			}
+			aliasDelay = aliasDelay == 0 ? ALIAS_RETRY_MS : Math.min(ALIAS_RETRY_MAX_MS, aliasDelay * 2);
+			if (closed || aliasRetryPending) return;                     // (one retry waits at a time)
+			if (aliasTimer == null) aliasTimer = new java.util.Timer("agentconsumer-alias", true);
+			aliasRetryPending = true;
+			aliasTimer.schedule(new java.util.TimerTask() {
+				@Override public void run() {
+					synchronized (AgentConsumer.this) {
+						aliasRetryPending = false;
+						if (!closed) openAlias();
+					}
+				}
+			}, aliasDelay);
+		}
+	}
+
+	/**
+	 * F-17: the transport reconnected (failover). It re-added the consumer of the former address's inbox on the broker, which
+	 * may have refused it without the client being told (a region controller that restarted does not know the record yet):
+	 * its session is closed and the consumer asked for again, off the transport's thread. Nothing without a former address.
+	 */
+	private void aliasAfterResume() {
+		if (aliasQueueName == null || closed) return;
+		final ActiveMQSession on = sess;
+		new Thread(null, () -> {
+			synchronized (AgentConsumer.this) {
+				if (closed || sess != on || sess == null) return;
+				closeAlias();
+				aliasDelay = 0;
+				openAlias();
+			}
+		}, "agentconsumer-alias-resume", 1 << 18).start();
+	}
+
+	/** Close the consumer of the former address's inbox with its session. */
+	private void closeAlias() {
+		try { if (aliasSess != null) aliasSess.close(); } catch (Exception ignore) { }
+		aliasSess = null;
+		aliasConsumer = null;
+	}
+
 	/** Close the current consumer, session and owned connection (the re-init follows). Never parks on a dead transport. */
 	private synchronized void teardownTransport() {
 		if (dedicatedConnection && connection != null) ActiveClient.disposeIfDead(connection);
 		try { if (consumer != null) consumer.close(); } catch (Exception ignore) { }
-		try { if (aliasConsumer != null) aliasConsumer.close(); } catch (Exception ignore) { }
-		aliasConsumer = null;
+		closeAlias();
 		try { if (legacyConsumer != null) legacyConsumer.close(); } catch (Exception ignore) { }
 		legacyConsumer = null;
 		if (dedicatedConnection) {
@@ -870,6 +949,7 @@ public class AgentConsumer {
 			controllerEngine.msgCounts().dropped(MsgCounts.Drop.HOLD_CLOSED, dropped, "held for trust data");
 		}
 		synchronized (this) {
+			if (aliasTimer != null) aliasTimer.cancel();
 			shutdownTransport();
 		}
 	}
@@ -886,9 +966,7 @@ public class AgentConsumer {
 				logger.warn("AgentConsumer.shutdown: dedicated transport is dead; disposed it before teardown");
 			}
 		}
-		try {
-			if (aliasConsumer != null) aliasConsumer.close();
-		} catch (Exception ignore) { }
+		closeAlias();
 		try {
 			if (legacyConsumer != null) legacyConsumer.close();
 		} catch (Exception ignore) { }

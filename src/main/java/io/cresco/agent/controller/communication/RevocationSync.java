@@ -107,6 +107,8 @@ public final class RevocationSync {
     /** Another label than a list's: neither is ever taken for the other; the kind, the addressee and the fresh value are signed too. */
     private static final String NAMES_LABEL = "cresco-name-revocations-v2";
     private static final String KIND_ASK = "ask", KIND_REPORT = "report";
+    /** F-17: a global's answers to a region controller's questions about former names ({@link RecordedMoves}). */
+    private static final String KIND_MOVES = "moves";
     /** The most items one signed set of requests or answers carries (a global has at most that many open for one region). */
     private static final int NAMES_MAX = PeerTrustRegistry.NAME_REVOCATIONS_OPEN_PER_REGION;
     /** How many of its last pings' fresh values a region's controller still takes a request for. */
@@ -417,6 +419,8 @@ public final class RevocationSync {
             ping.setParam(CLOCK, Long.toString(System.currentTimeMillis()));
             if (!ce.cstate.isRegionalController()) return;                       // a region reports its own revocations
             try { freshValue(st, ping); answerNames(ce, st, reg, ping); } catch (Exception ignore) { }
+            // F-17: whether its nodes' former addresses are recorded moves (answered, signed, on this ping's pong)
+            try { ce.recordedMoves().onPing(ping); } catch (Exception ignore) { }
             long own = reg.ownRevocationSeq();
             if (own == 0) return;
             long acked = reg.revocationEpoch().equals(st.ackedEpoch) ? st.ackedSeq : -1;
@@ -442,6 +446,7 @@ public final class RevocationSync {
         onParentList(ce, pong, parentRegion, parentAgent);
         // after the list (the registry then holds what the parent revoked by key): what it revoked by name
         try { onParentNames(ce, state(ce), pong, parentRegion, parentAgent); } catch (Exception ignore) { }
+        try { onParentMoves(ce, state(ce), pong, parentRegion, parentAgent); } catch (Exception ignore) { }
     }
 
     private static void onParentList(ControllerEngine ce, MsgEvent pong, String parentRegion, String parentAgent) {
@@ -589,12 +594,15 @@ public final class RevocationSync {
             // a region's answers are read only while this node has a request open: otherwise nothing is parsed or verified
             String nameReport = childIsRegion && reg.nameRevocationsOpen() > 0 && msg.getParam(NAME_REPORT) != null
                     ? msg.getCompressedParam(NAME_REPORT) : null;
+            String moveAsk = childIsRegion ? msg.getParam(RecordedMoves.ASK) : null;
             msg.removeParam(CHILD_LIST);
             msg.removeParam(HAVE);
             msg.removeParam(CLOCK);
             msg.removeParam(NAMES_FRESH);
             msg.removeParam(NAME_REPORT);
             msg.removeParam(NAMES);                                              // never one the ping brought
+            msg.removeParam(RecordedMoves.ASK);
+            msg.removeParam(RecordedMoves.ANSWER);
             String src = msg.getSrcRegion() + "/" + msg.getSrcAgent();
             String child = null;
             // a node that answers region controllers' pings as their global is one, whatever its configuration said at start
@@ -645,6 +653,12 @@ public final class RevocationSync {
             }
             // revocations by name: only from a global, only to a VERIFIED pinger, only while one is open (one volatile read)
             if (childIsRegion && pinger != null && reg.nameRevocationsOpen() > 0) askNames(ce, reg, msg, pinger, fresh);
+            // F-17: a verified region controller's questions about its nodes' former names, answered signed for this ping
+            if (childIsRegion && pinger != null && moveAsk != null && fresh != null && FRESH.matcher(fresh).matches()) {
+                List<String> items = RecordedMoves.answers(reg, moveAsk);
+                String signed = items == null ? null : signNames(ce, KIND_MOVES, pinger, fresh, items);
+                if (signed != null) msg.setCompressedParam(RecordedMoves.ANSWER, signed);
+            }
             // clock skew is recorded only for a verified peer bound here (a ping's claimed name cannot raise an alarm)
             if (clock != null && pinger != null) {
                 try { ce.getCertificateManager().noteClock(Long.parseLong(clock), "child " + pinger); } catch (NumberFormatException ignore) { }
@@ -926,6 +940,43 @@ public final class RevocationSync {
             asks.put(p[1], new String[]{p[0], p[2]});
         }
         st.nameAsks = asks;
+    }
+
+    /**
+     * F-17, at a region's controller, on its global's pong: the answers to its questions about its nodes' former names
+     * ({@link RecordedMoves}). Taken as revocations by name are: signed by the controller this node joined as its global (its
+     * name from this node's own state, its tenant the one bound here, the one global its registry records), addressed to
+     * this node, and fresh -- repeating the value of one of this node's last pings, so an answer held back or delivered
+     * again is not taken. Nothing (one parameter read) when the pong carries none.
+     */
+    private static void onParentMoves(ControllerEngine ce, State st, MsgEvent pong, String parentRegion, String parentAgent) {
+        if (pong.getParam(RecordedMoves.ANSWER) == null) return;
+        String json = pong.getCompressedParam(RecordedMoves.ANSWER);
+        if (json == null || !ce.cstate.isRegionalController() || parentRegion == null || parentAgent == null) return;
+        String parent = parentRegion + "/" + parentAgent;
+        PeerTrustRegistry reg = ce.getCertificateManager().getPeerTrust();
+        String[] why = new String[1], who = new String[2];
+        X509Certificate[] signer = new X509Certificate[1];
+        SignedNames l = verifyNames(ce, json, KIND_MOVES, signer, who, why);
+        if (l != null) {
+            why[0] = controllerRefusal(ce, who[0], who[1], signer, parentRegion, parentAgent, false);
+            String tenant = reg.boundTenant(parentRegion, parentAgent);
+            if (why[0] == null && tenant != null && !tenant.equals(l.tenant)) {
+                why[0] = "it is of tenant " + l.tenant + ", and " + parent + " is bound here with tenant " + tenant;
+            }
+            String g = reg.globalRecorded();
+            if (why[0] == null && g != null && !g.equals(parent)) why[0] = "this node's global is recorded here as " + g + ", not " + parent;
+            if (why[0] == null) {
+                boolean fresh = false;
+                for (String[] f : st.fresh) if (f[0].equals(l.fresh)) fresh = true;
+                if (!fresh) why[0] = "it is not fresh: it answers none of this node's last " + FRESH_KEPT + " pings (held back, or delivered again)";
+            }
+        }
+        if (l == null || why[0] != null) {
+            warnOnce(ce, st, "moves|" + why[0], "Answers about former addresses (region_alias) on the pong of " + parent + " REFUSED: " + why[0]);
+            return;
+        }
+        ce.recordedMoves().record(l.items);
     }
 
     /**
