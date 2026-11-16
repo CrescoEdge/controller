@@ -16,7 +16,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Map;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap; // Import ConcurrentHashMap
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class ActiveClient {
 
@@ -377,7 +381,9 @@ public class ActiveClient {
                     closeConnectionFast(conn);
                 });
             } else {
-                conn.setExceptionListener(new ConnectionExceptionListener(URI));
+                // its failure is this connection's: the owner (a send lane, a shard) rebuilds it; the pooled connection of
+                // the URI, and the dataplane session and listeners on it, are not torn down with it
+                conn.setExceptionListener(new ConnectionExceptionListener(URI, conn));
             }
             conn.start();
             int attempts = 0;
@@ -418,29 +424,72 @@ public class ActiveClient {
     }
 
     /**
-     * The pooled connection to {@code URI}: the one in the map while it is usable, else a new one. ONE caller makes it at a
-     * time (a lock per URI); a caller that waited takes the connection the first made (F-11). Before, two threads that
-     * found no connection in the same moment -- on an agent's recovery, the dataplane restoring its listeners and a
-     * producer worker for a held message -- each made one, and the second to finish replaced the first in the map and
-     * CLOSED it, with the sessions and consumers the first had made on it ("DataPlaneServiceImpl.addMessageListener
+     * The pooled connection to {@code URI}: the one in the map while it is usable, else a new one. ONE attempt to make it
+     * runs at a time per URI, and every caller that finds it running takes its outcome, a failure included (F-11).
+     * Before, two threads that found no connection in the same moment -- on an agent's recovery, the dataplane restoring
+     * its listeners and the state export's timer -- each made one, and the second to finish replaced the first in the map
+     * and CLOSED it, with the sessions and consumers the first had made on it ("DataPlaneServiceImpl.addMessageListener
      * error": the consumer is closed).
+     * <p>
+     * No caller waits longer than {@code broker_connect_wait_ms} (default 60 s, more than an agent URI's failover budget):
+     * a caller that gives up returns null and takes the attempt off the URI, so an attempt that never ends holds nobody
+     * after it. The wait can be interrupted. The attempt itself is bounded by the failover transport's reconnect attempts
+     * and by the factory's connect response timeout ({@code broker_connect_response_timeout_ms}). An attempt keeps its
+     * connection only if the map holds no usable one then; it never replaces or closes a connection someone else made.
      */
     private ActiveMQConnection getConnection(String URI) {
         ActiveMQConnection usable = usableConnection(URI);
         if (usable != null) {
             return usable;
         }
-        synchronized (connectLocks.computeIfAbsent(URI, k -> new Object())) {
-            usable = usableConnection(URI);           // made by the caller this one waited for
-            if (usable != null) {
-                return usable;
+        CompletableFuture<ActiveMQConnection> mine = new CompletableFuture<>();
+        CompletableFuture<ActiveMQConnection> running = connecting.putIfAbsent(URI, mine);
+        if (running == null) {
+            // this caller makes the attempt, in its own thread as before; the others wait for its outcome
+            ActiveMQConnection made = null;
+            try {
+                long epoch;
+                synchronized (installLock) {
+                    epoch = connectEpoch;
+                }
+                made = usableConnection(URI);          // made by an attempt that ended just before this one began
+                if (made == null) {
+                    made = newConnection(URI, epoch);
+                }
+            } finally {
+                connecting.remove(URI, mine);
+                mine.complete(made);
             }
-            return newConnection(URI);
+            return made;
+        }
+        return awaitAttempt(URI, running);
+    }
+
+    /** The outcome of the attempt running for {@code URI}, waited for at most broker_connect_wait_ms; null when none. */
+    private ActiveMQConnection awaitAttempt(String URI, CompletableFuture<ActiveMQConnection> running) {
+        long waitMs = Math.max(1L, plugin.getConfig().getLongParam("broker_connect_wait_ms", 60000L));
+        try {
+            return running.get(waitMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException stuck) {
+            // the attempt is not ending: the next caller makes one of its own instead of joining this one
+            connecting.remove(URI, running);
+            logger.error("The connection to URI [{}] being made by another caller did not come within {} ms: this caller goes on without one",
+                    URI, waitMs);
+            return null;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException ee) {
+            return null;
         }
     }
 
-    /** One lock per broker URI: who makes its pooled connection ({@link #getConnection}). */
-    private final Map<String, Object> connectLocks = new ConcurrentHashMap<>();
+    /** The attempt running per broker URI ({@link #getConnection}); an entry leaves when its attempt ends. */
+    private final Map<String, CompletableFuture<ActiveMQConnection>> connecting = new ConcurrentHashMap<>();
+    /** Guards putting a new pooled connection in the map against {@link #shutdown}, and {@link #connectEpoch}. */
+    private final Object installLock = new Object();
+    /** +1 on every {@link #shutdown}: an attempt that began before it does not put its connection in the map. */
+    private long connectEpoch;
 
     /** The connection in the map for {@code URI} if it is usable; an unusable one is taken out and closed. Null if none. */
     private ActiveMQConnection usableConnection(String URI) {
@@ -473,8 +522,11 @@ public class ActiveClient {
         return null;
     }
 
-    /** A new pooled connection to {@code URI}, started and put in the map; null on failure. Only under URI's connect lock. */
-    private ActiveMQConnection newConnection(String URI) {
+    /**
+     * A new pooled connection to {@code URI}, started and put in the map; null on failure. Its failure is this attempt's
+     * only: it never takes out a connection another attempt put in the map.
+     */
+    private ActiveMQConnection newConnection(String URI, long epoch) {
         // If no valid connection exists, create a new one
         logger.info("No valid connection found for URI [{}]. Attempting to create new connection.", URI);
 
@@ -491,12 +543,13 @@ public class ActiveClient {
 
         if (activeMQSslConnectionFactory == null) {
             logger.error("Cannot create connection for URI [{}]: Connection factory is null.", URI);
-            handleConnectionFailure(URI); // Signal failure
+            attemptFailed(URI, null, null);
             return null;
         }
 
+        ActiveMQConnection newConnection = null;
         try {
-            ActiveMQConnection newConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
+            newConnection = (ActiveMQConnection) activeMQSslConnectionFactory.createConnection();
             logger.info("Created new connection object for URI [{}]", URI);
 
             // its failure is handled for THIS connection: reported late, after it was replaced, it must not close the successor
@@ -513,32 +566,61 @@ public class ActiveClient {
 
             if (newConnection.isStarted()) {
                 logger.info("Connection to URI [{}] started successfully.", URI);
-                // Put in map. Under the URI's connect lock no other thread makes one, so there is nothing to replace.
-                ActiveMQConnection oldConn = connectionMap.put(URI, newConnection);
-                if (oldConn != null && oldConn != newConnection) { // If there was a different old connection
-                    logger.warn("Replaced an existing connection in map for URI [{}] during new connection setup.", URI);
-                    try { oldConn.close(); } catch (JMSException e) { /* ignore */ }
+                ActiveMQConnection kept;
+                synchronized (installLock) {
+                    ActiveMQConnection there = connectionMap.get(URI);
+                    if (epoch != connectEpoch) {
+                        kept = null;                                    // the client was shut down meanwhile
+                    } else if (there != null && there != newConnection && !there.isClosed() && !there.isClosing() && there.isStarted()) {
+                        kept = there;                                   // another attempt (one given up on) put one first
+                    } else {
+                        connectionMap.put(URI, newConnection);
+                        kept = newConnection;
+                    }
                 }
-                return newConnection;
+                if (kept != newConnection) {
+                    logger.info("Connection to URI [{}] made but not kept ({}): closed", URI, kept == null ? "the client was shut down" : "another is in use");
+                    closeConnectionFast(newConnection);                 // unused: no session was made on it
+                }
+                return kept;
             } else {
                 logger.error("Connection to URI [{}] failed to start after {} attempts.", URI, startAttempts);
-                try { newConnection.close(); } catch (JMSException e) { logger.warn("Error closing failed connection attempt for URI [{}]: {}", URI, e.getMessage()); }
-                handleConnectionFailure(URI); // Signal failure
+                attemptFailed(URI, activeMQSslConnectionFactory, newConnection);
                 return null;
             }
         } catch (JMSException jmse) {
             logger.error("JMSException during connection creation or start for URI [{}]: {}", URI, jmse.getMessage(), jmse);
-            handleConnectionFailure(URI); // Signal failure
+            attemptFailed(URI, activeMQSslConnectionFactory, newConnection);
             return null;
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             logger.error("Interrupted while waiting for connection to URI [{}] to start.", URI, ie);
-            handleConnectionFailure(URI); // Signal failure
+            attemptFailed(URI, activeMQSslConnectionFactory, newConnection);
             return null;
         } catch (Exception ex) {
             logger.error("General Exception in getConnection (creation phase) for URI [{}]: {}", URI, ex.getMessage(), ex);
-            handleConnectionFailure(URI); // Signal failure
+            attemptFailed(URI, activeMQSslConnectionFactory, newConnection);
             return null;
+        }
+    }
+
+    /**
+     * An attempt to connect to {@code URI} failed: its connection is closed (in the background) and, while the map holds no connection for the
+     * URI, the factory it used is dropped (the next attempt makes one with the present key and trust). A connection
+     * another attempt put in the map is left alone.
+     */
+    private void attemptFailed(String URI, ActiveMQSslConnectionFactory factory, ActiveMQConnection made) {
+        if (made != null) {
+            // off this thread: the close of a connect that got no answer waits for the broker it got none from (in-JVM,
+            // VMTransport.stop runs the broker's side of it), and the caller is to have its failure now
+            Thread t = new Thread(() -> closeConnectionFast(made), "broker-connect-close");
+            t.setDaemon(true);
+            t.start();
+        }
+        synchronized (installLock) {
+            if (connectionMap.get(URI) == null && connectionFactoryMap.remove(URI, factory)) {
+                logger.info("Removed connection factory from map for URI [{}] after a failed connection attempt.", URI);
+            }
         }
     }
 
@@ -552,6 +634,9 @@ public class ActiveClient {
             PeerIdentity.Expected bound = URI.startsWith("vm://") ? null : expectedPeers.get(URI);
             activeMQSslConnectionFactory = URI.startsWith("vm://") ? new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger))
                     : new LinkTlsConnectionFactory(BrokerTransport.forActiveMQ(URI, logger), bound);
+            // a broker that takes the connection but never answers its ConnectionInfo must not hold the connect for ever
+            activeMQSslConnectionFactory.setConnectResponseTimeout(
+                    Math.max(1, plugin.getConfig().getIntegerParam("broker_connect_response_timeout_ms", 30000)));
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
                 // mark this controller's own in-JVM connections: for recipient-bound dataplane streams the broker treats
@@ -641,14 +726,16 @@ public class ActiveClient {
      * The failure of the connection {@code failed} to {@code uri}: handled as {@link #handleConnectionFailure(String)} while
      * it is still the pooled connection for {@code uri}; once replaced, only it is closed. A failure seen late -- the
      * listener of a connection already taken out and made anew, a session of the former one -- must not tear down the
-     * successor other threads are using (F-11). Null: the connection is not known, the URI's is handled.
+     * successor other threads are using (F-11); nor must a dedicated connection's (a send lane, a shard), whose owner
+     * rebuilds it, tear down the pooled one. Null: the connection is not known, the URI's is handled.
      */
     public synchronized void handleConnectionFailure(String uri, ActiveMQConnection failed) {
         if (failed == null || connectionMap.get(uri) == failed) {
             handleConnectionFailure(uri);
             return;
         }
-        logger.info("Connection failure for URI [{}] reported for a connection that is no longer the pooled one: only it is closed", uri);
+        logger.info("Connection failure for URI [{}] reported for a connection that is not its pooled one (a dedicated one, or one"
+                + " already replaced): only it is closed", uri);
         closeConnectionFast(failed);
     }
 
@@ -667,11 +754,7 @@ public class ActiveClient {
 
     private class ConnectionExceptionListener implements ExceptionListener {
         private final String listenerUri;
-        private final ActiveMQConnection connection;      // null: a dedicated connection, whose failure is the URI's
-
-        public ConnectionExceptionListener(String uri) {
-            this(uri, null);
-        }
+        private final ActiveMQConnection connection;      // the connection whose failure this listener reports
 
         ConnectionExceptionListener(String uri, ActiveMQConnection connection) {
             this.listenerUri = uri;
@@ -1113,6 +1196,11 @@ public class ActiveClient {
             }
             dedicatedConnections.clear();
         }
+        // an attempt to connect that is still running keeps nothing (its connection would outlive this shutdown)
+        synchronized (installLock) {
+            connectEpoch++;
+        }
+        connecting.clear();
         // Create a new list from keys to avoid ConcurrentModificationException if handleConnectionFailure modifies the map
         List<String> urisToClose = new ArrayList<>(connectionMap.keySet());
         for (String uri : urisToClose) {
