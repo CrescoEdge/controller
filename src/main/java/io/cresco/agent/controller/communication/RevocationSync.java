@@ -49,6 +49,28 @@ import java.util.concurrent.ConcurrentHashMap;
  * Merging is monotonic (revocation is permanent), so a replayed or stale list changes nothing. Entries are put in force
  * when the list is verified; their bindings, tombstones and durable record follow on the registry's background writer in
  * one write, so the ping/pong path never waits for a disk.
+ *
+ * <p><b>Revocations by name.</b> A global holds no key for an agent of another region (it is bound at that region's
+ * controller), so a name its operator revokes cannot be put on its list. The global reserves the name and ASKS: while such
+ * a request is open, the pong to the ONE controller it records for the name's region carries it ({@link #NAMES}).
+ * <ul>
+ *   <li>Asked: only that region's one joined controller ({@link PeerTrustRegistry#controllerOf}: none, or more than one name
+ *       recorded under the region, and nothing is sent), verified as the pinger, in the tenant recorded for it, and only
+ *       when its ping carried {@link #NAMES_FRESH} -- a random value an earlier build does not send. A request is signed
+ *       anew for each pong, over that value: it answers THIS ping.</li>
+ *   <li>Taken: by a region's controller only (an agent takes none), from the controller it joined (its name from this
+ *       node's own state; verified as its list is; its tenant the one recorded for it), addressed to this node, for names
+ *       of this node's own region, and FRESH: it must repeat the value of one of this node's last pings. A request that was
+ *       held back, or is delivered again, repeats none and is refused. It carries the AGE of the operator's act, so the
+ *       region dates the act by its own clock and leaves a later binding alone
+ *       ({@link PeerTrustRegistry#applyNameRevocation}).</li>
+ *   <li>Answered ({@link #NAME_REPORT}, on the region's next ping): signed with its identity key, addressed to its global,
+ *       naming the request's id. Read at the global only while a request is open, only from that one controller in its
+ *       tenant; it settles the request and nothing else ({@link PeerTrustRegistry#acceptNameAnswer}): no key is revoked on
+ *       a region's word, nothing is distributed.</li>
+ * </ul>
+ * Cost: one short parameter on a region controller's ping; on a pong nothing while no request is open for the pinger's
+ * region (one volatile read), one signature while one is. Nothing new reaches a node of an earlier build.
  */
 public final class RevocationSync {
 
@@ -68,9 +90,45 @@ public final class RevocationSync {
     static final String SEQ = "rev_seq";
     /** On a ping: the child's clock (the parent reports a skew). */
     static final String CLOCK = "rev_ts";
+    /**
+     * On a region controller's ping to its global: a fresh random value (16 hex digits). It says that this controller
+     * takes revocations by name, and a request must repeat it. An earlier build sends none, and is asked nothing.
+     */
+    static final String NAMES_FRESH = "rev_names_fresh";
+    /** On a pong, from a global to a region's one controller: the open revocations by name of that region's names (signed). */
+    static final String NAMES = "rev_names";
+    /** On a ping, from a region's controller to its global: its answers to those (signed). */
+    static final String NAME_REPORT = "rev_name_report";
 
     private static final Gson GSON = new Gson();
     private static final String LABEL = "cresco-revocations-v2";
+    /** Another label than a list's: neither is ever taken for the other; the kind, the addressee and the fresh value are signed too. */
+    private static final String NAMES_LABEL = "cresco-name-revocations-v2";
+    private static final String KIND_ASK = "ask", KIND_REPORT = "report";
+    /** The most items one signed set of requests or answers carries (a global has at most that many open for one region). */
+    private static final int NAMES_MAX = PeerTrustRegistry.NAME_REVOCATIONS_OPEN_PER_REGION;
+    /** How many of its last pings' fresh values a region's controller still takes a request for. */
+    private static final int FRESH_KEPT = 3;
+
+    /**
+     * Signed revocations by name. {@code ask}: a global's requests to one region's controller; items {@code A|id|name|age}
+     * (revoke the name; the operator did so {@code age} ms ago) and {@code L|id|name|key} (the operator rebound it: to that
+     * key, or -- empty -- to the first one presented); {@code fresh} repeats the value of the ping it answers.
+     * {@code report}: that controller's answers; items {@code id|name|status|key} ({@link PeerTrustRegistry#acceptNameAnswer}).
+     */
+    static final class SignedNames {
+        int v = 2;
+        String kind;
+        String issuer;          // region/agent
+        String tenant;          // the issuer's: compared with its certificate's and with the one recorded for it
+        String to;              // region/agent it is for: a set made for one node is nothing to another
+        String fresh;
+        long issued;
+        List<String> items;
+        String cert;
+        List<String> chain;
+        String sig;
+    }
 
     /** A signed revocation list (a delta of positions {@code (from, to]} of the issuer's list in {@code epoch}). */
     static final class SignedList {
@@ -107,6 +165,13 @@ public final class RevocationSync {
         /** A pong since this node last joined its parent stated no position of its list (a parent of an earlier build). */
         volatile boolean parentStatesNoPosition;
         final Map<String, String> childAcks = new ConcurrentHashMap<>();
+        /** At a region's controller: the fresh values of its last pings, {value, when sent}, newest first (replaced, never mutated). */
+        volatile String[][] fresh = new String[0][];
+        /** At a region's controller: the requests on its global's last pong, id -> {A or L, name}; and its last signed answer. */
+        volatile Map<String, String[]> nameAsks = Map.of();
+        volatile String[] nameReport;
+        /** The last warning logged (tests). */
+        volatile String lastWarning;
         final Map<String, Long> lastWarned = new ConcurrentHashMap<>();
         final Map<String, String> cache = java.util.Collections.synchronizedMap(new LinkedHashMap<String, String>(16, 0.75f, true) {
             @Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 64; }
@@ -129,6 +194,11 @@ public final class RevocationSync {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static byte[] signedBytes(SignedNames l) {
+        return (NAMES_LABEL + "|" + l.v + "|" + l.kind + "|" + l.issuer + "|" + l.tenant + "|" + l.to + "|" + l.fresh + "|" + l.issued + "|"
+                + String.join(",", l.items)).getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] signedBytes(SignedList l) {
@@ -205,6 +275,36 @@ public final class RevocationSync {
         return signedDelta(ce, 0, true);
     }
 
+    /**
+     * The identity that signed {@code signed}: the certificate must verify HERE as {@code issuer} (by its bound key, its
+     * region's recorded CA or the operator's PKI; not revoked, not tombstoned) and its key must have made {@code sigB64}
+     * over {@code signed}. Sets {@code signer[0]} to the leaf; null (and {@code why}) otherwise. The caller checks WHO it is.
+     */
+    private static CrescoIdentity verifySigner(ControllerEngine ce, String issuer, String certB64, List<String> chainB64, byte[] signed,
+                                               String sigB64, X509Certificate[] signer, String[] why) throws Exception {
+        CertificateFactory cf = CertificateFactory.getInstance("X.509");
+        X509Certificate leaf = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(certB64)));
+        List<X509Certificate> presented = new ArrayList<>();
+        presented.add(leaf);
+        if (chainB64 != null) {
+            for (int i = 0; i < chainB64.size() && i < CertificateManager.MAX_CHAIN_CERTS; i++) {
+                presented.add((X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(chainB64.get(i)))));
+            }
+        }
+        String[] w = new String[1];
+        CrescoIdentity id = ce.getCertificateManager().getPeerTrust().verifiedIdentity(presented.toArray(new X509Certificate[0]), w);
+        if (id == null || !(id.getRegion() + "/" + id.getAgent()).equals(issuer)) {
+            why[0] = "its certificate does not verify here as its issuer " + issuer + (w[0] == null ? "" : " (" + w[0] + ")");
+            return null;
+        }
+        Signature sig = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(leaf.getPublicKey().getAlgorithm()));
+        sig.initVerify(leaf.getPublicKey());
+        sig.update(signed);
+        if (!sig.verify(Base64.getDecoder().decode(sigB64))) { why[0] = "the signature does not verify"; return null; }
+        signer[0] = leaf;
+        return id;
+    }
+
     /** Parse and check a signed list: its certificate must verify here and sign it. The caller checks WHO it is. */
     private static Verified verifySigned(ControllerEngine ce, String json, X509Certificate[] signer, String[] why) {
         try {
@@ -212,25 +312,8 @@ public final class RevocationSync {
             if (l == null || l.v != 2 || l.entries == null || l.cert == null || l.sig == null || l.issuer == null || l.epoch == null
                     || l.from < 0 || l.to < l.from) { why[0] = "malformed"; return null; }
             if (l.entries.size() > 100_000) { why[0] = "too long"; return null; }
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            X509Certificate leaf = (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(l.cert)));
-            List<X509Certificate> presented = new ArrayList<>();
-            presented.add(leaf);
-            if (l.chain != null) {
-                for (int i = 0; i < l.chain.size() && i < CertificateManager.MAX_CHAIN_CERTS; i++) {
-                    presented.add((X509Certificate) cf.generateCertificate(new ByteArrayInputStream(Base64.getDecoder().decode(l.chain.get(i)))));
-                }
-            }
-            String[] w = new String[1];
-            CrescoIdentity id = ce.getCertificateManager().getPeerTrust().verifiedIdentity(presented.toArray(new X509Certificate[0]), w);
-            if (id == null || !(id.getRegion() + "/" + id.getAgent()).equals(l.issuer)) {
-                why[0] = "its certificate does not verify here as its issuer " + l.issuer + (w[0] == null ? "" : " (" + w[0] + ")");
-                return null;
-            }
-            Signature sig = Signature.getInstance(io.cresco.library.crypto.CrescoCrypto.signatureAlgorithm(leaf.getPublicKey().getAlgorithm()));
-            sig.initVerify(leaf.getPublicKey());
-            sig.update(signedBytes(l));
-            if (!sig.verify(Base64.getDecoder().decode(l.sig))) { why[0] = "the signature does not verify"; return null; }
+            CrescoIdentity id = verifySigner(ce, l.issuer, l.cert, l.chain, signedBytes(l), l.sig, signer, why);
+            if (id == null) return null;
             Verified v = new Verified();
             v.region = id.getRegion();
             v.agent = id.getAgent();
@@ -243,7 +326,6 @@ public final class RevocationSync {
                 if (x == null) { why[0] = "a malformed entry"; return null; }
                 v.entries.add(x);
             }
-            signer[0] = leaf;
             return v;
         } catch (Exception e) {
             why[0] = e.getClass().getSimpleName() + ": " + e.getMessage();
@@ -274,19 +356,27 @@ public final class RevocationSync {
         X509Certificate[] signer = new X509Certificate[1];
         Verified v = verifySigned(ce, json, signer, why);
         if (v == null) return null;
-        if (region != null && agent != null && (!region.equals(v.region) || !agent.equals(v.agent))) {
-            why[0] = "issued by " + v.region + "/" + v.agent + ", not " + region + "/" + agent;
-            return null;
+        why[0] = controllerRefusal(ce, v.region, v.agent, signer, region, agent, requireBinding);
+        return why[0] == null ? v : null;
+    }
+
+    /**
+     * Why the verified signer {@code vRegion/vAgent} is not the controller {@code region/agent} (null names: any) this node
+     * takes a list -- or revocations by name -- from, or null. See {@link #verifyController} for {@code requireBinding}.
+     */
+    private static String controllerRefusal(ControllerEngine ce, String vRegion, String vAgent, X509Certificate[] signer, String region,
+                                            String agent, boolean requireBinding) {
+        if (region != null && agent != null && (!region.equals(vRegion) || !agent.equals(vAgent))) {
+            return "issued by " + vRegion + "/" + vAgent + ", not " + region + "/" + agent;
         }
         // the role the signer's own certificate carries (pre-provisioned), never one remembered for the name
-        String role = ce.getCertificateManager().getPeerTrust().boundRole(v.region, v.agent, signer);
-        if (!requireBinding && (role == null || PeerTrustRegistry.ROLE_CONTROLLER.equals(role))) return v;
+        String role = ce.getCertificateManager().getPeerTrust().boundRole(vRegion, vAgent, signer);
+        if (!requireBinding && (role == null || PeerTrustRegistry.ROLE_CONTROLLER.equals(role))) return null;
         if (!PeerTrustRegistry.ROLE_CONTROLLER.equals(role)) {
-            why[0] = v.region + "/" + v.agent + " is not a controller bound here by its key (" + (role == null ? "not bound" : "bound as " + role)
+            return vRegion + "/" + vAgent + " is not a controller bound here by its key (" + (role == null ? "not bound" : "bound as " + role)
                     + "): only controllers send revocation lists";
-            return null;
         }
-        return v;
+        return null;
     }
 
     private static long seqOf(String v) {
@@ -307,8 +397,12 @@ public final class RevocationSync {
         if (last != null && now - last < 600_000L) return;
         if (st.lastWarned.size() > 4096) st.lastWarned.clear();
         st.lastWarned.put(key, now);
+        st.lastWarning = text;
         logger(ce).warn(text);
     }
+
+    /** Tests: the last warning this node's revocation sync logged. */
+    static String lastWarning(ControllerEngine ce) { return state(ce).lastWarning; }
 
     // ------------------------------------------------------------------ child side
 
@@ -320,6 +414,7 @@ public final class RevocationSync {
             ping.setParam(HAVE, st.parentEpoch.isEmpty() ? "" : st.parentEpoch + "." + st.parentSeq);
             ping.setParam(CLOCK, Long.toString(System.currentTimeMillis()));
             if (!ce.cstate.isRegionalController()) return;                       // a region reports its own revocations
+            try { freshValue(st, ping); answerNames(ce, st, reg, ping); } catch (Exception ignore) { }
             long own = reg.ownRevocationSeq();
             if (own == 0) return;
             long acked = reg.revocationEpoch().equals(st.ackedEpoch) ? st.ackedSeq : -1;
@@ -342,6 +437,12 @@ public final class RevocationSync {
      * node's own state).
      */
     public static void onParentPong(ControllerEngine ce, MsgEvent pong, String parentRegion, String parentAgent) {
+        onParentList(ce, pong, parentRegion, parentAgent);
+        // after the list (the registry then holds what the parent revoked by key): what it revoked by name
+        try { onParentNames(ce, state(ce), pong, parentRegion, parentAgent); } catch (Exception ignore) { }
+    }
+
+    private static void onParentList(ControllerEngine ce, MsgEvent pong, String parentRegion, String parentAgent) {
         try {
             State st = state(ce);
             PeerTrustRegistry reg = ce.getCertificateManager().getPeerTrust();
@@ -482,11 +583,21 @@ public final class RevocationSync {
             String childList = msg.getParam(CHILD_LIST) == null ? null : msg.getCompressedParam(CHILD_LIST);
             String have = msg.getParam(HAVE);
             String clock = msg.getParam(CLOCK);
+            String fresh = msg.getParam(NAMES_FRESH);
+            // a region's answers are read only while this node has a request open: otherwise nothing is parsed or verified
+            String nameReport = childIsRegion && reg.nameRevocationsOpen() > 0 && msg.getParam(NAME_REPORT) != null
+                    ? msg.getCompressedParam(NAME_REPORT) : null;
             msg.removeParam(CHILD_LIST);
             msg.removeParam(HAVE);
             msg.removeParam(CLOCK);
+            msg.removeParam(NAMES_FRESH);
+            msg.removeParam(NAME_REPORT);
+            msg.removeParam(NAMES);                                              // never one the ping brought
             String src = msg.getSrcRegion() + "/" + msg.getSrcAgent();
             String child = null;
+            // a node that answers region controllers' pings as their global is one, whatever its configuration said at start
+            if (childIsRegion && !reg.isGlobal()) reg.setGlobal(true);
+            String reporter = nameReport == null ? null : acceptAnswers(ce, st, reg, msg, nameReport, src);
             if (childList != null && childIsRegion) {
                 String[] why = new String[1];
                 Verified v = verifyChild(ce, msg, childList, why);
@@ -504,7 +615,7 @@ public final class RevocationSync {
             }
             // who pinged, as far as this node can tell: the controller whose signed list verified, else the caller the broker
             // stamped -- when its name is bound here (never the names the message itself carries)
-            String pinger = child != null ? child : verifiedPinger(ce, reg, msg, childIsRegion);
+            String pinger = child != null ? child : reporter != null ? reporter : verifiedPinger(ce, reg, msg, childIsRegion);
             boolean anonymous = "anonymous".equals(msg.getParam(io.cresco.library.security.Caller.PARAM_CALLER));
             // the global serves its list (fingerprints and names) only to its verified child controllers (and in the explicit
             // insecure development mode, where nothing is verified); a region serves its own list to its agents
@@ -530,6 +641,8 @@ public final class RevocationSync {
                 String delta = parentDelta(ce, reg, have);
                 if (delta != null) msg.setCompressedParam(PARENT_LIST, delta);
             }
+            // revocations by name: only from a global, only to a VERIFIED pinger, only while one is open (one volatile read)
+            if (childIsRegion && pinger != null && reg.nameRevocationsOpen() > 0) askNames(ce, reg, msg, pinger, fresh);
             // clock skew is recorded only for a verified peer bound here (a ping's claimed name cannot raise an alarm)
             if (clock != null && pinger != null) {
                 try { ce.getCertificateManager().noteClock(Long.parseLong(clock), "child " + pinger); } catch (NumberFormatException ignore) { }
@@ -568,23 +681,28 @@ public final class RevocationSync {
     private static Verified verifyChild(ControllerEngine ce, MsgEvent msg, String json, String[] why) {
         Verified v = verifyController(ce, json, null, null, true, why);
         if (v == null) return null;
-        if (v.region.equals(ce.cstate.getRegion())) {
-            why[0] = v.region + "/" + v.agent + " is of this node's own region: not a child region";
-            return null;
-        }
-        if (v.region.equals(ce.cstate.getGlobalRegion()) && v.agent.equals(ce.cstate.getGlobalAgent())) {
-            why[0] = v.region + "/" + v.agent + " is this node's parent, not a child";
-            return null;
+        why[0] = childRefusal(ce, msg, v.region, v.agent);
+        return why[0] == null ? v : null;
+    }
+
+    /**
+     * Why the controller {@code region/agent} -- whose signature verified, with the key bound here as a controller -- is not
+     * a child region's controller on this ping, or null: it is of this node's own region, or this node's parent, or the
+     * broker stamped another caller on the message.
+     */
+    private static String childRefusal(ControllerEngine ce, MsgEvent msg, String region, String agent) {
+        if (region.equals(ce.cstate.getRegion())) return region + "/" + agent + " is of this node's own region: not a child region";
+        if (region.equals(ce.cstate.getGlobalRegion()) && agent.equals(ce.cstate.getGlobalAgent())) {
+            return region + "/" + agent + " is this node's parent, not a child";
         }
         // the verified caller the broker stamped (phase 3): when there is one it must be this same controller ("anonymous"
         // only in the explicit insecure development mode, where no identity is verified and the signature alone decides)
         String caller = msg.getParam(io.cresco.library.security.Caller.PARAM_CALLER);
         if (caller != null && !caller.isEmpty() && !"anonymous".equals(caller)
-                && !(caller.startsWith("controller:") && caller.endsWith("/" + v.region + "/" + v.agent))) {
-            why[0] = "the verified caller " + caller + " is not the controller " + v.region + "/" + v.agent + " that signed the list";
-            return null;
+                && !(caller.startsWith("controller:") && caller.endsWith("/" + region + "/" + agent))) {
+            return "the verified caller " + caller + " is not the controller " + region + "/" + agent + " that signed the list";
         }
-        return v;
+        return null;
     }
 
     /** The parent's list after what the child holds ({@code have}), or null when it holds all of it. O(1) when nothing changed. */
@@ -601,5 +719,239 @@ public final class RevocationSync {
         }
         if (from >= durable) return null;
         return signedDelta(ce, from, false);
+    }
+
+    // ------------------------------------------------------------------ revocations by name
+
+    private static final java.util.regex.Pattern FRESH = java.util.regex.Pattern.compile("[0-9a-f]{16}");
+    private static final java.security.SecureRandom RANDOM = new java.security.SecureRandom();
+
+    /** A region controller's ping: a new fresh value on it, kept with the last few (a request must repeat one of them). */
+    private static void freshValue(State st, MsgEvent ping) {
+        byte[] b = new byte[8];
+        RANDOM.nextBytes(b);
+        String v = java.util.HexFormat.of().formatHex(b);
+        String[][] old = st.fresh, now = new String[Math.min(FRESH_KEPT, old.length + 1)][];
+        now[0] = new String[]{v, Long.toString(System.currentTimeMillis())};
+        System.arraycopy(old, 0, now, 1, now.length - 1);
+        st.fresh = now;
+        ping.setParam(NAMES_FRESH, v);
+    }
+
+    /** Sign {@code items} as this node's requests or answers for {@code to}; null when it cannot sign now. */
+    private static String signNames(ControllerEngine ce, String kind, String to, String fresh, List<String> items) {
+        try {
+            CertificateManager cm = ce.getCertificateManager();
+            X509Certificate[] mine = cm.getPublicCertificate();
+            if (mine == null || mine.length == 0 || mine[0] == null) return null;
+            long now = System.currentTimeMillis();
+            if (now >= mine[0].getNotAfter().getTime() || now < mine[0].getNotBefore().getTime()) return null;
+            SignedNames l = new SignedNames();
+            l.kind = kind;
+            l.issuer = ce.cstate.getRegion() + "/" + ce.cstate.getAgent();
+            l.tenant = SecuritySettings.tenant(ce.getPluginBuilder().getConfig());
+            l.to = to;
+            l.fresh = fresh == null ? "" : fresh;
+            l.issued = now;
+            l.items = items;
+            l.cert = Base64.getEncoder().encodeToString(mine[0].getEncoded());
+            if (mine.length > 1 && mine[1] != null) {
+                l.chain = new ArrayList<>();
+                for (int i = 1; i < mine.length && mine[i] != null; i++) l.chain.add(Base64.getEncoder().encodeToString(mine[i].getEncoded()));
+            }
+            l.sig = Base64.getEncoder().encodeToString(cm.signWithIdentity(signedBytes(l)));
+            return GSON.toJson(l);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Parse and check signed requests or answers of {@code kind}: the certificate verifies here as the issuer and signed
+     * them, the tenant they state is that certificate's, and they are addressed to THIS node. Sets {@code who} to the
+     * issuer's {region, agent}. The caller checks WHO the issuer is. Null (and {@code why}) otherwise.
+     */
+    private static SignedNames verifyNames(ControllerEngine ce, String json, String kind, X509Certificate[] signer, String[] who, String[] why) {
+        try {
+            SignedNames l = GSON.fromJson(json, SignedNames.class);
+            if (l == null || l.v != 2 || l.items == null || l.cert == null || l.sig == null || l.issuer == null || l.to == null
+                    || l.tenant == null || l.fresh == null || !kind.equals(l.kind)) { why[0] = "malformed"; return null; }
+            if (l.items.size() > NAMES_MAX) { why[0] = "too long"; return null; }
+            CrescoIdentity id = verifySigner(ce, l.issuer, l.cert, l.chain, signedBytes(l), l.sig, signer, why);
+            if (id == null) return null;
+            if (!l.tenant.equals(id.getTenant())) {
+                why[0] = "it states tenant " + l.tenant + ", and its certificate is of tenant " + id.getTenant();
+                return null;
+            }
+            if (!l.to.equals(ce.cstate.getRegion() + "/" + ce.cstate.getAgent())) {
+                why[0] = "it is addressed to " + l.to + ", not to this node";
+                return null;
+            }
+            who[0] = id.getRegion();
+            who[1] = id.getAgent();
+            return l;
+        } catch (Exception e) {
+            why[0] = e.getClass().getSimpleName() + ": " + e.getMessage();
+            return null;
+        }
+    }
+
+    /**
+     * At a global, on a verified region controller's ping while a revocation by name is open: the open ones of ITS region's
+     * names, signed for this pong -- when it is the ONE controller this node records for that region, and its ping carried
+     * a fresh value. Otherwise nothing is sent and the registry is told why (what the reminders say).
+     */
+    private static void askNames(ControllerEngine ce, PeerTrustRegistry reg, MsgEvent msg, String pinger, String fresh) {
+        String region = pinger.substring(0, pinger.indexOf('/'));
+        List<PeerTrustRegistry.NameRevocation> open = reg.nameRevocationsFor(region);
+        if (open.isEmpty()) return;
+        PeerTrustRegistry.RegionController rc = reg.controllerOf(region);
+        String notSent = rc.why != null ? rc.why
+                : !rc.name.equals(pinger) ? pinger + " pinged, and the controller recorded for region " + region + " is " + rc.name
+                : fresh == null || !FRESH.matcher(fresh).matches() ? pinger + " says nothing of revocations by name on its pings (an earlier build"
+                + " does not; it is asked once it is upgraded)" : null;
+        String signed = null;
+        if (notSent == null) {
+            long now = System.currentTimeMillis();
+            List<String> items = new ArrayList<>(open.size());
+            for (PeerTrustRegistry.NameRevocation x : open) {
+                if (items.size() >= NAMES_MAX) break;
+                items.add(PeerTrustRegistry.NameRevocation.ASKED.equals(x.state) ? "A|" + x.id + "|" + x.name + "|" + Math.max(0, now - x.t)
+                        : "L|" + x.id + "|" + x.name + "|" + (x.allow == null ? "" : x.allow));
+            }
+            signed = signNames(ce, KIND_ASK, pinger, fresh, items);
+            if (signed == null) notSent = "this node cannot sign now (its certificate is not valid)";
+        }
+        reg.noteNameRegion(region, pinger, notSent);
+        if (signed != null) msg.setCompressedParam(NAMES, signed);
+    }
+
+    /**
+     * At a global, while a revocation by name is open: a region controller's signed answers. WHO: verified exactly as a
+     * child's revocation list is -- signed with the key bound HERE as a controller to the issuer's name, of another region
+     * than this node's, not this node's parent, the broker-stamped caller (when there is one) that same controller,
+     * addressed to this node -- AND the one controller this node records for that region, in the tenant recorded for it
+     * (an answer from any other name bound under the region is not read). WHAT each answer then does is the registry's to
+     * decide ({@link PeerTrustRegistry#acceptNameAnswer}). Returns the verified controller ({@code region/agent}), or null.
+     */
+    private static String acceptAnswers(ControllerEngine ce, State st, PeerTrustRegistry reg, MsgEvent msg, String json, String src) {
+        String[] why = new String[1], who = new String[2];
+        X509Certificate[] signer = new X509Certificate[1];
+        SignedNames l = verifyNames(ce, json, KIND_REPORT, signer, who, why);
+        String controller = null;
+        if (l != null) {
+            controller = who[0] + "/" + who[1];
+            why[0] = controllerRefusal(ce, who[0], who[1], signer, null, null, true);
+            if (why[0] == null) why[0] = childRefusal(ce, msg, who[0], who[1]);
+            if (why[0] == null) {
+                PeerTrustRegistry.RegionController rc = reg.controllerOf(who[0]);
+                why[0] = rc.why != null ? rc.why : !rc.name.equals(controller) ? "the controller recorded for region " + who[0] + " is " + rc.name
+                        : !rc.tenant.equals(l.tenant) ? "it is of tenant " + l.tenant + ", and " + rc.name + " is recorded with tenant " + rc.tenant : null;
+            }
+        }
+        if (l == null || why[0] != null) {
+            warnOnce(ce, st, "nameanswers|" + src + "|" + why[0], "Answers to revocations by name on the ping from " + src + " REFUSED, none"
+                    + " read: " + why[0]);
+            return null;
+        }
+        int ignored = 0;
+        String first = null;
+        for (String item : l.items) {
+            String bad = reg.acceptNameAnswer(who[0], controller, item);
+            if (bad != null && ignored++ == 0) first = bad;
+        }
+        // one line per controller and reason every ten minutes, however many answers it sends
+        if (ignored > 0) {
+            warnOnce(ce, st, "nameanswer|" + controller + "|" + first, ignored + " answer(s) of " + controller + " to revocations by name"
+                    + " IGNORED (" + first + ")");
+        }
+        return controller;
+    }
+
+    /**
+     * At a region's controller, on its global's pong: the revocations by name the global asks of it. See the class comment
+     * for what is taken. Without them on the pong nothing is asked (any more).
+     */
+    private static void onParentNames(ControllerEngine ce, State st, MsgEvent pong, String parentRegion, String parentAgent) {
+        String json = pong.getParam(NAMES) == null ? null : pong.getCompressedParam(NAMES);
+        if (json == null) {
+            if (!st.nameAsks.isEmpty()) st.nameAsks = Map.of();
+            return;
+        }
+        if (!ce.cstate.isRegionalController() || parentRegion == null || parentAgent == null) return;
+        String parent = parentRegion + "/" + parentAgent, region = ce.cstate.getRegion();
+        PeerTrustRegistry reg = ce.getCertificateManager().getPeerTrust();
+        String[] why = new String[1], who = new String[2];
+        X509Certificate[] signer = new X509Certificate[1];
+        SignedNames l = verifyNames(ce, json, KIND_ASK, signer, who, why);
+        long sentAt = 0;
+        if (l != null) {
+            why[0] = controllerRefusal(ce, who[0], who[1], signer, parentRegion, parentAgent, false);
+            String tenant = reg.boundTenant(parentRegion, parentAgent);
+            if (why[0] == null && tenant != null && !tenant.equals(l.tenant)) {
+                why[0] = "it is of tenant " + l.tenant + ", and " + parent + " is bound here with tenant " + tenant;
+            }
+            if (why[0] == null) {
+                // fresh: it repeats the value of one of this node's last pings (and was therefore signed after that ping)
+                for (String[] f : st.fresh) if (f[0].equals(l.fresh)) sentAt = Long.parseLong(f[1]);
+                if (sentAt == 0) why[0] = "it is not fresh: it answers none of this node's last " + FRESH_KEPT + " pings (held back, or delivered again)";
+            }
+        }
+        if (l == null || why[0] != null) {
+            warnOnce(ce, st, "names|" + why[0], "Revocations by name on the pong of " + parent + " REFUSED: " + why[0]);
+            return;
+        }
+        Map<String, String[]> asks = new LinkedHashMap<>();
+        for (String item : l.items) {
+            String[] p = item == null ? new String[0] : item.split("\\|", -1);
+            if (p.length < 4 || !("A".equals(p[0]) || "L".equals(p[0]))) continue;
+            if (!p[2].startsWith(region + "/")) {
+                warnOnce(ce, st, "names|other|" + p[2], "A revocation by name of " + p[2] + " on the pong of " + parent + " is IGNORED: it is"
+                        + " not a name of this node's region " + region);
+                continue;
+            }
+            if ("A".equals(p[0])) {
+                long age;
+                try { age = Math.max(0, Long.parseLong(p[3])); } catch (NumberFormatException e) { continue; }
+                // the operator's act, by this node's clock: no earlier than (the ping this answers) - (its age when it was signed)
+                reg.applyNameRevocation(p[1], p[2], sentAt - age, parent);
+            } else {
+                reg.applyNameRebind(p[1], p[2], p[3].isEmpty() ? null : p[3], parent);
+            }
+            asks.put(p[1], new String[]{p[0], p[2]});
+        }
+        st.nameAsks = asks;
+    }
+
+    /**
+     * At a region's controller, before its ping: its answers to what its global last asked -- to a revocation once it is
+     * answered and recorded here, to a rebind once the name is no longer reserved for it -- signed with this node's
+     * identity key and addressed to its global. Nothing (one volatile read) while nothing is asked.
+     */
+    private static void answerNames(ControllerEngine ce, State st, PeerTrustRegistry reg, MsgEvent ping) {
+        Map<String, String[]> asks = st.nameAsks;
+        if (asks.isEmpty()) return;
+        List<String> items = new ArrayList<>();
+        for (Map.Entry<String, String[]> e : asks.entrySet()) {
+            String id = e.getKey(), name = e.getValue()[1];
+            if ("A".equals(e.getValue()[0])) {
+                String[] a = reg.nameAnswer(id);
+                // (W: the request was withdrawn before it was applied here -- the rebind that did so is what is answered)
+                if (a != null && !"W".equals(a[0])) items.add(id + "|" + name + "|" + a[0] + "|" + (a[1] == null ? "" : a[1]));
+            } else {
+                String status = reg.nameLiftAnswer(id, name);
+                if (status != null) items.add(id + "|" + name + "|" + status + "|");
+            }
+        }
+        if (items.isEmpty()) return;
+        String to = ce.cstate.getGlobalRegion() + "/" + ce.cstate.getGlobalAgent();
+        String content = to + "|" + String.join(",", items);
+        String[] last = st.nameReport;
+        if (last == null || !last[0].equals(content)) {
+            String signed = signNames(ce, KIND_REPORT, to, null, items);
+            if (signed == null) return;
+            st.nameReport = last = new String[]{content, signed};
+        }
+        ping.setCompressedParam(NAME_REPORT, last[1]);
     }
 }
