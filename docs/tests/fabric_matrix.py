@@ -234,8 +234,10 @@ KNOWN: list[Known] = [
           "a message reaches a node whose plugin is still loading (on the owner's list of known lines, not seen in these runs)"),
     Known("error-agent-lost", "error", r"Agent NodeID: \S+ (is STALE\. Setting to LOST|lost\. Setting Plugin NodeID: \S+ to LOST)",
           ("global-outage", "revoke"), 7, "a controller reports an agent the event killed or revoked as lost (one line, and one per plugin)"),
-    Known("error-upgrade-window", "error", r"UPGRADE WINDOW OPEN until", ("*",), 3,
-          "a controller with the upgrade window open says so at ERROR at every start, and hourly (upgrade profile)"),
+    Known("error-upgrade-window", "error", r"UPGRADE WINDOW OPEN until", ("*",), 4,
+          "a controller with the upgrade window open says so at ERROR at every start, and hourly (upgrade profile): two lines at a"
+          " start (the boot warning and the first hourly reminder), and move-agent starts the agent it makes twice (bound 3 until"
+          " 2026-11-16, when the rolling cells, the window open on every node, had 4 at that agent)"),
     # ---- revoke: the report of the revocation
     Known("error-revoked", "error", r"Key [0-9a-f]+ (of \S+ )?REVOKED \(operator file|Merged the revocation list of \S+: \d+ key\(s\) newly REVOKED",
           ("revoke",), 2, "every node reports the key the operator revoked (at the global) or that reached it in a list"),
