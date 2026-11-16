@@ -841,7 +841,7 @@ public class DiscoveryProcessor {
 		}
 		// proof of possession: a responder whose nonce says it is a build that proves its key signed this result with the key
 		// of the leaf it presented -- or it is refused, whatever its MACs say (no downgrade). One whose nonce does not say so
-		// is a build of before the proof (release 1.3.378), or says it is: the registry gives it only what such a build has.
+		// is a build of before the proof (release 1.3.379 or earlier), or says it is: the registry gives it only what such a build has.
 		boolean proved = false;
 		if (!pkiDiscovery()) {
 			java.security.cert.X509Certificate sleaf = leafOf(ch.scert);

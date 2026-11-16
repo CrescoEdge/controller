@@ -15,7 +15,7 @@ public class DiscoveryNode {
 	public transient String remote, refusal;
 	/**
 	 * The peer signed this exchange with the key of the leaf it presented (proof of possession, verified). False for a peer
-	 * of a build of before the proof (release 1.3.378) and for the legacy exchange: such a peer is given only what it
+	 * of a build of before the proof (release 1.3.379 or earlier) and for the legacy exchange: such a peer is given only what it
 	 * already has (PeerTrustRegistry.join).
 	 */
 	public transient boolean proved;

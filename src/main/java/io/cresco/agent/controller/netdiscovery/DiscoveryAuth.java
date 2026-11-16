@@ -38,7 +38,7 @@ import java.util.Map;
  * The secret proves membership only (every member of a kind holds it), so the MACs alone never said that the sender of a
  * certificate holds its key. The signatures do: see "proof of possession" below ({@link #possessionTranscript}, P) for
  * what they cover, how a build says that it proves ({@link #PROOF_NONCE}), and what a peer of a release before the
- * proof (1.3.378: MACs only) is still given.
+ * proof (1.3.379 or earlier: MACs only) is still given.
  *
  * T is the transcript: protocol label, discovery type, both nonces, both identities (region, agent), the SHA-384
  * fingerprints of both leaf certificates' keys, the responder's broker port, and the SHA-384 over the responder's WHOLE
@@ -104,7 +104,7 @@ public final class DiscoveryAuth {
         public String auth;
         /**
          * The secret's exchange, PROOF and RESULT: the sender's signature by the key of the leaf it presented, next to the MAC
-         * (proof of possession: {@link #possessionTranscript}). Absent from a build of before the proof (release 1.3.378).
+         * (proof of possession: {@link #possessionTranscript}). Absent from a build of before the proof (release 1.3.379 or earlier).
          */
         public String pop;
         /**

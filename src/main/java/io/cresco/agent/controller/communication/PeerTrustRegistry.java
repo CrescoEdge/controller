@@ -916,7 +916,7 @@ public final class PeerTrustRegistry {
     // reads the record as it always did (it never interprets a binding's source beyond "legacy").
     /** The peer proved possession of this key to this node (it signed a discovery exchange with it). */
     static final String MARK_POP = "pop";
-    /** Recorded WITHOUT proof, in the upgrade window: a first join of a node of release 1.3.378 or earlier. */
+    /** Recorded WITHOUT proof, in the upgrade window: a first join of a node of release 1.3.379 or earlier. */
     static final String MARK_COMPAT = "compat";
     /** The one global above this node: the only identity it takes in a GLOBAL exchange. */
     static final String MARK_GLOBAL = "global";
@@ -1037,7 +1037,7 @@ public final class PeerTrustRegistry {
      * <ul>
      *   <li><b>Proof.</b> Anything NEW -- a name not recorded, another key for a name, a replacement, the same key under
      *       another name -- is recorded only when the peer proved possession ({@link Join#proved}). Without proof only
-     *       an exactly recorded name and key is accepted, as before (a node of release 1.3.378: it gains nothing it does
+     *       an exactly recorded name and key is accepted, as before (a node of release 1.3.379 or earlier: it gains nothing it does
      *       not have); a FIRST join without proof only while the upgrade window is open, logged. A name and key that has
      *       proved itself here once is refused without proof afterwards, outside the window.</li>
      *   <li><b>One controller per region.</b> A controller of a region for which another is recorded is refused, unless
@@ -1212,7 +1212,7 @@ public final class PeerTrustRegistry {
                 if (j.global) gp = globalLocked(j, n, b, false, same, gone);
                 if (!j.proved) {
                     // the upgrade window admits a FIRST join without proof -- and the same controller under another agent name (a
-                    // node of release 1.3.378 whose agent name is generated at each start): the new name replaces the former one,
+                    // node of release 1.3.379 or earlier whose agent name is generated at each start): the new name replaces the former one,
                     // as long as that key never PROVED itself here. Nothing else.
                     boolean provedBefore = false;
                     for (String o : same) if (marked(identities.get(o), MARK_POP)) provedBefore = true;
@@ -1330,7 +1330,7 @@ public final class PeerTrustRegistry {
             }
             if (!same.isEmpty() && j != null && !j.proved) {
                 warn("UPGRADE WINDOW: the controller of region " + region + " is now recorded as " + n + " in place of " + String.join(", ", same)
-                        + " -- the same key " + PeerIdentity.shortFp(fp) + " under another agent name, WITHOUT proof (a node of release 1.3.378"
+                        + " -- the same key " + PeerIdentity.shortFp(fp) + " under another agent name, WITHOUT proof (a node of release 1.3.379 or earlier"
                         + " whose agent name is generated at each start; give it a fixed agentname). It stays unproved: when the key's"
                         + " holder proves it, what is recorded without proof gives way");
             } else if (!same.isEmpty()) {
@@ -1354,7 +1354,7 @@ public final class PeerTrustRegistry {
             if (j != null && !j.proved && same.isEmpty()) {
                 // what the upgrade window (or the CA this node holds) is there to admit: expected, said as a WARN
                 warn((j.window ? "UPGRADE WINDOW: " : "REGION CA: ") + n + " (tenant " + tenant + ", key " + PeerIdentity.shortFp(fp) + (j.peerAddress == null ? "" : ", at "
-                        + j.peerAddress) + ") is recorded WITHOUT proof of its key -- a first join of a node of release 1.3.378 or earlier,"
+                        + j.peerAddress) + ") is recorded WITHOUT proof of its key -- a first join of a node of release 1.3.379 or earlier,"
                         + " admitted because " + (j.window ? "the upgrade window is open on this node (discovery_auth=compat)"
                         : "its certificate was issued by the CA this node holds for region " + region) + ". Whoever holds the discovery"
                         + " secret and a copy of that node's certificate could have sent it: upgrade " + n
@@ -1675,7 +1675,7 @@ public final class PeerTrustRegistry {
      * same node, its agent name generated anew -- and the refusal says exactly what to do about that.
      */
     private BindResult noProof(String n, String fp, String what, String former, boolean window) {
-        String who = n + " sent no proof of the key of the certificate it presents -- it runs a release of before the proof (1.3.378 or"
+        String who = n + " sent no proof of the key of the certificate it presents -- it runs a release of before the proof (1.3.379 or"
                 + " earlier), or it is someone who holds the discovery secret and a copy of that certificate";
         if (former != null && (what == null || !window)) {
             // the same key under another agent name, without proof, outside the upgrade window (or its key proved itself before)
@@ -1693,14 +1693,14 @@ public final class PeerTrustRegistry {
             return new BindResult(false, who + " -- and " + what + ": without proof only a FIRST join is admitted (and, in the upgrade window,"
                     + " another agent name of an unproved key). Nothing was recorded. Upgrade " + n
                     + (former == null ? "" : ", or set agentname=" + agentOf(former) + " on it (it is recorded here as " + former + ")"),
-                    n + " sent no proof of its key (release 1.3.378 or earlier?) and what it asks for is more than a first join: upgrade it"
+                    n + " sent no proof of its key (release 1.3.379 or earlier?) and what it asks for is more than a first join: upgrade it"
                             + (former == null ? "" : ", or set agentname=" + agentOf(former) + " on it"), KIND_PROOF);
         }
         return new BindResult(false, who + " -- and this node has no record of that name with that key (" + PeerIdentity.shortFp(fp)
                 + "). A new name, another key, a replacement or a second name of a key is recorded only on proof. Nothing was recorded. Upgrade "
                 + n + "; or, while the fleet is being upgraded, open the upgrade window on this node (discovery_auth=compat with"
                 + " discovery_compat_until=<date>; read at start): it admits a FIRST join without proof and logs each one",
-                n + " sent no proof of its key (it runs release 1.3.378 or earlier) and is not recorded there with this key: UPGRADE " + n
+                n + " sent no proof of its key (it runs release 1.3.379 or earlier) and is not recorded there with this key: UPGRADE " + n
                         + ", or have that node's operator open its upgrade window (discovery_auth=compat with discovery_compat_until)", KIND_PROOF);
     }
 

@@ -83,7 +83,7 @@ Controllers first, from the top: a parent must understand everything its childre
 0. **Give every controller a fixed `agentname`** (and `regionname`) in its configuration, BEFORE the first node is
    upgraded, and restart it once so that it is recorded under that name. A controller without one takes a new generated
    agent name at each start; to the nodes that recorded it that is a new name of a known key, which a node of this build
-   records only on proof of the key -- and a node of release 1.3.378 sends none. Such a controller is then refused where
+   records only on proof of the key -- and a node of release 1.3.379 or earlier sends none. Such a controller is then refused where
    it is recorded (`... recorded as <region>/<old name> ...: set agentname=<old name> on that node ...; upgrade it; or open
    the upgrade window on this node`) until one of the three is done. With fixed names none of this arises, in either
    direction, also on a roll back. (Agents: a generated agent name is a first join at each start; see below.)
@@ -114,17 +114,17 @@ controller per region, and the proof of its key") a node records a new name or k
 its certificate in the discovery exchange, and refuses a second controller for a region, and a second global. It is the
 recording node that enforces it, so upgrade the global first, then the region controllers, then the agents.
 
-- **Registries kept, fixed agent names (the usual upgrade):** nothing to do. A node of release 1.3.378 sends no proof and
+- **Registries kept, fixed agent names (the usual upgrade):** nothing to do. A node of release 1.3.379 or earlier sends no proof and
   is accepted where its name and key are recorded, exactly as before; after it is upgraded it proves its key.
 - **What needs the upgrade window on the RECORDING node** (`discovery_auth=compat` with `discovery_compat_until`; it is
-  read when that node starts): (a) a FIRST join without proof -- a 1.3.378 node at a NEW (empty-registry) node of this
-  build, a 1.3.378 agent whose agent name is generated at each start, a new joiner of this build at a 1.3.378
-  controller; (b) a 1.3.378 CONTROLLER whose agent name is generated at each start: in the window its new name replaces
+  read when that node starts): (a) a FIRST join without proof -- a node of an earlier release at a NEW (empty-registry) node
+  of this build, an agent of an earlier release whose agent name is generated at each start, a new joiner of this build
+  at a controller of an earlier release; (b) a CONTROLLER of an earlier release whose agent name is generated at each start: in the window its new name replaces
   the former one (same key, same tenant, one name at a time). Each is logged (`UPGRADE WINDOW: ...`). Without the window
   (a) is refused with a line that says to upgrade the joiner, (b) with the line of step 0. The window admits nothing
   else without proof: a re-key or a replacement needs the upgraded node.
-- **Rolling a node back to 1.3.378** after it proved its key. Within `discovery_proof_grace_days` (default 7; 0 = none)
-  of its FIRST proof at a node: nothing to do -- it is taken there as 1.3.378 takes it, with a WARN per ten minutes (`...
+- **Rolling a node back to an earlier release** (1.3.379 or before) after it proved its key. Within `discovery_proof_grace_days` (default 7; 0 = none)
+  of its FIRST proof at a node: nothing to do -- it is taken there as that release takes it, with a WARN per ten minutes (`...
   proved its key before and sent no proof now: rolled back to an earlier release, or a holder of the secret answers in its
   name`) and a WARN in that node's `identity` health while it lasts; nothing that node holds of it changes meanwhile.
   After the grace: open the upgrade window on the nodes that recorded it (its joiners, its parent) and restart them --

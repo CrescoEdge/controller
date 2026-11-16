@@ -755,9 +755,9 @@ is recorded.
 - **What is recorded only on proof:** anything NEW -- a name not recorded, another key for a recorded name (also with the
   operator's rebind line or a voucher), a replacement, the same key under another name. Each node remembers which names
   have proved their key to it (durably), and refuses that name and key WITHOUT proof afterwards.
-- **A node of release 1.3.378 or earlier sends no proof.** It keeps exactly what it has: a re-join of a name and key that
-  is recorded is accepted as before (a 1.3.378 agent at its upgraded controller, a 1.3.378 region at its upgraded
-  global, an upgraded joiner answered by its recorded 1.3.378 controller). It is NOT recorded anew: a first join and a
+- **A node of release 1.3.379 or earlier sends no proof.** It keeps exactly what it has: a re-join of a name and key that
+  is recorded is accepted as before (an agent of an earlier release at its upgraded controller, a region of an earlier
+  release at its upgraded global, an upgraded joiner answered by its recorded controller of an earlier release). It is NOT recorded anew: a first join and a
   re-key (even with the operator's rebind line) are refused with `... sent no proof of its key ...: UPGRADE <name>, or
   ... upgrade window`. A node whose agent name is generated at each start comes back as ANOTHER name of a recorded key:
   refused with exactly what to do -- `... recorded as <region>/<old> ...: set agentname=<old> on that node (it then
@@ -770,12 +770,12 @@ is recorded.
   recorded as <new> in place of <old> ...`); both are WARN lines -- what the window is open for, not an error. Nothing
   else. Such records can be anybody's doing (the secret and a copy of
   a certificate suffice), so they never stand against the key's holder: when a node PROVES a key, whatever was recorded
-  of that key without proof -- another name, region or tenant -- gives way to it. So a fabric of 1.3.378 nodes that is
+  of that key without proof -- another name, region or tenant -- gives way to it. So a fabric of nodes of an earlier release that is
   to join a NEW global of this build either upgrades first or the global opens its window for the time of the upgrade; a
   fabric whose registries are kept and whose controllers have fixed agent names needs neither.
   What "no proof" still allows, until the peer has proved its key once: whoever holds the secret and a copy of a
   recorded node's certificate can re-join in its name (it gains nothing: every use of the name needs the key; the
-  certificates the node holds for that name are replaced by the chain presented, as 1.3.378 does), and can ANSWER a
+  certificates the node holds for that name are replaced by the chain presented, as an earlier release does), and can ANSWER a
   joiner in the name of its recorded controller from another address -- the joiner then fails at TLS, where the key is
   needed, and tries again. Upgrade controllers first.
 - **Proved once: a grace, then always.** A name and key that has proved itself to a node (recorded with the time of its
@@ -785,9 +785,9 @@ is recorded.
   back to an earlier release, or a holder of the secret answers in its name ...` (WARN, once per pair per ten minutes),
   and the `identity` health is WARN while it lasts. NOTHING the recording node holds changes by such an exchange: not the
   certificates it holds for the name, not the chain kept with the binding, not its bridge record, marks or last-seen
-  time (under the regional CA the CA still re-issues the recorded joiner's leaf, as it does for 1.3.378); another tenant,
-  role, name or key is not "that name and key" and is refused. What it does allow is what 1.3.378
-  allows: the re-join itself, and -- at a joiner -- being sent to the address the answer came from, where TLS needs the
+  time (under the regional CA the CA still re-issues the recorded joiner's leaf, as it does for an earlier release); another tenant,
+  role, name or key is not "that name and key" and is refused. What it does allow is what an earlier
+  release allows: the re-join itself, and -- at a joiner -- being sent to the address the answer came from, where TLS needs the
   recorded key. After the grace: `... PROVED its key to this node before ... and sent no proof now: refused`, unless the
   upgrade window is open on the recording node.
 - **One controller per region.** Where a controller is recorded for a region, the region has ONE controller there: the
@@ -862,7 +862,7 @@ is recorded.
   `security_regional_ca`: who a regional CA trusts is unchanged -- one CA per region, a leaf by that CA -- and the same
   rules decide BEFORE the CA issues or records anything: nothing for a joiner without proof (an agent's enrollment, a
   controller's federation) unless it is recorded as it presents itself or its leaf was issued by the CA already held for
-  its region (a node of release 1.3.378), or the window is open; one global (the controller a region federated with in a
+  its region (a node of release 1.3.379 or earlier), or the window is open; one global (the controller a region federated with in a
   GLOBAL exchange; another region's controller that answers a GLOBAL exchange is refused, as above); a controller that
   federates in a REGION exchange, or that joins, is a peer.
 - **The proof's algorithm is fixed** per key type -- SHA384withRSA, SHA384withECDSA -- like the key derivation: it does
