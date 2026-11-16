@@ -216,8 +216,6 @@ public class ActiveBroker {
 				//SSLContext sslContext = SSLContext.getInstance("Default");
 				sslContext.init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 				sslContextBroker.setSSLContext(sslContext);
-				// a change of trust reaches the sessions its clients would resume (CertificateManager.invalidateRefusedTlsSessions)
-				controllerEngine.getCertificateManager().registerTlsContext(sslContext);
 				logger.info("Initialized SSL Context");
 
 				// Dead letters. With no strategy set ActiveMQ's default applied: every PERSISTENT message that expired (liveness
@@ -791,7 +789,10 @@ public class ActiveBroker {
 		for (NetworkConnector nc : own) {
 			try {
 				SslContext ctx = nc.getSslContext();
-				if (ctx != null) {
+				if (ctx instanceof FreshSslContext) {
+					// (a context is made per connection: the next one presents the new identity)
+					((FreshSslContext) ctx).useKeyManagers(controllerEngine.getCertificateManager().getKeyManagers());
+				} else if (ctx != null) {
 					ctx.getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), ctx.getTrustManagersAsArray(), new SecureRandom());
 				}
 			} catch (Exception ex) {
@@ -1069,21 +1070,17 @@ public class ActiveBroker {
 	// shards. This gives one TLS socket per shard -> real cross-node parallelism, no duplicates.
 	/**
 	 * The TLS context of one outbound bridge connector: this node's identity (key managers) and a trust manager bound to
-	 * {@code expected}. Null with peer_identity_mode=off: the connector then uses the broker's shared context, as before.
+	 * {@code expected} (with peer_identity_mode=off, the broker's own trust, the old chain-only check). A JSSE context is
+	 * made for each connection the bridge opens ({@link FreshSslContext}): a bridge that reconnects never resumes a session,
+	 * which would skip the trust manager, so its peer is judged by this node's trust as it is at every connection. Every
+	 * completed handshake is recorded, so a revocation of its peer (key, name, or a CA in its chain) closes it (round-2
+	 * review N5).
 	 */
 	static SslContext bridgeSslContext(CertificateManager cm, PeerIdentity.Expected expected, String endpoint) {
-		if (cm.peerIdentityMode() == PeerIdentity.Mode.OFF) return null;
-		SslContext ctx = new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
-		try {
-			// a change of trust reaches the sessions this bridge would resume (CertificateManager.invalidateRefusedTlsSessions)
-			cm.registerTlsContext(ctx.getSSLContext());
-			// every completed handshake of the bridge -- resumed ones too, which skip the trust manager -- is recorded, so a
-			// revocation of its peer (key, name, or a CA in its chain) closes it (round-2 review N5)
-			ctx.setSSLContext(RecordingSslContext.wrap(ctx.getSSLContext(), cm.outboundConnections(), endpoint));
-		} catch (Exception e) {
-			throw new IllegalStateException("the bridge's TLS context could not be made: " + e.getMessage(), e);
-		}
-		return ctx;
+		javax.net.ssl.TrustManager[] tm = cm.peerIdentityMode() == PeerIdentity.Mode.OFF ? cm.getTrustManagers()
+				: cm.clientTrustManagers(expected, endpoint);
+		return new FreshSslContext(cm.getKeyManagers(), tm, new SecureRandom(),
+				c -> RecordingSslContext.wrap(c, cm.outboundConnections(), endpoint));
 	}
 
 	private NetworkConnector buildConnector(String hostname, int port, int index, PeerIdentity.Expected expected) throws Exception {

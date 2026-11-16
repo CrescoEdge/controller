@@ -77,7 +77,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkClientTrusted(chain, authType, socket);
             else pkix.checkClientTrusted(chain, authType);
         });
-        TlsSessionCaches.judged(handshakeSession(socket));
+        notResumable(handshakeSession(socket));
     }
 
     @Override
@@ -86,7 +86,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkServerTrusted(chain, authType, socket);
             else pkix.checkServerTrusted(chain, authType);
         });
-        TlsSessionCaches.judged(handshakeSession(socket));
+        notResumable(handshakeSession(socket));
     }
 
     @Override
@@ -95,7 +95,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkClientTrusted(chain, authType, engine);
             else pkix.checkClientTrusted(chain, authType);
         });
-        TlsSessionCaches.judged(handshakeSession(engine));
+        notResumable(handshakeSession(engine));
     }
 
     @Override
@@ -104,7 +104,35 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkServerTrusted(chain, authType, engine);
             else pkix.checkServerTrusted(chain, authType);
         });
-        TlsSessionCaches.judged(handshakeSession(engine));
+        notResumable(handshakeSession(engine));
+    }
+
+    /**
+     * The session of a handshake whose peer this trust has just ACCEPTED is invalidated: it is never resumed. A resumed
+     * session skips the trust manager, so a peer revoked here, or whose anchors were removed and whose key is not bound
+     * here, got back in by resuming -- for the 24 h a session lives, and also after a revocation that came while the
+     * handshake that made the session was in flight (whatever is looked for at a revocation, such a session is cached
+     * after it). Invalidated here, inside the handshake that judged it, the session is resumable at no moment: a JDK
+     * server issues no ticket for it and caches nothing (TLS 1.3 and 1.2: the session is not rejoinable when its ticket or
+     * cache entry would be made), so the peer's next connection is a full handshake, judged by this trust as it is then.
+     * {@code SSLSession.invalidate} is the platform's contract ("future connections will not be able to resume or join
+     * this session"), whatever the TLS provider; a provider that does not let a handshake session be invalidated gets its
+     * handshake refused (fail safe), never a resumable session. The client side of the node's own links and bridges does
+     * not depend on the peer: each connection there has a TLS context of its own ({@link FreshSslContext}).
+     *
+     * <p>TLS 1.2 included (security over speed): a peer that negotiates it makes a full handshake at each connection.
+     * Cresco's own nodes negotiate TLS 1.3 with each other (SunJSSE offers it by default and is TLS 1.3 only in the
+     * production profile; BCJSSE, crypto_fips_tls=bcjsse, offers 1.3 and 1.2 and negotiates 1.3 with any node of this
+     * family): TLS 1.2 is negotiated only with a peer that does not offer 1.3.
+     */
+    static void notResumable(javax.net.ssl.SSLSession handshakeSession) throws CertificateException {
+        if (handshakeSession == null) return;           // (no handshake in progress: nothing is made that could be resumed)
+        try {
+            handshakeSession.invalidate();
+        } catch (RuntimeException e) {
+            throw new CertificateException("this TLS provider does not let the session be made non-resumable ("
+                    + e.getClass().getSimpleName() + "): a session whose peer is judged here is never resumable, so the handshake is refused");
+        }
     }
 
     /** The session of the handshake in progress on {@code socket} / {@code engine} (null when there is none). */

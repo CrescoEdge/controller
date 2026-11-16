@@ -211,11 +211,11 @@ class JoinTrustIsLiveTest {
     }
 
     /**
-     * A resumed TLS session skips the trust manager. A revoked node gets no IDENTITY through one (the broker binds a
-     * connection to one only by the registry's word for its session's chain: CrescoAuthorizationBroker.resolve,
-     * verifiedIdentity) -- and, since its context is registered with the node (as the broker's is), it does not get the
-     * TLS connection either: at the revocation the session is invalidated (CertificateManager.invalidateRefusedTlsSessions)
-     * and the next connection makes a full handshake, which the trust refuses. ResumedSessionTrustTest has the other cases.
+     * A resumed TLS session skips the trust manager. The node's trust makes no session it judged resumable
+     * (BoundKeyTrustManager.notResumable): the same client context's next connection is a full handshake, judged as it is
+     * then -- so a revoked node is refused, not resumed. (What a revoked node could never get through a resumed session
+     * either is an identity: the broker binds a connection to one only by the registry's word for its chain.)
+     * ResumedSessionTrustTest has the other cases.
      */
     @Test
     void aRevokedNodeHoldsNoIdentityThroughAResumedSession() throws Exception {
@@ -226,7 +226,6 @@ class JoinTrustIsLiveTest {
         for (TrustManager t : cm.getTrustManagers()) if (t instanceof javax.net.ssl.X509ExtendedTrustManager) tm = new Counting((javax.net.ssl.X509ExtendedTrustManager) t);
         javax.net.ssl.SSLContext server = javax.net.ssl.SSLContext.getInstance("TLS");
         server.init(cm.getKeyManagers(), new TrustManager[]{tm}, RND);
-        cm.registerTlsContext(server);                                       // as ActiveBroker registers its context
         X509Certificate[] sc = cm.getPublicCertificate();
         try (javax.net.ssl.SSLServerSocket ss = (javax.net.ssl.SSLServerSocket) server.getServerSocketFactory().createServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress())) {
             ss.setNeedClientAuth(true);
@@ -239,20 +238,18 @@ class JoinTrustIsLiveTest {
             assertNotNull(reg.verifiedIdentity(first, new String[1]), "precondition: the broker would bind this connection to rgA/a3");
             int decisions = tm.calls.get();
             X509Certificate[] again = connect(ss, held);
-            boolean resumes = again != null && tm.calls.get() == decisions;
-            System.out.println("JoinTrustIsLiveTest: a second connection of the same client context "
-                    + (resumes ? "resumed its session (no trust decision)" : "made a full handshake (" + (tm.calls.get() - decisions) + " trust decision(s))"));
+            assertNotNull(again);
+            assertEquals(decisions + 1, tm.calls.get(), "the same client context's second connection resumed its session (no trust decision)");
 
             assertNull(reg.revoke(PeerTrustRegistry.fingerprint(a3.chain[0].getPublicKey().getEncoded()), "test"));
-            // (1) the session it holds was invalidated at the revocation: its next connection is a full handshake, refused
+            // (1) its next connection is a full handshake, refused
             decisions = tm.calls.get();
             X509Certificate[] afterRevocation = connect(ss, held);
             String[] why = new String[1];
-            assertTrue(resumes, "precondition: the same client context resumed its session");
-            assertNull(afterRevocation, "a revoked node got back in by resuming its session");
+            assertNull(afterRevocation, "a revoked node got back in");
             System.out.println("JoinTrustIsLiveTest: after the revocation, the same client context again: TLS "
                     + (afterRevocation == null ? "refused it" : "accepted it (resumed, no trust decision); the registry gives it no identity: " + why[0]));
-            // (2) what the broker also does at a revocation (its own sweep of its context): nothing is left to invalidate
+            // (2) what the broker also does at a revocation (a sweep of its context's cache): nothing is there to invalidate
             int invalidated = ActiveBroker.invalidateRefusedSessions(server.getServerSessionContext(), reg);
             X509Certificate[] afterInvalidation = connect(ss, held);
             System.out.println("JoinTrustIsLiveTest: " + invalidated + " cached session(s) of the revoked peer invalidated; the same client context again: TLS "
