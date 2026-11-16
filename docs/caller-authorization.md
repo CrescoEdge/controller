@@ -584,13 +584,18 @@ after 90 days. Its tests (`ReviewIdentityRevocationTest`) pass unchanged; `Ident
   - *The global* RESERVES the name at once, always (no key is accepted for it, no message signed in it, until an operator
     rebind), and records a request with a random id and the time of the operator's act. Its own name is never revoked
     this way, and an unbound name of its OWN region stays an error (it is bound nowhere: a typo).
-  - *Who is asked:* the ONE controller the global records as that region's joined controller, in the tenant recorded for
-    it, on its pongs, and only when its ping said that it takes such requests (a fresh random value, which an earlier
-    build does not send). With no controller of the region joined, or MORE than one name recorded under the region as a
-    controller, nobody is asked and the reason is reported: which of two is the region's is not the global's to guess --
-    revoke the other here.
+  - *Who is asked:* the ONE controller the global records for that region -- the record the one-controller-per-region
+    rule keeps (section 9, "One controller per region"), read in one place (`PeerTrustRegistry.controllerOf`): the
+    controller bound there under the region, by its key (every name of that key, one as a rule), in the tenant recorded
+    for it; under the regional CA with no controller bound, or pre-provisioned, the one controller of the region that
+    completed discovery with the global (its bridge peer). It is asked on its pongs, and only when its ping said that it
+    takes such requests (a fresh random value, which an earlier build does not send). With no controller of the region
+    joined, or MORE than one recorded for it (other keys or tenants: a registry of before the rule, which the `identity`
+    health check reports as CRITICAL), nobody is asked and the reason is reported: which of two is the region's is not
+    the global's to guess. A bridge-peer record without a binding is nobody, as for the rule.
   - *The region's controller* takes a request only from the global it joined (verified as its list is, in its tenant,
-    addressed to it), only for a name of its own region, and only FRESH: the request repeats the random value of one of
+    addressed to it; where its registry records its ONE global, that one only), only for a name of its own region, and
+    only FRESH: the request repeats the random value of one of
     its last three pings, so one that was held back or is delivered again is refused. It then acts as if its operator
     had revoked the name there -- the bound key revoked for every name, the name reserved, the node's connections closed
     -- and answers with the key on its next ping. A binding made AFTER the operator's act (the request carries its age;

@@ -191,10 +191,21 @@ public final class PeerTrustRegistry {
         public boolean outstanding() { return ASKED.equals(state) || REFUSED.equals(state); }
     }
 
-    /** The ONE controller of a region joined to this node ({@link #controllerOf}), or why there is none to ask. */
+    /**
+     * A region's ONE controller as this node records it ({@link #controllerOf}), or why there is none to ask. {@code names}:
+     * every name its key is bound to here (one, unless a release of before the one-controller rule recorded another name
+     * of that key); {@code name} the first of them; {@code tenant} the one recorded with it.
+     */
     public static final class RegionController {
         public final String name, tenant, why;
-        RegionController(String name, String tenant, String why) { this.name = name; this.tenant = tenant; this.why = why; }
+        public final Set<String> names;
+        RegionController(java.util.SortedSet<String> names, String tenant, String why) {
+            this.names = names == null ? Set.of() : java.util.Collections.unmodifiableSortedSet(new java.util.TreeSet<>(names));
+            this.name = names == null || names.isEmpty() ? null : names.first();
+            this.tenant = tenant; this.why = why;
+        }
+        /** Is {@code n} ({@code region/agent}) a name of this controller? */
+        public boolean is(String n) { return n != null && names.contains(n); }
     }
 
     public static final String ROLE_AGENT = "agent", ROLE_CONTROLLER = "controller", ROLE_SELF = "self";
@@ -2251,6 +2262,98 @@ public final class PeerTrustRegistry {
         return names;
     }
 
+    /**
+     * The controllers BOUND here under {@code region}, by what each one IS -- its tenant and key ({@code tenant|key} -> the
+     * names bound to it, sorted). One entry is one controller (a key a release of before the rule recorded under two
+     * names is still ONE controller: "the controller is its key"); two or more are what {@link #controllerConflicts}
+     * reports. Read from {@link #controllersByRegion}, which {@link #join} keeps; lock-free, O(the names bound under the
+     * region): one, as a rule.
+     */
+    private Map<String, java.util.TreeSet<String>> controllersOf(String region) {
+        Map<String, java.util.TreeSet<String>> byKey = new java.util.TreeMap<>();
+        Set<String> bound = region == null ? null : controllersByRegion.get(region);
+        if (bound == null) return byKey;
+        for (String o : bound) {
+            Binding b = identities.get(o);
+            if (b != null) byKey.computeIfAbsent(b.tenant + "|" + b.key, k -> new java.util.TreeSet<>()).add(o);
+        }
+        return byKey;
+    }
+
+    /** The bridge peers recorded here under {@code region} (sorted). O(the bridge peers): only where no binding names them. */
+    private java.util.TreeSet<String> bridgePeersOf(String region) {
+        java.util.TreeSet<String> names = new java.util.TreeSet<>();
+        String prefix = region + "/";
+        for (String b : bridges.keySet()) if (b.startsWith(prefix)) names.add(b);
+        return names;
+    }
+
+    /**
+     * THE controller of {@code region} as this node records it under the rules above -- or why there is none. This is
+     * the one place that answers it outside {@link #join}, from the same record ({@link #controllersOf}): whom a global
+     * asks to revoke a name of that region by name, and whose answer it reads ({@link RevocationSync}).
+     * <ul>
+     *   <li>Per-node trust: the controller BOUND here under the region, by its key: every name of that key (one, as a
+     *       rule) is that controller. A bridge-peer record without a binding is nobody. More than one controller (other
+     *       keys or tenants: a registry of before the rule, CRITICAL in the identity health check) -- this node does not
+     *       choose, and nobody is the region's controller until the operator has revoked or replaced the others.</li>
+     *   <li>A region whose CA is recorded here and no controller bound (the regional CA: the controllers that joined are
+     *       recorded as bridge peers only; one CA per region): its ONE bridge peer, in the CA's tenant.</li>
+     *   <li>Pre-provisioned (the operator's PKI names controllers): the ONE controller of the region that completed
+     *       discovery with this node (its bridge peer, with its tenant).</li>
+     * </ul>
+     * Several where one is wanted: nobody, and why. The one named must also have JOINED this node
+     * ({@link #isJoinedController}): a controller this node followed is its parent, not a region that joined it.
+     */
+    public RegionController controllerOf(String region) {
+        if (!CrescoNames.isValid(region)) return new RegionController(null, null, "no such region");
+        boolean byCa = cas.containsKey(region);
+        java.util.TreeSet<String> names;
+        String tenant;
+        boolean oneKey = false;                                  // the names are those of ONE bound key
+        if (pki == null) {
+            Map<String, java.util.TreeSet<String>> byKey = controllersOf(region);
+            if (byKey.size() > 1) {
+                java.util.TreeSet<String> all = new java.util.TreeSet<>();
+                for (java.util.TreeSet<String> s : byKey.values()) all.addAll(s);
+                return new RegionController(null, null, byKey.size() + " controllers are recorded here for region " + region + " ("
+                        + String.join(", ", all) + ")" + (byCa ? ", each issued by the region's CA: which of them answers for the region this node"
+                        + " does not choose -- revoke the ones that are not its controller here"
+                        : ": a region has ONE controller, and this node does not choose -- the identity health check says how to remove the"
+                        + " one that is not; then the remaining one is asked"));
+            }
+            if (byKey.size() == 1) {
+                names = byKey.values().iterator().next();
+                Binding b = identities.get(names.first());
+                tenant = b == null ? null : b.tenant;
+                oneKey = true;
+            } else if (byCa) {
+                names = bridgePeersOf(region);
+                Binding ca = cas.get(region);
+                tenant = ca == null ? null : ca.tenant;
+            } else {
+                return new RegionController(null, null, "no controller of region " + region + " has joined this node");
+            }
+        } else {
+            names = bridgePeersOf(region);
+            Binding br = names.size() == 1 ? bridges.get(names.first()) : null;
+            tenant = br == null ? null : br.tenant;
+        }
+        if (names.isEmpty()) return new RegionController(null, null, "no controller of region " + region + " has joined this node");
+        if (names.size() > 1 && !oneKey) {
+            return new RegionController(null, null, names.size() + " controllers of region " + region + " are recorded here (" + String.join(", ", names)
+                    + "): which of them answers for the region this node does not choose -- revoke the ones that are not its controller"
+                    + " here (peer_bridge_revoke), then the remaining one is asked");
+        }
+        String first = names.first();
+        java.util.TreeSet<String> joined = new java.util.TreeSet<>();
+        if (tenant != null) for (String o : names) if (isJoinedController(tenant, region, o.substring(region.length() + 1))) joined.add(o);
+        if (joined.isEmpty()) {
+            return new RegionController(null, null, first + " is recorded here under region " + region + " but not as a controller that joined this node");
+        }
+        return new RegionController(joined, tenant, null);
+    }
+
     private String describeControllers(Collection<String> names) {
         StringBuilder sb = new StringBuilder();
         for (String o : names) {
@@ -2343,11 +2446,7 @@ public final class PeerTrustRegistry {
             if (bound == null || bound.size() < 2) continue;                      // (the usual case: one name)
             if (cas.containsKey(region)) continue;                                // (one CA: its controllers are its own)
             java.util.TreeSet<String> names = new java.util.TreeSet<>(bound);
-            Map<String, List<String>> byKey = new java.util.TreeMap<>();
-            for (String o : names) {
-                Binding b = identities.get(o);
-                if (b != null) byKey.computeIfAbsent(b.tenant + "|" + b.key, k -> new ArrayList<>()).add(o);
-            }
+            Map<String, java.util.TreeSet<String>> byKey = controllersOf(region);
             if (byKey.size() < 2) continue;
             boolean shared = false;
             for (String o : names) {
@@ -3806,35 +3905,6 @@ public final class PeerTrustRegistry {
 
     /** This node's record of the revocation by name of {@code region/agent}, or null. */
     public NameRevocation nameRevocation(String region, String agent) { return nameRevs.get(name(region, agent)); }
-
-    /**
-     * The ONE controller of {@code region} that joined this node -- the only node a revocation by name of that region's
-     * names is sent to, and the only one whose answer is read -- or why there is none: no controller of the region is
-     * recorded here, or MORE than one name is recorded under it as a controller (bound as one, or a bridge peer). Which of
-     * several is the region's is not this node's to guess: nothing is sent until the operator has revoked the others here.
-     * Its tenant is the one recorded with it. O(the controllers recorded here); called only while a request is open.
-     */
-    public RegionController controllerOf(String region) {
-        if (!CrescoNames.isValid(region)) return new RegionController(null, null, "no such region");
-        java.util.TreeSet<String> names = new java.util.TreeSet<>();
-        Set<String> bound = controllersByRegion.get(region);
-        if (bound != null) names.addAll(bound);
-        String prefix = region + "/";
-        for (String b : bridges.keySet()) if (b.startsWith(prefix)) names.add(b);
-        if (names.isEmpty()) return new RegionController(null, null, "no controller of region " + region + " has joined this node");
-        if (names.size() > 1) {
-            return new RegionController(null, null, names.size() + " controllers are recorded here under region " + region + " (" + String.join(", ", names)
-                    + "): a region has ONE controller here, and which of them it is this node does not guess -- revoke the others here"
-                    + " (their names in peer-trust.json.revoke), then the remaining one is asked");
-        }
-        String n = names.first(), agent = n.substring(prefix.length());
-        Binding id = identities.get(n), br = bridges.get(n), ca = cas.get(region);
-        String tenant = pki != null ? (br == null ? null : br.tenant) : id != null ? id.tenant : ca != null ? ca.tenant : null;
-        if (tenant == null || !isJoinedController(tenant, region, agent)) {
-            return new RegionController(null, null, n + " is recorded here under region " + region + " but not as a controller that joined this node");
-        }
-        return new RegionController(n, tenant, null);
-    }
 
     /**
      * At a global, from RevocationSync on a pong to {@code controller} of {@code region} while requests are open for that

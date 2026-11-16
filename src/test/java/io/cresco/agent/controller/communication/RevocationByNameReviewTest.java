@@ -169,9 +169,10 @@ class RevocationByNameReviewTest {
     // ------------------------------------------------------------------ one controller answers for a region
 
     /**
-     * Review F2. A second controller bound at the global under the region's name (first come, as discovery binds a joining
-     * controller) is NOT the region's controller: while more than one is recorded under the region nobody is asked and
-     * nobody's answer is read; the operator is told why. With the impostor revoked, the region's controller is asked.
+     * Review F2. A second controller bound at the global under the region's name (a registry written before the
+     * one-controller-per-region rule: discovery refuses it now) is NOT the region's controller: while more than one is
+     * recorded under the region nobody is asked and nobody's answer is read; the operator is told why. With the impostor
+     * revoked, the region's controller is asked.
      */
     @Test
     void aSecondControllerBoundUnderTheRegionsNameIsNeitherAskedNorHeard() throws Exception {
@@ -203,7 +204,7 @@ class RevocationByNameReviewTest {
         // revocation is said with it
         assertEquals("CRITICAL", h[0], "the revocation is reported as done: " + h[1]);
         assertTrue(h[1].contains("CONTROLLERS are recorded here for region rgB"), "the one-controller rule's conflict is not said: " + h[1]);
-        assertTrue(h[1].contains("rgB/b1") && h[1].contains("rgB/rc") && h[1].contains("rgB/zz"), "the operator is not told why nobody is asked: " + h[1]);
+        assertTrue(h[1].contains("rgB/b1 (not answered") && h[1].contains("rgB/rc") && h[1].contains("rgB/zz"), "the operator is not told why nobody is asked: " + h[1]);
         assertTrue(atGlobal.revocations().isEmpty(), "a key was revoked at the global");
         assertFalse(atB.isRevokedKey(fp(b1.getPublic())));
         // the operator revokes the name that is not the region's controller: the remaining one is asked, and answers
@@ -213,6 +214,31 @@ class RevocationByNameReviewTest {
         exchange(real, global);
         assertTrue(atB.isRevokedKey(fp(b1.getPublic())) && atB.isTombstoned("rgB", "b1"), "the region's controller did not apply the request");
         assertEquals("OK", health(global)[0], health(global)[1]);
+    }
+
+    /**
+     * A node has ONE global (the rule of the discovery that records it): where a region's registry records its global, a
+     * request signed by another controller -- even one the region's state takes as its parent -- is not taken.
+     */
+    @Test
+    void onlyTheGlobalARegionRecordsAsksIt() throws Exception {
+        ControllerEngine global = node("rgG", "gc", true), other = node("rgH", "gh", true), region = node("rgB", "rc", false);
+        PeerTrustRegistry.Join j = new PeerTrustRegistry.Join();
+        j.region = "rgG"; j.agent = "gc"; j.chain = global.getCertificateManager().getPublicCertificate();
+        j.role = PeerTrustRegistry.ROLE_CONTROLLER; j.proved = true; j.client = true; j.global = true;
+        assertTrue(reg(region).join(j).ok, "the region did not record its global");
+        assertEquals("rgG/gc", reg(region).globalRecorded());
+        join(other, region);
+        KeyPair b1 = TlsTestSupport.rsa();
+        assertTrue(reg(region).bind("t1", "rgB", "b1", b1.getPublic(), "discovery").ok);
+        Thread.sleep(40);
+        assertNull(reg(other).revoke("rgB/b1", "operator"));
+        MsgEvent p = pongFor(other, region, true);
+        assertNotNull(requests(p).get("rgB/b1"), "(the other global did not ask: the test shows nothing)");
+        RevocationSync.onParentPong(region, p, "rgH", "gh");
+        reg(region).awaitRevocations();
+        assertFalse(reg(region).isRevokedKey(fp(b1.getPublic())) || reg(region).isTombstoned("rgB", "b1"), "a controller that is not the region's global revoked one of its names");
+        assertTrue(String.valueOf(RevocationSync.lastWarning(region)).contains("global is recorded here as rgG/gc"), String.valueOf(RevocationSync.lastWarning(region)));
     }
 
     // ------------------------------------------------------------------ the operator's own word reaches everybody

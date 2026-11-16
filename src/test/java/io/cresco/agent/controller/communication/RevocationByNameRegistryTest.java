@@ -95,7 +95,11 @@ class RevocationByNameRegistryTest {
         assertTrue(g.nameRevocation("rgB", "b1").id.matches(ID));
     }
 
-    /** The ONE controller of a region: none, one (with its tenant), or more than one recorded under it -- then nobody. */
+    /**
+     * The ONE controller of a region, as the one-controller-per-region rule records it: none, one (with its tenant), or
+     * more than one recorded under it -- then nobody. A bridge-peer record without a binding is nobody (that rule's own
+     * reading); a key recorded under two names is ONE controller ("the controller is its key").
+     */
     @Test
     void aRegionHasOneControllerToAskOrNone() throws Exception {
         PeerTrustRegistry g = global(null);
@@ -110,10 +114,22 @@ class RevocationByNameRegistryTest {
         assertTrue(g.bind("t2", "rgB", "zz", second.getPublic(), "discovery", PeerTrustRegistry.ROLE_CONTROLLER, false).ok);
         assertNull(g.controllerOf("rgB").name);
         assertTrue(g.controllerOf("rgB").why.contains("2 controllers") && g.controllerOf("rgB").why.contains("rgB/rc, rgB/zz"), g.controllerOf("rgB").why);
-        // ... also when it is only recorded as a bridge peer
+        assertEquals(1, g.controllerConflicts().size(), "the one-controller rule does not see the same two: " + g.controllerConflicts());
+        // a bridge peer of the region that is bound nowhere here gives nobody an identity: it is not a second controller
         PeerTrustRegistry h = global(null);
         h.allowBridgePeer("rgB", "yy");
-        assertNull(h.controllerOf("rgB").name);
+        assertEquals("rgB/rc", h.controllerOf("rgB").name);
+        assertFalse(h.controllerOf("rgB").is("rgB/yy"));
+        // a key a release of before the rule recorded under two names of the region: one controller, under either name
+        PeerTrustRegistry k = new PeerTrustRegistry();
+        k.setGlobal(true);
+        k.setSelf(() -> "rgG/gc");
+        KeyPair one = TlsTestSupport.rsa();
+        assertTrue(k.bind("t1", "rgB", "rc", one.getPublic(), "discovery", PeerTrustRegistry.ROLE_CONTROLLER, false).ok);
+        assertTrue(k.bind("t1", "rgB", "rc2", one.getPublic(), "discovery", PeerTrustRegistry.ROLE_CONTROLLER, false).ok);
+        assertTrue(k.controllerConflicts().isEmpty(), k.controllerConflicts().toString());
+        assertNull(k.controllerOf("rgB").why, k.controllerOf("rgB").why);
+        assertTrue(k.controllerOf("rgB").is("rgB/rc") && k.controllerOf("rgB").is("rgB/rc2") && "t1".equals(k.controllerOf("rgB").tenant));
         // revoked here, the remaining one is the region's controller again
         assertNull(g.revoke("rgB/zz", "operator"));
         assertEquals("rgB/rc", g.controllerOf("rgB").name);
@@ -639,7 +655,7 @@ class RevocationByNameRegistryTest {
         ControllerEngine second = node("rgB", "zz", false, "t1");
         assertNull(atGlobal.pin("rgB", "zz", leaf(second), PeerTrustRegistry.ROLE_CONTROLLER, false));
         deliver(global, regionB, "controller:t1/rgB/rc", good);
-        assertTrue(RevocationSync.lastWarning(global).contains("2 controllers are recorded here under region rgB"), RevocationSync.lastWarning(global));
+        assertTrue(RevocationSync.lastWarning(global).contains("2 controllers are recorded here for region rgB"), RevocationSync.lastWarning(global));
         assertEquals(PeerTrustRegistry.NameRevocation.ASKED, atGlobal.nameRevocation("rgB", "b1").state);
         assertNull(atGlobal.revoke("rgB/zz", "operator"));
         deliver(global, regionB, "controller:t1/rgB/rc", good);

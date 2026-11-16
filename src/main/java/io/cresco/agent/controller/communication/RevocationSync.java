@@ -54,12 +54,14 @@ import java.util.concurrent.ConcurrentHashMap;
  * controller), so a name its operator revokes cannot be put on its list. The global reserves the name and ASKS: while such
  * a request is open, the pong to the ONE controller it records for the name's region carries it ({@link #NAMES}).
  * <ul>
- *   <li>Asked: only that region's one joined controller ({@link PeerTrustRegistry#controllerOf}: none, or more than one name
- *       recorded under the region, and nothing is sent), verified as the pinger, in the tenant recorded for it, and only
+ *   <li>Asked: only that region's one joined controller, as the one-controller-per-region rule records it
+ *       ({@link PeerTrustRegistry#controllerOf}, the same record discovery keeps: none, or more than one controller
+ *       recorded for the region, and nothing is sent), verified as the pinger, in the tenant recorded for it, and only
  *       when its ping carried {@link #NAMES_FRESH} -- a random value an earlier build does not send. A request is signed
  *       anew for each pong, over that value: it answers THIS ping.</li>
  *   <li>Taken: by a region's controller only (an agent takes none), from the controller it joined (its name from this
- *       node's own state; verified as its list is; its tenant the one recorded for it), addressed to this node, for names
+ *       node's own state; verified as its list is; its tenant the one recorded for it; where its registry records this
+ *       node's one global, that global only), addressed to this node, for names
  *       of this node's own region, and FRESH: it must repeat the value of one of this node's last pings. A request that was
  *       held back, or is delivered again, repeats none and is refused. It carries the AGE of the operator's act, so the
  *       region dates the act by its own clock and leaves a later binding alone
@@ -807,7 +809,7 @@ public final class RevocationSync {
         if (open.isEmpty()) return;
         PeerTrustRegistry.RegionController rc = reg.controllerOf(region);
         String notSent = rc.why != null ? rc.why
-                : !rc.name.equals(pinger) ? pinger + " pinged, and the controller recorded for region " + region + " is " + rc.name
+                : !rc.is(pinger) ? pinger + " pinged, and the controller recorded for region " + region + " is " + String.join(", ", rc.names)
                 : fresh == null || !FRESH.matcher(fresh).matches() ? pinger + " says nothing of revocations by name on its pings (an earlier build"
                 + " does not; it is asked once it is upgraded)" : null;
         String signed = null;
@@ -845,7 +847,7 @@ public final class RevocationSync {
             if (why[0] == null) why[0] = childRefusal(ce, msg, who[0], who[1]);
             if (why[0] == null) {
                 PeerTrustRegistry.RegionController rc = reg.controllerOf(who[0]);
-                why[0] = rc.why != null ? rc.why : !rc.name.equals(controller) ? "the controller recorded for region " + who[0] + " is " + rc.name
+                why[0] = rc.why != null ? rc.why : !rc.is(controller) ? "the controller recorded for region " + who[0] + " is " + String.join(", ", rc.names)
                         : !rc.tenant.equals(l.tenant) ? "it is of tenant " + l.tenant + ", and " + rc.name + " is recorded with tenant " + rc.tenant : null;
             }
         }
@@ -891,6 +893,9 @@ public final class RevocationSync {
             if (why[0] == null && tenant != null && !tenant.equals(l.tenant)) {
                 why[0] = "it is of tenant " + l.tenant + ", and " + parent + " is bound here with tenant " + tenant;
             }
+            // a node has ONE global (PeerTrustRegistry#join): where its registry records it, only that one asks
+            String g = reg.globalRecorded();
+            if (why[0] == null && g != null && !g.equals(parent)) why[0] = "this node's global is recorded here as " + g + ", not " + parent;
             if (why[0] == null) {
                 // fresh: it repeats the value of one of this node's last pings (and was therefore signed after that ping)
                 for (String[] f : st.fresh) if (f[0].equals(l.fresh)) sentAt = Long.parseLong(f[1]);
