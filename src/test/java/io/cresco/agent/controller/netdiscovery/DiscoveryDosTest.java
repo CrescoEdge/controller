@@ -229,7 +229,9 @@ class DiscoveryDosTest {
             Thread sender = new Thread(() -> {
                 try {
                     OutputStream out = trickle.getOutputStream();
-                    out.write(new byte[]{0, 2, 0, 0});             // a 128 KiB frame announced, then a byte every 200 ms
+                    // a 12 KiB frame announced (within what a responder reads: a larger one is refused when its length
+                    // arrives, DiscoveryStormTest), then a byte every 200 ms
+                    out.write(new byte[]{0, 0, 0x30, 0});
                     out.flush();
                     while (!closedByPeer(trickle, 200)) { out.write(5); out.flush(); }
                 } catch (Exception gone) { /* closed */ }

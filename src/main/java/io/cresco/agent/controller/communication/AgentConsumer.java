@@ -144,6 +144,9 @@ public class AgentConsumer {
 			logger.info("AgentConsumer inbox on dedicated control-plane connection for uri [{}]", uri);
 		}
 		this.connection = (org.apache.activemq.ActiveMQConnection) sess.getConnection();
+		// the controller this connection's TLS is bound to, as its factory was made: what the broker at its other end
+		// attests first hand is that controller's word (linkParent); a later expectPeer for the URI does not change it
+		this.linkPeer = controllerEngine.getActiveClient() == null ? null : controllerEngine.getActiveClient().boundPeer(connection);
 		// A node on another node's broker (an agent) is told at once when its transport to it is interrupted: from that
 		// moment it sends under none of its sessions (they all ran over this link; MsgSigning.parentLinkDown). On vm://
 		// (a controller on its own broker) there is nothing to interrupt.
@@ -553,9 +556,37 @@ public class AgentConsumer {
 		if (d == null || caller == null) return null;
 		boolean vm = uri != null && uri.startsWith("vm:");
 		if (vm) return d;
+		String[] parent = linkParent();
+		return parent == null ? null : trustedFirstHand(d, false, parent[0], parent[1]);
+	}
+
+	/** The controller this consumer's connection is bound to ({@link ActiveClient#boundPeer}), or null; set with the connection. */
+	private volatile PeerIdentity.Expected linkPeer;
+
+	/**
+	 * The parent whose broker this (network) consumer reads from: the controller its connection was made to -- the peer
+	 * the discovery that chose this broker certified, to which the TLS of this very connection is bound (its factory's
+	 * trust manager holds every handshake to it: {@link LinkTlsConnectionFactory#boundPeer}) -- and, for a connection bound
+	 * to none, the region controller the node's state names. Null when neither is known.
+	 *
+	 * <p>Not the state alone: an agent's state names its parent only between the end of its join (after its inbox is up)
+	 * and the moment it declares that parent lost (before its inbox is closed). What its parent's broker delivered outside
+	 * that span -- typically the answer to a ping of the agent's previous link, still on its inbox queue when the agent
+	 * joined again a moment later -- was refused as "not delivered first hand", although the broker attested it as the
+	 * parent's own. And not the peer recorded for the URI NOW ({@link ActiveClient#expectedPeer}): a later attempt to join
+	 * may record another node for the same address, and a sibling's message attested by this connection's broker would
+	 * then have been taken for the parent's. The broker's word counts for this connection's own controller's messages only.
+	 *
+	 * <p>With {@code peer_identity_mode=warn} or {@code off} the connection is not held to its peer: its broker is then
+	 * whatever answered at the address, and its first-hand word counts for the whole connection -- as the state's parent
+	 * did in those modes before.
+	 */
+	private String[] linkParent() {
+		PeerIdentity.Expected link = linkPeer;
+		if (link != null && link.region != null && link.agent != null) return new String[]{link.region, link.agent};
 		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
-		if (cs == null) return null;
-		return trustedFirstHand(d, false, cs.getRegionalRegion(), cs.getRegionalAgent());
+		if (cs == null || cs.getRegionalRegion() == null || cs.getRegionalAgent() == null) return null;
+		return new String[]{cs.getRegionalRegion(), cs.getRegionalAgent()};
 	}
 
 	/** {@code d} as a consumer may trust it: on its own broker ({@code vm}) as attested; on its parent's, only the parent. */
@@ -748,6 +779,8 @@ public class AgentConsumer {
 		if (plugin.getRegion().equals(c.getRegion()) && plugin.getAgent().equals(c.getAgent())) return true;
 		io.cresco.agent.core.ControllerStateImp cs = controllerEngine.cstate;
 		if (cs == null) return false;
+		// the parent whose trust data the hold waits for (ControllerEngine.trustReady): the one the state names. (While the
+		// state names none, nothing is held: trustReady is true.)
 		boolean region = cs.isRegionalController();
 		String pr = region ? cs.getGlobalRegion() : cs.getRegionalRegion(), pa = region ? cs.getGlobalAgent() : cs.getRegionalAgent();
 		return pr != null && pa != null && pr.equals(c.getRegion()) && pa.equals(c.getAgent());

@@ -505,6 +505,23 @@ public class ControllerEngine {
         return rAgents;
     }
 
+    private final java.util.concurrent.atomic.AtomicLong reachableCountAt = new java.util.concurrent.atomic.AtomicLong();
+    private volatile int reachableCount;
+
+    /**
+     * How many agents this controller reaches, for the count a discovery answer carries (a joiner's hint of how loaded a
+     * region is): read from the broker at most once a second. {@link #reachableAgents} lists every destination of the
+     * broker, and it was called for every discovery answered: a join cost more the more had joined.
+     */
+    public int reachableAgentCount() {
+        long now = System.nanoTime() | 1L, at = reachableCountAt.get();
+        if ((at == 0 || now - at > 1_000_000_000L) && reachableCountAt.compareAndSet(at, now)) {
+            List<String> l = reachableAgents();
+            reachableCount = l == null ? 0 : l.size();
+        }
+        return reachableCount;
+    }
+
     //getters and setters
 
     //helper functions
@@ -570,6 +587,20 @@ public class ControllerEngine {
     public boolean isUDPDiscoveryActive() {
         return UDPDiscoveryActive;
     }
+    private volatile io.cresco.agent.controller.netdiscovery.DiscoveryJobs discoveryJobs;
+    private volatile io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission discoveryAdmission;
+
+    /** The discovery responder's queue and its connection limits, once its listener exists (for what they count). */
+    public void setDiscoveryJobs(io.cresco.agent.controller.netdiscovery.DiscoveryJobs jobs,
+                                 io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission admission) {
+        this.discoveryJobs = jobs;
+        this.discoveryAdmission = admission;
+    }
+
+    public io.cresco.agent.controller.netdiscovery.DiscoveryJobs getDiscoveryJobs() { return discoveryJobs; }
+
+    public io.cresco.agent.controller.netdiscovery.DiscoveryGuard.Admission getDiscoveryAdmission() { return discoveryAdmission; }
+
     public void setTCPDiscoveryActive(boolean discoveryActive) {
         TCPDiscoveryActive = discoveryActive;
     }

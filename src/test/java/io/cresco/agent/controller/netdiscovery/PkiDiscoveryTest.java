@@ -72,6 +72,28 @@ class PkiDiscoveryTest {
         return e;
     }
 
+    /**
+     * The trust a pre-provisioned node's TLS is judged by is the operator's anchors. They are put in force with the
+     * identity by replacing the truststore as a whole, and the index every TLS trust decision reads must be replaced with
+     * it. On the DGX gate a production fabric did not form with the index left as it was: an agent's handshake with its
+     * controller ended in "no entry of this node's truststore is, or issued, a certificate of the presented chain".
+     */
+    @Test
+    void aPreProvisionedNodesTlsTrustsTheOperatorsPkiAndNothingElse() throws Exception {
+        ControllerEngine a = node(agentA1, "rgA", "a1", null, true);
+        javax.net.ssl.X509TrustManager tm = null;
+        for (javax.net.ssl.TrustManager t : a.getCertificateManager().getTrustManagers()) {
+            if (t instanceof javax.net.ssl.X509TrustManager) tm = (javax.net.ssl.X509TrustManager) t;
+        }
+        assertNotNull(tm);
+        tm.checkServerTrusted(regionA.chain, "UNKNOWN");                // its controller, of the operator's PKI
+        tm.checkClientTrusted(agentA2.chain, "UNKNOWN");
+        final javax.net.ssl.X509TrustManager held = tm;
+        assertThrows(java.security.cert.CertificateException.class, () -> held.checkServerTrusted(stranger.chain, "UNKNOWN"),
+                "a chain of another root was trusted");
+        assertTrue(a.getCertificateManager().trustIndexCounts()[2] >= 1, "the operator's anchors are not in the index TLS reads");
+    }
+
     private static DiscoveryAuth.Msg copy(DiscoveryAuth.Msg m) { return m == null ? null : GSON.fromJson(GSON.toJson(m), DiscoveryAuth.Msg.class); }
 
     private static DiscoveryNode exchange(ControllerEngine client, ControllerEngine server, DiscoveryType type) {

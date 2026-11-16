@@ -28,6 +28,27 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
     private final java.util.concurrent.atomic.AtomicBoolean legacyPeer;
     private DiscoveryAuth.Msg hello, challenge;
     private boolean done;
+    /** What became of this attempt, for the caller's one line and its next try (null: nobody asked). */
+    private TCPDiscoveryStatic.Attempt attempt;
+
+    TCPDiscoveryStaticHandler attempt(TCPDiscoveryStatic.Attempt a) {
+        this.attempt = a;
+        return this;
+    }
+
+    private void heard() { if (attempt != null) attempt.heard = true; }
+
+    /** The responder said it is busy: remember after how long it asked to be tried again. */
+    private boolean busy(MsgEvent me, DiscoveryAuth.Msg m) {
+        long retry = -1;
+        if (m != null && "busy".equals(m.step)) retry = m.retry == null ? 0 : Math.max(0, m.retry);
+        else if (me != null && me.getParam(DiscoveryAuth.BUSY_PARAM) != null) {
+            try { retry = Math.max(0, Long.parseLong(me.getParam(DiscoveryAuth.BUSY_PARAM))); } catch (NumberFormatException e) { retry = 0; }
+        }
+        if (retry < 0) return false;
+        if (attempt != null) attempt.busyRetryMs = retry;
+        return true;
+    }
     /** The locator or certify in the earlier builds' format (the upgrade window's fallback to a responder not upgraded). */
     private boolean legacyFormat;
 
@@ -142,12 +163,15 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
         try {
             MsgEvent me = gson.fromJson(json, MsgEvent.class);
             String v = (me == null) ? null : me.getParam(DiscoveryAuth.PARAM);
+            heard();
+            if (v == null && busy(me, null)) { done = true; return; }
             if (v == null) {                                   // a legacy responder answered the probe node
                 if (legacyPeer != null) legacyPeer.set(true);
                 done = true;
                 return;
             }
             DiscoveryAuth.Msg m = gson.fromJson(v, DiscoveryAuth.Msg.class);
+            if (busy(me, m)) { done = true; return; }           // the responder's queue is full: no error, the caller waits
             if (m != null && "challenge".equals(m.step) && challenge == null) {
                 DiscoveryAuth.Msg proof = discoveryProcessor.clientProof(hello, m, remoteHost);
                 if (proof == null) { done = true; return; }
@@ -217,6 +241,8 @@ public class TCPDiscoveryStaticHandler extends ChannelInboundHandlerAdapter {
             try {
                 MsgEvent me = gson.fromJson(json, MsgEvent.class);
                 DiscoveryNode discoveryNode = null;
+                heard();
+                if (me != null && busy(me, null)) return;       // the responder's queue is full: no error, the caller waits
                 if (me != null) {
 
                     if(me.paramsContains("discovery_node")) {

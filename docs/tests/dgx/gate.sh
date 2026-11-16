@@ -29,6 +29,26 @@
 #   paced:2") pick the dataplane lines, so one line can be run again alone. Each line keeps every flow's own figures
 #   (per_flow: setup time, how late it started, its send start, first and last receive, send time). GATE_JFR_DIR: a JFR recording (profile
 #   settings) of the global and the region over the dataplane lines, written to <dir>/<build>-gc.jfr and -rc.jfr.
+#   Scale, where a join's time goes: SCALE_JFR_STEPS (e.g. "2000", with GATE_JFR_DIR) records the global and the region
+#   from the start of that step until all its agents are listed (<dir>/<build>-scale<step>-gc.jfr, -rc.jfr, and their
+#   summaries by jfrtop.py, .txt); SCALE_TRACE_EVERY=<k> runs two light agents in every k at INFO, so that their own
+#   stages (identity made, discovery answered, broker connected, registered) are stamped; joinstages.py reads the stages
+#   of every agent from the logs into the result (join_stages) and $GATE_OUT/<build>-joinstages.txt. A light agent
+#   listens on nothing, so it is given a discovery port of its own only while P0+100+<its number> is below the range
+#   for outgoing connections (steps beyond that, e.g. 4000 with P0=30000, need no port).
+#   What the scale phase measures is mostly the agents' own start when a host starts hundreds of them: a light agent
+#   runs with the first-tier compiler only (LIGHT_JVM, default "-XX:+UseSerialGC -XX:TieredStopAtLevel=1"), in which
+#   making its identity (three RSA-3072 key pairs) takes several times as long, and the controllers share their host's
+#   cpus with the agents that start there. To measure the controllers' part instead: LIGHT_JVM="-XX:+UseSerialGC" (the
+#   JVM's normal compilers) and GATE_LIGHT_NICE=<n> (light agents run at that niceness, so a controller on the same
+#   host is not starved by them). Both builds of a run get the same.
+#   SCALE_RESTART=rc (or gc): after the last step that controller is stopped and started again in place (its data
+#   kept), and the result says how long until its agents were back (restart: seconds from the stop and from its first
+#   answer to the last agent's first health answer, the discoveries that went unanswered, the ERROR lines). The agents
+#   are up and hold their identities: this is a storm of joins alone. SCALE_RESTART_DOWN_S (default 0): how long the
+#   controller stays down. Back within some 25 s, its agents' connections simply reconnect (no discovery, nothing to
+#   measure here); down for longer (90), they declare it lost and look for it again every few seconds, and all of them
+#   find it at the same moment.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 J="${GATE_JAVA:-$HOME/cresco/jdk/bin/java}"
@@ -40,8 +60,8 @@ P0="${P0:-30000}"; STEPS="${SCALE_STEPS:-50 100 200}"
 # the host can hold the port a node wants ("Address already in use"); the block is P0 .. P0+500 and P0+100+<agents>
 read -r EPH_LO _ < /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || EPH_LO=32768
 top_step=0; for s in $STEPS; do top_step=$s; done
-[ $((P0 + 100 + top_step)) -lt "$EPH_LO" ] && [ $((P0 + 500)) -lt "$EPH_LO" ] \
-  || { echo "FATAL: ports $P0..$((P0 + 100 + top_step)) reach this host's range for outgoing connections ($EPH_LO up): set P0 lower"; exit 2; }
+[ $((P0 + 500)) -lt "$EPH_LO" ] \
+  || { echo "FATAL: ports $P0..$((P0 + 500)) reach this host's range for outgoing connections ($EPH_LO up): set P0 lower"; exit 2; }
 HOSTS=( $(scontrol show hostnames "$SLURM_JOB_NODELIST") )
 [ "${#HOSTS[@]}" -ge 4 ] || { echo "FATAL: the gate needs 4 hosts, the job has ${#HOSTS[@]}"; exit 2; }
 H1=${HOSTS[0]}; H2=${HOSTS[1]}; H3=${HOSTS[2]}; H4=${HOSTS[3]}
@@ -85,10 +105,11 @@ EOF
     done >> "$RD/pki.log" 2>&1 || { log "FATAL pki agents"; return 1; }
     bash "$PKI_TOOL" crl "$PKI" >> "$RD/pki.log" 2>&1
     # FIPS approved-only keystores are BCFKS, converted with the tool of the build that will read them, 16 at a time
+    # (GATE_PKI_PAR: 2,000 of them take 15 minutes at 16)
     local n c=0
     for n in "$PKI"/nodes/*/; do
       "$J" -jar "$JAR" --crypto convert-keystore "${n}node.p12" "${n}node.p12.pass" "${n}node.bcfks" >/dev/null 2>&1 &
-      c=$((c + 1)); [ $((c % 16)) = 0 ] && wait
+      c=$((c + 1)); [ $((c % ${GATE_PKI_PAR:-16})) = 0 ] && wait
     done; wait
     for n in "$PKI"/nodes/*/; do [ -f "${n}node.bcfks" ] || { log "FATAL keystore conversion: $n"; return 1; }; done
     openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-384 -sha384 -days 3 -nodes -keyout "$RD/codesign.key" -out "$RD/codesign.pem" \
@@ -198,7 +219,7 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
 
   # ---- 3. scale: light agents in steps, all hosts, alternately on the global and the region
   local steps_run="$STEPS"; [[ "$PH" == *" scale "* ]] || steps_run=""
-  local LIGHT="${GATE_EXTRA_FLAGS:-} -Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN -XX:+UseSerialGC -XX:TieredStopAtLevel=1"
+  local LIGHT="${GATE_EXTRA_FLAGS:-} -Denable_stunnel=false -Denable_sysinfo=false -Denable_executor=false -Denable_filerepo=false -Denable_repo=false -Denable_wsapi=false -Droot_log_level=WARN ${LIGHT_JVM:--XX:+UseSerialGC -XX:TieredStopAtLevel=1}"
   local prev=0 step sc="{" sfirst=1 i k
   local -a HS=("$H1" "$H2" "$H3" "$H4")
   for step in $steps_run; do
@@ -206,13 +227,23 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
     for i in $(seq $((prev + 1)) "$step"); do
       local reg host cp_port; host=${HS[$(( (i - 1) % 4 ))]}
       if [ $((i % 2)) = 1 ]; then reg=glob; cp_port=$((P0+5)); ch=$H1; else reg=rgr; cp_port=$((P0+15)); ch=$H2; fi
-      echo "s$i|$reg|${LIGHT_XMX:-192m}|-Dis_agent=true -Dregional_controller_host=$ch -Dregional_controller_port=$cp_port -Dnetdiscoveryport=$((P0+100+i)) $LIGHT $(ident $reg s$i)" >> "$RD/spawn/$host.s$step.tmp"
+      # two in every SCALE_TRACE_EVERY log at INFO (one on the global, one on the region): their own stages are stamped
+      local lf="$LIGHT" te="${SCALE_TRACE_EVERY:-0}" np=""
+      [ "$te" -gt 0 ] && [ $((i % te)) -le 1 ] && lf="${LIGHT/-Droot_log_level=WARN/-Droot_log_level=INFO}"
+      [ $((P0 + 100 + i)) -lt "$EPH_LO" ] && np="-Dnetdiscoveryport=$((P0+100+i))"
+      echo "s$i|$reg|${LIGHT_XMX:-192m}|-Dis_agent=true -Dregional_controller_host=$ch -Dregional_controller_port=$cp_port $np $lf $(ident $reg s$i)" >> "$RD/spawn/$host.s$step.tmp"
     done
     local g0 r0; g0=$(on "$H1" bash "$HERE/host.sh" stats "$RD" gc); r0=$(on "$H2" bash "$HERE/host.sh" stats "$RD" rc)
     rm -f "$RD/storm.stop"
     on "$H4" "$PY" "$HERE/gate_probe.py" storm "${CL[@]}" --target glob/gc --until "$RD/storm.stop" > "$RD/storm-$step.json" 2>/dev/null &
     local sp=$!; sleep 3
+    local jfr_on=0
+    if [ -n "${GATE_JFR_DIR:-}" ] && [[ " ${SCALE_JFR_STEPS:-} " == *" $step "* ]]; then
+      jfr_on=1; mkdir -p "$GATE_JFR_DIR"
+      on "$H1" bash "$HERE/host.sh" jfr "$RD" gc start >/dev/null; on "$H2" bash "$HERE/host.sh" jfr "$RD" rc start >/dev/null
+    fi
     local t0; t0=$(date +%s.%N)
+    echo "$step $t0" >> "$RD/steps.txt"
     for k in 0 1 2 3; do [ -f "$RD/spawn/${HS[$k]}.s$step.tmp" ] && mv "$RD/spawn/${HS[$k]}.s$step.tmp" "$RD/spawn/${HS[$k]}.s$step"; done
     local listed=0 t_all=null
     for _ in $(seq 1 300); do
@@ -221,6 +252,12 @@ print(json.dumps({"flows": len(rs), "sent": sum(r["messages"] for r in rs), "rec
       sleep 3
     done
     sleep 10; touch "$RD/storm.stop"; wait "$sp"
+    if [ "$jfr_on" = 1 ]; then
+      on "$H1" bash "$HERE/host.sh" jfr "$RD" gc dump "$GATE_JFR_DIR/$B-scale$step-gc.jfr" >/dev/null
+      on "$H2" bash "$HERE/host.sh" jfr "$RD" rc dump "$GATE_JFR_DIR/$B-scale$step-rc.jfr" >/dev/null
+      on "$H3" "$PY" "$HERE/jfrtop.py" "$(dirname "$J")/jfr" "$GATE_JFR_DIR/$B-scale$step-gc.jfr" > "$GATE_JFR_DIR/$B-scale$step-gc.txt" 2>&1 &
+      on "$H4" "$PY" "$HERE/jfrtop.py" "$(dirname "$J")/jfr" "$GATE_JFR_DIR/$B-scale$step-rc.jfr" > "$GATE_JFR_DIR/$B-scale$step-rc.txt" 2>&1 &
+    fi
     local storm; storm=$(cat "$RD/storm-$step.json" 2>/dev/null)
     local g1 r1; g1=$(on "$H1" bash "$HERE/host.sh" stats "$RD" gc); r1=$(on "$H2" bash "$HERE/host.sh" stats "$RD" rc)
     sleep "${STEADY_S:-60}"
@@ -253,6 +290,29 @@ EOF
     prev=$step
   done
   put scale "$sc}"
+
+  # ---- 3b. a controller is restarted under its agents (SCALE_RESTART=rc or gc): how long until they are back.
+  # Its agents are up and hold their identities, so this is a storm of joins alone: no JVM starts, no key is made.
+  if [ -n "$steps_run" ] && [ -n "${SCALE_RESTART:-}" ]; then
+    local rn="$SCALE_RESTART" rh=$H2 expect=$(( prev / 2 )) rt0 rs=null back=0
+    [ "$rn" = gc ] && rh=$H1
+    mkdir -p "$RD/restart"
+    rt0=$(date +%s.%N); echo "restart $rt0" >> "$RD/steps.txt"
+    echo "${SCALE_RESTART_DOWN_S:-0}" > "$RD/restart/$rh.$rn.tmp" && mv "$RD/restart/$rh.$rn.tmp" "$RD/restart/$rh.$rn"
+    for _ in $(seq 1 200); do
+      rs=$("$PY" "$HERE/joinstages.py" "$RD/logs" "$prev" --since "$rt0" --controller "$rn" 2>/dev/null)
+      back=$(echo "$rs" | jq_ 'd.get("back", 0)' 2>/dev/null || echo 0)
+      [ "${back:-0}" -ge "$expect" ] && break
+      sleep 3
+    done
+    sleep 20      # what the agents log after the last of them is back
+    rs=$("$PY" "$HERE/joinstages.py" "$RD/logs" "$prev" --since "$rt0" --controller "$rn" 2>/dev/null)
+    put restart "${rs:-null}"; log "$B: restart of $rn under $expect agents: $rs"
+  fi
+  if [ -n "$steps_run" ]; then
+    put join_stages "$("$PY" "$HERE/joinstages.py" "$RD/logs" "$steps_run" --rate --steps-file "$RD/steps.txt" 2> "$OUT/$B-joinstages.txt")"
+    cat "$OUT/$B-joinstages.txt"
+  fi
 
   # ---- errors and refusals in every log
   local e; e=$("$PY" "$HERE/logscan.py" "$RD/logs")

@@ -121,7 +121,7 @@ public class DiscoveryProcessor {
 					// that follows authenticates both sides); a secret-keyed locator or a legacy certify is not answered
 					if (discoveryNode.nodeType == DiscoveryNode.NodeType.DISCOVER && DiscoveryAuth.PKI_LOCATOR.equals(discoveryNode.broadcast_validator)) {
 						discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(), plugin.getAgent(),
-								controllerEngine.reachableAgents().size(), DiscoveryAuth.PKI_LOCATOR);
+								controllerEngine.reachableAgentCount(), DiscoveryAuth.PKI_LOCATOR);
 						discoveryNode.discovered_broker_port = advertisedBrokerPort();
 					} else {
 						notPki(remoteAddress, "a secret-keyed " + discoveryNode.discovery_type + " " + discoveryNode.nodeType + " locator");
@@ -142,7 +142,7 @@ public class DiscoveryProcessor {
 									// answered in the requester's format: an earlier build's (only inside the window, where decrypt accepted it), else v2
 									String answer = DiscoveryCrypto.isLegacyFormat(discoveryNode.broadcast_validator)
 											? discoveryCrypto.encryptLegacy(validateMessage, discoverySecret) : discoveryCrypto.encrypt(validateMessage, discoverySecret);
-									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), answer);
+									discoveryNode.setDiscovered(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgentCount(), answer);
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 								} else if(discoveryNode.nodeType == DiscoveryNode.NodeType.CERTIFY && !legacyCertifyAllowed(remoteAddress, discoveryNode.discovery_type)) {
 									discoveryNode = null;
@@ -152,7 +152,7 @@ public class DiscoveryProcessor {
 									discoveryNode.remote = remoteAddress;
 									String discovered_cert = configureCertTrust(discoveryNode);
 									if (discovered_cert == null) return null;     // refused (logged): no answer, nothing recorded
-									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgents().size(), discoveryCrypto.encryptLegacy(validateMessage,discoverySecret), discovered_cert);
+									discoveryNode.setCertified(localAddress, localPort, remoteAddress, remotePort, plugin.getRegion(),plugin.getAgent(),controllerEngine.reachableAgentCount(), discoveryCrypto.encryptLegacy(validateMessage,discoverySecret), discovered_cert);
 									discoveryNode.discovered_broker_port = advertisedBrokerPort();
 
 								} else {
@@ -628,9 +628,10 @@ public class DiscoveryProcessor {
 				localCertString = controllerEngine.getCertificateManager().issueEnrollment(remoteCertString, joinType);
 			} else {
 				Certificate[] certs = controllerEngine.getCertificateManager().getCertsfromJson(remoteCertString);
-				// the peer's current chain REPLACES its previous one (a renewed chain is not one more anchor)
-				if (controllerEngine.getCertificateManager().replaceTrustStoreEntries(remoteAgentPath, certs)
-						&& controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+				// the peer's current chain REPLACES its previous one (a renewed chain is not one more anchor). The broker's
+				// trust reads the truststore's index at each handshake (LivePkixTrustManager): the chain is trusted from the
+				// moment this returns, and the broker's TLS context is not rebuilt (it was, from the whole store, at every join)
+				controllerEngine.getCertificateManager().replaceTrustStoreEntries(remoteAgentPath, certs);
 				localCertString = controllerEngine.getCertificateManager().getJsonFromCerts(controllerEngine.getCertificateManager().getPublicCertificate());
 			}
 		} catch(Exception ex) {

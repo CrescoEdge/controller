@@ -47,8 +47,14 @@ public final class DiscoveryGuard {
     public static final int MAX_NODE_BYTES = 64 * 1024;
 
     /** Defaults for {@link Admission} (config keys in brackets). */
-    public static final int DEFAULT_MAX_CONNECTIONS = 128;              // discovery_max_connections
-    public static final int DEFAULT_MAX_CONNECTIONS_PER_ADDRESS = 16;   // discovery_max_connections_per_address
+    // A connection waits in the responder's queue (DiscoveryJobs) for its turn, so what an address may hold open is what
+    // it may have waiting: 16 per address closed, without a word, most of the requests of a host that starts hundreds of
+    // agents at once. One address still cannot hold more than an eighth of the listener, and a connection over a limit is
+    // told to come back (its host's agents are served in waves, not refused). Every open connection may hold a partial
+    // frame that nobody has authenticated, of at most DiscoveryWire.MAX_REQUEST_BYTES (16 KiB, three times a real hello):
+    // 4 MiB for one address at its limit, 32 MiB for the listener at its own -- what it was (128 connections of 256 KiB).
+    public static final int DEFAULT_MAX_CONNECTIONS = 2048;             // discovery_max_connections
+    public static final int DEFAULT_MAX_CONNECTIONS_PER_ADDRESS = 256;  // discovery_max_connections_per_address
     public static final int DEFAULT_MAX_CONNECTION_SECONDS = 30;        // discovery_max_connection_seconds
     public static final int DEFAULT_IDLE_SECONDS = 10;                  // discovery_idle_seconds
 
@@ -160,6 +166,23 @@ public final class DiscoveryGuard {
     public static final class Admission extends ChannelInboundHandlerAdapter {
 
         private static final AttributeKey<String> ADMITTED = AttributeKey.valueOf("cresco.discovery.admitted");
+        /** Set while the responder itself is at work on the channel's request (queued or being answered). */
+        static final AttributeKey<Boolean> WORKING = AttributeKey.valueOf("cresco.discovery.working");
+        private volatile java.util.function.Supplier<Object> refusalAnswer;
+
+        /**
+         * What a connection over a limit is sent before it is closed (a "busy, come back later" frame), so that its peer
+         * knows it was not lost on the way; none (as before): it is closed without a word.
+         */
+        public Admission answerWhenRefused(java.util.function.Supplier<Object> answer) {
+            this.refusalAnswer = answer;
+            return this;
+        }
+
+        /** The responder starts ({@code true}) or ends work on the channel's request: it is not idle while it waits for us. */
+        static void working(ChannelHandlerContext ctx, boolean on) {
+            if (ctx != null) ctx.channel().attr(WORKING).set(on ? Boolean.TRUE : null);
+        }
 
         private final int maxTotal, maxPerAddress;
         private final long maxLifetimeMs;
@@ -183,7 +206,11 @@ public final class DiscoveryGuard {
                 warnLimited(logger, "discovery-admission", "Discovery: refused a connection from " + key + ": over the limit of "
                         + maxPerAddress + " per address / " + maxTotal + " in total (discovery_max_connections_per_address,"
                         + " discovery_max_connections)");
-                ctx.close();
+                java.util.function.Supplier<Object> answer = refusalAnswer;
+                Object frame = null;
+                try { frame = answer == null ? null : answer.get(); } catch (RuntimeException ignore) { }
+                if (frame != null) ctx.channel().writeAndFlush(frame).addListener(io.netty.channel.ChannelFutureListener.CLOSE);
+                else ctx.close();
                 return;
             }
             ctx.channel().attr(ADMITTED).set(key);
@@ -260,6 +287,8 @@ public final class DiscoveryGuard {
         @Override
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) throws Exception {
             if (evt instanceof IdleStateEvent) {
+                // nothing was read because the peer waits for THIS node's answer (its request is queued or being answered)
+                if (Boolean.TRUE.equals(ctx.channel().attr(Admission.WORKING).get())) return;
                 closed.incrementAndGet();
                 ctx.close();
                 return;

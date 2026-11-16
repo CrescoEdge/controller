@@ -27,6 +27,9 @@ public class TCPDiscoveryEngine implements Runnable {
     private int discoveryPort;
     private final DiscoveryGuard.Admission admission;
     private final int idleSeconds;
+    private final DiscoveryJobs jobs;
+    private final int maxRequestBytes;
+    private static volatile DiscoveryJobs liveJobs;
 
     private static EventLoopGroup bossGroup;
     private static EventLoopGroup workerGroup;
@@ -45,6 +48,14 @@ public class TCPDiscoveryEngine implements Runnable {
         discoveryPort = plugin.getConfig().getIntegerParam("netdiscoveryport",32005);
         admission = admission(plugin, logger);
         idleSeconds = Math.max(1, plugin.getConfig().getIntegerParam("discovery_idle_seconds", DiscoveryGuard.DEFAULT_IDLE_SECONDS));
+        maxRequestBytes = plugin.getConfig().getIntegerParam("discovery_max_request_bytes", DiscoveryWire.MAX_REQUEST_BYTES);
+        jobs = jobs(plugin, logger);
+        liveJobs = jobs;
+        controllerEngine.setDiscoveryJobs(jobs, admission);
+        final com.google.gson.Gson gson = new com.google.gson.Gson();
+        // a connection over a limit is told to come back (in about the time the queue takes), not closed without a word
+        admission.answerWhenRefused(() -> TCPDiscoveryEngineHandler.busyFrame(gson, plugin,
+                Math.max(1_000L, jobs.serviceMicros() * Math.max(1, jobs.queued()) / 1_000L / jobs.workers()), "too many connections"));
         logger.info("Started DiscoveryTCPEngine");
     }
 
@@ -69,7 +80,7 @@ public class TCPDiscoveryEngine implements Runnable {
             b.group(bossGroup, workerGroup)
                     .channel(NioServerSocketChannel.class)
                     .handler(new LoggingHandler(LogLevel.INFO))
-                    .childHandler(childInitializer(admission, idleSeconds, controllerEngine, sslCtx));
+                    .childHandler(childInitializer(admission, idleSeconds, controllerEngine, sslCtx, jobs, maxRequestBytes));
 
             controllerEngine.setTCPDiscoveryActive(true);
 
@@ -102,6 +113,36 @@ public class TCPDiscoveryEngine implements Runnable {
      */
     static ChannelInitializer<SocketChannel> childInitializer(DiscoveryGuard.Admission admission, int idleSeconds,
                                                               ControllerEngine controllerEngine, SslContext sslCtx) {
+        return childInitializer(admission, idleSeconds, controllerEngine, sslCtx, null);
+    }
+
+    /**
+     * The responder's workers and its queue's bound, from config: {@code discovery_workers} (default a quarter of the
+     * cpus, 2 to 16), {@code discovery_max_wait_ms} (default 5000: a request whose turn would come later is answered
+     * "busy"); it holds at most as many requests as the listener holds connections, and at most
+     * {@code discovery_max_queued_bytes_per_address} (32 MiB) of one address and {@code discovery_max_queued_bytes}
+     * (256 MiB) in all -- and never more than a sixteenth of the heap in all, an eighth of that for one address.
+     */
+    static DiscoveryJobs jobs(PluginBuilder plugin, CLogger logger) {
+        int cpus = Runtime.getRuntime().availableProcessors();
+        int workers = plugin.getConfig().getIntegerParam("discovery_workers", Math.max(2, Math.min(16, cpus / 4)));
+        int waitMs = plugin.getConfig().getIntegerParam("discovery_max_wait_ms", DiscoveryJobs.DEFAULT_MAX_WAIT_MS);
+        int total = plugin.getConfig().getIntegerParam("discovery_max_connections", DiscoveryGuard.DEFAULT_MAX_CONNECTIONS);
+        // (never more than a sixteenth of this JVM's heap in all, nor more than an eighth of that for one address)
+        long bytes = DiscoveryJobs.maxBytesFor(plugin.getConfig().getLongParam("discovery_max_queued_bytes", DiscoveryJobs.DEFAULT_MAX_BYTES));
+        long perAddress = DiscoveryJobs.maxBytesPerAddressFor(
+                plugin.getConfig().getLongParam("discovery_max_queued_bytes_per_address", DiscoveryJobs.DEFAULT_MAX_BYTES_PER_ADDRESS), bytes);
+        return new DiscoveryJobs(workers, waitMs, total, perAddress, bytes, logger);
+    }
+
+    static ChannelInitializer<SocketChannel> childInitializer(DiscoveryGuard.Admission admission, int idleSeconds,
+                                                              ControllerEngine controllerEngine, SslContext sslCtx, DiscoveryJobs jobs) {
+        return childInitializer(admission, idleSeconds, controllerEngine, sslCtx, jobs, DiscoveryWire.MAX_REQUEST_BYTES);
+    }
+
+    static ChannelInitializer<SocketChannel> childInitializer(DiscoveryGuard.Admission admission, int idleSeconds,
+                                                              ControllerEngine controllerEngine, SslContext sslCtx, DiscoveryJobs jobs,
+                                                              int maxRequestBytes) {
         return new ChannelInitializer<SocketChannel>() {
             @Override
             public void initChannel(SocketChannel ch) {
@@ -110,15 +151,20 @@ public class TCPDiscoveryEngine implements Runnable {
                 if (sslCtx != null) {
                     p.addLast(sslCtx.newHandler(ch.alloc()));
                 }
-                p.addLast(new IdleStateHandler(idleSeconds, 0, 0));          // nothing read for idleSeconds
+                // Nothing read AND nothing written for idleSeconds. Written too: a joiner's allowance for its next frame runs
+                // from this responder's answer, not from the joiner's last frame -- the time its request waited in the queue
+                // was taken from it (a hello that waited 1.5 s of a 2 s allowance left 0.5 s for the proof).
+                p.addLast(new IdleStateHandler(0, 0, idleSeconds));
                 p.addLast(admission.idleCloser());
-                DiscoveryWire.install(p);
-                p.addLast(new TCPDiscoveryEngineHandler(controllerEngine));
+                DiscoveryWire.install(p, maxRequestBytes);
+                p.addLast(new TCPDiscoveryEngineHandler(controllerEngine, jobs));
             }
         };
     }
 
     public static void shutdown() {
+        DiscoveryJobs j = liveJobs;
+        if (j != null) j.shutdown();
         try {
 
             try {

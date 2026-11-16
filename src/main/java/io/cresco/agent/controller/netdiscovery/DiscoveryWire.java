@@ -60,15 +60,36 @@ final class DiscoveryWire {
         throw new RefusedClassException("class " + className);
     };
 
-    /** Install the discovery codec (String-only decoder, Netty's encoder) on a server or client pipeline. */
+    /**
+     * Largest frame a RESPONDER reads (discovery_max_request_bytes). What a joiner sends is a locator, a hello with its
+     * certificate chain, or a proof. Measured (DiscoveryStormTest, the three-certificate RSA-3072 chain a node makes for
+     * itself, with the proof of possession): locator 436 bytes, hello 4,876 bytes, proof 829 bytes. The bound is a little
+     * over three times the hello; three certificates of 8192-bit keys make a hello of some 10 KiB (estimated from the
+     * certificates' size, not measured). Every open connection may hold a partial frame of this size that nobody has
+     * authenticated: at the listener's limit of 2,048 connections that is 32 MiB, what it was before the limit was
+     * raised (128 connections of 256 KiB). A joiner still allows an answer {@link #MAX_OBJECT_BYTES} (a challenge carries
+     * the responder's chain and may carry an operator's rebind statement).
+     */
+    static final int MAX_REQUEST_BYTES = 16 * 1024;
+
+    /** Install the discovery codec (String-only decoder, Netty's encoder) on a client pipeline. */
     static void install(ChannelPipeline p) {
-        p.addLast(new ObjectEncoder(), new StringOnlyDecoder());
+        install(p, MAX_OBJECT_BYTES);
+    }
+
+    /** As above, reading frames of at most {@code maxFrameBytes} (a responder: {@link #MAX_REQUEST_BYTES}). */
+    static void install(ChannelPipeline p, int maxFrameBytes) {
+        p.addLast(new ObjectEncoder(), new StringOnlyDecoder(Math.max(1024, Math.min(MAX_OBJECT_BYTES, maxFrameBytes))));
     }
 
     /** Netty's length-field framing, then {@link #readString}. */
     static final class StringOnlyDecoder extends LengthFieldBasedFrameDecoder {
         StringOnlyDecoder() {
-            super(MAX_OBJECT_BYTES, 0, 4, 0, 4);
+            this(MAX_OBJECT_BYTES);
+        }
+
+        StringOnlyDecoder(int maxFrameBytes) {
+            super(maxFrameBytes, 0, 4, 0, 4);
         }
 
         @Override

@@ -88,7 +88,7 @@ public final class DiscoveryAuth {
     /** One message of the exchange (JSON in the MsgEvent parameter {@value #PARAM}). */
     public static final class Msg {
         public int v = 2;
-        public String step;              // hello | challenge | proof | result
+        public String step;              // hello | challenge | proof | result | busy
         public String type;              // AGENT | REGION | GLOBAL
         public String nc, ns;
         public String creg, cagt, ccert;
@@ -107,6 +107,11 @@ public final class DiscoveryAuth {
          * (proof of possession: {@link #possessionTranscript}). Absent from a build of before the proof (release 1.3.378).
          */
         public String pop;
+        /**
+         * BUSY: after how many milliseconds the responder asks to be tried again (a hint; it is not authenticated). Absent
+         * from every other message (null is not written): a message of an exchange is as it was.
+         */
+        public Long retry;
     }
 
     // ---------------------------------------------------------------- proof of possession (the secret's exchange)
@@ -199,6 +204,9 @@ public final class DiscoveryAuth {
         }
         return out.toByteArray();
     }
+
+    /** The message parameter of a busy answer for a peer that sent a locator (it reads no {@link Msg}): the same milliseconds. */
+    public static final String BUSY_PARAM = "discovery_busy";
 
     /**
      * The PKI exchange (security_profile=production). The same four messages and the same transcript, but no discovery

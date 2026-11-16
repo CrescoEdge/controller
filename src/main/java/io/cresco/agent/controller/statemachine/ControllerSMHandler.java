@@ -549,20 +549,32 @@ public class ControllerSMHandler {
                         controllerEngine.setCertificateManager(new CertificateManager(controllerEngine));
                     }
                     //stay in loop until something happens
+                    JoinBackoff backoff2 = joinBackoff(retryWait);
                     while((cstate.getControllerState() != ControllerMode.AGENT) && (!forceShutdown.get())) {
 
                         //try and discover REGIONS that will accept agents
+                        long searched = System.currentTimeMillis();
                         List<DiscoveryNode> discoveryNodeList = nodeDiscovery(DiscoveryType.AGENT);
                         DiscoveryNode discoveryNode = getDiscoveryNode(discoveryNodeList);
+                        TCPDiscoveryStatic.Attempt failed = null;
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT_INIT)); //1
                             cstate.setAgentInit(discoveryNode.discovered_region, cstate.getAgent(), "stateInit() : Case 2"); //2
                             //try and do a static connection, if successful set agent
+                            joinAttempt = null;
                             isStateInit = isAgent(discoveryNode);
+                            failed = joinAttempt;
                         } else {
-                            logger.error("No agents discovered.");
+                            // nobody answered the search: no controller is up yet, as far as this node can tell (it asks again
+                            // as often as before, not in step with the others)
+                            long next = backoff2.failed(TCPDiscoveryStatic.Outcome.UNREACHABLE, -1);
+                            logger.warn("Discovery: joining a region: no controller answered this node's search in "
+                                    + (System.currentTimeMillis() - searched) + " ms; attempt " + backoff2.attempts() + ", trying again in "
+                                    + (next + 50) / 100 / 10.0 + " s");
+                            Thread.sleep(next);
+                            continue;
                         }
-                        Thread.sleep(retryWait);
+                        waitAfterJoinAttempt(backoff2, failed, retryWait, "joining region " + discoveryNode.discovered_region);
                     }
                     break;
 
@@ -574,30 +586,32 @@ public class ControllerSMHandler {
                         controllerEngine.setCertificateManager(new CertificateManager(controllerEngine));
                     }
 
+                    JoinBackoff backoff6 = joinBackoff(retryWait);
                     while((cstate.getControllerState() != ControllerMode.AGENT) && (!forceShutdown.get())) {
 
                         //manually create the discoveryNode when host is specified
                         DiscoveryNode discoveryNode = null;
                         String discoveryIP = plugin.getConfig().getStringParam("regional_controller_host");
                         int discoveryPort = plugin.getConfig().getIntegerParam("regional_controller_port",32005);
+                        TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
                         try {
-                            TCPDiscoveryStatic ds = new TCPDiscoveryStatic(controllerEngine);
                             List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), discoveryIP, discoveryPort, false);
-                            discoveryNode = certDiscovery.get(0);
+                            // a discovery that is not answered is no exception: it is an empty list, reported below in one line
+                            if (certDiscovery != null && !certDiscovery.isEmpty()) discoveryNode = certDiscovery.get(0);
                         } catch (Exception ex) {
-                            logger.error("Discovery Failed: " + ex.getMessage());
-                            logger.debug(getStringFromError(ex));
+                            logger.debug("discovery of " + discoveryIP + ":" + discoveryPort + ": " + getStringFromError(ex));
                         }
 
+                        TCPDiscoveryStatic.Attempt failed = ds.lastAttempt();
                         if(discoveryNode != null) {
                             stateContext.setCurrentState(getStateByEnum(ControllerMode.AGENT_INIT)); //1
                             cstate.setAgentInit(discoveryNode.discovered_region, cstate.getAgent(), "stateInit() : Case 2"); //2
                             //try and do a static connection, if successful set agent
+                            joinAttempt = null;
                             isStateInit = isAgent(discoveryNode);
-                        } else {
-                            logger.error("No agents discovered.");
+                            failed = joinAttempt;
                         }
-                        Thread.sleep(retryWait);
+                        waitAfterJoinAttempt(backoff6, failed, retryWait, "joining the controller at " + discoveryIP + ":" + discoveryPort);
                     }
                     break;
 
@@ -1008,6 +1022,40 @@ public class ControllerSMHandler {
         return true;
     }
 
+    /** The certificate exchange of the join attempt in progress, when it was not answered (see {@link #isAgent}). */
+    private volatile TCPDiscoveryStatic.Attempt joinAttempt;
+
+    /** The waits between this node's attempts to join ({@link JoinBackoff}): discovery_retry_min_ms, discovery_retry_max_ms. */
+    private JoinBackoff joinBackoff(long retryWait) {
+        return new JoinBackoff(retryWait, plugin.getConfig().getLongParam("discovery_retry_min_ms", JoinBackoff.DEFAULT_MIN_MS),
+                plugin.getConfig().getLongParam("discovery_retry_max_ms", JoinBackoff.DEFAULT_MAX_MS));
+    }
+
+    /**
+     * After an attempt to join as an agent. Joined: the pause there always was (retrywait). A discovery exchange that was
+     * not answered ({@code failed}): ONE line saying who was asked, what happened, how long it took and when the next
+     * attempt is -- at WARN, the node is still trying -- then that wait ({@link JoinBackoff}). Anything else (the broker
+     * connection or the registration failed, logged where it happened): the wait there always was (retrywait, spread).
+     */
+    private void waitAfterJoinAttempt(JoinBackoff backoff, TCPDiscoveryStatic.Attempt failed, long retryWait, String what) throws InterruptedException {
+        if (cstate.getControllerState() == ControllerMode.AGENT) {
+            backoff.succeeded();
+            Thread.sleep(retryWait);
+            return;
+        }
+        if (forceShutdown.get()) return;
+        if (failed == null) {
+            long next = backoff.failedAfterDiscovery();     // (the wait it always was: the responder is not what is behind)
+            logger.warn("Discovery: " + what + ": discovery was answered but the join did not complete (see the lines before); attempt "
+                    + backoff.attempts() + ", trying again in " + (next + 50) / 100 / 10.0 + " s");
+            Thread.sleep(next);
+            return;
+        }
+        long next = backoff.failed(failed.outcome, failed.busyRetryMs);
+        logger.warn(JoinBackoff.line(failed, what, backoff.attempts(), next));
+        Thread.sleep(next);
+    }
+
     private boolean isAgent(DiscoveryNode discoveryNode) {
         logger.debug("isAgent Called");
 
@@ -1022,6 +1070,12 @@ public class ControllerSMHandler {
             int joinPort = discoveryNode.discovered_port;
             List<DiscoveryNode> certDiscovery = ds.discover(DiscoveryType.AGENT, plugin.getConfig().getIntegerParam("discovery_static_agent_timeout", 10000), joinIp, joinPort, true);
 
+            if (certDiscovery == null || certDiscovery.isEmpty()) {
+                // the certificate exchange was not answered (the responder is busy, or gone): no error -- the joining loop
+                // says so in one line and tries again after its wait
+                joinAttempt = ds.lastAttempt();
+                return false;
+            }
             if(certDiscovery.size() == 1) {
                 discoveryNode = certDiscovery.get(0);
                 // every join path (multicast and static regional_controller_host alike) can re-enroll with this controller

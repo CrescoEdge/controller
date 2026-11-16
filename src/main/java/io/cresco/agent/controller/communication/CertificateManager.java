@@ -43,6 +43,16 @@ public class CertificateManager {
      * its connection had no trust manager. Its own object: the field above is replaced when a store is loaded.
      */
     private final Object trustStoreLock = new Object();
+    /**
+     * The truststore's certificates, indexed (by subject, alias prefix and key): what every TLS trust decision of this node
+     * reads ({@link LivePkixTrustManager}), so a certificate recorded a moment ago is trusted by the next handshake and no
+     * TLS context is rebuilt because the truststore changed. Changed only with {@link #trustStoreLock}, together with the
+     * KeyStore above ({@link #tsPut}, {@link #tsDelete}). When the KeyStore itself is replaced (a store loaded from its
+     * file, a pre-provisioned identity put in force) the index of the new one is built aside and the two are swapped
+     * together ({@link #swapTrustStore}): no handshake is judged by an index that is empty or half filled.
+     */
+    private volatile TrustAnchorIndex anchorIndex = new TrustAnchorIndex();
+    private final LivePkixTrustManager livePkix = new LivePkixTrustManager(() -> anchorIndex);
     private char[] keyStorePassword;
     private String keyStoreFilePath;
     private char[] trustStorePassword;
@@ -134,8 +144,9 @@ public class CertificateManager {
                     keyStore.load(null, null);
 
 
-                    trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
-                    trustStore.load(null, null);
+                    KeyStore blank = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+                    blank.load(null, null);
+                    swapTrustStore(blank);            // (and its index: nothing of a store that failed to load stays trusted)
 
                     generateCertChain();
 
@@ -150,8 +161,9 @@ public class CertificateManager {
                 keyStore.load(null, null);
 
 
-                trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
-                trustStore.load(null, null);
+                KeyStore blank = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+                blank.load(null, null);
+                swapTrustStore(blank);
 
                 // the node's key survives restarts (identity bindings at peers and CAs follow the key)
                 if (!loadNodeIdentity()) {
@@ -163,8 +175,10 @@ public class CertificateManager {
                 replaceTrustStoreEntries(keyStoreAlias, getPublicCertificate());
             }
             // CAs recorded for regions before a restart stay trusted for TLS (their scope is in the registry)
-            for (X509Certificate ca : peerTrust.recordedCas()) {
-                trustStore.setCertificateEntry("recordedCA-" + PeerIdentity.spkiFingerprint(ca).substring(0, 16), ca);
+            synchronized (trustStoreLock) {
+                for (X509Certificate ca : peerTrust.recordedCas()) {
+                    tsPut("recordedCA-" + PeerIdentity.spkiFingerprint(ca).substring(0, 16), ca);
+                }
             }
 
             startRenewalCheck();
@@ -403,7 +417,7 @@ public class CertificateManager {
             if (me != null) peerTrust.setOwnRegion(me.getTenant(), me.getRegion());
         }
         operatorRevocations = rev;
-        this.trustStore = trust;
+        swapTrustStore(trust);
         presented = new NodeIdentityKeyManager.Identity(p.chain.clone(), p.key, IDENTITY_GEN.incrementAndGet());
         storeKeyAndCertificateChain(keyStoreAlias, keyStorePassword, p.key, p.chain);
         this.chain = p.chain;
@@ -716,20 +730,20 @@ public class CertificateManager {
             if (trustStore == null || keyFps.isEmpty()) return;
             java.util.List<String> drop = new java.util.ArrayList<>();
             synchronized (trustStoreLock) {
-                for (String alias : java.util.Collections.list(trustStore.aliases())) {
-                    Certificate c = trustStore.getCertificate(alias);
-                    if (c == null) continue;
-                    String fp = PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded());
-                    if (!keyFps.contains(fp)) continue;
-                    CrescoIdentity named = c instanceof X509Certificate ? CrescoNames.identityOf((X509Certificate) c) : null;
-                    if (peerTrust == null || peerTrust.isRevokedFor(fp, named == null ? null : named.getRegion())) drop.add(alias);
+                // the entries carrying each key, from the index: no walk of the store, whatever its size
+                for (String fp : keyFps) {
+                    for (String alias : anchorIndex.aliasesOfKey(fp)) {
+                        X509Certificate c = anchorIndex.get(alias);
+                        if (c == null) continue;
+                        CrescoIdentity named = CrescoNames.identityOf(c);
+                        if (peerTrust == null || peerTrust.isRevokedFor(fp, named == null ? null : named.getRegion())) drop.add(alias);
+                    }
                 }
-                for (String alias : drop) trustStore.deleteEntry(alias);
+                for (String alias : drop) tsDelete(alias);
             }
             if (!drop.isEmpty()) {
                 logger.warn("Removed " + drop.size() + " truststore anchor(s) carrying revoked keys: " + drop);
-                saveKeyAndTrustStore();
-                if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+                saveKeyAndTrustStore();           // (the broker's trust reads the index: the entries are gone for it already)
             }
         } catch (Exception ex) {
             logger.error("dropAnchorsOfKeys: " + ex.getMessage());
@@ -878,13 +892,13 @@ public class CertificateManager {
             String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
             java.util.List<X509Certificate> held = new java.util.ArrayList<>();
             synchronized (trustStoreLock) {
-                for (String alias : java.util.Collections.list(trustStore.aliases())) {
-                    if (!alias.toLowerCase(java.util.Locale.ROOT).startsWith(prefix)) continue;
-                    Certificate c = trustStore.getCertificate(alias);
-                    if (!(c instanceof X509Certificate)) continue;
+                // this name's entries, from the index: the registry's join decision does not walk the store, whatever it holds
+                for (String alias : anchorIndex.aliasesOfPrefix(prefix)) {
+                    X509Certificate c = anchorIndex.get(alias);
+                    if (c == null) continue;
                     // the leaf first: the certificate that carries the recorded key
-                    if (keyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) held.add(0, (X509Certificate) c);
-                    else held.add((X509Certificate) c);
+                    if (keyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()))) held.add(0, c);
+                    else held.add(c);
                 }
             }
             // (no certificate of it at hand: it cannot be judged, and nothing recorded is given up on an anchor's word then)
@@ -997,18 +1011,15 @@ public class CertificateManager {
             String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
             java.util.List<String> drop = new java.util.ArrayList<>();
             synchronized (trustStoreLock) {
-                for (String alias : java.util.Collections.list(trustStore.aliases())) {
-                    Certificate c = trustStore.getCertificate(alias);
-                    boolean sameKey = c != null && oldKeyFp != null && oldKeyFp.equals(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()));
-                    if (alias.toLowerCase(java.util.Locale.ROOT).startsWith(prefix) || sameKey) drop.add(alias);
-                }
-                for (String alias : drop) trustStore.deleteEntry(alias);
+                java.util.Set<String> named = new java.util.LinkedHashSet<>(anchorIndex.aliasesOfPrefix(prefix));
+                named.addAll(anchorIndex.aliasesOfKey(oldKeyFp));
+                drop.addAll(named);
+                for (String alias : drop) tsDelete(alias);
             }
             if (!drop.isEmpty()) {
                 logger.warn("Removed " + drop.size() + " truststore anchor(s) of " + name + " (its key " + PeerIdentity.shortFp(oldKeyFp)
                         + " was replaced): " + drop);
-                saveKeyAndTrustStore();
-                if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager();
+                saveKeyAndTrustStore();           // (the broker's trust reads the index: the entries are gone for it already)
             }
         } catch (Exception ex) {
             logger.error("dropReplacedAnchors(" + name + "): " + ex.getMessage());
@@ -1446,13 +1457,16 @@ public class CertificateManager {
             }
             java.util.List<String> stale = new java.util.ArrayList<>();
             synchronized (trustStoreLock) {
-                for (String alias : java.util.Collections.list(trustStore.aliases())) {
-                    if (alias.toLowerCase(java.util.Locale.ROOT).startsWith(p) && !keep.contains(alias.toLowerCase(java.util.Locale.ROOT))) stale.add(alias);
+                // this name's entries, from the index: the store is not walked, however many names it holds
+                for (String alias : anchorIndex.aliasesOfPrefix(p)) {
+                    if (!keep.contains(alias)) stale.add(alias);
                 }
-                for (String alias : stale) trustStore.deleteEntry(alias);
+                for (String alias : stale) tsDelete(alias);
             }
             java.util.List<String> added = addCertificatesToTrustStore(prefix, certs);
-            if (!stale.isEmpty() && added.isEmpty()) saveKeyAndTrustStore();
+            // a REMOVAL is written through (file-backed stores): saved a second later, a crash in that second brought a
+            // replaced chain's anchors back from the file. (Additions of a peer are saved within the second.)
+            if (!stale.isEmpty()) saveKeyAndTrustStore();
             return !stale.isEmpty() || !added.isEmpty();
         } catch (Exception ex) {
             logger.error("replaceTrustStoreEntries(" + prefix + "): " + ex.getMessage());
@@ -1528,7 +1542,7 @@ public class CertificateManager {
                         continue;
                     }
                     synchronized (trustStoreLock) {
-                        trustStore.setCertificateEntry("imported#" + fp, cert);
+                        if (!tsPut("imported#" + fp, cert)) continue;
                     }
                     imported.add(fp);
                     logger.info("Imported trust anchor " + f.getFileName() + " (" + fp + ") from " + dir + " (listed in public_key_trusted_fingerprints)");
@@ -1581,11 +1595,11 @@ public class CertificateManager {
                 synchronized (trustStoreLock) {
                     if (trustStore.containsAlias(name)) continue;
                     logger.debug("addCertificatesToTrustStore: adding " + name);
-                    trustStore.setCertificateEntry(name, cert);
+                    if (!tsPut(name, cert)) continue;
                 }
                 added.add(name);
             }
-            if (!added.isEmpty()) saveKeyAndTrustStore();
+            if (!added.isEmpty()) saveAfterChange(alias);
         } catch (Exception ex) {
             logger.error("addCertificatesToTrustStore() : error " + ex.getMessage());
         }
@@ -1638,7 +1652,14 @@ public class CertificateManager {
 
 
             //create Intermediate CA cert signed by Root CA
-            KeyPair intermedCAKeyPair = generateKeyPair();
+            // ONE key pair for the two CA certificates. A node made three RSA key pairs at its first start (root,
+            // intermediate, leaf) and dropped two of them when this method returned: the hierarchy dates from 2019, when the
+            // intermediate was meant to sign (the two lines that kept its key are commented out below), and nothing has
+            // signed with either CA key since. Both are still thrown away -- nobody can issue under this node's root, as
+            // before -- but making them was two thirds of the work of a first start (on the DGX, 74 s of the 126 s a node
+            // needed to join in a storm of 1,000). The leaf keeps a key of its own: it is the node's identity, and the
+            // one certificate of the chain that carries it.
+            KeyPair intermedCAKeyPair = rootCAKeyPair;
             builder = new JcaX509v3CertificateBuilder(
                     rootCA, // here rootCA is issuer authority
                     CertValidity.serial(), CertValidity.notBefore(),
@@ -1726,23 +1747,61 @@ public class CertificateManager {
      * the in-memory truststore no longer holds their self-rooted chains.
      */
     public TrustManager[] getTrustManagers() {
-        TrustManager[] trustManagers = null;
-        try {
-            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            // init copies the store's certificates into the factory: only that walk needs the store to hold still
-            synchronized (trustStoreLock) {
-                trustManagerFactory.init(trustStore);
-            }
-            trustManagers = trustManagerFactory.getTrustManagers();
-            for (int i = 0; i < trustManagers.length; i++) {
-                if (trustManagers[i] instanceof X509TrustManager) {
-                    trustManagers[i] = new BoundKeyTrustManager((X509TrustManager) trustManagers[i], peerTrust, logger);
-                }
-            }
-        } catch(Exception ex) {
-            logger.error("getTrustManagers Error : " + ex);
+        // PKIX over the truststore as it is at each handshake (LivePkixTrustManager): nothing is built from the store here,
+        // so this costs the same whatever the store holds, and what it returns never needs replacing when the store changes
+        return new TrustManager[]{ new BoundKeyTrustManager(livePkix, peerTrust, logger) };
+    }
+
+    /**
+     * Replace the truststore by {@code store}: its index is built first, then the KeyStore and the index are swapped
+     * together, so that TLS is judged by the former store or by the new one, never by something in between.
+     */
+    private void swapTrustStore(KeyStore store) throws KeyStoreException {
+        TrustAnchorIndex index = new TrustAnchorIndex();
+        int left = index.rebuild(store);
+        if (left > 0) {
+            logger.error("Truststore: " + left + " certificate(s) of the store put in force are NOT used as anchors: more than "
+                    + TrustAnchorIndex.MAX_PER_SUBJECT + " different certificates carry one subject. Chains that end at them are refused.");
         }
-        return trustManagers;
+        synchronized (trustStoreLock) {
+            this.trustStore = store;
+            this.anchorIndex = index;
+        }
+    }
+
+    /**
+     * With {@link #trustStoreLock}: set a truststore entry, in the KeyStore and in the index TLS reads.
+     *
+     * @return false when it was NOT recorded: its subject has as many different certificates as one subject may
+     * ({@link TrustAnchorIndex#MAX_PER_SUBJECT}); said once in 10 s. Its holder, if bound, is trusted by its bound key.
+     */
+    private boolean tsPut(String alias, Certificate cert) throws KeyStoreException {
+        if (!anchorIndex.accepts(cert)) {
+            anchorIndex.put(alias, cert);                 // (counts the refusal)
+            io.cresco.agent.controller.netdiscovery.DiscoveryGuard.warnLimited(logger, "truststore-subject-full",
+                    "Truststore: a certificate was NOT recorded as an anchor (entry " + alias + "): " + TrustAnchorIndex.MAX_PER_SUBJECT
+                            + " different certificates of its subject are recorded already, and one subject has no more (every trust"
+                            + " decision for that name tries each of them). A node bound here is still trusted by its bound key; "
+                            + anchorIndex.refused() + " not recorded so far");
+            return false;
+        }
+        trustStore.setCertificateEntry(alias, cert);
+        anchorIndex.put(alias, cert);
+        return true;
+    }
+
+    /** With {@link #trustStoreLock}: remove a truststore entry, from the KeyStore and from the index TLS reads. */
+    private void tsDelete(String alias) throws KeyStoreException {
+        trustStore.deleteEntry(alias);
+        anchorIndex.remove(alias);
+    }
+
+    /** Tests: PKIX over the truststore as it is now, without the registry's part. */
+    X509TrustManager livePkixForTests() { return livePkix; }
+
+    /** Trust decisions answered from the truststore's index, and its entries added or removed, so far (counters). */
+    public long[] trustIndexCounts() {
+        return new long[]{ anchorIndex.lookups(), anchorIndex.changes(), anchorIndex.size() };
     }
 
     /**
@@ -2424,7 +2483,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         }
         replaceTrustStoreEntries("peerCA-" + region, joinerCerts.length > 2 && joinerCerts[2] != null
                 ? new X509Certificate[]{joinerCa, joinerCerts[2]} : new X509Certificate[]{joinerCa});
-        try { if (controllerEngine.getBroker() != null) controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+        // (trust only: the broker's trust reads the truststore's index at each handshake, its TLS context is not rebuilt)
         logger.info("Federated with controller " + region + "/" + agent + " (tenant=" + tenant + "): recorded its region CA, scoped to "
                 + region + "; returning this region's CA");
         return getJsonFromCerts(regionCA.caChain());
@@ -2495,8 +2554,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                     logger.error("installEnrollment REFUSED: " + why);
                     return false;
                 }
-                replaceTrustStoreEntries("peerCA-" + scope[0], signedChain);
-                try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
+                replaceTrustStoreEntries("peerCA-" + scope[0], signedChain);     // trust only: read live, no TLS context is rebuilt
                 try { controllerEngine.getActiveClient().refreshTrust(); } catch (Exception ignore) {}
                 logger.info("Federated with region " + scope[0] + " (tenant=" + scope[1] + "): recorded its CA, kept our own identity");
                 return true;
@@ -2557,7 +2615,7 @@ System.out.println("Decoded value is " + new String(valueDecoded));
             saveNodeIdentity();
             boolean anchorsChanged = replaceTrustStoreEntries("issuingCA-" + scope[0], signedChain.length > 2 && signedChain[2] != null
                     ? new X509Certificate[]{ issuer, signedChain[2] } : new X509Certificate[]{ issuer });
-            if (anchorsChanged || !sameKeyAndIssuer) {
+            if (!sameKeyAndIssuer) {               // a new identity to present; changed anchors alone are read live
                 try { controllerEngine.getBroker().updateTrustManager(); } catch (Exception ignore) {}
             }
             if (!sameKeyAndIssuer) {
@@ -2576,9 +2634,40 @@ System.out.println("Decoded value is " + new String(valueDecoded));
         }
     }
 
+    private final java.util.concurrent.atomic.AtomicBoolean savePending = new java.util.concurrent.atomic.AtomicBoolean();
+    private final Object saveLock = new Object();
+
+    /**
+     * The truststore changed under the entries of {@code owner}. With file-backed stores (keystorefile, truststorefile; not
+     * the default) the stores are saved: at once when this node's own entries changed, as before; for a peer's entries
+     * within a second, once for every peer recorded in that second. Saving writes the whole truststore, and it was written
+     * at every join: a join cost more the more had joined. A peer's entry that a crash loses inside that second is learned
+     * again at its next discovery exchange, and its bound key is trusted meanwhile (the registry is durable).
+     */
+    private void saveAfterChange(String owner) {
+        if (keyStoreFilePath == null || trustStoreFilePath == null) return;
+        if (owner == null || owner.equals(keyStoreAlias)) {
+            saveKeyAndTrustStore();
+            return;
+        }
+        if (!savePending.compareAndSet(false, true)) return;
+        Thread t = new Thread(() -> {
+            try { Thread.sleep(1000); } catch (InterruptedException ignore) { }
+            savePending.set(false);
+            saveKeyAndTrustStore();
+        }, "truststore-save");
+        t.setDaemon(true);
+        t.start();
+    }
+
     public void saveKeyAndTrustStore() {
         if (keyStoreFilePath == null || trustStoreFilePath == null || keyStoreFilePath.equals(trustStoreFilePath) || certificateSaveFailureEncountered)
             return;
+        synchronized (saveLock) { saveKeyAndTrustStoreLocked(); }
+    }
+
+    /** With {@link #saveLock}: one writer of the two files at a time (joins on several threads wrote them together). */
+    private void saveKeyAndTrustStoreLocked() {
         logger.debug("saveKeyAndTrustStore({},{})", keyStoreFilePath, trustStoreFilePath);
         Path keyStoreFilePathObj = Paths.get(keyStoreFilePath);
         try {
@@ -2634,10 +2723,10 @@ System.out.println("Decoded value is " + new String(valueDecoded));
                 logger.warn("Alias [{}] does not appear in key store, load failed", keyStoreAlias);
                 return false;
             }
-            logger.trace("Generating blank trust store object");
-            trustStore = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
             logger.trace("Loading existing trust store: {}", Paths.get(trustStoreFilePath).toAbsolutePath());
-            trustStore.load(trustStoreIn, trustStorePassword);
+            KeyStore loaded = KeyStore.getInstance(io.cresco.library.crypto.CrescoCrypto.KEYSTORE_TYPE);
+            loaded.load(trustStoreIn, trustStorePassword);
+            swapTrustStore(loaded);
             Certificate[] keyStoreCertChain = keyStore.getCertificateChain(keyStoreAlias);
             if (keyStoreCertChain == null) {
                 logger.warn("Certificate chain for alias [{}] does not appear in key store, load failed",

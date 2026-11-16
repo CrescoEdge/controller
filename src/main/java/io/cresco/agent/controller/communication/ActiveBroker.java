@@ -674,6 +674,11 @@ public class ActiveBroker {
 		return SecuritySettings.requireClientAuth(config);
 	}
 
+	/** How often this broker's TLS contexts were rebuilt ({@link #updateTrustManager}): identity changes only, never a join. */
+	private final java.util.concurrent.atomic.AtomicLong tlsContextRebuilds = new java.util.concurrent.atomic.AtomicLong();
+
+	public long tlsContextRebuilds() { return tlsContextRebuilds.get(); }
+
 	/** This broker's authorization plugin (null when broker security is off). */
 	private volatile CrescoAuthorizationBroker authorization;
 
@@ -705,6 +710,32 @@ public class ActiveBroker {
 	}
 
 	/**
+	 * Invalidate every cached server TLS session of {@code sessions} whose peer {@code peers} refuses now (its key revoked
+	 * for its name, its name tombstoned, its region CA revoked): a session that is resumed skips the trust manager, so a
+	 * revoked peer's reconnect would otherwise be accepted at the TLS layer as it was before. How many were invalidated.
+	 * Only sessions the context CACHES are found here: a client that resumes by a session ticket (the JDK's default) has
+	 * none (JoinTrustIsLiveTest measures 0), and its ticket still completes a handshake -- the connection then gets no
+	 * identity from the registry (CrescoAuthorizationBroker.resolve) and is treated as one without a certificate.
+	 */
+	static int invalidateRefusedSessions(javax.net.ssl.SSLSessionContext sessions, PeerTrustRegistry peers) {
+		int n = 0;
+		for (byte[] id : java.util.Collections.list(sessions.getIds())) {
+			javax.net.ssl.SSLSession ss = sessions.getSession(id);
+			if (ss == null) continue;
+			try {
+				java.security.cert.Certificate[] peer = ss.getPeerCertificates();
+				java.security.cert.X509Certificate[] pc = new java.security.cert.X509Certificate[peer.length];
+				int k = 0;
+				for (java.security.cert.Certificate c : peer) if (c instanceof java.security.cert.X509Certificate) pc[k++] = (java.security.cert.X509Certificate) c;
+				if (k > 0 && peers.revokedReason(java.util.Arrays.copyOf(pc, k)) != null) { ss.invalidate(); n++; }
+			} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
+				// no client certificate in this session
+			}
+		}
+		return n;
+	}
+
+	/**
 	 * Revocations changed: invalidate every cached server TLS session whose peer is refused now (a resumed session would not
 	 * have its certificate checked again), close every live connection to this broker whose peer is refused now (key revoked
 	 * for its name, name tombstoned, region CA revoked), and remove the bridges this broker opened to a peer whose name is now
@@ -713,20 +744,7 @@ public class ActiveBroker {
 	public void closeRevokedConnections() {
 		PeerTrustRegistry peers = controllerEngine.getCertificateManager().getPeerTrust();
 		try {
-			javax.net.ssl.SSLSessionContext sessions = broker.getSslContext().getSSLContext().getServerSessionContext();
-			for (byte[] id : java.util.Collections.list(sessions.getIds())) {
-				javax.net.ssl.SSLSession ss = sessions.getSession(id);
-				if (ss == null) continue;
-				try {
-					java.security.cert.Certificate[] peer = ss.getPeerCertificates();
-					java.security.cert.X509Certificate[] pc = new java.security.cert.X509Certificate[peer.length];
-					int k = 0;
-					for (java.security.cert.Certificate c : peer) if (c instanceof java.security.cert.X509Certificate) pc[k++] = (java.security.cert.X509Certificate) c;
-					if (k > 0 && peers.revokedReason(java.util.Arrays.copyOf(pc, k)) != null) ss.invalidate();
-				} catch (javax.net.ssl.SSLPeerUnverifiedException none) {
-					// no client certificate in this session
-				}
-			}
+			invalidateRefusedSessions(broker.getSslContext().getSSLContext().getServerSessionContext(), peers);
 		} catch (Exception ex) {
 			logger.error("invalidating the TLS sessions of revoked peers: " + ex.getMessage());
 		}
@@ -748,7 +766,14 @@ public class ActiveBroker {
 		}
 	}
 
+	/**
+	 * This node's IDENTITY changed (a new key or chain to present): give the broker's TLS context, and each bridge's, the
+	 * current key managers. Not for a change of trust: every context's trust manager reads the truststore's index at each
+	 * handshake ({@link LivePkixTrustManager}), so a certificate recorded a moment ago is trusted without this -- and this
+	 * was called, rebuilding trust from the whole truststore, at every join.
+	 */
 	public void updateTrustManager() {
+		tlsContextRebuilds.incrementAndGet();
 		try {
 			broker.getSslContext().getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 
@@ -764,7 +789,10 @@ public class ActiveBroker {
 		for (NetworkConnector nc : own) {
 			try {
 				SslContext ctx = nc.getSslContext();
-				if (ctx != null) {
+				if (ctx instanceof FreshSslContext) {
+					// (a context is made per connection: the next one presents the new identity)
+					((FreshSslContext) ctx).useKeyManagers(controllerEngine.getCertificateManager().getKeyManagers());
+				} else if (ctx != null) {
 					ctx.getSSLContext().init(controllerEngine.getCertificateManager().getKeyManagers(), ctx.getTrustManagersAsArray(), new SecureRandom());
 				}
 			} catch (Exception ex) {
@@ -1042,19 +1070,17 @@ public class ActiveBroker {
 	// shards. This gives one TLS socket per shard -> real cross-node parallelism, no duplicates.
 	/**
 	 * The TLS context of one outbound bridge connector: this node's identity (key managers) and a trust manager bound to
-	 * {@code expected}. Null with peer_identity_mode=off: the connector then uses the broker's shared context, as before.
+	 * {@code expected} (with peer_identity_mode=off, the broker's own trust, the old chain-only check). A JSSE context is
+	 * made for each connection the bridge opens ({@link FreshSslContext}): a bridge that reconnects never resumes a session,
+	 * which would skip the trust manager, so its peer is judged by this node's trust as it is at every connection. Every
+	 * completed handshake is recorded, so a revocation of its peer (key, name, or a CA in its chain) closes it (round-2
+	 * review N5).
 	 */
 	static SslContext bridgeSslContext(CertificateManager cm, PeerIdentity.Expected expected, String endpoint) {
-		if (cm.peerIdentityMode() == PeerIdentity.Mode.OFF) return null;
-		SslContext ctx = new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
-		try {
-			// every completed handshake of the bridge -- resumed ones too, which skip the trust manager -- is recorded, so a
-			// revocation of its peer (key, name, or a CA in its chain) closes it (round-2 review N5)
-			ctx.setSSLContext(RecordingSslContext.wrap(ctx.getSSLContext(), cm.outboundConnections(), endpoint));
-		} catch (Exception e) {
-			throw new IllegalStateException("the bridge's TLS context could not be made: " + e.getMessage(), e);
-		}
-		return ctx;
+		javax.net.ssl.TrustManager[] tm = cm.peerIdentityMode() == PeerIdentity.Mode.OFF ? cm.getTrustManagers()
+				: cm.clientTrustManagers(expected, endpoint);
+		return new FreshSslContext(cm.getKeyManagers(), tm, new SecureRandom(),
+				c -> RecordingSslContext.wrap(c, cm.outboundConnections(), endpoint));
 	}
 
 	private NetworkConnector buildConnector(String hostname, int port, int index, PeerIdentity.Expected expected) throws Exception {
@@ -1169,7 +1195,7 @@ public class ActiveBroker {
 						bridge.start();
 					}
 				}
-				updateTrustManager();
+				// (each new bridge's TLS context is made with the current key managers and reads trust live: nothing to rebuild)
 			} catch (Exception ex) {
 				logger.error("NetworkConnector addBridgeConnectors: {}", ex.getMessage(), ex);
 			}

@@ -173,9 +173,21 @@ public class ActiveClient {
         }
     }
 
+    /** The inbox consumer (tests). */
+    AgentConsumer agentConsumer() { return agentConsumer; }
+
     /** The peer recorded for {@code uri} by {@link #expectPeer}, or null. */
     public PeerIdentity.Expected expectedPeer(String uri) {
         return uri == null ? null : expectedPeers.get(uri);
+    }
+
+    /**
+     * The peer {@code connection}'s TLS connection is bound to: the one recorded for its URI when the factory that made it
+     * was made (the trust manager of its every handshake holds it to that peer), or null (vm://, or no peer was recorded).
+     * Not the URI's present entry: a later {@link #expectPeer} for the same URI is for new connections.
+     */
+    public PeerIdentity.Expected boundPeer(jakarta.jms.Connection connection) {
+        return connection instanceof ActiveMQConnection ? LinkTlsConnectionFactory.BoundPeers.of((ActiveMQConnection) connection) : null;
     }
 
     /**
@@ -504,7 +516,10 @@ public class ActiveClient {
         try {
             logger.debug("Initializing ConnectionFactory for URI: {}", URI);
             // the connection map stays keyed by URI; ActiveMQ gets it without any secret-looking parameter
-            activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger));
+            // read once: the peer this factory's connections are bound to (boundPeer) is the one its trust manager holds them to
+            PeerIdentity.Expected bound = URI.startsWith("vm://") ? null : expectedPeers.get(URI);
+            activeMQSslConnectionFactory = URI.startsWith("vm://") ? new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger))
+                    : new LinkTlsConnectionFactory(BrokerTransport.forActiveMQ(URI, logger), bound);
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
                 // mark this controller's own in-JVM connections: for recipient-bound dataplane streams the broker treats
@@ -516,12 +531,12 @@ public class ActiveClient {
                 // vm:// is in-JVM and never does TLS: only network URIs need the key/trust managers
                 // the broker's certificate must name the peer this URI was opened to (PeerIdentity); a URI with no
                 // recorded peer gets a null expectation, which peer_identity_mode=enforce refuses (fail closed)
-                PeerIdentity.Expected expected = expectedPeers.get(URI);
+                PeerIdentity.Expected expected = bound;
                 if (expected == null && controllerEngine.getCertificateManager().peerIdentityMode() != PeerIdentity.Mode.OFF) {
                     logger.warn("No expected peer identity recorded for broker URI [{}]; its TLS connections will be refused under {}=enforce",
                             BrokerTransport.forActiveMQ(URI, null), PeerIdentity.MODE_KEY);
                 }
-                activeMQSslConnectionFactory.setKeyAndTrustManagers(
+                ((LinkTlsConnectionFactory) activeMQSslConnectionFactory).setTls(
                         controllerEngine.getCertificateManager().getKeyManagers(),
                         controllerEngine.getCertificateManager().clientTrustManagers(expected, "broker connection " + endpointOf(URI)),
                         new SecureRandom()
@@ -1059,6 +1074,8 @@ public class ActiveClient {
         int factoryCount = connectionFactoryMap.size();
         connectionFactoryMap.clear();
         logger.info("Cleared connection factory map ({} entries).", factoryCount);
+        // the peers the links were made to go with them: the next link records the peer its discovery certifies
+        expectedPeers.clear();
 
         logger.info("ActiveClient shutdown complete.");
     }

@@ -26,6 +26,33 @@ public class TCPDiscoveryStatic {
     private PluginBuilder plugin;
     private CLogger logger;
 
+    /** What became of one discovery attempt at a responder. */
+    public enum Outcome {
+        /** it answered and the exchange completed */ ANSWERED,
+        /** it said it is busy and after how long to ask again */ BUSY,
+        /** it answered, and the exchange did not complete (refused, or not authentic: the reason is logged where it was seen) */ INCOMPLETE,
+        /** the connection opened and nothing came back before it closed or timed out */ NO_ANSWER,
+        /** no connection: nothing listens there, or it cannot be reached */ UNREACHABLE
+    }
+
+    /** The last attempt of this instance: what a caller needs for one clear line and for when to try again. */
+    public static final class Attempt {
+        public volatile Outcome outcome = Outcome.NO_ANSWER;
+        public volatile String host = "?";
+        public volatile int port;
+        public volatile long elapsedMs;
+        /** {@link Outcome#BUSY}: the milliseconds the responder asked for; else -1. */
+        public volatile long busyRetryMs = -1;
+        /** {@link Outcome#UNREACHABLE}: why. */
+        public volatile String detail;
+        volatile boolean heard;
+    }
+
+    private volatile Attempt last = new Attempt();
+
+    /** What became of this instance's last {@code discover} call. */
+    public Attempt lastAttempt() { return last; }
+
     public TCPDiscoveryStatic(ControllerEngine controllerEngine) {
         this.controllerEngine = controllerEngine;
         this.plugin = controllerEngine.getPluginBuilder();
@@ -70,6 +97,12 @@ public class TCPDiscoveryStatic {
 
     private List<DiscoveryNode> discover(DiscoveryType disType, int discoveryTimeout, String hostAddress, int discoveryPort, boolean sendCert,
                                          boolean v2, java.util.concurrent.atomic.AtomicBoolean legacyPeer, boolean legacyFormat) throws Exception {
+        final Attempt attempt = new Attempt();
+        attempt.host = hostAddress;
+        attempt.port = discoveryPort;
+        last = attempt;
+        final long started = System.nanoTime();
+        boolean connected = false;
         // Configure SSL.
 
         final List<DiscoveryNode> discoveredList = new ArrayList<>();
@@ -116,7 +149,7 @@ public class TCPDiscoveryStatic {
                                 // String-only decoding: a responder (or anyone answering in its place) is unauthenticated
                                 DiscoveryWire.install(p);
                                 p.addLast(new TCPDiscoveryStaticHandler(controllerEngine, discoveredList, disType, hostAddress, discoveryPort, sendCert, v2, legacyPeer)
-                                        .legacyFormat(legacyFormat));
+                                        .legacyFormat(legacyFormat).attempt(attempt));
                             }
                         });
 
@@ -131,9 +164,23 @@ public class TCPDiscoveryStatic {
                  */
 
                 // Start the connection attempt.
-                b.connect(hostAddress, discoveryPort).sync().channel().closeFuture().sync();
+                io.netty.channel.Channel ch;
+                try {
+                    ch = b.connect(hostAddress, discoveryPort).sync().channel();
+                } catch (Exception notConnected) {
+                    attempt.outcome = Outcome.UNREACHABLE;
+                    attempt.detail = notConnected.getMessage();
+                    throw notConnected;
+                }
+                connected = true;
+                ch.closeFuture().sync();
 
             } finally {
+                attempt.elapsedMs = (System.nanoTime() - started) / 1_000_000L;
+                if (connected) {
+                    attempt.outcome = !discoveredList.isEmpty() ? Outcome.ANSWERED : attempt.busyRetryMs >= 0 ? Outcome.BUSY
+                            : attempt.heard ? Outcome.INCOMPLETE : Outcome.NO_ANSWER;
+                }
                 group.shutdownGracefully();
             }
 
