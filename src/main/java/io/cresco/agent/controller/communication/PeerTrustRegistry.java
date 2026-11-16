@@ -1059,7 +1059,7 @@ public final class PeerTrustRegistry {
                 // what vouches for another key of a recorded name -- never an anchor: it admits a controller and replaces none
                 if (v == null && b != null && tomb == null && !b.key.equals(fp)) {
                     if (j.legacyUpgrade && SOURCE_LEGACY.equals(b.source) && ROLE_AGENT.equals(b.role) && b.tenant.equals(tenant)) {
-                        v = "upgraded from the legacy exchange";
+                        v = UPGRADED_FROM_LEGACY;
                     } else if (ROLE_CONTROLLER.equals(b.role) && ROLE_CONTROLLER.equals(role)) {
                         // (a scoped anchor is the operator's standing statement on THIS node that this key is that controller: it
                         // replaces that name's recorded key at a joiner and at a responder alike)
@@ -1177,6 +1177,11 @@ public final class PeerTrustRegistry {
                 tombs.remove(n);
                 log.accept("Identity " + n + " (revoked: key " + PeerIdentity.shortFp(tomb.key) + ") REBOUND to key " + PeerIdentity.shortFp(fp)
                         + " by the operator ('" + token + "', now consumed); the revoked key stays revoked");
+            } else if (b != null && !b.key.equals(fp) && token == null && UPGRADED_FROM_LEGACY.equals(v)) {
+                // an expected event of the upgrade window (WARN): the earlier build kept no key, its upgraded node proved a new one
+                warn("Discovery: " + n + " UPGRADED: the binding its earlier build made over the legacy exchange is replaced by the key it"
+                        + " proved over the authenticated exchange (upgrade window; key " + PeerIdentity.shortFp(b.key) + ", now "
+                        + PeerIdentity.shortFp(fp) + "); the old key stays refused for " + n);
             } else if (b != null && !b.key.equals(fp)) {
                 log.accept("Identity " + n + " REBOUND from key " + PeerIdentity.shortFp(b.key) + " to " + PeerIdentity.shortFp(fp)
                         + (token != null ? " (operator rebind '" + token + "', now consumed)"
@@ -1733,6 +1738,9 @@ public final class PeerTrustRegistry {
     /** The source of a binding made by the legacy (unauthenticated, replayable) discovery exchange of the upgrade window. */
     public static final String SOURCE_LEGACY = "legacy";
 
+    /** What vouches for the key that replaces an agent's {@link #SOURCE_LEGACY} binding in the upgrade window. */
+    static final String UPGRADED_FROM_LEGACY = "upgraded from the legacy exchange";
+
     /** Is {@code region/agent} an agent bound by the legacy exchange ({@link #SOURCE_LEGACY})? Lock-free. */
     public boolean isLegacyBinding(String region, String agent) {
         Binding b = identities.get(name(region, agent));
@@ -1754,7 +1762,7 @@ public final class PeerTrustRegistry {
             return new BindResult(false, name(region, agent) + " was not bound by the legacy exchange");
         }
         if (!b.tenant.equals(tenant)) return new BindResult(false, "tenant " + tenant + " differs from the bound tenant " + b.tenant);
-        return bind(tenant, region, agent, key, "discovery", ROLE_AGENT, false, "upgraded from the legacy exchange", null);
+        return bind(tenant, region, agent, key, "discovery", ROLE_AGENT, false, UPGRADED_FROM_LEGACY, null);
     }
 
     /** The role {@code region/agent} is bound with when its bound key is {@code key}; else null. Lock-free. */

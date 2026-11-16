@@ -59,7 +59,7 @@ What an upgraded controller does for them while the window is open:
 - an earlier build keeps no identity key across restarts, so its upgraded build presents a NEW key: the binding the legacy
   exchange made for that agent name is replaced, once, by the key the upgraded agent proves over the authenticated
   exchange (`Discovery: <region>/<agent> UPGRADED: the binding its earlier build made over the legacy exchange is
-  replaced ...`; the old key stays refused). A binding made by the authenticated exchange is never replaced this way, and
+  replaced ...`, a WARN; the old key stays refused). A binding made by the authenticated exchange is never replaced this way, and
   outside the window a legacy binding is like any other (an operator rebind).
 
 Open the window on every **upgraded** node they talk to (global, regions, upgraded agents):

@@ -80,6 +80,20 @@ class RegistryNoticeLevelsTest {
     }
 
     @Test
+    void anEarlierBuildsBindingReplacedByItsUpgradedNodeIsSaidAsUpgraded() throws Exception {
+        PeerTrustRegistry r = open();
+        KeyPair earlier = TlsTestSupport.rsa(), upgraded = TlsTestSupport.rsa();
+        assertNull(r.pin("rgG", "a7", chain("rgG", "a7", earlier)[0], PeerTrustRegistry.ROLE_AGENT, false, PeerTrustRegistry.SOURCE_LEGACY));
+        assertTrue(r.isLegacyBinding("rgG", "a7"));
+        PeerTrustRegistry.BindResult up = join(r, "rgG", "a7", upgraded, PeerTrustRegistry.ROLE_AGENT, true, j -> { j.window = true; j.legacyUpgrade = true; });
+        assertTrue(up.ok, up.reason);
+        assertFalse(r.isLegacyBinding("rgG", "a7"));
+        // the line the upgrade guide and its live test look for, at WARN: an expected event of the window
+        assertTrue(any(warns, "Discovery: rgG/a7 UPGRADED: the binding its earlier build made over the legacy exchange is replaced"), warns.toString());
+        assertFalse(any(errors, "rgG/a7"), "the upgrade of an earlier build's binding was said as an ERROR: " + errors);
+    }
+
+    @Test
     void whatIsRefusedOrMovedByTheOperatorStaysAnError() throws Exception {
         TlsTestSupport.provider();
         Path f = Files.createTempDirectory("notices").resolve("security").resolve("peer-trust.json");
