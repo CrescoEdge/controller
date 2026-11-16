@@ -504,7 +504,8 @@ public class ActiveClient {
         try {
             logger.debug("Initializing ConnectionFactory for URI: {}", URI);
             // the connection map stays keyed by URI; ActiveMQ gets it without any secret-looking parameter
-            activeMQSslConnectionFactory = new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger));
+            activeMQSslConnectionFactory = URI.startsWith("vm://") ? new ActiveMQSslConnectionFactory(BrokerTransport.forActiveMQ(URI, logger))
+                    : new RegisteredTlsConnectionFactory(BrokerTransport.forActiveMQ(URI, logger), controllerEngine.getCertificateManager());
             if (URI.startsWith("vm://")) {
                 activeMQSslConnectionFactory.setObjectMessageSerializationDefered(true);
                 // mark this controller's own in-JVM connections: for recipient-bound dataplane streams the broker treats
@@ -521,7 +522,7 @@ public class ActiveClient {
                     logger.warn("No expected peer identity recorded for broker URI [{}]; its TLS connections will be refused under {}=enforce",
                             BrokerTransport.forActiveMQ(URI, null), PeerIdentity.MODE_KEY);
                 }
-                activeMQSslConnectionFactory.setKeyAndTrustManagers(
+                ((RegisteredTlsConnectionFactory) activeMQSslConnectionFactory).setTls(
                         controllerEngine.getCertificateManager().getKeyManagers(),
                         controllerEngine.getCertificateManager().clientTrustManagers(expected, "broker connection " + endpointOf(URI)),
                         new SecureRandom()

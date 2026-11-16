@@ -216,6 +216,8 @@ public class ActiveBroker {
 				//SSLContext sslContext = SSLContext.getInstance("Default");
 				sslContext.init(controllerEngine.getCertificateManager().getKeyManagers(), controllerEngine.getCertificateManager().getTrustManagers(), new SecureRandom());
 				sslContextBroker.setSSLContext(sslContext);
+				// a change of trust reaches the sessions its clients would resume (CertificateManager.invalidateRefusedTlsSessions)
+				controllerEngine.getCertificateManager().registerTlsContext(sslContext);
 				logger.info("Initialized SSL Context");
 
 				// Dead letters. With no strategy set ActiveMQ's default applied: every PERSISTENT message that expired (liveness
@@ -1073,6 +1075,8 @@ public class ActiveBroker {
 		if (cm.peerIdentityMode() == PeerIdentity.Mode.OFF) return null;
 		SslContext ctx = new SslContext(cm.getKeyManagers(), cm.clientTrustManagers(expected, endpoint), new SecureRandom());
 		try {
+			// a change of trust reaches the sessions this bridge would resume (CertificateManager.invalidateRefusedTlsSessions)
+			cm.registerTlsContext(ctx.getSSLContext());
 			// every completed handshake of the bridge -- resumed ones too, which skip the trust manager -- is recorded, so a
 			// revocation of its peer (key, name, or a CA in its chain) closes it (round-2 review N5)
 			ctx.setSSLContext(RecordingSslContext.wrap(ctx.getSSLContext(), cm.outboundConnections(), endpoint));

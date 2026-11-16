@@ -675,6 +675,64 @@ public class CertificateManager {
     /** The TLS connections this node opened (bridges, client connections), closed when their peer is revoked. */
     private final OutboundTlsConnections outbound = new OutboundTlsConnections();
 
+    /** The session caches of this node's TLS contexts for broker connections (its broker's, its bridges', its links'). */
+    private final TlsSessionCaches tlsSessions = new TlsSessionCaches();
+
+    /**
+     * A TLS context this node made for broker connections (its broker's, a bridge's, a link of its own to a broker): from
+     * now on a change of trust reaches the sessions it would resume ({@link #invalidateRefusedTlsSessions}).
+     */
+    public void registerTlsContext(SSLContext context) {
+        tlsSessions.register(context);
+    }
+
+    /**
+     * The trust changed for the keys {@code keyFps} (null: for any key): every resumable TLS session of this node's contexts
+     * whose peer chain carries one of them is judged again by the trust as it stands -- what a full handshake would decide
+     * now -- and invalidated when it is refused, so the peer's next connection makes a full handshake. A resumed session
+     * skips the trust manager: a peer revoked here, or whose anchors went and whose key is not bound here, was accepted
+     * when it resumed for as long as its session lived. How many sessions were invalidated.
+     */
+    int invalidateRefusedTlsSessions(java.util.Collection<String> keyFps) {
+        try {
+            int n = tlsSessions.invalidate(keyFps, this::refusedNow);
+            if (n > 0) logger.warn("TLS: " + n + " resumable session(s) of peers this node's trust refuses now were invalidated: their"
+                    + " next connection makes a full handshake");
+            return n;
+        } catch (Exception ex) {
+            logger.error("TLS: invalidating the sessions of refused peers: " + ex.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Would a full handshake refuse {@code chain} now -- a TLS client's ({@code peerIsClient}) or a TLS server's? Revoked
+     * here, or neither anchored by the truststore nor carrying a key bound here ({@link BoundKeyTrustManager}).
+     */
+    boolean refusedNow(X509Certificate[] chain, boolean peerIsClient) {
+        if (chain == null || chain.length == 0) return true;
+        if (peerTrust != null && peerTrust.revokedReason(chain) != null) return true;
+        BoundKeyTrustManager now = new BoundKeyTrustManager(livePkix, peerTrust, null);
+        try {
+            // the authType a JDK peer's TLS 1.3 handshake hands the trust manager: the client's key algorithm; UNKNOWN for a server
+            if (peerIsClient) now.checkClientTrusted(chain, chain[0].getPublicKey().getAlgorithm());
+            else now.checkServerTrusted(chain, "UNKNOWN");
+            return false;
+        } catch (CertificateException refused) {
+            return true;
+        }
+    }
+
+    /** The public keys (SHA-256 fingerprints) of the truststore entries {@code aliases}; with {@link #trustStoreLock}, before they go. */
+    private java.util.Set<String> keysOfEntries(java.util.Collection<String> aliases) {
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (String alias : aliases) {
+            X509Certificate c = anchorIndex.get(alias);
+            if (c != null) keys.add(PeerTrustRegistry.fingerprint(c.getPublicKey().getEncoded()));
+        }
+        return keys;
+    }
+
     /** The outbound connections this node opened, as recorded by their trust managers and handshakes. */
     public OutboundTlsConnections outboundConnections() {
         if (!outboundRefusalSet) {
@@ -716,6 +774,8 @@ public class CertificateManager {
         } catch (Exception ex) {
             logger.error("closing outbound connections of revoked keys: " + ex.getMessage());
         }
+        // and what a revoked peer could still resume (no keys named: the operator's revocations were reloaded -- every session)
+        invalidateRefusedTlsSessions(keyFps == null || keyFps.isEmpty() ? null : keyFps);
     }
 
     /**
@@ -1008,17 +1068,21 @@ public class CertificateManager {
             if (trustStore == null || name == null) return;
             String prefix = name.replace('/', '_').replaceAll("[^A-Za-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT) + "#";
             java.util.List<String> drop = new java.util.ArrayList<>();
+            java.util.Set<String> keys;
             synchronized (trustStoreLock) {
                 java.util.Set<String> named = new java.util.LinkedHashSet<>(anchorIndex.aliasesOfPrefix(prefix));
                 named.addAll(anchorIndex.aliasesOfKey(oldKeyFp));
                 drop.addAll(named);
+                keys = keysOfEntries(drop);
                 for (String alias : drop) tsDelete(alias);
             }
+            if (oldKeyFp != null) keys.add(oldKeyFp);
             if (!drop.isEmpty()) {
                 logger.warn("Removed " + drop.size() + " truststore anchor(s) of " + name + " (its key " + PeerIdentity.shortFp(oldKeyFp)
                         + " was replaced): " + drop);
                 saveKeyAndTrustStore();           // (the broker's trust reads the index: the entries are gone for it already)
             }
+            invalidateRefusedTlsSessions(keys);   // a session of the former key is not resumed
         } catch (Exception ex) {
             logger.error("dropReplacedAnchors(" + name + "): " + ex.getMessage());
         }
@@ -1454,17 +1518,21 @@ public class CertificateManager {
                 keep.add(p + java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(c.getEncoded())));
             }
             java.util.List<String> stale = new java.util.ArrayList<>();
+            java.util.Set<String> staleKeys;
             synchronized (trustStoreLock) {
                 // this name's entries, from the index: the store is not walked, however many names it holds
                 for (String alias : anchorIndex.aliasesOfPrefix(p)) {
                     if (!keep.contains(alias)) stale.add(alias);
                 }
+                staleKeys = keysOfEntries(stale);
                 for (String alias : stale) tsDelete(alias);
             }
             java.util.List<String> added = addCertificatesToTrustStore(prefix, certs);
             // a REMOVAL is written through (file-backed stores): saved a second later, a crash in that second brought a
             // replaced chain's anchors back from the file. (Additions of a peer are saved within the second.)
             if (!stale.isEmpty()) saveKeyAndTrustStore();
+            // a session made while a removed entry anchored its peer is not resumed unless the trust still takes that peer
+            if (!staleKeys.isEmpty()) invalidateRefusedTlsSessions(staleKeys);
             return !stale.isEmpty() || !added.isEmpty();
         } catch (Exception ex) {
             logger.error("replaceTrustStoreEntries(" + prefix + "): " + ex.getMessage());
@@ -1765,6 +1833,8 @@ public class CertificateManager {
             this.trustStore = store;
             this.anchorIndex = index;
         }
+        // a store put in force whole may lack what anchored a cached session's peer: every session is judged again
+        invalidateRefusedTlsSessions(null);
     }
 
     /**

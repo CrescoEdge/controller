@@ -77,6 +77,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkClientTrusted(chain, authType, socket);
             else pkix.checkClientTrusted(chain, authType);
         });
+        TlsSessionCaches.judged(handshakeSession(socket));
     }
 
     @Override
@@ -85,6 +86,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkServerTrusted(chain, authType, socket);
             else pkix.checkServerTrusted(chain, authType);
         });
+        TlsSessionCaches.judged(handshakeSession(socket));
     }
 
     @Override
@@ -93,6 +95,7 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkClientTrusted(chain, authType, engine);
             else pkix.checkClientTrusted(chain, authType);
         });
+        TlsSessionCaches.judged(handshakeSession(engine));
     }
 
     @Override
@@ -101,6 +104,16 @@ final class BoundKeyTrustManager extends X509ExtendedTrustManager {
             if (pkix instanceof X509ExtendedTrustManager) ((X509ExtendedTrustManager) pkix).checkServerTrusted(chain, authType, engine);
             else pkix.checkServerTrusted(chain, authType);
         });
+        TlsSessionCaches.judged(handshakeSession(engine));
+    }
+
+    /** The session of the handshake in progress on {@code socket} / {@code engine} (null when there is none). */
+    static javax.net.ssl.SSLSession handshakeSession(Socket socket) {
+        return socket instanceof javax.net.ssl.SSLSocket ? ((javax.net.ssl.SSLSocket) socket).getHandshakeSession() : null;
+    }
+
+    static javax.net.ssl.SSLSession handshakeSession(SSLEngine engine) {
+        return engine == null ? null : engine.getHandshakeSession();
     }
 
     /**
