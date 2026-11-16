@@ -43,11 +43,22 @@ top_step=0; for s in $STEPS; do top_step=$s; done
 [ $((P0 + 100 + top_step)) -lt "$EPH_LO" ] && [ $((P0 + 500)) -lt "$EPH_LO" ] \
   || { echo "FATAL: ports $P0..$((P0 + 100 + top_step)) reach this host's range for outgoing connections ($EPH_LO up): set P0 lower"; exit 2; }
 HOSTS=( $(scontrol show hostnames "$SLURM_JOB_NODELIST") )
-[ "${#HOSTS[@]}" -ge 4 ] || { echo "FATAL: the gate needs 4 hosts, the job has ${#HOSTS[@]}"; exit 2; }
+# GATE_THREE_HOSTS=1 and a job of 3 nodes: H4's part (agent a1 and the benchmark clients) runs on H3's node, named by
+# that node's IP address, so its spawn files, pids and stop file stay its own and every leg the benches measure still
+# crosses hosts (a1 -> global on H1 -> region on H2 -> b1 on H3; the clients call the global and the region across hosts)
+H4NODE=""
+if [ "${#HOSTS[@]}" -eq 3 ] && [ "${GATE_THREE_HOSTS:-0}" = 1 ]; then
+  H4NODE=${HOSTS[2]}
+  H4IP=$(getent hosts "$H4NODE" | awk '{print $1; exit}')
+  [ -n "$H4IP" ] && [ "$H4IP" != "$H4NODE" ] || { echo "FATAL: GATE_THREE_HOSTS: no IP address for $H4NODE"; exit 2; }
+  HOSTS+=( "$H4IP" )
+  echo "gate: 3 hosts; H4 (a1 and the benchmark clients) runs on $H4NODE as $H4IP"
+fi
+[ "${#HOSTS[@]}" -ge 4 ] || { echo "FATAL: the gate needs 4 hosts (or 3 with GATE_THREE_HOSTS=1), the job has ${#HOSTS[@]}"; exit 2; }
 H1=${HOSTS[0]}; H2=${HOSTS[1]}; H3=${HOSTS[2]}; H4=${HOSTS[3]}
 GW=$((P0+480)); AW=$((P0+481)); BW=$((P0+482))
 log() { echo "[$(date +%H:%M:%S)] $*"; }
-on() { local h=$1; shift; srun --overlap -N1 -n1 -w "$h" --cpu-bind=none "$@"; }
+on() { local h=$1; shift; [ -n "$H4NODE" ] && [ "$h" = "$H4" ] && h=$H4NODE; srun --overlap -N1 -n1 -w "$h" --cpu-bind=none "$@"; }
 fp() { openssl s_client -connect "$1:$2" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256 | cut -d= -f2; }
 waitport() { for _ in $(seq 1 120); do (echo > "/dev/tcp/$1/$2") 2>/dev/null && return 0; sleep 2; done; return 1; }
 jq_() { "$PY" -c "import json,sys; d=json.load(sys.stdin); print($1)"; }

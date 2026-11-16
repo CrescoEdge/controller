@@ -15,7 +15,8 @@ cmd="$1"; RD="$2"
 case "$cmd" in
 run)
   H="$3"; JAR="$4"
-  LOCAL="/tmp/cresco-gate-$(id -un)-${SLURM_JOB_ID:-x}/$(basename "$RD")"
+  # one directory per host NAME: with GATE_THREE_HOSTS two names (H3 and H4) share a node and must not share its PKI copy
+  LOCAL="/tmp/cresco-gate-$(id -un)-${SLURM_JOB_ID:-x}/$(basename "$RD")/$H"
   mkdir -p "$LOCAL" "$RD/pids" "$RD/logs"; chmod 700 "$LOCAL"
   : > "$RD/pids/$H"
   # production: a node refuses identity files below a directory that another user than itself or root owns (on the DGX
@@ -58,7 +59,7 @@ run)
     [ "$alive" = 0 ] && break; sleep 1
   done
   while read -r _ p; do kill -9 "$p" 2>/dev/null; done < "$RD/pids/$H"
-  rm -rf "$LOCAL"
+  rm -rf "$LOCAL"; rmdir "$(dirname "$LOCAL")" "$(dirname "$(dirname "$LOCAL")")" 2>/dev/null
   echo "host $H stopped"
   ;;
 stats)
