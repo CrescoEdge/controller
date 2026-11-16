@@ -345,7 +345,11 @@ upgraded, with client certificates on.
 | `peer_trust_persist`, `node_identity_persist`, `node_identity_dir` | true, true, `<data>/security` | |
 | `security_federated_tenants` | any | tenants a regional-CA controller federates with |
 | `broker_stream_recipient_binding` | true | with `broker_security_enabled` |
-| `discovery_max_connections`, `discovery_max_connections_per_address` | 128, 16 | concurrent discovery connections (pre-auth limits, `fix/discovery-dos`) |
+| `discovery_max_connections`, `discovery_max_connections_per_address` | 2048, 256 | concurrent discovery connections (pre-auth limits; 128 and 16 before release 1.3.380) |
+| `discovery_workers`, `discovery_max_wait_ms` | a quarter of the cpus (2 to 16), 5000 | threads that answer discovery requests off the network threads; a request whose turn would come later than the wait is answered busy, with a time to come back (1.3.380) |
+| `discovery_max_queued_bytes`, `discovery_max_queued_bytes_per_address` | 256 MiB, 32 MiB | bytes of requests waiting in all (never more than a sixteenth of the heap) and from one address (never more than an eighth of that) |
+| `discovery_max_request_bytes` | 16384 | the largest discovery request read; a larger frame closes the connection |
+| `discovery_retry_min_ms`, `discovery_retry_max_ms` | 1000, 30000 | a joiner whose controller is there but behind (busy, or no answer) backs off from the min, doubling up to the max, each wait a random 50-100 %; any other failure is retried after `retrywait` (3 s) at 75-125 % (`JoinBackoff`) |
 | `discovery_idle_seconds`, `discovery_max_connection_seconds` | 10, 30 | a discovery connection that reads nothing, or stays open longer, is closed |
 
 ### 7.7 Tests
