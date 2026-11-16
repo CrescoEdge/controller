@@ -571,9 +571,11 @@ class ReplyAtFirstInstantTest {
             assertEquals(0, e.msgCounts().droppedCount(MsgCounts.Drop.NO_ROUTE), "and not as having no route as well");
             assertEquals(0, e.msgCounts().droppedCount(MsgCounts.Drop.HOLD_FULL) + e.msgCounts().droppedCount(MsgCounts.Drop.SEND_FAILED)
                     + e.msgCounts().droppedCount(MsgCounts.Drop.ROUTE_ERROR), "nor under any other cause of a send");
-            // (the answer itself ends in this test at a plugin that is not there: that is the one other drop)
-            assertEquals(2, e.msgCounts().droppedCount(), "once: " + e.msgCounts().droppedCount(MsgCounts.Drop.PLUGIN_UNKNOWN));
+            // (the answer itself ends in this test at a plugin that is not there: that is the one other drop. The send hook
+            // records the answer BEFORE handing it on, so that drop is awaited, then nothing more may come)
+            await(() -> e.msgCounts().droppedCount() >= 2, "the answer did not end at the absent plugin");
             Thread.sleep(200);
+            assertEquals(2, e.msgCounts().droppedCount(), "once: " + e.msgCounts().droppedCount(MsgCounts.Drop.PLUGIN_UNKNOWN));
             assertEquals(before + 1, sentByController.size(), "one answer");
         } finally {
             if (was != null) was.shutdown();
