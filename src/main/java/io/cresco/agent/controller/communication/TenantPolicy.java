@@ -182,6 +182,18 @@ public final class TenantPolicy {
         return io.cresco.library.security.Caller.validAlias(name.substring(from, sep), region) != null;
     }
 
+    /**
+     * F-17: is {@code name} the inbox of {@code principal}'s FORMER address -- {@link #isOwnInbox} in the alias form, a region
+     * other than its own ({@code T.<tenant>.<R>_<agent>})? Whether it may read it is the broker's (the record of the move).
+     */
+    public static boolean isFormerInbox(CrescoIdentity principal, String name) {
+        if (!isOwnInbox(principal, name)) return false;
+        int from = NS + principal.getTenant().length() + 1;
+        int sep = name.length() - principal.getAgent().length() - 1;
+        String region = principal.getRegion();
+        return !(sep - from == region.length() && name.startsWith(region, from));
+    }
+
     /** Back-compat entry point: evaluates as an ordinary {@link Role#TENANT} principal. */
     public static Decision check(CrescoIdentity principal, String destination, Access access, Set<String> sharedPrefixes) {
         return check(principal, destination, access, sharedPrefixes, Role.TENANT);

@@ -489,7 +489,9 @@ public class DBEngine {
 
                     String agent_id = entry.getKey();
 
-                    String region_id = getRNodeFromAnode(agent_id);
+                    // (none: an agent this registry does not hold now -- it moved to another region, whose export brings
+                    // its plugins, or this export's reconcile removed it: its plugin entries are skipped, not an error)
+                    String region_id = regionOfAgentQuiet(agent_id);
 
                     String agentOwner = (isRegionUpdate && region_id != null) ? foreignTenant(agent_id, writerTenant) : null;
                     if (agentOwner != null) {

@@ -50,6 +50,8 @@ class AnonymousAndAdvisoryTest {
         assertNull(peers.trustCa(caB.caCert(), "rgB", "t2", "test"));
         assertNull(peers.trustCa(caS.caCert(), "rgS", "cresco-system", "test"));
         CrescoAuthorizationBroker authz = new CrescoAuthorizationBroker(pb, peers);
+        // F-17: a1 moved from region "old" (the record of the move is RecordedMovesTest's subject, not this test's)
+        authz.setMoveRecord((t, r, a, fp) -> "old".equals(r) && "a1".equals(a));
         BrokerService b = TlsTestSupport.broker("rgA_gc", TlsTestSupport.issued(caA, "t1", "rgA", "gc"),
                 needClientAuth ? "?needClientAuth=true" : "?wantClientAuth=true",
                 new BrokerPlugin[]{authz}, authz, caA.caCert(), caB.caCert(), caS.caCert());

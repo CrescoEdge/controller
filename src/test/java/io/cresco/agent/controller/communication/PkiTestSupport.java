@@ -107,6 +107,12 @@ public final class PkiTestSupport {
     }
 
     public static Node node(Ca issuer, KeyPair kp, String tenant, String region, String agent, boolean controller, boolean global, long from, long validMs) throws Exception {
+        return node(issuer, kp, tenant, region, agent, controller, global, from, validMs, new String[0]);
+    }
+
+    /** As above, the leaf carrying {@code extraUris} as SAN URIs too (cresco:former:..., F-17). */
+    public static Node node(Ca issuer, KeyPair kp, String tenant, String region, String agent, boolean controller, boolean global, long from,
+                            long validMs, String... extraUris) throws Exception {
         JcaX509v3CertificateBuilder b = new JcaX509v3CertificateBuilder(X500Name.getInstance(issuer.cert.getSubjectX500Principal().getEncoded()), serial(),
                 new Date(from), new Date(from + validMs), CrescoNames.x500(CrescoIdentity.of(tenant, region, agent, null)), kp.getPublic());
         b.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
@@ -115,6 +121,7 @@ public final class PkiTestSupport {
         sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:node:" + tenant + "/" + region + "/" + agent));
         if (controller) sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:role:controller"));
         if (global) sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, "cresco:role:global"));
+        for (String u : extraUris) sans.add(new GeneralName(GeneralName.uniformResourceIdentifier, u));
         b.addExtension(Extension.subjectAlternativeName, false, new GeneralNames(sans.toArray(new GeneralName[0])));
         X509Certificate leaf = sign(b, issuer.kp);
         X509Certificate[] chain = new X509Certificate[1 + issuer.above.length + 1];

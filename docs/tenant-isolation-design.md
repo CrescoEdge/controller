@@ -478,9 +478,70 @@ joined it or bridges to it (`formerAddressOfAController`, asked when the consume
 removed, never per message): `DENY READ '<queue>' for <identity> : the inbox of a controller this broker knows is no
 node's former address`. A controller that is there reads that inbox; it is nobody's former address.
 
-What remains is the inbox of a LEAF of the same agent name in another region (or of a controller this broker has
-never met): the broker a node is attached to cannot know every name of the fabric. Closing it is refusing, at
-enrolment or registration, an agent name another region of the tenant already holds (section 15).
+What remained (F-17, found by the review of this rule) was the inbox of a LEAF of the same agent name in another
+region, or of a controller this broker has never met: the broker a node is attached to cannot know every name of the
+fabric, and the region in the alias form was the node's own word.
+
+**The alias form is bound to a move the fabric recorded (F-17, 2026-11-16).** A broker gives a node the inbox
+`T.<tenant>.<R>_<agent>` of another region `R` only when the move is recorded; otherwise the node is refused
+(`DENY READ '<queue>' for <identity> : no move of this node from R ...`). What counts as the record depends on who issues
+names:
+
+- *Standard profile (names a node claims, bound first come).* What the fabric records of a node is its name bound to a
+  KEY: the controller it joined bound `<region>/<agent>` to the key it presented, and a second key is refused unless the
+  operator rebinds the name. A node keeps its identity key when it moves (CertificateManager re-issues its leaf for the
+  new name with the same key; `security/node-identity.p12` goes with its data directory). So the former address is the
+  node's only when the key it presents is the one bound to `R/<agent>` where that name was recorded
+  (`CrescoAuthorizationBroker.formerAddressRefusal`, `RecordedMoves`, `PeerTrustRegistry.agentKeyRecorded`). A node of the
+  same agent name holds another key and is refused.
+- *Production profile (pre-provisioned names, issued by the operator): fail closed.* The certificate must state the move:
+  a SAN URI `cresco:former:<tenant>/<R>/<agent>`, and every CA on its path must be one that may issue that former name
+  (`ProvisionedIdentity.formerRefusal`). A region CA's scope is its own region, so such a certificate is issued by the
+  root: `cresco-pki.sh node <pki> <tenant> <region> <agent> --former <R>` (the tool refuses `--issuer region` with it). A
+  certificate a region CA issued for a name of its own region states nothing about another region and reads no inbox there.
+
+**Who answers (standard profile).** The controller that bound the former name: the global for its own region's names;
+for any other region, that region's ONE controller (`PeerTrustRegistry.controllerOf`, the record discovery keeps), which
+the global asks on behalf of the region that asks (the channel revocations by name use). A region's controller puts its
+brokers' questions (`tenant|R|agent|key`) on its ping (`alias_ask`); the global answers on the pong, signed with its
+identity key, addressed to that controller and repeating the fresh value of one of its last pings (`alias_moves`); a
+question about another region goes, signed and fresh, on the pong to that region's controller (`alias_relay_ask`), whose
+signed answer comes on its next ping (`alias_relay_report`, taken only from the one controller recorded for that region,
+in its tenant) and is given to the asking region on its next ping. The global answers only questions of the asking
+controller's own tenant (any, for a controller of a superuser tenant). Without a global nothing records a move: a node
+moved in a fabric without one (no global configured, none joined since the region started) is refused its former
+address. A region whose global is away (an outage, a restart) is not such a region: it answers from what it holds and
+waits for the rest.
+
+**While the answer is not known** the broker gives the consumer and withholds what arrives for it (no line per message;
+`formerHeldCount`), so no client has to ask again -- one of an earlier build does not, and a restarted region controller
+does not know the answer until its global tells it. A yes dispatches what waited; a NO refuses the subscription, and a
+consumer already given is closed by the broker (ConsumerControl; logged `CLOSING the consumer of ... on '<queue>'`) and
+given nothing more. What reached that broker for the former address before a no stays queued there (at most what arrives
+in one ping round trip).
+
+**Kept, and taken back.** A region keeps a no 5 minutes and a yes 30 minutes; the broker's minute sweep asks again, every
+10 minutes, for a yes a consumer uses -- marked as a use, and only then does the controller that answers refresh the former
+name's binding, so a move in use is never pruned (`peer_binding_prune_days`) and a question alone keeps nothing alive. A
+controller that answered yes looks again at each later ping of the asker and sends a NO when the name was rebound, revoked
+or removed since; the asking region then closes the consumer. A registry that was reset, or a node whose key was made
+anew, has no record of the former name: refused, and that is right. The operator's way is a rebind of the former name at
+the controller that recorded it, to the node's key (`<R>/<agent>=<key>` in its `security/peer-trust.json.rebind`). A yes
+is not kept past its 30 minutes when it cannot be asked again: while the global (or the former region's controller) is
+away longer than that, what is addressed to former addresses waits in the queues until it is back.
+
+**Bounded.** One open question per asking identity (`tenant|agent|key`) at a region controller, at most 4,096 open; when
+full the oldest already asked (else the oldest) makes room; each ping carries the 16 newest and the 16 longest-waiting,
+so neither a flood of new identities nor an old backlog starves a moved node. Relayed: 64 open per region; yes answers
+remembered: 1,024 per asker. Asked when a consumer or browser is added, a queue removed, an advisory's copy of a message
+judged, and per message only from a per-connection cache judged again at most once a second.
+
+**The moved node** (`AgentConsumer`) opens the former inbox on a session of its own, off its lock (a call on a failover
+transport that is reconnecting parks; shutdown and the inbox's rebuild take that lock), and never fails its inbox over it:
+a no is logged once and not asked again until the transport reconnects; any other failure is tried again after 2 s,
+doubling to 15 s. After a reconnect it closes that session and asks again: the transport re-adds consumers by itself, and
+removing a consumer the broker never registered fails the whole connection ("Cannot remove a consumer that had not been
+registered"); removing its session does not.
 
 ### Per message as well
 
@@ -576,8 +637,12 @@ Run all four after any change to the auth or namespacing path; each must stay gr
 - **L4 — payload envelope encryption** (opt-in; protects against a compromised transit broker).
 - **Advisory scoping** — close the destination-existence leak (§12), and inside a tenant give a node the advisories
   about its own inbox only (§12a).
-- **Agent names unique across the fabric** — `region_alias` requires it and the alias inbox rule rests on it (§12a);
-  nothing refuses, at enrolment, a name that another region of the tenant already holds.
+- **Agent names unique across the fabric** — `region_alias` required it; since F-17 a former address is given only to a
+  recorded move (§12a): the key bound to the former name (standard) or the operator's `cresco:former:` statement
+  (production), so a duplicate name no longer reads another node's inbox. Still open: nothing refuses, at enrolment, a name
+  another region of the tenant holds; the broker's alias stamp (`cresco_alias`, from the node's own registration) is still
+  the node's word (it lets a node of another tenant be answered at that address, and reads nothing); a fabric without a
+  global records no move; what reached a broker for a former address before its answer was no stays queued there.
 - **Infra cross-tenant dataplane aggregation** — with topics qualified by local tenant, a global "god
   view" of all tenants' dataplane streams needs a `T.*.` wildcard *consumer* on infra (produce stays
   tenant-scoped). Built for the one stream the fabric itself needs — the regions' state exports at a global of a

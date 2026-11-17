@@ -792,7 +792,9 @@ public class RegionHealthWatcher {
             // offers the direct link anew
             if (!up || joined) signing.parentLinkReset();
             // a join, or a message this region (or one of its agents) holds because it cannot judge it yet: ping now
-            if (joined || (up && signing.takeTrustWanted(System.currentTimeMillis()))) new ActivePingTask().run();
+            // ... or a node's former address that this region's broker has to ask the global about (F-17: RecordedMoves)
+            long now = System.currentTimeMillis();
+            if (joined || (up && (signing.takeTrustWanted(now) || controllerEngine.recordedMoves().takeAskNow(now)))) new ActivePingTask().run();
         }
     }
 
