@@ -31,7 +31,7 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
 	private CEPEngine cepEngine;
 
-    private ActiveMQSession activeMQSession;
+    private volatile ActiveMQSession activeMQSession;
 
     private Destination agentTopic;
     private Destination regionTopic;
@@ -300,37 +300,98 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 Thread.sleep(1000);
             }
 
-	        // A failover connection whose transport has failed still reads as open/started, but
-	        // every synchronous call on it (createConsumer/createProducer) blocks. Drop it so the
-	        // pooled connection is rebuilt - the dataplane no longer shares the control plane's
-	        // socket, so nothing else would notice it had gone bad.
-	        if (activeMQSession != null) {
-	            try {
-	                org.apache.activemq.ActiveMQConnection c =
-	                        (org.apache.activemq.ActiveMQConnection) activeMQSession.getConnection();
-	                if (c != null && (c.isTransportFailed() || c.isClosed())) {
-	                    logger.warn("getSession: dataplane connection transport failed/closed - dropping for rebuild");
-	                    controllerEngine.getActiveClient().handleConnectionFailure(URI);
+	        // The session is made with no lock held (a new broker connection can take a failover's whole reconnect budget),
+	        // so a reconnect (updateConnections) never waits for it; it is KEPT under sessionLock, and only when no reconnect
+	        // happened meanwhile and no other caller kept one first. A session made for the former URI is closed and made
+	        // again on the present one. F-11: before, every caller that found none made one and the last to finish was kept;
+	        // on an agent's recovery the listeners being restored (updateConnections) and the state export's timer
+	        // (createMapMessage) each made one, and with it the broker connection: the timer's replaced the restore's and
+	        // closed it, and the restored listener with it. The connection itself is ActiveClient's: one attempt per URI.
+	        for (int round = 0; round < 3; round++) {
+	            ActiveMQSession s = activeMQSession;
+	            if (sessionUsable(s)) {
+	                return s;
+	            }
+	            String uri;
+	            long epoch;
+	            org.apache.activemq.ActiveMQConnection failed = null;
+	            synchronized (sessionLock) {
+	                s = activeMQSession;
+	                if (sessionUsable(s)) {
+	                    return s;
+	                }
+	                if (s != null) {
+	                    // A failover connection whose transport has failed still reads as open/started, but
+	                    // every synchronous call on it (createConsumer/createProducer) blocks. Drop it so the
+	                    // pooled connection is rebuilt - the dataplane no longer shares the control plane's
+	                    // socket, so nothing else would notice it had gone bad.
+	                    if (!connectionUsable(s)) {
+	                        logger.warn("getSession: dataplane connection transport failed/closed - dropping for rebuild");
+	                        failed = (org.apache.activemq.ActiveMQConnection) s.getConnection();
+	                    } else {
+	                        logger.error("getsession: activeMQSession.isClosed()");
+	                    }
 	                    activeMQSession = null;
 	                }
-	            } catch (Exception ignore) { }
+	                uri = URI;
+	                epoch = sessionEpoch;
+	            }
+	            if (failed != null) {
+	                // that connection only: one made anew meanwhile (by a producer worker) is not torn down
+	                controllerEngine.getActiveClient().handleConnectionFailure(uri, failed);
+	            }
+	            ActiveMQSession made = controllerEngine.getActiveClient().createSession(uri, false, Session.AUTO_ACKNOWLEDGE);
+	            ActiveMQSession kept = null;
+	            boolean reconnected;
+	            synchronized (sessionLock) {
+	                reconnected = epoch != sessionEpoch;
+	                if (!reconnected) {
+	                    if (sessionUsable(activeMQSession)) {
+	                        kept = activeMQSession;                  // another caller kept one first: that one is the session
+	                    } else if (made != null) {
+	                        activeMQSession = made;
+	                        kept = made;
+	                    }
+	                }
+	            }
+	            if (made != null && made != kept) {
+	                closeQuietly(made);                              // never handed out: nothing was made on it
+	            }
+	            if (kept != null || !reconnected) {
+	                return kept;                                     // null: the connection could not be made (its caller is told)
+	            }
+	            // a reconnect switched the URI while this session was being made on the former one: make it on the new one
 	        }
-
-	        if(activeMQSession == null) {
-                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-	        }
-
-                
-            if(activeMQSession.isClosed()) {
-                activeMQSession = controllerEngine.getActiveClient().createSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-                logger.error("getsession: activeMQSession.isClosed()");
-            }
 
         } catch (Exception ex) {
             logger.error("DataPlaneServiceImpl.getSession error", ex);
         }
 
 	    return activeMQSession;
+    }
+
+    /** Guards the pooled session ({@link #activeMQSession}), the URI and {@link #sessionEpoch} changing; never held across a
+     *  broker call, nor by a send that has a session. */
+    private final Object sessionLock = new Object();
+
+    /**
+     * +1 on every reconnect (updateConnections), with sessionLock and lockMessage held. A session made, or a listener
+     * subscribed, under an earlier value belongs to the former connection: it is not kept, it is made again.
+     */
+    private volatile long sessionEpoch;
+
+    private static boolean sessionUsable(ActiveMQSession s) {
+        return s != null && !s.isClosed() && connectionUsable(s);
+    }
+
+    /** Whether the connection of session {@code s} is open and its transport has not failed. */
+    private static boolean connectionUsable(ActiveMQSession s) {
+        try {
+            org.apache.activemq.ActiveMQConnection c = (org.apache.activemq.ActiveMQConnection) s.getConnection();
+            return c == null || !(c.isTransportFailed() || c.isClosed());
+        } catch (Exception ex) {
+            return true;                                        // as before: a check that throws drops nothing
+        }
     }
     private MessageConsumer getConsumer(Destination destination) {
 	    return getConsumer(destination,null);
@@ -423,9 +484,14 @@ public class DataPlaneServiceImpl implements DataPlaneService {
     }
 
 	public String addMessageListener(TopicType topicType, MessageListener messageListener, String selectorString, Boolean persistant, String listenerId) {
-	    try {
+	    // A reconnect (updateConnections) can happen while this listener is being subscribed. Its consumer is then of the
+	    // former connection, and the listener is not among those the reconnect restores (it took them in one step with the
+	    // new session): the listener is subscribed again on the new connection, so it is held once, never twice or not at all.
+	    for (int round = 0; ; round++) {
+	        long epoch = sessionEpoch;
+	        MessageConsumer consumer = null;
+	        try {
 
-            MessageConsumer consumer = null;
             boolean everyTenant = listenerId != null && everyTenantListeners.contains(listenerId);
 
             if (paced(messageListener)) {
@@ -464,15 +530,18 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     break;
             }
             if (consumer == null) {
+                if (epoch != sessionEpoch && round < 2) continue;   // the session went with a reconnect: on the new one
                 return null;                                        // not subscribed: no id to hand out
             }
-            if(consumer != null) {
-                consumer.setMessageListener(messageListener);
+            consumer.setMessageListener(messageListener);
 
-                if(listenerId == null) {
-                    listenerId = UUID.randomUUID().toString();
-                }
-                synchronized (lockMessage) {
+            if(listenerId == null) {
+                listenerId = UUID.randomUUID().toString();
+            }
+            boolean former;
+            synchronized (lockMessage) {
+                former = epoch != sessionEpoch;
+                if (!former) {
                     messageConsumerMap.put(listenerId, consumer);
                     //keep persistent in memory
                     if(persistant) {
@@ -480,6 +549,14 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     }
                 }
             }
+            if (former) {
+                dropFormerConsumer(consumer, messageListener, listenerId);
+                if (round < 2) continue;
+                logger.error("DataPlaneServiceImpl.addMessageListener: the dataplane reconnected " + (round + 1)
+                        + " times while listener " + listenerId + " was being subscribed; not subscribed");
+                return null;
+            }
+            return listenerId;
 
         } catch (io.cresco.library.data.SubscriptionRefusedException refused) {
             logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refused.getMessage());
@@ -489,11 +566,25 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             logger.warn("Dataplane subscription REFUSED (" + selectorString + "): " + other.getMessage());
             throw new io.cresco.library.data.SubscriptionRefusedException(other.getMessage());
         } catch (Exception ex) {
+            if (epoch != sessionEpoch && round < 2) {
+                // the consumer was closed with the former session under it (a reconnect): subscribe on the new one
+                if (consumer != null) dropFormerConsumer(consumer, messageListener, listenerId);
+                continue;
+            }
             logger.error("DataPlaneServiceImpl.addMessageListener error", ex);
             if (paced(messageListener)) closeOwnSession(listenerId);
             return null;
         }
-        return listenerId;
+	    }
+    }
+
+    /** A consumer made on the former connection of a reconnect, never registered: closed off this thread (a close on a dead
+     *  transport parks), with a paced listener's own session. */
+    private void dropFormerConsumer(MessageConsumer consumer, MessageListener listener, String listenerId) {
+        if (paced(listener)) closeOwnSession(listenerId);
+        Thread t = new Thread(() -> { try { consumer.close(); } catch (Exception ignore) { } }, "dataplane-former-consumer-close");
+        t.setDaemon(true);
+        t.start();
     }
 
     // --- Measurement: record producer send-latency + tx bytes onto the uplink (the local broker
@@ -644,28 +735,48 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                     Thread.sleep(1000);
                 }
                 ActiveMQSession old = null;
+                List<ActiveMQSession> gone = new ArrayList<>();
                 synchronized (shardLock(key)) {
                     s = shardSessions.get(key);
                     if (s == null || !sessionAlive(s)) {
                         boolean hadOne = s != null;
                         old = s;
-                        s = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
-                        if (s != null) {
-                            shardSessions.put(key, s);
+                        for (int round = 0; round < 2; round++) {
+                            long epoch = sessionEpoch;
+                            ActiveMQSession made = controllerEngine.getActiveClient().createDedicatedSession(URI, false, Session.AUTO_ACKNOWLEDGE);
+                            boolean current = false;
+                            if (made != null) {
+                                // kept only if no reconnect switched the URI while it was made (updateConnections takes the
+                                // shard sessions in the same step): one made for the former URI is closed and made again
+                                synchronized (lockMessage) {
+                                    current = epoch == sessionEpoch;
+                                    if (current) shardSessions.put(key, made);
+                                }
+                                if (!current) {
+                                    gone.add(made);
+                                    continue;
+                                }
+                            }
+                            s = made;
+                            break;
+                        }
+                        if (s != null && s != old) {
                             logger.info("Opened dedicated dataplane connection for shard " + key);
                             // producers cached on the dead session would fail (or vanish) every send: drop the shard's
                             dropShardProducers(key);
                             rebuilt = hadOne;
-                        } else if (old != null) {
-                            shardSessions.remove(key, old);
+                        } else {
+                            s = null;
+                            if (old != null) shardSessions.remove(key, old);
                         }
                     }
                 }
                 // a closed session's dedicated connection may still be open: close it (outside every lock: a JMS close
                 // may block on the broker) or every shard rebuild leaks a socket
-                if (old != null) {
+                if (old != null) gone.add(old);
+                for (ActiveMQSession g : gone) {
                     try {
-                        org.apache.activemq.ActiveMQConnection oldConn = (org.apache.activemq.ActiveMQConnection) old.getConnection();
+                        org.apache.activemq.ActiveMQConnection oldConn = (org.apache.activemq.ActiveMQConnection) g.getConnection();
                         if (oldConn != null && !oldConn.isClosed()) oldConn.close();
                     } catch (Exception ignore) { }
                 }
@@ -740,10 +851,13 @@ public class DataPlaneServiceImpl implements DataPlaneService {
      * and its owner (gfs's FrameBus and streams) never received another frame, while sends kept succeeding.
      */
     private String addShardListener(TopicType topicType, MessageListener messageListener, String selectorString, int shard, String listenerId) {
+        // as addMessageListener: subscribed again on the new connection when a reconnect happened meanwhile
+        for (int round = 0; ; round++) {
+        long epoch = sessionEpoch;
+        MessageConsumer consumer = null;
         try {
             int key = Math.floorMod(shard, dataPlaneShards);
             ActiveMQSession s = getShardSession(key);
-            MessageConsumer consumer;
             if (paced(messageListener)) {
                 if (listenerId == null) listenerId = UUID.randomUUID().toString();
                 consumer = ownConsumer(listenerId, s, s == null ? null : s.createTopic(shardedTopicName(topicType, key)), selectorString);
@@ -753,11 +867,23 @@ public class DataPlaneServiceImpl implements DataPlaneService {
             if (consumer != null) {
                 consumer.setMessageListener(messageListener);
                 if (listenerId == null) listenerId = UUID.randomUUID().toString();
+                boolean former;
                 synchronized (lockMessage) {
-                    messageConsumerMap.put(listenerId, consumer);
-                    messageConfigMap.put(listenerId, new DataPlanePersistantInstance(topicType, messageListener, selectorString, listenerId, key));
+                    former = epoch != sessionEpoch;
+                    if (!former) {
+                        messageConsumerMap.put(listenerId, consumer);
+                        messageConfigMap.put(listenerId, new DataPlanePersistantInstance(topicType, messageListener, selectorString, listenerId, key));
+                    }
+                }
+                if (former) {
+                    dropFormerConsumer(consumer, messageListener, listenerId);
+                    if (round < 2) continue;
+                    logger.error("addShardListener: the dataplane reconnected " + (round + 1) + " times while listener " + listenerId
+                            + " was being subscribed; not subscribed");
+                    return null;
                 }
             } else {
+                if (epoch != sessionEpoch && round < 2) continue;
                 logger.error("addShardListener: no consumer on shard " + key + " (session " + (s == null ? "unavailable" : "open") + ")");
                 return null;
             }
@@ -767,10 +893,15 @@ public class DataPlaneServiceImpl implements DataPlaneService {
                 logger.warn("Dataplane subscription REFUSED by the broker (" + selectorString + "): " + refusal);
                 throw new io.cresco.library.data.SubscriptionRefusedException(refusal);
             }
+            if (epoch != sessionEpoch && round < 2) {
+                if (consumer != null) dropFormerConsumer(consumer, messageListener, listenerId);
+                continue;
+            }
             logger.error("DataPlaneServiceImpl.addMessageListener(shard) error", ex);
             return null;
         }
         return listenerId;
+        }
     }
 
     private MessageConsumer shardConsumer(ActiveMQSession s, TopicType topicType, String selectorString, int key) throws JMSException {
@@ -938,87 +1069,72 @@ public class DataPlaneServiceImpl implements DataPlaneService {
 
         //set new URI
         logger.error("Restoring DataPlane");
-        this.URI = URI;
-
-        //reset activeMQSession
-        try {
-            if(activeMQSession != null){
-                if(!activeMQSession.isClosed()) {
-                    activeMQSession.close();
-                }
+        // ONE step (F-11): the URI, the session and what was made on the former connection change together, and the
+        // listeners to restore are taken in that same step. A listener subscribed after it is on the new connection and is
+        // not restored a second time (it was: two consumers, every message twice, one left after its removal); one
+        // subscribed on the former connection but recorded after this step sees the new epoch and subscribes again
+        // (addMessageListener). Nothing here waits for a session being made: none is made under sessionLock.
+        ActiveMQSession formerSession;
+        MessageProducer[] formerProducers;
+        Map<Integer, ActiveMQSession> formerShards = new HashMap<>();
+        Map<String, ActiveMQSession> formerOwn;
+        Map<String, DataPlanePersistantInstance> saveMessageConfigMap;
+        synchronized (sessionLock) {
+            synchronized (lockMessage) {
+                this.URI = URI;
+                sessionEpoch++;
+                formerSession = activeMQSession;
                 activeMQSession = null;
-            }
-
-            if(agentProducer != null){
-                agentProducer.close();
+                formerProducers = new MessageProducer[]{agentProducer, regionProducer, globalProducer};
                 agentProducer = null;
-            }
-
-            if(regionProducer != null){
-                regionProducer.close();
                 regionProducer = null;
-            }
-
-            if(globalProducer != null){
-                globalProducer.close();
                 globalProducer = null;
-
-            }
-
-            // drop sharded producer/destination caches and close the dedicated shard connections
-            // each entry leaves its map first, then is closed outside every lock
-            for (Map.Entry<String, MessageProducer> e : shardProducerMap.entrySet()) {
-                if (shardProducerMap.remove(e.getKey(), e.getValue())) {
-                    try { e.getValue().close(); } catch (Exception ignore) {}
+                formerShards.putAll(shardSessions);
+                for (Map.Entry<Integer, ActiveMQSession> e : formerShards.entrySet()) shardSessions.remove(e.getKey(), e.getValue());
+                formerOwn = new HashMap<>(ownSessions);
+                //clean existing listeners
+                restoring.addAll(messageConfigMap.keySet());
+                for (String listenerId : new ArrayList<>(messageConsumerMap.keySet())) {
+                    logger.error("Removing old listenerId: " + listenerId);
+                    messageConsumerMap.remove(listenerId);
                 }
+                //add consumers back: these, and only these
+                saveMessageConfigMap = new HashMap<>(messageConfigMap);
+                messageConfigMap.clear();
             }
-            shardDestMap.clear();
-            for (Integer key : new ArrayList<>(shardSessions.keySet())) {
-                ActiveMQSession ss;
-                synchronized (shardLock(key)) {           // a rebuild under way on the old URI ends first
-                    ss = shardSessions.remove(key);
-                }
-                try {
-                    if (ss != null) {
-                        jakarta.jms.Connection c = ss.getConnection();
-                        ss.close();
-                        if (c != null) c.close();
-                    }
-                } catch (Exception ignore) {}
-            }
+        }
 
+        //reset activeMQSession: closed outside every lock (a close may wait for a listener in onMessage, or on the broker)
+        try {
+            if (formerSession != null && !formerSession.isClosed()) {
+                formerSession.close();
+            }
         } catch (Exception ex) {
             logger.error("updateConnections(): reset activeMQSession ");
             logger.error(ex.getMessage());
             logger.error("DataPlaneServiceImpl.updateConnections reset activeMQSession error", ex);
         }
-
-        for (String id : new ArrayList<>(ownSessions.keySet())) closeOwnSession(id);   // they ride the old connection
-
-        //clean existing listeners
-        synchronized (lockMessage) {
-            restoring.addAll(messageConfigMap.keySet());
-            //get all keys
-            List<String> listenerIds = new ArrayList<>(messageConsumerMap.keySet());
-            for(String listenerId : listenerIds) {
-                try {
-                    logger.error("Removing old listenerId: " + listenerId);
-                    //messageConsumerMap.get(listenerId).setMessageListener(null);
-                    //messageConsumerMap.get(listenerId).close();
-                    messageConsumerMap.remove(listenerId);
-
-                } catch (Exception ex) {
-                    logger.error("resetMessageListener() : remove existing messageConsumerMap");
-                    logger.error(ex.getMessage());
-                    logger.error("DataPlaneServiceImpl.updateConnections remove messageConsumerMap error", ex);
-                }
+        for (MessageProducer p : formerProducers) {
+            if (p != null) try { p.close(); } catch (Exception ignore) { }
+        }
+        // drop sharded producer/destination caches and close the former dedicated shard connections
+        // each entry leaves its map first, then is closed outside every lock
+        for (Map.Entry<String, MessageProducer> e : shardProducerMap.entrySet()) {
+            if (shardProducerMap.remove(e.getKey(), e.getValue())) {
+                try { e.getValue().close(); } catch (Exception ignore) {}
             }
         }
-        //add consumers back
-        Map<String, DataPlanePersistantInstance> saveMessageConfigMap = null;
-        synchronized (lockMessage) {
-            saveMessageConfigMap = new HashMap<>(messageConfigMap);
-            messageConfigMap.clear();
+        shardDestMap.clear();
+        for (ActiveMQSession ss : formerShards.values()) {
+            try {
+                jakarta.jms.Connection c = ss.getConnection();
+                ss.close();
+                if (c != null) c.close();
+            } catch (Exception ignore) {}
+        }
+        // the paced listeners' own sessions of the former connection (only those: one subscribed since is the new one's)
+        for (Map.Entry<String, ActiveMQSession> e : formerOwn.entrySet()) {
+            if (ownSessions.remove(e.getKey(), e.getValue())) closeQuietly(e.getValue());
         }
 
         int restored = 0;
