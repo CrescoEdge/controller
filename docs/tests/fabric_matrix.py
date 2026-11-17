@@ -214,11 +214,14 @@ KNOWN: list[Known] = [
           "a region's ping for the global is dropped while it has joined none"),
     Known("dropped-no-route", "dropped", r"of this kind, no_route;",
           ("restart-agent", "restart-region", "region-outage", "restart-global", "global-outage", "rekey-region", "move-agent",
-           "cut-bridge", "revoke", "revoke-name"), 6,
+           "cut-bridge", "revoke", "revoke-name"), 10,
           "a controller does not send a ping or a request for a node its broker has no way to while the event has that node"
           " (or the controller it is reached through) down: region-outage's three RPCs at the global, a region's pings for"
           " the global whose bridge is away, the controllers' pings and inventory requests for the node that is down"
-          " (at most 2 at one node in one event over 5 runs of tree and mesh, 2026-11-11)"),
+          " (at most 2 at one node in one event over 5 runs of tree and mesh, 2026-11-11; region-outage at the global in"
+          " tenants and alias: 4 to 8 over 9 runs, 2026-11-12 to 11-16 -- the count is the drop counter's own, read from"
+          " lines logged at most every 10 s, so one event's window can take in a line that a neighbouring window would"
+          " have had; widened from 6 to 10 on those runs)"),
     Known("dropped-send-failed", "dropped", r"of this kind, send_failed;", PARENT_AWAY, 5,
           "an agent's watchdog or ping cannot be sent while its controller is away"),
     Known("dropped-controller-stopping", "dropped", r"of this kind, controller_stopping;", ("rekey-region", "move-agent", "revoke", "revoke-name"), 3,
