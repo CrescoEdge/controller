@@ -78,6 +78,10 @@ HOW TO RUN IT
                              the direct link and are accepted first hand (the release passes that; the signed ping of
                              an agent that had to join again is what it refused).
               move-agent     an agent of the global's region is stopped and started in a region with region_alias
+              move-agent-region  an agent of the last region is stopped and started in the first with region_alias (a
+                             move between two regions, neither the global's: F-17, the record is at the former region's
+                             controller and the global asks it). Runs only when named. In the production profile a
+                             moved node is issued with cresco-pki.sh node ... --former <region> (the operator's statement)
               cut-bridge     one region controller is SIGSTOPped for 40 s
               clock-skew     LEFT OUT: nothing supported gives one JVM another clock (the event reports that)
               revoke         one agent's key is revoked at the global (standard: its fingerprint in the global's
@@ -221,7 +225,7 @@ KNOWN: list[Known] = [
           " (at most 2 at one node in one event over 5 runs of tree and mesh, 2026-11-11)"),
     Known("dropped-send-failed", "dropped", r"of this kind, send_failed;", PARENT_AWAY, 5,
           "an agent's watchdog or ping cannot be sent while its controller is away"),
-    Known("dropped-controller-stopping", "dropped", r"of this kind, controller_stopping;", ("rekey-region", "move-agent", "revoke", "revoke-name"), 3,
+    Known("dropped-controller-stopping", "dropped", r"of this kind, controller_stopping;", ("rekey-region", "move-agent", "move-agent-region", "revoke", "revoke-name"), 3,
           "a node the event stops drops what it was about to send (seen by the counters' author at shutdown, not in these runs)"),
     Known("dropped-plugin-inactive", "dropped", r"of this kind, plugin_inactive;", ("*",), 2,
           "a message reaches a node whose plugin is still loading (expected by the counters' author, not seen in these runs)"),
@@ -771,7 +775,9 @@ class Production:
     def provision(self, fab, n):
         """Issue (or re-issue, with a new key) the node's identity; production keystores are BCFKS (converted offline)."""
         role = {"global": ["--global"], "region": ["--controller"], "agent": []}[n.role]
-        self.tool(fab, "node", str(self.pki), self.tenant, n.region, n.name, *role, "--days", "10")
+        # a moved node is issued with the operator's statement of its move (F-17: cresco:former:, by the root)
+        former = ["--former", n.alias] if n.alias else []
+        self.tool(fab, "node", str(self.pki), self.tenant, n.region, n.name, *role, *former, "--days", "10")
         d = self.ndir(n)
         new = d / "node.bcfks.new"
         run_tool(["java", "-jar", fab.a.jar, "--crypto", "convert-keystore", str(d / "node.p12"), str(d / "node.p12.pass"), str(new)],
@@ -1077,6 +1083,28 @@ def ev_move_agent(fab):
     return "%s stopped in %s and started in %s with region_alias=%s%s" % (m.name, former, m.region, former, made)
 
 
+def ev_move_agent_region(fab):
+    """F-17: a move between two regions, neither the global's. An agent of the last region is stopped and started in the
+    first with region_alias=<its region>: its former name is recorded at its former region's controller, which the global
+    asks for the region it moved to. It must keep answering at its former address."""
+    regions = fab.regions()
+    if len(regions) < 2:
+        raise Skip("fewer than two regions")
+    src, dst = regions[-1], regions[0]
+    if src.tenant != dst.tenant:
+        raise Skip("the regions are of different tenants")
+    pool = [n for n in fab.agents(src) if not n.old_build and not n.alias]
+    if not pool:
+        raise Skip("no agent of %s to move" % src.region)
+    m = pool[-1]
+    fab.stop(m)
+    former = m.region
+    m.parent, m.region, m.alias = dst, dst.region, former
+    fab.profile.provision(fab, m)
+    fab.launch(m)
+    return "%s stopped in %s and started in %s with region_alias=%s" % (m.name, former, m.region, former)
+
+
 def ev_cut_bridge(fab):
     regions = fab.regions()
     if not regions:
@@ -1259,10 +1287,11 @@ def secs(t):
 
 # Events that run only when named in --events, and why (rekey-region was one until the controller passed it).
 OPT_IN = {"quiet": "three minutes in which nothing happens; the mesh topology runs it by itself",
-          "revoke-name": "it has not run yet: a default event once it has passed on a build with the fix (controller branch fix/revoke-by-name)"}
+          "revoke-name": "it has not run yet: a default event once it has passed on a build with the fix (controller branch fix/revoke-by-name)",
+          "move-agent-region": "a move between two regions is honoured from controller branch fix/f17-alias-inbox on (F-17)"}
 EVENTS = {"start": ev_start, "quiet": ev_quiet, "restart-agent": ev_restart_agent, "restart-region": ev_restart_region,
           "region-outage": ev_region_outage, "restart-global": ev_restart_global, "global-outage": ev_global_outage, "rekey-region": ev_rekey_region,
-          "move-agent": ev_move_agent, "cut-bridge": ev_cut_bridge, "clock-skew": ev_clock_skew, "revoke": ev_revoke,
+          "move-agent": ev_move_agent, "move-agent-region": ev_move_agent_region, "cut-bridge": ev_cut_bridge, "clock-skew": ev_clock_skew, "revoke": ev_revoke,
           "revoke-name": ev_revoke_name}
 
 
