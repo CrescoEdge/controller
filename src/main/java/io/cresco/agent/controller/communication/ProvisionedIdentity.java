@@ -54,6 +54,9 @@ import java.util.Set;
  * controller: it may bridge, answer discovery, and send revocation lists); without it the node is an agent. A SAN URI
  * {@code cresco:role:global} (with the controller role) marks THE global controller. Every CA on a path must allow the leaf's
  * tenant, region and roles by its EXPLICIT scope ({@link #scopeOf}); only an unscoped self-signed anchor (the root) issues any.
+ * A SAN URI {@code cresco:former:<tenant>/<region>/<agent>} (F-17) states that the node moved here from that address: it may
+ * then read the inbox of its former address (region_alias), when every CA on its path may also issue that former name
+ * ({@link #formerRefusal}) -- a region CA's scope is its own region, so such a certificate comes from the root.
  *
  * <p>The chain must validate (PKIX: signatures, CA basic constraints and path length) to a trust anchor, and every
  * certificate on the path, the anchor included, must be valid now and not revoked by the operator.
@@ -67,6 +70,8 @@ public final class ProvisionedIdentity {
     public static final String URI_CA = "cresco:ca:";
     /** The roles a CA may issue: {@code cresco:ca-roles:<node,controller,global>}. */
     public static final String URI_CA_ROLES = "cresco:ca-roles:";
+    /** F-17: the node's former address, {@code cresco:former:<tenant>/<region>/<agent>} (it moved here from there). */
+    public static final String URI_FORMER = "cresco:former:";
 
     final PrivateKey key;
     final X509Certificate[] chain;
@@ -396,6 +401,28 @@ public final class ProvisionedIdentity {
         if (!CrescoNames.isValidTenant(t)) return null;
         if ("*".equals(r)) return new CaScope(t, null, Set.copyOf(rs));
         return CrescoNames.isValid(r) ? new CaScope(t, r, Set.copyOf(rs)) : null;
+    }
+
+    /**
+     * F-17: why the leaf of the validated {@code path} (leaf first, anchor last) may NOT read the inbox of the former address
+     * {@code tenant/region/agent}, or null: the leaf states that address ({@link #URI_FORMER}) and EVERY CA on the path may
+     * issue that name with the leaf's roles -- the operator's word that the node moved from there, by a CA whose scope
+     * covers the former region (a region CA covers only its own region: such a certificate is issued by the root).
+     */
+    static String formerRefusal(List<X509Certificate> path, String tenant, String region, String agent) {
+        if (path == null || path.isEmpty()) return "it has no validated certificate path";
+        X509Certificate leaf = path.get(0);
+        String want = tenant + "/" + region + "/" + agent;
+        if (!sanUris(leaf).contains(URI_FORMER + want)) return "its certificate states no such move (SAN " + URI_FORMER + want + ")";
+        CrescoIdentity former = CrescoIdentity.of(tenant, region, agent, null);
+        Set<String> roles = rolesOf(leaf);
+        for (int i = 1; i < path.size(); i++) {
+            X509Certificate ca = path.get(i);
+            CaScope scope = scopeOf(ca, i == path.size() - 1);
+            String no = scope == null ? "a CA without an explicit Cresco scope" : scope.refusal(former, roles);
+            if (no != null) return "its certificate states it, but was issued under " + describe(ca) + ", " + no;
+        }
+        return null;
     }
 
     /** Is {@code c} self-issued and self-signed (a root)? */

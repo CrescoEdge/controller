@@ -415,7 +415,9 @@ public class ActiveBroker {
 					});
 					// F-17: ... and READS the inbox of that former address only where the fabric recorded the move: its key is
 					// the one bound to its former name (the global's registry; a region asks its global on its ping)
-					authz.setMoveRecord(controllerEngine.recordedMoves()::moved);
+					authz.setMoveRecord(controllerEngine.recordedMoves());
+					// ... judged again when an answer arrives: a yes dispatches what waited, a no closes the consumer
+					controllerEngine.recordedMoves().setListener(authz::formerAddressAnswered);
 					// the upgrade window: nodes of an earlier build of this region write this controller's raw inbox
 					authz.setUpgradeWindow(controllerEngine::legacyNodesAdmitted);
 					brokerPlugins.add(authz);

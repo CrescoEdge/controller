@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class AliasConsumerRetryTest {
 
     private static final String INBOX = "r1_a1", FORMER = "old_a1";
-    private final AtomicBoolean give = new AtomicBoolean();
+    private final AtomicBoolean give = new AtomicBoolean(), sayNo = new AtomicBoolean();
     private final AtomicInteger refused = new AtomicInteger();
     private BrokerService broker;
     private int port;
@@ -57,7 +57,7 @@ class AliasConsumerRetryTest {
             public Subscription addConsumer(ConnectionContext ctx, ConsumerInfo info) throws Exception {
                 if (FORMER.equals(info.getDestination().getPhysicalName()) && !give.get()) {
                     refused.incrementAndGet();
-                    throw new SecurityException("not known here yet (test)");
+                    throw new SecurityException(sayNo.get() ? CrescoAuthorizationBroker.NO_MOVE + "old is recorded (test)" : "not reachable (test)");
                 }
                 return super.addConsumer(ctx, info);
             }
@@ -148,6 +148,35 @@ class AliasConsumerRetryTest {
             await("the inbox after the reconnect", 10_000, () -> dequeued(INBOX) == 1);
             assertEquals(failures, ControlPlaneFailures.INBOX_FAILURES.get(), "the inbox failed (and was rebuilt)");
             assertEquals(0, consumer.rebuilds(), "the inbox was rebuilt");
+        } finally {
+            consumer.shutdown();
+            engine.getActiveClient().shutdown();
+        }
+    }
+
+    /** A known no is not asked for again (logged once) until the transport reconnects; then once more. */
+    @Test
+    void aKnownNoIsNotAskedForAgainUntilAReconnect() throws Exception {
+        sayNo.set(true);
+        Map<String, Object> cfg = new HashMap<>();
+        cfg.put("agentconsumer_dedicated_connection", "true");
+        cfg.put("broker_security_enabled", "false");
+        cfg.put("region_alias", "old");
+        PluginBuilder pb = TestAgentService.plugin(System.getProperty("java.io.tmpdir"), cfg, m -> { }, "r1", "a1");
+        ControllerEngine engine = new ControllerEngine(null, pb, null, null);
+        String failover = "failover:(tcp://127.0.0.1:" + port + ")?maxReconnectAttempts=100&initialReconnectDelay=100&useExponentialBackOff=false";
+        AgentConsumer consumer = new AgentConsumer(engine, INBOX, failover);
+        try {
+            await("refused once", 10_000, () -> refused.get() == 1);
+            Thread.sleep(1_500);                                                 // past several retry delays (100-200 ms)
+            assertEquals(1, refused.get(), "a no was asked for again");
+            stopBroker();
+            startBroker();
+            await("asked once more after the reconnect", 30_000, () -> refused.get() == 2);
+            Thread.sleep(1_000);
+            assertEquals(2, refused.get(), "a no after the reconnect was asked for again");
+            send(INBOX);
+            await("the inbox works", 10_000, () -> dequeued(INBOX) == 1);
         } finally {
             consumer.shutdown();
             engine.getActiveClient().shutdown();

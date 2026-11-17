@@ -106,10 +106,12 @@ restart takes down one site's transport, not the fabric's).
 
 Requirements: agent names unique across the fabric (the global DB already keys agents by name), and no agent of the same
 name left in the former region. Unset, blank, equal to the node's own region, or on the global: nothing changes.
-Since F-17 (2026-11-16) the former address is given only where the fabric recorded the move: the moved node must keep
-its identity key (its data directory, `security/node-identity.p12`), the former region must be the global's, and the
-global must be of this build or later; its region's broker asks the global whether that key is the one bound to the
-former name (docs/tenant-isolation-design.md section 12a). Pre-provisioned identities are judged by name as before.
+Since F-17 (2026-11-16) the former address is given only where the fabric recorded the move (docs/tenant-isolation-design.md
+section 12a): in the standard profile the moved node must keep its identity key (its data directory,
+`security/node-identity.p12`) and the fabric must have a global (the former name's controller answers through it: the
+global for its own region, otherwise that region's one controller); in the production profile its certificate must state
+the move (`cresco-pki.sh node ... --former <former region>`, issued by the root). The global and the region controllers
+must be of that build or later (an earlier one does not answer: roll the global first, as the roll order says).
 Proof: `RegionAliasTest` (three embedded brokers: from the region, another region and the global's broker, then with the
 global's broker stopped).
 

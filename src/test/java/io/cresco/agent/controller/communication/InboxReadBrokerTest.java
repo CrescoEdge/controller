@@ -222,7 +222,11 @@ class InboxReadBrokerTest {
         assertFalse(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.rgA_a2"))), "a sibling's inbox");
         assertFalse(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.old_a2"))), "a sibling's former address");
         assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.rgA_a1"))), "its own inbox");
-        assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.old_a1"))), "its former address");
+        // F-17: its former address only while the move is recorded (withheld while it is not known, or no)
+        assertFalse(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.old_a1"))), "its former address, no move recorded");
+        authz.setMoveRecord((t, r, a, fp) -> "t1".equals(t) && "old".equals(r) && "a1".equals(a));
+        Thread.sleep(CrescoAuthorizationBroker.FORMER_RECHECK_MS + 100);           // (judged again per connection after a second)
+        assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("T.t1.old_a1"))), "its former address, its move recorded");
         assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQQueue("rgA_a1"))), "its raw inbox (an earlier build's node)");
         assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQTopic("T.t1.agent.event"))), "a topic of its tenant: as before");
         assertTrue(authz.isAllowedToConsume(leaf, on(new ActiveMQTopic("T.t1.rgA_rc"))), "a topic is not a queue");

@@ -186,7 +186,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         ex.scheduleWithFixedDelay(() -> { try { closeInvalidConnections(); } catch (Exception ignore) { } }, 60, 60,
                 java.util.concurrent.TimeUnit.SECONDS);
         seenRefresher = ex;
-        return new AuthFilter(next);
+        AuthFilter f = new AuthFilter(next);
+        installed = f;
+        return f;
     }
 
     /**
@@ -202,6 +204,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         final boolean anonymous;          // a network connection without a client certificate: no identity, no role
         volatile X509Certificate leaf;    // the TLS client certificate (leaf), when one was presented
         volatile X509Certificate[] chain; // the whole chain it presented (the live sweep judges every certificate on its path)
+        /** F-17: per inbox of a former address, {1 given / 0 not, when judged} (per message: judged again after a second). */
+        final java.util.concurrent.ConcurrentHashMap<String, long[]> former = new java.util.concurrent.ConcurrentHashMap<>();
         volatile boolean bridgeLocal;     // a vm:// connection carrying a network bridge's demand subscriptions
         volatile Object bridgePeer;       // the controller at the other end of this bridge connection (resolved once), or NO_PEER
         final java.util.concurrent.atomic.AtomicInteger consumers = new java.util.concurrent.atomic.AtomicInteger();
@@ -389,8 +393,10 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             d = TenantPolicy.Decision.deny("the inbox of a controller this broker knows is no node's former address");
         }
         if (d.allowed && access == TenantPolicy.Access.READ) {
-            String why = formerAddressRefusal(q, id, dest);
-            if (why != null) d = TenantPolicy.Decision.deny(why);
+            // F-17: a known no is refused here; while the answer is not known the consumer is given and its messages are
+            // withheld until it is yes (isAllowedToConsume), so no client has to ask again (one of an earlier build does not)
+            String why = formerAddressRefusal(q, id, dest, false);
+            if (why != null && !why.startsWith(NOT_KNOWN)) d = TenantPolicy.Decision.deny(why);
         }
         if (!d.allowed) {
             String who = (id != null) ? id.toString() : ("username=" + (ctx != null ? ctx.getUserName() : "?"));
@@ -444,6 +450,11 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             // the READ rule on queues (enforce, TenantPolicy) again, per message: whatever subscription a node holds, a
             // message on an inbox queue goes to the node that inbox names (or to infrastructure) and to no other
             return withheld(message, q.identity, "a queue of its tenant's namespace that is not this node's own inbox");
+        } else if (formerWithheld(q, message.getDestination())) {
+            // F-17: the inbox of its former address, while the fabric's record of the move is not known here as yes: it
+            // waits in the queue (given when the answer is yes; the consumer is closed when it is no)
+            formerHeld.increment();
+            return false;
         }
         // an advisory that carries a copy of a message (MessageDiscarded, DLQ'd, ...) is judged as that message: its
         // recipient binding and its destination's tenant, so properties never leak to other recipients or tenants
@@ -474,7 +485,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     sharedPrefixes, roleOf(who), crossTenantSinks, null, subject.getDestination().isQueue() && sc != null && !sc.inJvm);
             if (!t.allowed) return withheld(message, who, "an advisory about another tenant's destination (" + t.reason + ")");
             // (a copy of a message of a former address's inbox: only for the node whose move is recorded, F-17)
-            String moved = sc != null && !sc.inJvm ? formerAddressRefusal(sc, who, subject.getDestination()) : null;
+            String moved = sc != null && !sc.inJvm ? formerAddressRefusal(sc, who, subject.getDestination(), false) : null;
             if (moved != null) return withheld(message, who, "an advisory's copy of a message of another node's inbox (" + moved + ")");
         }
         if (to == null) return true;
@@ -496,6 +507,30 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
         return TenantPolicy.inOwnNamespace(sc.identity, name) && !TenantPolicy.isOwnInbox(sc.identity, name)
                 && roleOf(sc.identity) == TenantPolicy.Role.TENANT;
     }
+
+    /**
+     * F-17, per message: is {@code on} the inbox of this network node's former address, and the fabric's record of the move
+     * not known here as yes? Judged again at most once a second per connection and inbox (a map read otherwise); nothing
+     * for the node's own inbox (two field reads and a comparison of the name).
+     */
+    private boolean formerWithheld(CrescoSecurityContext sc, ActiveMQDestination on) {
+        if (sc == null || !sc.certificate || sc.inJvm || sc.identity == null || on == null || !on.isQueue()) return false;
+        String name = on.getPhysicalName();
+        if (!TenantPolicy.isFormerInbox(sc.identity, name)) return false;
+        long now = System.currentTimeMillis();
+        long[] v = sc.former.get(name);
+        if (v != null && now - v[1] < FORMER_RECHECK_MS) return v[0] == 0;
+        boolean given = formerAddressRefusal(sc, sc.identity, on, false) == null;
+        if (sc.former.size() > 64) sc.former.clear();
+        sc.former.put(name, new long[]{given ? 1 : 0, now});
+        return !given;
+    }
+
+    static final long FORMER_RECHECK_MS = 1_000L;
+    private final java.util.concurrent.atomic.LongAdder formerHeld = new java.util.concurrent.atomic.LongAdder();
+
+    /** Messages of a former address's inbox held back from its node until the move's record is known as yes, so far. */
+    public long formerHeldCount() { return formerHeld.sum(); }
 
     /**
      * Is the queue {@code dest} the alias form of {@code id}'s inbox ({@code <another region>_<its agent name>},
@@ -572,7 +607,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             TenantPolicy.Decision w = TenantPolicy.check(id, name, TenantPolicy.Access.WRITE, sharedPrefixes, roleOf(id), crossTenantSinks, CrescoAuthorizationBroker.this::boundTenantOf);
             if (!r.allowed || !w.allowed) return "'" + name + "' is not this identity's to administer (" + (r.allowed ? w.reason : r.reason) + ")";
             if (formerAddressOfAController(id, d)) return "'" + name + "' is the inbox of a controller this broker knows";
-            String moved = formerAddressRefusal(sc, id, d);
+            String moved = formerAddressRefusal(sc, id, d, false);
             if (moved != null) return "'" + name + "': " + moved;
         }
         return null;
@@ -582,12 +617,19 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
 
     /**
      * Whether the fabric recorded a move: (tenant, former region, agent name, the SHA-256 fingerprint of the key the node
-     * presents) -> TRUE, FALSE, or null when not known yet (asked; the node asks again later). {@link RecordedMoves#moved}.
+     * presents) -> TRUE, FALSE, or null when not known yet (asked). {@link RecordedMoves#moved}; {@link #movedInUse}: asked by
+     * the sweep for a consumer that holds the inbox (a yes is then asked again in time, as a use of the former name).
      */
     @FunctionalInterface
     public interface MoveRecord {
         Boolean moved(String tenant, String formerRegion, String agent, String fp);
+        default Boolean movedInUse(String tenant, String formerRegion, String agent, String fp) { return moved(tenant, formerRegion, agent, fp); }
     }
+
+    /** How a refusal of a former address begins: a known no (the agent then stops asking for it until it reconnects). */
+    public static final String NO_MOVE = "no move of this node from ";
+    /** How a former address whose record is not known yet begins (given; its messages withheld until it is yes). */
+    static final String NOT_KNOWN = "whether ";
 
     private volatile MoveRecord moves;
 
@@ -599,34 +641,101 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
     /**
      * Why the node {@code id} on this connection may not read {@code dest} as the inbox of its former address, or null:
      * {@code dest} is not that form ({@code T.<its tenant>.<another region>_<its agent name>}, the one form of an inbox
-     * whose region is the node's own statement), or the fabric recorded the move -- the key this connection presented is the
-     * one bound to {@code <that region>/<its agent name>} where that name was recorded ({@link RecordedMoves}). Before, the
-     * agent name alone bound it, so a node given the agent name of a node of another region read that node's inbox (F-17).
-     * Pre-provisioned identities (the production profile) are judged as before: there every name is the operator's issuance,
-     * which gives an agent name once (and a moved node a new certificate, with a new key). Asked when a consumer is added or
-     * a queue removed, and for an advisory's copy of a message: never for an ordinary message.
+     * whose region is the node's own statement), or the move is recorded. Before, the agent name alone bound it, so a node
+     * given the agent name of a node of another region read that node's inbox (F-17).
+     * <ul>
+     *   <li>Standard profile: the key this connection presented is the one bound to {@code <that region>/<its agent name>}
+     *       where that name was recorded ({@link RecordedMoves}). {@link #NOT_KNOWN}: asked, not known yet.</li>
+     *   <li>Pre-provisioned identities (production): its certificate states the move (SAN {@code cresco:former:}) and every
+     *       CA on its path may issue the former name ({@link PeerTrustRegistry#formerAddressRefusal}); fail closed.</li>
+     * </ul>
+     * A no begins with {@link #NO_MOVE}.
      */
-    private String formerAddressRefusal(CrescoSecurityContext sc, CrescoIdentity id, ActiveMQDestination dest) {
+    private String formerAddressRefusal(CrescoSecurityContext sc, CrescoIdentity id, ActiveMQDestination dest, boolean inUse) {
         if (id == null || dest == null || !dest.isQueue() || roleOf(id) != TenantPolicy.Role.TENANT) return null;
         String name = dest.getPhysicalName();
         if (!TenantPolicy.inOwnNamespace(id, name)) return null;
         String[] node = CrescoNames.splitPath(inboxNode(dest));
         if (node == null || !node[1].equals(id.getAgent()) || node[0].equals(id.getRegion())) return null;   // not the alias form
-        if (peers.isPki()) return null;
         X509Certificate leaf = sc == null ? null : sc.leaf;
-        if (leaf == null) return "the inbox of a former address is given to a node that presents its key, and this connection presented none";
+        if (leaf == null) return NO_MOVE + node[0] + " can be shown: the inbox of a former address is given to a node that presents its key, and this connection presented none";
+        if (peers.isPki()) {
+            String no = peers.formerAddressRefusal(sc.chain != null ? sc.chain : new X509Certificate[]{leaf}, id.getTenant(), node[0], id.getAgent());
+            return no == null ? null : NO_MOVE + node[0] + " is stated by an issuer that may name it: " + no
+                    + " (the operator issues a moved node's certificate with cresco-pki.sh node ... --former " + node[0] + ")";
+        }
         MoveRecord m = moves;
         Boolean yes;
         try {
-            yes = m == null ? Boolean.FALSE : m.moved(id.getTenant(), node[0], id.getAgent(), PeerIdentity.spkiFingerprint(leaf));
+            String fp = PeerIdentity.spkiFingerprint(leaf);
+            yes = m == null ? Boolean.FALSE : inUse ? m.movedInUse(id.getTenant(), node[0], id.getAgent(), fp) : m.moved(id.getTenant(), node[0], id.getAgent(), fp);
         } catch (RuntimeException e) {
             yes = Boolean.FALSE;
         }
         if (Boolean.TRUE.equals(yes)) return null;
         return yes == null
-                ? "whether " + node[0] + "/" + id.getAgent() + " is this node's former name is not known here yet (asked of the global: try again)"
-                : "no move of this node from " + node[0] + " is recorded: its key is not the one the fabric bound to " + node[0] + "/" + id.getAgent()
+                ? NOT_KNOWN + node[0] + "/" + id.getAgent() + " is this node's former name is not known here yet (asked)"
+                : NO_MOVE + node[0] + " is recorded: its key is not the one the fabric bound to " + node[0] + "/" + id.getAgent()
                 + " (a node reads the inbox of its former address only with the key it had there)";
+    }
+
+    /** F-17: the consumers this broker gave a former address's inbox: consumer -> {its connection, its subscription}. */
+    private final java.util.concurrent.ConcurrentHashMap<org.apache.activemq.command.ConsumerId, Object[]> formerConsumers =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile Broker installed;
+
+    /** A consumer was added: note it when it holds the inbox of its node's former address (judged again later). */
+    private void noteFormerConsumer(ConnectionContext ctx, ConsumerInfo info) {
+        CrescoSecurityContext sc = stateOf(ctx);
+        if (sc == null || !sc.certificate || sc.inJvm || sc.identity == null || info == null || info.getDestination() == null) return;
+        if (!info.getDestination().isQueue() || !TenantPolicy.isFormerInbox(sc.identity, info.getDestination().getPhysicalName())) return;
+        if (formerConsumers.size() < 100_000) formerConsumers.put(info.getConsumerId(), new Object[]{ctx, info});
+    }
+
+    /**
+     * F-17: judge again every consumer given a former address's inbox ({@code question}: only those it concerns,
+     * {@code tenant|region|agent|fp}; null: all, as the minute sweep does, asking again for a yes in use when it is due). A
+     * yes: what waited for it is dispatched now. A no: the consumer is closed (ConsumerControl; its client closes it), and
+     * nothing more is given to it meanwhile. Not known: its messages keep waiting.
+     */
+    public void formerAddressAnswered(String question) {
+        String[] q = question == null ? null : question.split("\\|", -1);
+        for (java.util.Map.Entry<org.apache.activemq.command.ConsumerId, Object[]> e : formerConsumers.entrySet()) {
+            ConnectionContext ctx = (ConnectionContext) e.getValue()[0];
+            ConsumerInfo info = (ConsumerInfo) e.getValue()[1];
+            CrescoSecurityContext sc = stateOf(ctx);
+            if (sc == null || sc.identity == null) { formerConsumers.remove(e.getKey()); continue; }
+            ActiveMQDestination dest = info.getDestination();
+            String[] node = CrescoNames.splitPath(inboxNode(dest));
+            if (node == null) continue;
+            if (q != null && (q.length != 4 || !q[0].equals(sc.identity.getTenant()) || !q[1].equals(node[0]) || !q[2].equals(node[1]))) continue;
+            sc.former.remove(dest.getPhysicalName());
+            String why = formerAddressRefusal(sc, sc.identity, dest, question == null);
+            if (why == null) {
+                wake(dest);
+            } else if (!why.startsWith(NOT_KNOWN)) {
+                formerConsumers.remove(e.getKey());
+                logger.warn("CLOSING the consumer of " + sc.identity + " on '" + dest.getPhysicalName() + "': " + why);
+                try {
+                    org.apache.activemq.command.ConsumerControl cc = new org.apache.activemq.command.ConsumerControl();
+                    cc.setConsumerId(info.getConsumerId());
+                    cc.setDestination(dest);
+                    cc.setClose(true);
+                    ctx.getConnection().dispatchAsync(cc);
+                } catch (Exception ex) {
+                    logger.warn("could not close that consumer (" + ex.getMessage() + "): its messages stay withheld");
+                }
+            }
+        }
+    }
+
+    /** Dispatch what waits in {@code dest} again (a consumer of it may be given its messages now). */
+    private void wake(ActiveMQDestination dest) {
+        Broker b = installed;
+        if (b == null) return;
+        try {
+            for (org.apache.activemq.broker.region.Destination d : b.getDestinations(dest)) d.wakeup();
+        } catch (Exception ignore) { }
     }
 
     private void refuseAdmin(ConnectionContext ctx, String op, ActiveMQDestination dest, String why) {
@@ -700,6 +809,8 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             else why = peers.revokedReason(sc.chain != null ? sc.chain : new X509Certificate[]{sc.leaf});   // key/name/issuer/anchor revoked
             if (why != null) { close(ctx, why); n++; }
         }
+        // F-17: every consumer given a former address's inbox is judged again (a yes in use asked again when due)
+        try { formerAddressAnswered(null); } catch (RuntimeException ignore) { }
         return n;
     }
 
@@ -926,7 +1037,9 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                     throw new SecurityException("Cresco stream policy: subscription to '" + name + "' denied (" + d.reason + ")");
                 }
             }
-            return super.addConsumer(context, info);
+            Subscription sub = super.addConsumer(context, info);
+            noteFormerConsumer(context, info);
+            return sub;
         }
 
         @Override
@@ -945,6 +1058,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
             try {
                 super.removeConsumer(context, info);
             } finally {
+                if (info != null && info.getConsumerId() != null) formerConsumers.remove(info.getConsumerId());
                 inboxConsumerLeft(info == null ? null : info.getDestination());
             }
         }
@@ -957,6 +1071,7 @@ public class CrescoAuthorizationBroker implements BrokerPlugin, MessageAuthoriza
                 CrescoSecurityContext sc = stateOf(context);
                 if (sc != null && sc.quarantineSlot.compareAndSet(true, false)) quarantinedConnections.decrementAndGet();
                 if (context != null && context.getConnectionId() != null) liveVerified.remove(context.getConnectionId().getValue());
+                if (context != null) formerConsumers.values().removeIf(v -> v[0] == context);
             }
         }
 

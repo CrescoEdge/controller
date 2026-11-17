@@ -112,10 +112,11 @@ class RecordedMovesTest {
             send(writer, "T.t1.rgG_a1", 3, "for-a1-");
 
             Session m0 = client.apply(moved);
-            assertThrows(JMSException.class, () -> m0.createConsumer(m0.createQueue("T.t1.rgG_m0")),
-                    "given while the record was not known here yet");
-            movedAnswer.set(Boolean.TRUE);                                           // the answer came: asked again, given
+            // not known yet: the consumer is given and what waits for it is held back until the answer is yes
             MessageConsumer former = m0.createConsumer(m0.createQueue("T.t1.rgG_m0"));
+            assertNull(former.receive(1500), "given before the record was known");
+            movedAnswer.set(Boolean.TRUE);                                           // the answer came (the region's listener)
+            authz.formerAddressAnswered("t1|rgG|m0|" + movedKey);
             assertEquals(Set.of("for-m0-0", "for-m0-1", "for-m0-2"), drain(former, 3), "the moved node's former address");
             m0.createConsumer(m0.createQueue("T.t1.rgB_m0")).close();               // its own inbox: never asked about
             assertTrue(asked.stream().allMatch(q -> q.equals("t1|rgG|m0|" + movedKey)), "asked with another key or name: " + asked);
@@ -249,5 +250,57 @@ class RecordedMovesTest {
         ControllerEngine alone = node("rgD", "rc4", null);
         ((TlsTestSupport.State) alone.cstate).globalRegion = null;
         assertEquals(Boolean.FALSE, alone.recordedMoves().moved("t1", "rgG", "m0", key(after)));
+        // ... but a region whose global is away (a global outage: its state names none) is not one: it waits (seen live:
+        // the sweep took the away global for a no and closed a moved node's consumer)
+        ((TlsTestSupport.State) region.cstate).globalRegion = null;
+        region.joiningGlobal("rgG", "gc");                                   // (it has known a global since it started)
+        assertEquals(Boolean.TRUE, at.moved("t1", "rgG", "m0", key(after)), "a recorded move while the global is away");
+        assertNull(at.moved("t1", "rgG", "z9", "1".repeat(64)), "an unknown question while the global is away is waited for, not a no");
+    }
+
+    /**
+     * A move between two regions, neither the global's: m0 joined rgA's controller (rgA/m0 bound to its key there) and moved
+     * to rgB with the same identity; a1 of rgB holds the name of rgA/a1 with another key. rgB asks its global, which holds no
+     * name of rgA: it asks rgA's one controller on that controller's pong, takes its signed answer from its next ping, and
+     * gives it to rgB on rgB's next ping. Then the operator rebinds rgA/m0 at rgA's controller to a new node: that controller
+     * says no on its next ping, and the global tells rgB on rgB's next.
+     */
+    @Test
+    void aMoveBetweenTwoRegionsIsAnsweredByTheFormerRegionsControllerThroughTheGlobal() throws Exception {
+        ControllerEngine global = node("rgG", "gc", null, "is_global", "true");
+        ControllerEngine rA = node("rgA", "rcA", null), rB = node("rgB", "rcB", null);
+        assertNotNull(join(rA, global, DiscoveryType.GLOBAL));
+        assertNotNull(join(rB, global, DiscoveryType.GLOBAL));
+        Path m0dir = Files.createTempDirectory("m0-ab");
+        ControllerEngine before = agent("rgA", "m0", m0dir);
+        assertNotNull(join(before, rA, DiscoveryType.AGENT), "m0 joins rgA's controller");
+        ControllerEngine victim = agent("rgA", "a1", null);
+        assertNotNull(join(victim, rA, DiscoveryType.AGENT));
+        ControllerEngine after = agent("rgB", "m0", m0dir);
+        assertEquals(key(before), key(after), "the moved node kept its key");
+        ControllerEngine sameName = agent("rgB", "a1", null);
+        assertNotNull(join(after, rB, DiscoveryType.AGENT));
+        assertNotNull(join(sameName, rB, DiscoveryType.AGENT));
+
+        RecordedMoves at = rB.recordedMoves();
+        assertNull(at.moved("t1", "rgA", "m0", key(after)));
+        assertNull(at.moved("t1", "rgA", "a1", key(sameName)));
+        ping(rB, global);
+        assertNull(at.moved("t1", "rgA", "m0", key(after)), "answered before rgA's controller was asked");
+        MsgEvent toA = ping(rA, global);
+        assertNotNull(toA.getParam(RecordedMoves.RELAY_ASK), "the global did not ask rgA's controller");
+        assertNull(ping(rB, global).getParam(RecordedMoves.ANSWER), "answered before rgA's controller answered");
+        ping(rA, global);                                                   // rgA's controller answers on its next ping
+        ping(rB, global);                                                   // ... and rgB is answered on its next
+        assertEquals(Boolean.TRUE, at.moved("t1", "rgA", "m0", key(after)), "the move rgA -> rgB, with m0's key, is recorded");
+        assertEquals(Boolean.FALSE, at.moved("t1", "rgA", "a1", key(sameName)), "rgB/a1's key is not the one rgA bound to rgA/a1");
+
+        // the operator gives rgA/m0 to a new node of rgA: rgA's controller says no, and the global tells rgB
+        ControllerEngine newHolder = agent("rgA", "m0", Files.createTempDirectory("m0-new"));
+        rA.getCertificateManager().getPeerTrust().withRebind(List.of("rgA/m0=" + key(newHolder)));
+        assertNotNull(join(newHolder, rA, DiscoveryType.AGENT), "the rebind was not taken");
+        ping(rA, global);
+        ping(rB, global);
+        assertEquals(Boolean.FALSE, at.moved("t1", "rgA", "m0", key(after)), "rgB kept the yes after rgA rebound the name");
     }
 }

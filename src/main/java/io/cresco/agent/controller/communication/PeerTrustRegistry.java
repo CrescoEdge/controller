@@ -1959,9 +1959,14 @@ public final class PeerTrustRegistry {
      * that very key (first come and strictly: as the controller it joined, or its issuing CA; never a binding learned by
      * following), or, pre-provisioned, the key of the agent certificate verified here for it -- and not revoked or
      * tombstoned? A node that moved away from this region with its key (region_alias) is what holds it
-     * ({@link RecordedMoves}). A yes is a use of the former name: it keeps the binding from being pruned. Lock-free.
+     * ({@link RecordedMoves}). Lock-free.
      */
     public boolean agentKeyRecorded(String tenant, String region, String agent, String fp) {
+        return agentKeyRecorded(tenant, region, agent, fp, false);
+    }
+
+    /** As above; {@code inUse}: a node's former address is in use under that key: a yes keeps the binding from being pruned. */
+    public boolean agentKeyRecorded(String tenant, String region, String agent, String fp, boolean inUse) {
         if (tenant == null || region == null || agent == null || fp == null) return false;
         String n = name(region, agent);
         if (tombs.containsKey(n) || isRevokedFor(fp, region)) return false;
@@ -1971,7 +1976,7 @@ public final class PeerTrustRegistry {
         }
         Binding b = identities.get(n);
         if (b == null || b.follow || !ROLE_AGENT.equals(b.role) || !tenant.equals(b.tenant) || !fp.equals(b.key)) return false;
-        touch(identities, n, b, System.currentTimeMillis(), "id");
+        if (inUse) touch(identities, n, b, System.currentTimeMillis(), "id");
         return true;
     }
 
@@ -3242,6 +3247,28 @@ public final class PeerTrustRegistry {
             if (p.paths.size() < PKI_PATHS_MAX) p.paths.put(cfp, path);
         }
         return ProvisionedIdentity.pathRefusal(path, now, p.rev);
+    }
+
+    /**
+     * F-17, pre-provisioned: why the node presenting {@code chain} may NOT read the inbox of its former address
+     * {@code tenant/formerRegion/agent}, or null: its certificate is accepted now and states that address, issued by CAs that
+     * may all issue that name ({@link ProvisionedIdentity#formerRefusal}). Not pre-provisioned: never null.
+     */
+    public String formerAddressRefusal(X509Certificate[] chain, String tenant, String formerRegion, String agent) {
+        Pki p = pki;
+        if (p == null) return "this node does not judge pre-provisioned identities";
+        if (chain == null || chain.length == 0 || chain[0] == null) return "no certificate";
+        String bad = pkiCheck(p, chain);
+        if (bad != null) return "the certificate " + bad;
+        String cfp;
+        try { cfp = CertificateManager.certFingerprint(chain[0]); } catch (Exception e) { return "the certificate is unreadable"; }
+        java.util.List<X509Certificate> path = p.paths.get(cfp);
+        if (path == null) {
+            ProvisionedIdentity.Validated v = ProvisionedIdentity.validatePath(chain, p.anchors, new java.util.Date());
+            if (v.refusal != null) return "the certificate " + v.refusal;
+            path = v.path;
+        }
+        return ProvisionedIdentity.formerRefusal(path, tenant, formerRegion, agent);
     }
 
     /** What PKI verification learned of a name: its tenant, role (controller or agent) and key, when last verified. */

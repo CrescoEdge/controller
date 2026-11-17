@@ -5,6 +5,7 @@
 #   cresco-pki.sh init   <pki> [--name "Cresco Fabric Root"] [--days 3650] [--key rsa|ec]
 #   cresco-pki.sh region <pki> <tenant> <region> [--days 1825]
 #   cresco-pki.sh node   <pki> <tenant> <region> <agent> [--controller|--global] [--issuer root|region] [--days 365]
+#                        [--former <region>]
 #   cresco-pki.sh api    <pki> <tenant> <user> <admin|user> [--days 365]
 #   cresco-pki.sh revoke <pki> <certificate.pem>
 #   cresco-pki.sh crl    <pki> [--days 30]
@@ -16,6 +17,11 @@
 # issue only that region's node and controller names (never the global). The root (unscoped) issues any. A CA without an
 # explicit scope issues nothing a node accepts. An API user's certificate carries cresco:api:<tenant>/<user> and
 # cresco:role:<admin|user> (wsapi's mapping) and names no node.
+#
+# A node that MOVED from another region and keeps answering at its former address (region_alias=<former region>) is issued
+# with --former <former region>: its certificate also carries cresco:former:<tenant>/<former region>/<agent>, the operator's
+# statement of the move, without which no broker gives it the inbox of that address (F-17). Such a certificate is issued by
+# the ROOT: a region CA's scope is its own region and cannot state a name of another. Revoke the node's former certificate.
 #
 # trust-anchors.pem holds the ROOT only; region CAs are intermediates every node presents in its chain (node.p12 holds
 # leaf, region CA, root), so revoking a region CA (revoke + crl) stops all of its leaves.
@@ -128,10 +134,19 @@ node|api)
 URI.2 = cresco:role:controller"
     [ "$global" = 1 ] && san="$san
 URI.3 = cresco:role:global"
+    former=$(opt --former "" "$@")
+    if [ -n "$former" ]; then
+      name_ok "$former"
+      [ "$former" != "$region" ] || die "--former names the node's own region ($region)"
+      { [ "$(flag --controller "$@")" = 0 ] && [ "$global" = 0 ]; } || die "--former is for an agent that moved, not a controller"
+      [ "$(opt --issuer root "$@")" = root ] || die "--former: a region CA's scope is its own region; a moved node's certificate is issued by the root"
+      san="$san
+URI.9 = cresco:former:$tenant/$former/$agent"
+    fi
     eku="serverAuth, clientAuth"
     issuer="$pki/root"
     # the global is issued by the root (no region CA may issue it)
-    if [ "$global" = 0 ] && [ "$(opt --issuer region "$@")" = region ] && [ -f "$pki/regions/${tenant}_${region}/ca.pem" ]; then issuer="$pki/regions/${tenant}_${region}"; fi
+    if [ "$global" = 0 ] && [ -z "$former" ] && [ "$(opt --issuer region "$@")" = region ] && [ -f "$pki/regions/${tenant}_${region}/ca.pem" ]; then issuer="$pki/regions/${tenant}_${region}"; fi
   else
     tenant=${1:?tenant}; user=${2:?user}; role=${3:?admin|user}; shift 3
     tenant_ok "$tenant"; name_ok "$user"; [ "$role" = admin ] || [ "$role" = user ] || die "role must be admin or user"
@@ -196,5 +211,5 @@ crl)
   echo "$pki/revocations.pem: $(grep -c 'BEGIN X509 CRL' "$pki/revocations.pem") CRL(s), $(grep -c '^key:' "$pki/revocations.txt" || true) key(s); valid $days days"
   ;;
 *)
-  sed -n '2,27p' "$0"; exit 2 ;;
+  sed -n '2,33p' "$0"; exit 2 ;;
 esac

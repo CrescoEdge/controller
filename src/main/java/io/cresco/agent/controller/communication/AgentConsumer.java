@@ -34,7 +34,7 @@ public class AgentConsumer {
     private MessageConsumer consumer;
 	/** gfs#26: the consumer of the former address's inbox (region_alias, {@link RegionAlias}); null without one. */
 	private MessageConsumer aliasConsumer;
-	/** F-17: the session of {@link #aliasConsumer}, its own (see {@link #openAlias}). */
+	/** F-17: the session of {@link #aliasConsumer}, its own (see {@link #aliasAttempt}). */
 	private ActiveMQSession aliasSess;
 	private String aliasRegion, aliasQueueName;
 	/** The upgrade window: the consumer of this controller's raw inbox, where nodes not yet upgraded write ({@link LegacyNodes}). */
@@ -182,7 +182,10 @@ public class AgentConsumer {
 		try {
 			RXqueue = sess.createQueue(RXQueueName);
 			consumer = sess.createConsumer(RXqueue);
-			openAlias();
+			// F-17: the inbox of the former address, on its own session, opened off this lock (aliasAttempt)
+			aliasEpoch++;
+			aliasRefusedForGood = false;
+			scheduleAlias(0);
 			String legacyQueue = legacyInbox(uri);
 			if (legacyQueue != null) {
 				legacyConsumer = sess.createConsumer(sess.createQueue(legacyQueue));
@@ -672,78 +675,129 @@ public class AgentConsumer {
 
 	/** F-17: the first wait before a refused consumer of the former address's inbox is asked for again (doubling, at most the max). */
 	static long ALIAS_RETRY_MS = 2_000L, ALIAS_RETRY_MAX_MS = 15_000L;
+	// guarded by this object's lock
 	private java.util.Timer aliasTimer;
 	private int aliasRefused;
-	private long aliasDelay;
-	private boolean aliasRetryPending;
+	private long aliasDelay, aliasEpoch;
+	private boolean aliasPending, aliasRefusedForGood;
 
 	/**
-	 * F-17: open the consumer of the former address's inbox (region_alias), on a session of its own on the inbox's connection.
-	 * The broker gives it only where the fabric recorded the move -- this node's key is the one bound to its former name
-	 * ({@link RecordedMoves}) -- which the region's controller may first have to ask its global. A refusal is therefore not
-	 * the inbox's failure: the node asks for it again (after {@link #ALIAS_RETRY_MS}, doubling up to
-	 * {@link #ALIAS_RETRY_MAX_MS}) until it is given.
-	 *
-	 * <p>Its own session, closed whole on a refusal and after a reconnect: the failover transport records every consumer
-	 * this client adds, refused or not, and adds them again on each reconnect; removing a consumer the broker never
-	 * registered fails the connection ("Cannot remove a consumer that had not been registered"), removing its session does
-	 * not, and takes it out of that record. Called with this object's lock held.
+	 * F-17: an attempt to open the consumer of the former address's inbox (region_alias), after {@code delay} ms. Called
+	 * with this object's lock held; it makes no call to the broker (see {@link #aliasAttempt}). Nothing while one is pending,
+	 * the consumer is open, or the broker said no.
 	 */
-	private void openAlias() {
-		if (aliasQueueName == null || aliasConsumer != null || closed || connection == null) return;
-		ActiveMQSession s = null;
+	private void scheduleAlias(long delay) {
+		if (aliasQueueName == null || closed || aliasPending || aliasConsumer != null || aliasRefusedForGood) return;
+		if (aliasTimer == null) aliasTimer = new java.util.Timer("agentconsumer-alias", true);
+		aliasPending = true;
 		try {
-			s = (ActiveMQSession) connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-			MessageConsumer c = s.createConsumer(s.createQueue(aliasQueueName));
-			MessageListener l = inboxListener;
-			if (l != null) c.setMessageListener(l);
-			aliasSess = s;
-			aliasConsumer = c;
-			logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias){}",
-					aliasQueueName, aliasRegion, aliasRefused > 0 ? ", given after " + aliasRefused + " refusal(s)" : "");
-			aliasRefused = 0;
-			aliasDelay = 0;
-		} catch (JMSException | RuntimeException refused) {
-			if (s != null) try { s.close(); } catch (Exception ignore) { }
-			if (aliasRefused++ % 20 == 0) {
-				logger.warn("AgentConsumer: the broker does not give this node the inbox of its former address [{}] yet ({}): asked for"
-						+ " again until it does ({} refusal(s) so far)", aliasQueueName, refused.getMessage(), aliasRefused);
-			}
-			aliasDelay = aliasDelay == 0 ? ALIAS_RETRY_MS : Math.min(ALIAS_RETRY_MAX_MS, aliasDelay * 2);
-			if (closed || aliasRetryPending) return;                     // (one retry waits at a time)
-			if (aliasTimer == null) aliasTimer = new java.util.Timer("agentconsumer-alias", true);
-			aliasRetryPending = true;
 			aliasTimer.schedule(new java.util.TimerTask() {
-				@Override public void run() {
-					synchronized (AgentConsumer.this) {
-						aliasRetryPending = false;
-						if (!closed) openAlias();
-					}
-				}
-			}, aliasDelay);
+				@Override public void run() { aliasAttempt(); }
+			}, Math.max(0L, delay));
+		} catch (java.lang.IllegalStateException cancelled) {
+			aliasPending = false;                                        // shut down meanwhile
 		}
 	}
 
 	/**
+	 * F-17: open the consumer of the former address's inbox, on a session of its own on the inbox's connection. The broker gives
+	 * it when the fabric recorded the move -- this node's key is the one bound to its former name ({@link RecordedMoves}; while
+	 * that is not known there it gives the consumer and holds its messages back) -- and refuses it when the record says no:
+	 * then it is not asked for again until the transport reconnects (logged once). Any other failure (the transport) is tried
+	 * again after {@link #ALIAS_RETRY_MS}, doubling up to {@link #ALIAS_RETRY_MAX_MS}.
+	 *
+	 * <p>The session and the consumer are made WITHOUT this object's lock: a call on a failover transport that is
+	 * reconnecting parks for as long as it reconnects, and shutdown and the inbox's rebuild take that lock (W-GFS-6). The
+	 * result is installed under the lock only if nothing changed meanwhile (else its session is closed).
+	 *
+	 * <p>Its own session, closed whole: the failover transport records every consumer this client adds, refused or not, and
+	 * adds them again on each reconnect; removing a consumer the broker never registered fails the connection ("Cannot remove
+	 * a consumer that had not been registered"), removing its session does not, and takes it out of that record.
+	 */
+	private void aliasAttempt() {
+		org.apache.activemq.ActiveMQConnection conn;
+		long epoch;
+		synchronized (this) {
+			if (closed || aliasQueueName == null || aliasConsumer != null || connection == null) { aliasPending = false; return; }
+			conn = connection;
+			epoch = aliasEpoch;
+		}
+		ActiveMQSession s = null;
+		MessageConsumer c = null;
+		Exception refused = null;
+		try {
+			s = (ActiveMQSession) conn.createSession(false, Session.AUTO_ACKNOWLEDGE);
+			c = s.createConsumer(s.createQueue(aliasQueueName));
+		} catch (JMSException | RuntimeException e) {
+			refused = e;
+		}
+		ActiveMQSession discard = null;
+		synchronized (this) {
+			aliasPending = false;
+			if (refused == null && !closed && connection == conn && epoch == aliasEpoch && aliasConsumer == null) {
+				try {
+					MessageListener l = inboxListener;
+					if (l != null) c.setMessageListener(l);
+					aliasSess = s;
+					aliasConsumer = c;
+					logger.info("AgentConsumer also consumes [{}]: this node answers at its former address in region {} (region_alias){}",
+							aliasQueueName, aliasRegion, aliasRefused > 0 ? ", given after " + aliasRefused + " refusal(s)" : "");
+					aliasRefused = 0;
+					aliasDelay = 0;
+				} catch (JMSException e) {
+					discard = s;
+					refused = e;
+				}
+			} else {
+				discard = s;
+			}
+			if (refused != null && !closed) {
+				String why = String.valueOf(refused.getMessage());
+				if (why.contains(CrescoAuthorizationBroker.NO_MOVE)) {
+					aliasRefusedForGood = true;
+					logger.warn("AgentConsumer: the broker refuses this node the inbox of its former address [{}] ({}): not asked for again"
+							+ " until the transport reconnects", aliasQueueName, why);
+				} else {
+					if (aliasRefused++ % 20 == 0) {
+						logger.warn("AgentConsumer: the inbox of this node's former address [{}] could not be opened ({}): tried again"
+								+ " ({} so far)", aliasQueueName, why, aliasRefused);
+					}
+					aliasDelay = aliasDelay == 0 ? ALIAS_RETRY_MS : Math.min(ALIAS_RETRY_MAX_MS, aliasDelay * 2);
+					scheduleAlias(aliasDelay);
+				}
+			} else if (discard != null && !closed) {
+				scheduleAlias(0);                                         // the transport changed meanwhile: on the current one
+			}
+		}
+		if (discard != null) try { discard.close(); } catch (Exception ignore) { }
+	}
+
+	/**
 	 * F-17: the transport reconnected (failover). It re-added the consumer of the former address's inbox on the broker, which
-	 * may have refused it without the client being told (a region controller that restarted does not know the record yet):
-	 * its session is closed and the consumer asked for again, off the transport's thread. Nothing without a former address.
+	 * may have refused it (a region's controller that restarted judges it anew) without the client being told: its session is
+	 * closed and the consumer asked for again -- also after a no, which may have changed -- all off the transport's thread and,
+	 * for the calls to the broker, outside this object's lock. Nothing without a former address.
 	 */
 	private void aliasAfterResume() {
-		if (aliasQueueName == null || closed) return;
-		final ActiveMQSession on = sess;
+		final ActiveMQSession old;
+		synchronized (this) {
+			if (aliasQueueName == null || closed) return;
+			old = aliasSess;
+			aliasSess = null;
+			aliasConsumer = null;
+			aliasEpoch++;
+			aliasDelay = 0;
+			aliasRefusedForGood = false;
+		}
 		new Thread(null, () -> {
-			synchronized (AgentConsumer.this) {
-				if (closed || sess != on || sess == null) return;
-				closeAlias();
-				aliasDelay = 0;
-				openAlias();
-			}
+			if (old != null) try { old.close(); } catch (Exception ignore) { }
+			synchronized (AgentConsumer.this) { scheduleAlias(0); }
 		}, "agentconsumer-alias-resume", 1 << 18).start();
 	}
 
-	/** Close the consumer of the former address's inbox with its session. */
+	/** Close the consumer of the former address's inbox with its session (with this object's lock held). */
 	private void closeAlias() {
+		aliasEpoch++;
 		try { if (aliasSess != null) aliasSess.close(); } catch (Exception ignore) { }
 		aliasSess = null;
 		aliasConsumer = null;
